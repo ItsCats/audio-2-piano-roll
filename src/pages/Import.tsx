@@ -150,6 +150,18 @@ function YouTubeTab({ busy }: { busy: boolean }) {
   const backend = useBackend();
   const id = parseYouTubeId(url);
   const serverReady = !!backend.health?.features.youtube;
+  // say why a button is disabled instead of leaving it silently grey
+  const commonBlock = !rights
+    ? 'Tick the box above to confirm you have the rights to this video.'
+    : busy
+      ? 'Another import is still running — wait for it to finish (progress is shown above).'
+      : null;
+  const recordBlock = !tabCaptureSupported()
+    ? 'Recording tab audio needs Chrome or Edge on a computer.'
+    : playerError
+      ? 'This video can’t be played here, so it can’t be recorded.'
+      : commonBlock;
+  const serverBlock = !serverReady ? 'Set up a processing server in Settings to use this.' : commonBlock;
 
   useEffect(() => {
     setMeta(null);
@@ -249,7 +261,12 @@ function YouTubeTab({ busy }: { busy: boolean }) {
               <span className="font-medium text-ink-50">{meta.title}</span> · {meta.author}
             </p>
           )}
-          <label className="flex items-start gap-2 text-[12.5px] text-ink-200">
+          <label
+            className={cn(
+              'flex items-start gap-2 rounded-lg border p-2.5 text-[12.5px] transition-colors',
+              rights ? 'border-transparent text-ink-200' : 'border-accent-500/40 bg-accent-500/10 text-ink-100',
+            )}
+          >
             <input type="checkbox" checked={rights} onChange={(e) => setRights(e.target.checked)} className="mt-0.5 accent-[var(--color-accent-500)]" />
             I own this content or have permission to use it, and I’ll respect YouTube’s Terms of Service and the creator’s copyright.
           </label>
@@ -263,9 +280,10 @@ function YouTubeTab({ busy }: { busy: boolean }) {
               <p className="mt-1.5 text-[12px] leading-relaxed text-ink-300">
                 Fastest and most reliable. Your self-hosted processing server fetches the audio. See the README to set one up.
               </p>
-              <Button className="mt-3" variant="primary" size="sm" disabled={!serverReady || !rights || busy} onClick={() => void importYT(url, id, separate, { title: meta?.title, artist: meta?.author })}>
+              <Button className="mt-3" variant="primary" size="sm" disabled={!!serverBlock} onClick={() => void importYT(url, id, separate, { title: meta?.title, artist: meta?.author })}>
                 Fetch & transcribe
               </Button>
+              {serverBlock && <p className="mt-1.5 text-[11.5px] text-ink-400">{serverBlock}</p>}
             </div>
             <div className="rounded-xl border border-ink-700 bg-ink-900/60 p-4">
               <div className="flex items-center gap-2 text-[13.5px] font-medium text-ink-50">
@@ -288,9 +306,12 @@ function YouTubeTab({ busy }: { busy: boolean }) {
                   </div>
                 </div>
               ) : (
-                <Button className="mt-3" size="sm" disabled={!tabCaptureSupported() || !rights || busy || !!playerError} onClick={() => void startCapture()}>
-                  Start recording
-                </Button>
+                <>
+                  <Button className="mt-3" size="sm" disabled={!!recordBlock} onClick={() => void startCapture()}>
+                    Start recording
+                  </Button>
+                  {recordBlock && <p className="mt-1.5 text-[11.5px] text-ink-400">{recordBlock}</p>}
+                </>
               )}
             </div>
           </div>

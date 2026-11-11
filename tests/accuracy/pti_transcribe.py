@@ -27,6 +27,16 @@ def main() -> None:
     from piano_transcription_inference import PianoTranscription, sample_rate
 
     tr = PianoTranscription(device="cpu", checkpoint_path=ckpt)
+    # We only need notes: skip the pedal sub-model (3 of the 7 CRNNs, ~40 % of CPU time).
+    note_model = tr.model.note_model
+
+    def notes_only(x):
+        out = note_model(x)
+        z = torch.zeros_like(out["frame_output"][..., :1])
+        out.update({"reg_pedal_onset_output": z, "reg_pedal_offset_output": z, "pedal_frame_output": z})
+        return out
+
+    tr.model.forward = notes_only
     for f in files:
         name = os.path.splitext(os.path.basename(f))[0]
         out = os.path.join(out_dir, f"{name}.pti.json")
