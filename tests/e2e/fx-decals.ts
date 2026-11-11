@@ -167,6 +167,7 @@ function scene() {
 }
 
 function perf() {
+  if (q.get('nocap')) (globalThis as unknown as { __nocap?: boolean }).__nocap = true;
   const W = 1920;
   const H = 1080;
   const ctx = canvas(W, H);
@@ -503,6 +504,97 @@ if (mode === 'micro') {
     ctx.fillStyle = patB;
     ctx.fill();
     ctx.fill();
+  });
+  const padded = document.createElement('canvas');
+  padded.width = 600;
+  padded.height = 600;
+  for (let a = 0; a < 2; a++) for (let b = 0; b < 2; b++) padded.getContext('2d')!.drawImage(small, a * 300, b * 300);
+  const patNR = ctx.createPattern(padded, 'no-repeat')!;
+  const capGrad = (n: MockNote) => {
+    ctx.globalAlpha = 0.95;
+    ctx.fillStyle = g1;
+    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.drawImage(padded, 10, 10, n.w, n.h - 12, n.x, n.y + 6, n.w, n.h - 12);
+  };
+  const capPath = (n: MockNote, top: boolean) => {
+    ctx.beginPath();
+    const y0 = top ? n.y : n.y + n.h - 6;
+    ctx.rect(n.x, y0, n.w, 6);
+  };
+  run('capsPatRepeat300', (n) => {
+    capGrad(n);
+    for (const top of [true, false]) {
+      capPath(n, top);
+      pat.setTransform({ a: 1, b: 0, c: 0, d: 1, e: Math.round(n.x), f: Math.round(n.y) });
+      ctx.fillStyle = pat;
+      ctx.fill();
+    }
+  });
+  run('capsPatNoRepeat600', (n) => {
+    capGrad(n);
+    for (const top of [true, false]) {
+      capPath(n, top);
+      patNR.setTransform({ a: 1, b: 0, c: 0, d: 1, e: Math.round(n.x) - 10, f: Math.round(n.y) - 10 });
+      ctx.fillStyle = patNR;
+      ctx.fill();
+    }
+  });
+  run('capsClipDraw', (n) => {
+    capGrad(n);
+    for (const top of [true, false]) {
+      ctx.save();
+      capPath(n, top);
+      ctx.clip();
+      ctx.drawImage(padded, 10, 10, n.w, 6, n.x, top ? n.y : n.y + n.h - 6, n.w, 6);
+      ctx.restore();
+    }
+  });
+  run('capsDrawOnly', (n) => {
+    capGrad(n);
+    for (const top of [true, false]) ctx.drawImage(padded, 10, 10, n.w, 6, n.x, top ? n.y : n.y + n.h - 6, n.w, 6);
+  });
+  run('capsRows', (n) => {
+    capGrad(n);
+    for (const top of [true, false]) for (let i = 0; i < 6; i++) ctx.drawImage(padded, 10 + i, 10 + i, n.w - 2 * i, 1, n.x + i, (top ? n.y : n.y + n.h - 6) + i, n.w - 2 * i, 1);
+  });
+  run('noCaps', (n) => capGrad(n));
+  const poc = new OffscreenCanvas(600, 600);
+  poc.getContext('2d')!.drawImage(padded, 0, 0);
+  const pbmp = poc.transferToImageBitmap();
+  run('noCapsBitmap', (n) => {
+    ctx.globalAlpha = 0.95;
+    ctx.fillStyle = g1;
+    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.drawImage(pbmp, 10, 10, n.w, n.h - 12, n.x, n.y + 6, n.w, n.h - 12);
+  });
+  const poc2 = new OffscreenCanvas(600, 600);
+  poc2.getContext('2d')!.drawImage(padded, 0, 0);
+  run('noCapsOffscreen', (n) => {
+    ctx.globalAlpha = 0.95;
+    ctx.fillStyle = g1;
+    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.drawImage(poc2, 10, 10, n.w, n.h - 12, n.x, n.y + 6, n.w, n.h - 12);
+  });
+  const patBmpNR = ctx.createPattern(pbmp, 'no-repeat')!;
+  run('capsBitmapPat', (n) => {
+    ctx.globalAlpha = 0.95;
+    ctx.fillStyle = g1;
+    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.drawImage(pbmp, 10, 10, n.w, n.h - 12, n.x, n.y + 6, n.w, n.h - 12);
+    for (const top of [true, false]) {
+      capPath(n, top);
+      patBmpNR.setTransform({ a: 1, b: 0, c: 0, d: 1, e: Math.round(n.x) - 10, f: Math.round(n.y) - 10 });
+      ctx.fillStyle = patBmpNR;
+      ctx.fill();
+    }
   });
   run('multiplyFill', (n) => {
     ctx.globalCompositeOperation = 'multiply';

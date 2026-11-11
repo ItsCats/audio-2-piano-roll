@@ -34,6 +34,8 @@ interface Geo {
   w: number;
   h: number;
   sc: number;
+  /** detail scale for key-sized features (shadows, radii): never larger than the keys allow */
+  ks: number;
   felt: number; // felt strip height
   ky: number; // top of keys
   kh: number; // key length (to bottom of region minus key bed)
@@ -41,7 +43,8 @@ interface Geo {
   bed: number; // dark key bed below the white keys
   blackLen: number;
   gap: number; // gap between white keys
-  shadowPad: number; // horizontal reach of black-key shadows
+  shadowL: number; // left reach of a resting black key's shadow
+  shadowR: number; // right reach
   white: RGB;
   black: RGB;
   border: RGB;
@@ -76,10 +79,12 @@ function geometry(layout: KeyboardLayout, o: RealisticKeyboardOptions): Geo {
   const kh = Math.max(1, h - felt - bed);
   const lip = Math.max(2, Math.min(kh * 0.055, 10 * sc));
   const gap = Math.max(1, Math.min(1.5 * sc, layout.whiteW * 0.07));
+  const ks = Math.max(0.2, Math.min(sc, layout.whiteW / 34));
   return {
     w: Math.max(1, Math.round(o.width)),
     h,
     sc,
+    ks,
     felt,
     ky,
     kh,
@@ -87,7 +92,8 @@ function geometry(layout: KeyboardLayout, o: RealisticKeyboardOptions): Geo {
     bed,
     blackLen: kh * 0.63,
     gap,
-    shadowPad: Math.ceil(10 * sc + 2),
+    shadowL: Math.ceil(7 * ks + 2),
+    shadowR: Math.ceil(12 * ks + 2),
     white: o.white,
     black: o.black,
     border: parseColor(o.border, shade(o.black, 0.05)),
@@ -105,26 +111,29 @@ function drawWhiteKey(ctx: Ctx2D, g: Geo, midi: number, x: number, w: number, hc
   const kw = Math.max(1, w - g.gap);
   const jitter = (hash(midi, 7) - 0.5) * 0.035; // tiny per-key tone variation, like real ivories
   let c = shade(g.white, jitter);
-  if (pressed) c = shade(mix(g.white, hc!, g.darkTheme ? 0.62 : 0.5), -0.04);
+  if (pressed) c = shade(mix(g.white, hc!, g.darkTheme ? 0.66 : 0.56), -0.03);
   const dip = pressed ? Math.max(1, g.lip * 0.45) : 0;
   const lip = pressed ? g.lip * 0.5 : g.lip;
   const yTop = g.ky;
   const yBot = g.ky + g.kh - dip; // bottom of the front face
   const ySurf = yBot - lip; // front edge of the top surface
-  const r = Math.min(kw * 0.12, 3 * g.sc);
+  const r = Math.min(kw * 0.12, 3 * g.ks);
 
   // top surface
   const sg = ctx.createLinearGradient(0, yTop, 0, ySurf);
   const surfLen = Math.max(1, ySurf - yTop);
   const f = (px: number) => Math.min(0.99, px / surfLen);
-  sg.addColorStop(0, css(shade(c, pressed ? -0.5 : -0.38)));
-  sg.addColorStop(f(4 * g.sc), css(shade(c, pressed ? -0.26 : -0.16)));
-  sg.addColorStop(f(14 * g.sc), css(shade(c, pressed ? -0.08 : -0.03)));
   if (pressed) {
-    // light pooling where the note lands, fading toward the player
-    sg.addColorStop(f(20 * g.sc), css(shade(mix(c, hc!, 0.35), 0.12)));
-    sg.addColorStop(0.55, css(c));
+    // depressed key: deeper shadow under the felt, then light pooling where the note lands
+    sg.addColorStop(0, css(shade(mix(c, hc!, 0.4), -0.55)));
+    sg.addColorStop(f(4 * g.sc), css(shade(mix(c, hc!, 0.3), -0.2)));
+    sg.addColorStop(f(12 * g.sc), css(mix(mix(c, hc!, 0.15), WHITE, 0.32)));
+    sg.addColorStop(0.3, css(mix(c, WHITE, 0.1)));
+    sg.addColorStop(0.7, css(c));
   } else {
+    sg.addColorStop(0, css(shade(c, -0.38)));
+    sg.addColorStop(f(4 * g.sc), css(shade(c, -0.16)));
+    sg.addColorStop(f(14 * g.sc), css(shade(c, -0.03)));
     sg.addColorStop(0.45, css(shade(c, 0.02)));
   }
   sg.addColorStop(1, css(shade(c, pressed ? -0.06 : 0.04)));
@@ -182,7 +191,7 @@ function drawWhiteKey(ctx: Ctx2D, g: Geo, midi: number, x: number, w: number, hc
 
 function drawBlackKey(ctx: Ctx2D, g: Geo, x: number, w: number, hc: RGB | null): void {
   const pressed = hc !== null;
-  const sc = g.sc;
+  const sc = g.ks;
   const len = g.blackLen * (pressed ? 0.975 : 1);
   const y0 = g.ky - 1;
   const y1 = g.ky + len;
@@ -256,10 +265,8 @@ function drawBlackKey(ctx: Ctx2D, g: Geo, x: number, w: number, hc: RGB | null):
   // bright rim where the top surface rolls over into the front face
   ctx.fillStyle = `rgba(255,255,255,${pressed ? 0.3 : 0.22})`;
   ctx.fillRect(tx + tw * 0.08, ySurf - 0.4 * sc, tw * 0.84, Math.max(0.8, 0.9 * sc));
-  // little glint on the front face
-  ctx.fillStyle = `rgba(255,255,255,${pressed ? 0.22 : 0.14})`;
-  ctx.fillRect(x + w * 0.3, ySurf + front * 0.42, w * 0.4, Math.max(0.8, 0.8 * sc));
 }
+
 
 // ---------------------------------------------------------------------------------------------
 
@@ -284,54 +291,90 @@ function drawFelt(ctx: Ctx2D, g: Geo): void {
   ctx.fillRect(0, 0, g.w, Math.max(1, Math.round(0.8 * g.sc)));
 }
 
-function drawRange(ctx: Ctx2D, layout: KeyboardLayout, g: Geo, colors: (RGB | null)[], x0: number, x1: number): void {
-  // white keys
-  for (let m = layout.lo; m <= layout.hi; m++) {
-    const k = layout.keys[m];
-    if (!k || k.black || k.x > x1 || k.x + k.w < x0) continue;
-    drawWhiteKey(ctx, g, m, k.x, k.w, colors[m - layout.lo]);
-  }
-  // black keys (including those whose shadow reaches into the range)
-  for (let m = layout.lo; m <= layout.hi; m++) {
-    const k = layout.keys[m];
-    if (!k || !k.black || k.x - g.shadowPad > x1 || k.x + k.w + g.shadowPad < x0) continue;
-    drawBlackKey(ctx, g, k.x, k.w, colors[m - layout.lo]);
-  }
-}
-
-function drawStatic(ctx: Ctx2D, layout: KeyboardLayout, g: Geo): void {
-  // key bed / gaps
-  ctx.fillStyle = css(shade(g.border, -0.35));
-  ctx.fillRect(0, 0, g.w, g.h);
-  const none: (RGB | null)[] = new Array(layout.hi - layout.lo + 1).fill(null);
-  drawRange(ctx, layout, g, none, -1e9, 1e9);
-  drawFelt(ctx, g);
-  // shadow cast by the felt / fallboard onto the keys
-  const sh = ctx.createLinearGradient(0, g.felt, 0, g.felt + 6 * g.sc);
-  sh.addColorStop(0, 'rgba(0,0,0,0.45)');
+/** Shadow cast by the felt / fallboard onto the keys (drawn last, over black keys too). */
+function drawFeltShadow(ctx: Ctx2D, g: Geo, x0: number, x1: number): void {
+  const d = 7 * g.sc;
+  const sh = ctx.createLinearGradient(0, g.felt, 0, g.felt + d);
+  sh.addColorStop(0, 'rgba(0,0,0,0.5)');
+  sh.addColorStop(0.4, 'rgba(0,0,0,0.16)');
   sh.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.fillStyle = sh;
-  ctx.fillRect(0, g.felt, g.w, 6 * g.sc);
+  ctx.fillRect(x0, g.felt, x1 - x0, d);
 }
 
-// small LRU of static keyboards (live view + export renderers may coexist)
-const cache = new Map<string, AnyCanvas>();
-const CACHE_MAX = 4;
+interface StaticKb {
+  /** felt + resting white keys + key bed (no black keys) */
+  whites: AnyCanvas;
+  /** resting black keys with their shadows, on transparent */
+  blacks: AnyCanvas;
+  /** whites + blacks + felt shadow: what a frame with no pressed keys shows */
+  full: AnyCanvas;
+}
 
-function staticKeyboard(layout: KeyboardLayout, g: Geo): AnyCanvas {
-  const key = [g.w, g.h, g.sc.toFixed(4), layout.lo, layout.hi, layout.width.toFixed(2), css(g.white), css(g.black), css(g.border), g.labels].join('|');
-  const hit = cache.get(key);
-  if (hit) {
-    cache.delete(key);
-    cache.set(key, hit);
+function ctxOf(c: AnyCanvas): Ctx2D {
+  return c.getContext('2d') as Ctx2D;
+}
+
+function buildStatic(layout: KeyboardLayout, g: Geo): StaticKb {
+  const whites = makeCanvas(g.w, g.h);
+  const wc = ctxOf(whites);
+  wc.fillStyle = css(shade(g.border, -0.35));
+  wc.fillRect(0, 0, g.w, g.h);
+  for (let m = layout.lo; m <= layout.hi; m++) {
+    const k = layout.keys[m];
+    if (k && !k.black) drawWhiteKey(wc, g, m, k.x, k.w, null);
+  }
+  drawFelt(wc, g);
+
+  const blacks = makeCanvas(g.w, g.h);
+  const bc = ctxOf(blacks);
+  for (let m = layout.lo; m <= layout.hi; m++) {
+    const k = layout.keys[m];
+    if (k && k.black) drawBlackKey(bc, g, k.x, k.w, null);
+  }
+  // the felt sits above the black keys' back ends
+  bc.clearRect(0, 0, g.w, g.felt);
+
+  const full = makeCanvas(g.w, g.h);
+  const fc = ctxOf(full);
+  fc.drawImage(whites, 0, 0);
+  fc.drawImage(blacks, 0, 0);
+  drawFeltShadow(fc, g, 0, g.w);
+  return { whites, blacks, full };
+}
+
+// small LRUs (live view + export renderers may coexist)
+const staticCache = new Map<string, StaticKb>();
+const bloomCache = new Map<string, AnyCanvas>();
+
+function lru<T>(map: Map<string, T>, key: string, max: number, make: () => T): T {
+  const hit = map.get(key);
+  if (hit !== undefined) {
+    map.delete(key);
+    map.set(key, hit);
     return hit;
   }
-  const c = makeCanvas(g.w, g.h);
-  const cctx = c.getContext('2d') as Ctx2D;
-  drawStatic(cctx, layout, g);
-  cache.set(key, c);
-  while (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value as string);
-  return c;
+  const v = make();
+  map.set(key, v);
+  while (map.size > max) map.delete(map.keys().next().value as string);
+  return v;
+}
+
+/** Soft additive light pool for a pressed key: radial, centred on the top edge. */
+function bloomSprite(c: RGB, r: number): AnyCanvas {
+  return lru(bloomCache, `${css(c)}|${r}`, 24, () => {
+    const cv = makeCanvas(r * 2, r);
+    const x = ctxOf(cv);
+    const rg = x.createRadialGradient(r, 0, 0, r, 0, r);
+    rg.addColorStop(0, rgba(mix(c, WHITE, 0.55), 1));
+    rg.addColorStop(0.12, rgba(mix(c, WHITE, 0.25), 0.75));
+    rg.addColorStop(0.4, rgba(c, 0.28));
+    rg.addColorStop(0.7, rgba(c, 0.08));
+    rg.addColorStop(1, rgba(c, 0));
+    x.fillStyle = rg;
+    x.fillRect(0, 0, r * 2, r);
+    return cv;
+  });
 }
 
 export function drawRealisticKeyboard(
@@ -343,16 +386,22 @@ export function drawRealisticKeyboard(
   if (o.height <= 0 || o.width <= 0) return;
   const g = geometry(layout, o);
   const top = Math.round(o.top);
+  const key = [g.w, g.h, g.sc.toFixed(4), layout.lo, layout.hi, layout.width.toFixed(2), css(g.white), css(g.black), css(g.border), g.labels].join('|');
+  const st = lru(staticCache, key, 4, () => buildStatic(layout, g));
+
   const n = layout.hi - layout.lo + 1;
   const colors: (RGB | null)[] = new Array(n);
   const spans: [number, number][] = [];
+  let anyBlackPressed = false;
   for (let m = layout.lo; m <= layout.hi; m++) {
     const k = layout.keys[m];
     const c = k ? keyColor(m) : null;
     colors[m - layout.lo] = c;
     if (c && k) {
-      const pad = k.black ? g.shadowPad : 1;
-      spans.push([Math.floor(k.x - pad), Math.ceil(k.x + k.w + pad)]);
+      if (k.black) {
+        anyBlackPressed = true;
+        spans.push([Math.floor(k.x - g.shadowL), Math.ceil(k.x + k.w + g.shadowR)]);
+      } else spans.push([Math.floor(k.x - 1), Math.ceil(k.x + k.w + 1)]);
     }
   }
 
@@ -361,23 +410,21 @@ export function drawRealisticKeyboard(
   ctx.globalCompositeOperation = 'source-over';
   ctx.shadowColor = 'rgba(0,0,0,0)';
   ctx.shadowBlur = 0;
-  ctx.filter = 'none';
+  ctx.shadowOffsetX = 0;
+  ctx.shadowOffsetY = 0;
 
   // soft hit-line highlight just above the keyboard
   if (o.hitLine) {
     const hh = 16 * g.sc;
     const hg = ctx.createLinearGradient(0, top - hh, 0, top);
     hg.addColorStop(0, 'rgba(255,255,255,0)');
-    hg.addColorStop(1, 'rgba(255,255,255,0.13)');
+    hg.addColorStop(1, 'rgba(255,255,255,0.12)');
     ctx.fillStyle = hg;
     ctx.fillRect(0, top - hh, g.w, hh);
   }
 
-  ctx.drawImage(staticKeyboard(layout, g), 0, top);
-  if (o.hitLine) {
-    ctx.fillStyle = 'rgba(255,255,255,0.55)';
-    ctx.fillRect(0, top, g.w, Math.max(1, Math.round(1.2 * g.sc)));
-  }
+  ctx.translate(0, top);
+  ctx.drawImage(st.full, 0, 0);
 
   if (spans.length) {
     spans.sort((a, b) => a[0] - b[0]);
@@ -385,57 +432,78 @@ export function drawRealisticKeyboard(
     for (const s of spans) {
       const last = merged[merged.length - 1];
       if (last && s[0] <= last[1]) last[1] = Math.max(last[1], s[1]);
-      else merged.push([s[0], s[1]]);
+      else merged.push([Math.max(0, s[0]), s[1]]);
     }
-    ctx.translate(0, top);
-    for (const [a, b] of merged) {
+    const y0 = g.felt;
+    const hh = g.h - g.felt;
+    for (const span of merged) {
+      const a = span[0];
+      const b = Math.min(g.w, span[1]);
+      if (b <= a) continue;
       ctx.save();
       ctx.beginPath();
-      ctx.rect(a, g.felt, b - a, g.h - g.felt);
+      ctx.rect(a, y0, b - a, hh);
       ctx.clip();
-      ctx.fillStyle = css(shade(g.border, -0.35));
-      ctx.fillRect(a, g.felt, b - a, g.h - g.felt);
-      drawRange(ctx, layout, g, colors, a, b);
-      const sh = ctx.createLinearGradient(0, g.felt, 0, g.felt + 6 * g.sc);
-      sh.addColorStop(0, 'rgba(0,0,0,0.45)');
-      sh.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = sh;
-      ctx.fillRect(a, g.felt, b - a, 6 * g.sc);
+      // 1) resting ivories, 2) pressed ivories
+      ctx.drawImage(st.whites, a, y0, b - a, hh, a, y0, b - a, hh);
+      for (let m = layout.lo; m <= layout.hi; m++) {
+        const k = layout.keys[m];
+        const c = colors[m - layout.lo];
+        if (c && k && !k.black && k.x < b && k.x + k.w > a) drawWhiteKey(ctx, g, m, k.x, k.w, c);
+      }
+      // 3) resting black keys, except where a pressed black key (and its old shadow) lives
+      if (anyBlackPressed) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(a, y0, b - a, hh);
+        for (let m = layout.lo; m <= layout.hi; m++) {
+          const k = layout.keys[m];
+          if (!k || !k.black || !colors[m - layout.lo]) continue;
+          const l = Math.floor(k.x - g.shadowL);
+          const r = Math.ceil(k.x + k.w + g.shadowR);
+          if (r > a && l < b) ctx.rect(l, y0, r - l, hh);
+        }
+        ctx.clip('evenodd');
+        ctx.drawImage(st.blacks, a, y0, b - a, hh, a, y0, b - a, hh);
+        ctx.restore();
+        // 4) pressed black keys
+        for (let m = layout.lo; m <= layout.hi; m++) {
+          const k = layout.keys[m];
+          const c = colors[m - layout.lo];
+          if (c && k && k.black && k.x - g.shadowL < b && k.x + k.w + g.shadowR > a) drawBlackKey(ctx, g, k.x, k.w, c);
+        }
+      } else {
+        ctx.drawImage(st.blacks, a, y0, b - a, hh, a, y0, b - a, hh);
+      }
+      drawFeltShadow(ctx, g, a, b);
       ctx.restore();
     }
 
-    // gentle additive glow on pressed keys
+    // gentle additive light pooled where each pressed key meets the felt
     if (o.glow > 0) {
       ctx.save();
       ctx.beginPath();
       ctx.rect(0, 0, g.w, g.h);
       ctx.clip();
       ctx.globalCompositeOperation = 'lighter';
+      const r = Math.max(8, Math.round(Math.max(layout.whiteW * 1.5, 22 * g.ks)));
+      const a = Math.min(1, o.glow) * (g.darkTheme ? 1 : 0.85);
+      ctx.globalAlpha = a;
       for (let m = layout.lo; m <= layout.hi; m++) {
         const c = colors[m - layout.lo];
         const k = layout.keys[m];
         if (!c || !k) continue;
         const cx = k.x + k.w / 2;
-        const len = k.black ? g.blackLen : g.kh;
-        const a = Math.min(1, o.glow) * (g.darkTheme ? 0.6 : 0.42);
-        // light pooled at the top of the key, spilling a little onto neighbours
-        const rad = Math.max(k.w * 1.6, 18 * g.sc);
-        const rg = ctx.createRadialGradient(cx, g.felt, 0, cx, g.felt, rad);
-        rg.addColorStop(0, rgba(mix(c, WHITE, 0.35), a * 0.9));
-        rg.addColorStop(0.35, rgba(c, a * 0.4));
-        rg.addColorStop(1, rgba(c, 0));
-        ctx.fillStyle = rg;
-        ctx.fillRect(cx - rad, 0, rad * 2, rad);
-        // along the key body
-        const vg = ctx.createLinearGradient(0, g.felt, 0, g.ky + len);
-        vg.addColorStop(0, rgba(c, a * 0.55));
-        vg.addColorStop(1, rgba(c, a * 0.06));
-        ctx.fillStyle = vg;
-        const inset = k.black ? k.w * 0.12 : g.gap;
-        ctx.fillRect(k.x + inset, g.felt, k.w - inset * 2, len);
+        const rr = k.black ? Math.round(r * 0.8) : r;
+        ctx.drawImage(bloomSprite(c, rr), cx - rr, g.felt - rr * 0.12, rr * 2, rr);
       }
       ctx.restore();
     }
+  }
+
+  if (o.hitLine) {
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.fillRect(0, 0, g.w, Math.max(1, Math.round(1.2 * g.sc)));
   }
   ctx.restore();
 }

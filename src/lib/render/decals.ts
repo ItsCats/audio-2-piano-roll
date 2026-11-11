@@ -1448,6 +1448,7 @@ function blit(ctx: Ctx2D, bk: Baked, w: number, h: number, ox: number, oy: numbe
 
 /** Fill the current path with the decal (for the rounded caps). The path must fit in w × h. */
 function fillCap(ctx: Ctx2D, pat: CanvasPattern, w: number, h: number, ox: number, oy: number, x0: number, y0: number): void {
+  if ((globalThis as unknown as { __nocap?: boolean }).__nocap) return;
   xform.e = ox + w * Math.floor((x0 - ox) / w);
   xform.f = oy + h * Math.floor((y0 - oy) / h);
   pat.setTransform(xform);
