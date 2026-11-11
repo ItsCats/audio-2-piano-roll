@@ -136,6 +136,28 @@ def main() -> None:
         md.append("## Low notes (< C3) vs drum hits\n\n`near drum` = onset within 40 ms of a drum-stem onset (vs `chance` for random times). `suspect` = near a drum hit AND not the bass stem's pitch class.\n")
         md.append(table(["song", "preset", "#low", "low/min", "near drum", "chance", "not bass PC", "#suspect", "suspect/min", "suspect pitches (midi:count)"], rows) + "\n")
 
+    # ---- separation oracle
+    rows = []
+    for s in songs:
+        orc = s.get("separationOracle")
+        if not orc:
+            continue
+        mix = s["presets"].get("mix", {})
+        v = orc.get("vocals.mix", {})
+        acc = orc.get("accomp-nodrums.mix", {})
+        rows.append([
+            s["song"],
+            f"{f(mix.get('melody', {}).get('easy', {}).get('rawPitch'))} / {f(mix.get('melody', {}).get('easy', {}).get('rawChroma'))}",
+            f"{f(v.get('melody_easyRH', {}).get('rawPitch'))} / {f(v.get('melody_easyRH', {}).get('rawChroma'))}",
+            f"{f(v.get('melody_baseTop', {}).get('rawPitch'))} / {f(v.get('melody_baseTop', {}).get('rawChroma'))}",
+            v.get("vocalNotes", {}).get("onset100", {}).get("f1"),
+            f"{f(mix.get('bass', {}).get('easy', {}).get('rawChroma'))}",
+            f"{f(acc.get('bass_easyLH', {}).get('rawChroma'))}",
+        ])
+    if rows:
+        md.append("## Separation oracle (what server-quality separation would buy)\n\nThe unchanged app pipeline ('mix' preset) run on Demucs stems of the same song: the vocal stem alone (melody) and bass+other+guitar+piano (no drums, no vocals; left hand). An upper bound for an in-browser separation front-end of the same quality.\n")
+        md.append(table(["song", "full mix: Easy RH vs vocal RPA/RCA", "vocal stem: Easy RH RPA/RCA", "vocal stem: base top RPA/RCA", "vocal stem: note F1@100 vs ref notes", "full mix: Easy LH bass RCA", "no-drums accomp: Easy LH bass RCA"], rows) + "\n")
+
     # ---- content proxies
     rows = []
     for s in songs:

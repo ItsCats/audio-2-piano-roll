@@ -191,6 +191,34 @@ def eval_song(sid: str, audio: str, cfg: dict, work: str, trans_dir: str, log) -
         if drums is not None:
             r["drumLowNotes"] = drum_low_notes(base, drums, bass)
         res["presets"][preset] = r
+    # ---- separation oracle (optional): the app's pipeline run on Demucs stems of the same song
+    orc = {}
+    for stem in ("vocals", "accomp-nodrums"):
+        for preset in ("mix", "piano"):
+            p = os.path.join(trans_dir, f"{sid}.{stem}.{preset}.json")
+            if not os.path.exists(p):
+                continue
+            tr = load_trans(p)
+            N = tr["_notes"]
+            o = {"counts": {lv: len(N[lv]) for lv in LEVELS}, "transcribeSec": round(tr["timing"]["transcribeMs"] / 1000, 2)}
+            if vocal is not None and stem == "vocals":
+                vt, vf = vocal
+                o["melody_baseTop"] = melody_metrics(vt, vf, line_f0(N["base"], vt, None))
+                o["melody_easyRH"] = melody_metrics(vt, vf, line_f0(N["easy"], vt, "R"))
+                o["vocalPresentInBase"] = presence(vt, vf, N["base"])
+                if vf.any():
+                    ref_notes = load_notes(os.path.join(work, "refs", "vocal", f"{sid}.vocals.notes.json"))[0] \
+                        if os.path.exists(os.path.join(work, "refs", "vocal", f"{sid}.vocals.notes.json")) else None
+                    if ref_notes is not None:
+                        o["vocalNotes"] = {"onset50": note_prf(ref_notes, N["base"], 0.05), "onset100": note_prf(ref_notes, N["base"], 0.1)}
+            if bass is not None and stem == "accomp-nodrums":
+                bt, bf = bass
+                o["bass_easyLH"] = melody_metrics(bt, bf, line_f0(N["easy"], bt, "L", mode="bottom"))
+                o["bass_baseBottom"] = melody_metrics(bt, bf, line_f0(N["base"], bt, None, mode="bottom"))
+                o["chromaSim_vsOriginalMix"] = {lv: chroma_similarity(ac, loud, N[lv], dur) for lv in ("base", "easy")}
+            orc[f"{stem}.{preset}"] = o
+    if orc:
+        res["separationOracle"] = orc
     res["evalSec"] = round(time.time() - t0, 1)
     return res
 

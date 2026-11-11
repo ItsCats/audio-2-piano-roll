@@ -97,7 +97,20 @@ def error_breakdown(ref: NoteArr, est: NoteArr, tol: float = 0.05) -> dict:
         else:
             cat = "missed"
         fn[cat] = fn.get(cat, 0) + 1
-    return {"falsePositives": dict(sorted(fp.items(), key=lambda x: -x[1])), "missed": dict(sorted(fn.items(), key=lambda x: -x[1]))}
+    hit = np.zeros(len(ref), bool)
+    hit[list(mr)] = True
+    by_reg = {}
+    for name, lo, hi in (("<C3", 0, 48), ("C3-B4", 48, 72), (">=C5", 72, 128)):
+        k = (ref.pitch >= lo) & (ref.pitch < hi)
+        if k.any():
+            by_reg[name] = {"n": int(k.sum()), "recall": round(float(hit[k].mean()), 4)}
+    by_vel = {}
+    if len(ref) >= 30 and np.ptp(ref.vel) > 0:
+        q1, q2 = np.quantile(ref.vel, [1 / 3, 2 / 3])
+        for name, k in (("soft third", ref.vel <= q1), ("middle third", (ref.vel > q1) & (ref.vel <= q2)), ("loud third", ref.vel > q2)):
+            if k.any():
+                by_vel[name] = {"n": int(k.sum()), "recall": round(float(hit[k].mean()), 4)}
+    return {"recallByRegister": by_reg, "recallByVelocity": by_vel, "falsePositives": dict(sorted(fp.items(), key=lambda x: -x[1])), "missed": dict(sorted(fn.items(), key=lambda x: -x[1]))}
 
 
 # ----------------------------------------------------------------------------- melody

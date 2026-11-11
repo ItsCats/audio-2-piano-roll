@@ -23,7 +23,7 @@ import numpy as np  # noqa: E402
 def main() -> None:
     ckpt, out_dir, files = sys.argv[1], sys.argv[2], sys.argv[3:]
     os.makedirs(out_dir, exist_ok=True)
-    torch.set_num_threads(os.cpu_count() or 4)
+    torch.set_num_threads(int(os.environ.get("PTI_THREADS", os.cpu_count() or 4)))
     from piano_transcription_inference import PianoTranscription, sample_rate
 
     tr = PianoTranscription(device="cpu", checkpoint_path=ckpt)
