@@ -7,7 +7,7 @@ A small FastAPI service that adds two capabilities to the web app:
 | `GET /api/health` | version and enabled features (`features.separation`, `features.stems`, `features.youtube`) |
 | `POST /api/jobs/youtube` `{url, separate}` | fetch a YouTube video's audio with yt-dlp; with `separate: true` also split it into stems |
 | `POST /api/jobs/separate` (multipart `file`) | SCNet source separation: a **vocal stem** and the **accompaniment without drums or vocals** (bass + other) |
-| `GET /api/jobs/{id}` | status, stage (`decoding` → `separating` → `encoding`), real per-segment progress, available `stems` |
+| `GET /api/jobs/{id}` | status, stage (`decoding` → `separating` → `encoding`), real per-segment progress, available `stems`, `separationMs` (the server's separation time). A YouTube job whose separation fails still finishes as `done` with only the `mix` stem and the reason in `separationError`, so the client can separate that audio itself without a second download. |
 | `GET /api/jobs/{id}/audio?stem=vocals\|accomp\|mix` | a result file. Stems are mono 22.05 kHz FLAC, sample-aligned with the mixture; `mix` (YouTube) is AAC/M4A. Without `stem`: the accompaniment for separation jobs, the mix for plain YouTube jobs (what pre-2.0 clients expect). |
 
 The web app still does the transcription: it puts the sung melody (vocal stem) on the right hand and

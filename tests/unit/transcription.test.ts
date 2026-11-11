@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { extractNotes, DEFAULT_EXTRACTION } from '../../src/lib/transcription/noteExtraction';
 import { BP_FPS, BP_KEPT_FRAMES, frameToTime, timeToFrame } from '../../src/lib/transcription/constants';
-import { EXTRACTION_PRESETS, VOCAL_EXTRACTION, cleanNotes, drumOnsetMax, frameRise, melodyFromRaw } from '../../src/lib/transcription/pipeline';
+import { EXTRACTION_PRESETS, VOCAL_EXTRACTION, cleanNotes, drumOnsetMax, frameRise, melodyFromRaw, separationFailureWarning } from '../../src/lib/transcription/pipeline';
 import { DRUM_HIT_RULE } from '../../src/lib/music/cleanup';
 import type { RawNoteEvent } from '../../src/lib/transcription/noteExtraction';
 
@@ -225,5 +225,28 @@ describe('drum-hit filter default', () => {
     const strip = (ns: { midi: number; start: number; dur: number }[]) => ns.map(({ midi, start, dur }) => ({ midi, start, dur }));
     expect(strip(cleanNotes(raw, rms, EXTRACTION_PRESETS.mix, 20, { drums: d }))).toEqual(strip(cleanNotes(raw, rms, EXTRACTION_PRESETS.mix, 20)));
     expect(cleanNotes(raw, rms, EXTRACTION_PRESETS.mix, 20, { drums: d })).toHaveLength(2);
+  });
+});
+
+
+describe('separation failure warnings', () => {
+  it('memory errors get advice instead of the raw engine message', () => {
+    for (const msg of [
+      'failed to call OrtRun(). ERROR_CODE: 6, ERROR_MESSAGE: std::bad_alloc',
+      'Aborted(OOM)',
+      'Array buffer allocation failed',
+      'The separation worker failed.',
+    ]) {
+      const f = separationFailureWarning(new Error(msg));
+      expect(f.kind).toBe('memory');
+      expect(f.warning).toMatch(/ran out of memory.*right hand does not follow the singer.*Close other tabs/);
+    }
+    const r = separationFailureWarning(new RangeError('Invalid typed array length: 4294967296'));
+    expect(r.kind).toBe('memory');
+  });
+  it('other errors keep their message', () => {
+    const f = separationFailureWarning(new Error('Could not download the separation model (HTTP 404).'));
+    expect(f.kind).toBe('error');
+    expect(f.warning).toMatch(/HTTP 404.*full mix was transcribed/);
   });
 });

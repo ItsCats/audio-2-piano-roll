@@ -93,15 +93,8 @@ async function runAccuracy(piece: 'bach' | 'chords', preset: keyof typeof EXTRAC
     if (stages[stages.length - 1] !== s) stages.push(s);
   });
   const arr = generateAllArrangements(res.notes, [], res.tempo, res.duration);
-  // Studio "Re-detect" with unchanged parameters must reproduce the import (notes and beat grid)
-  const re = await redetectNotes(res.posteriors, EXTRACTION_PRESETS[preset], res.duration, { melody: res.notes.filter((n) => n.role === 'melody') });
-  const redetect = {
-    sameNotes: re.notes.length === res.notes.length && re.notes.every((n, i) => n.midi === res.notes[i].midi && Math.abs(n.start - res.notes[i].start) < 1e-6),
-    sameTempo: re.tempo.bpm === res.tempo.bpm && re.tempo.confidence === res.tempo.confidence && re.tempo.beats.length === res.tempo.beats.length,
-  };
   return {
     piece,
-    redetect,
     preset,
     renderMs: Math.round(renderMs),
     transcribeMs: res.info.processingMs,
@@ -219,10 +212,20 @@ async function runSeparationReuse() {
   const before = { accomp: separation.accomp.length, vocals: separation.vocals.length, v0: separation.vocals.find((v) => v !== 0) };
   const a = await transcribeAudio(blob, EXTRACTION_PRESETS.mix, () => {}, undefined, { separation });
   const b = await transcribeAudio(blob, EXTRACTION_PRESETS.mix, () => {}, undefined, { separation });
+  // Studio "Re-detect" keeps the sung line; its beats must come from the accompaniment alone, as on
+  // import, so the kept melody notes must not change the tempo
+  const melody = a.notes.filter((n) => n.role === 'melody');
+  const withMelody = await redetectNotes(a.posteriors, EXTRACTION_PRESETS.mix, a.duration, { melody });
+  const without = await redetectNotes(a.posteriors, EXTRACTION_PRESETS.mix, a.duration);
   return {
     intact: separation.accomp.length === before.accomp && separation.vocals.length === before.vocals && separation.vocals.find((v) => v !== 0) === before.v0,
     notes: [a.notes.length, b.notes.length],
     melody: [a.notes.filter((n) => n.role === 'melody').length, b.notes.filter((n) => n.role === 'melody').length],
+    redetect: {
+      keptMelody: withMelody.notes.filter((n) => n.role === 'melody').length,
+      sameTempoWithAndWithoutMelody:
+        withMelody.tempo.bpm === without.tempo.bpm && withMelody.tempo.confidence === without.tempo.confidence && withMelody.tempo.beats.join() === without.tempo.beats.join(),
+    },
   };
 }
 

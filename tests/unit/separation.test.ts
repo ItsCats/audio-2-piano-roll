@@ -302,3 +302,27 @@ describe('drumOnsetEnvelope', () => {
     expect(Math.max(...leak)).toBeLessThan(Math.max(...env) / 3);
   });
 });
+
+describe('separationSupport and recording length', () => {
+  it('does not recommend separating long recordings in the browser (memory grows with length)', async () => {
+    const { vi } = await import('vitest');
+    vi.stubGlobal('Worker', class {});
+    vi.stubGlobal('navigator', { userAgent: 'Desktop', deviceMemory: 4, hardwareConcurrency: 4, maxTouchPoints: 0 });
+    try {
+      const { separationSupport, estimateSeparationMB, BROWSER_SEPARATION_MAX_SECONDS } = await import('../../src/lib/separation');
+      expect(separationSupport(240).recommended).toBe(true);
+      const long = separationSupport(15 * 60);
+      expect(long.ok).toBe(true);
+      expect(long.recommended).toBe(false);
+      expect(long.maxSeconds).toBe(BROWSER_SEPARATION_MAX_SECONDS);
+      expect(long.reason).toMatch(/15-minute recording needs about 3\.\d GB/);
+      expect(estimateSeparationMB(20 * 60)).toBeGreaterThan(estimateSeparationMB(4 * 60));
+      // 8 GB devices may separate up to the 20-minute import limit
+      vi.stubGlobal('navigator', { userAgent: 'Desktop', deviceMemory: 8, hardwareConcurrency: 4, maxTouchPoints: 0 });
+      expect(separationSupport(15 * 60).recommended).toBe(true);
+      expect(separationSupport().maxSeconds).toBe(20 * 60);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
