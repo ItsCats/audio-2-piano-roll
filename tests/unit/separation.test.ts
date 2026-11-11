@@ -6,7 +6,9 @@ import {
   RealFFT,
   SEGMENT,
   SegmentStft,
+  DRUM_ENV_FPS,
   decimate2,
+  drumOnsetEnvelope,
   halfbandTaps,
   mixStats,
   planSegments,
@@ -216,5 +218,58 @@ describe('vocalPresence', () => {
     mix.fill(0, n / 2);
     const voc = Float32Array.from(mix, (v) => v * 0.5);
     expect(vocalPresence(voc, mix, sr).activeFraction).toBeCloseTo(1, 5);
+  });
+});
+
+describe('drumOnsetEnvelope', () => {
+  const rate = 44100;
+  /** decaying noise bursts (kick-like: low-passed) at the given times, over a quiet sine bed */
+  function drumTrack(seconds: number, hits: number[], amp = 0.8) {
+    const n = Math.round(seconds * rate);
+    const x = new Float32Array(n);
+    const r = rng(5);
+    for (const t of hits) {
+      const s = Math.round(t * rate);
+      let lp = 0;
+      for (let i = 0; i < 0.15 * rate && s + i < n; i++) {
+        lp += 0.05 * (r() - lp);
+        x[s + i] += amp * Math.exp(-i / (0.03 * rate)) * (lp * 8 + 0.5 * Math.sin((2 * Math.PI * 60 * i) / rate));
+      }
+    }
+    return x;
+  }
+  const bed = (n: number, amp = 0.2) => Float32Array.from({ length: n }, (_, i) => amp * Math.sin((2 * Math.PI * 220 * i) / rate));
+  const add = (a: Float32Array, b: Float32Array) => a.map((v, i) => v + b[i]);
+  const peaks = (env: Uint8Array, min: number) => {
+    const out: number[] = [];
+    for (let i = 1; i < env.length - 1; i++) if (env[i] >= min && env[i] >= env[i - 1] && env[i] > env[i + 1]) out.push(i);
+    return out;
+  };
+
+  it('is silent without drums and has one frame per 10 ms', () => {
+    const mix = bed(rate * 2);
+    const env = drumOnsetEnvelope(new Float32Array(mix.length), mix, rate);
+    expect(env.length).toBe(Math.floor(mix.length / (rate / DRUM_ENV_FPS)) + 1);
+    expect(Math.max(...env)).toBe(0);
+  });
+
+  it('peaks at the hits, within one frame', () => {
+    const hits = [0.3, 0.8, 1.25, 1.9];
+    const drums = drumTrack(2.5, hits);
+    const env = drumOnsetEnvelope(drums, add(drums, bed(drums.length)), rate);
+    const p = peaks(env, 30);
+    expect(p.length).toBe(hits.length);
+    p.forEach((f, i) => expect(Math.abs(f - hits[i] * DRUM_ENV_FPS)).toBeLessThanOrEqual(1));
+  });
+
+  it('is measured relative to the mixture level (gain invariant) and stays low for leakage', () => {
+    const drums = drumTrack(2, [0.5, 1.2]);
+    const mix = add(drums, bed(drums.length));
+    const env = drumOnsetEnvelope(drums, mix, rate);
+    const quiet = drumOnsetEnvelope(drums.map((v) => v * 0.25), mix.map((v) => v * 0.25), rate);
+    for (let i = 0; i < env.length; i++) expect(Math.abs(env[i] - quiet[i])).toBeLessThanOrEqual(1);
+    // a drum stem 40 dB under the mixture (separation leakage of a song without drums)
+    const leak = drumOnsetEnvelope(drums.map((v) => v * 0.01), mix, rate);
+    expect(Math.max(...leak)).toBeLessThan(Math.max(...env) / 3);
   });
 });

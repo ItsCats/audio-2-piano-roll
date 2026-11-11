@@ -24,10 +24,14 @@ export function bumpNoteIds(notes: Note[]): void {
  * began at least `minPrevDur` earlier, is never merged. The threshold ramps from `lowRise` at
  * and below `bottomMidi` to `highRise` at and above `lowMidi`.
  *
+ * The test is applied only for presets with a strict continuation fold (continuationOnset >=
+ * `minContinuation`: "piano", "mix"); with a permissive one ("sensitive", 0.5) the fold rarely
+ * swallows a real re-strike and the test only added false splits.
+ *
  * Tuned on MAESTRO exact MIDI (tests/accuracy/sweep_extraction.mjs, onset F1 @50 ms, 5 pieces +
- * Liszt held out): piano mean F1 +0.004 (C2-B2 recall .668 -> .705 at precision .926 -> .928),
- * sensitive +0.0003 (C2-B2 recall .755 -> .774), no piece worse than -0.007; a lower threshold
- * above C3 gains more on MAESTRO but costs the synthetic e2e Bach gate.
+ * Liszt held out), "piano": mean F1 +0.0023 (Liszt +0.003), no piece worse, C2-B2 recall
+ * .668 -> .698 at precision .926 -> .929; synthetic e2e Bach .936 -> .937. A lower threshold above
+ * C3 (0.2) gained +0.004 on MAESTRO but cost the e2e Bach gate 0.003; "sensitive" never gained.
  */
 export interface RestrikeRule {
   lowMidi: number;
@@ -36,9 +40,11 @@ export interface RestrikeRule {
   highRise: number;
   /** the note before must have lasted this long (s): a short fragment followed by a rise is the model's early, unstable start of one note */
   minPrevDur: number;
+  /** apply only when the preset's continuationOnset is at least this */
+  minContinuation: number;
 }
 
-export const RESTRIKE: RestrikeRule = { lowMidi: 48, bottomMidi: 36, lowRise: 0.15, highRise: 0.2, minPrevDur: 0.2 };
+export const RESTRIKE: RestrikeRule = { lowMidi: 48, bottomMidi: 36, lowRise: 0.15, highRise: 0.25, minPrevDur: 0.2, minContinuation: 0.6 };
 
 /** Frame-posterior rise at which a note of this pitch counts as re-struck. */
 export function minRise(midi: number, rule: RestrikeRule = RESTRIKE): number {

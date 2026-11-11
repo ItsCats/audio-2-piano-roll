@@ -18,7 +18,7 @@ import { BP_FPS, BP_MIDI_OFFSET, BP_N_PITCHES, BP_SAMPLE_RATE, frameToTime } fro
 import type { NoteExtractionOptions, RawNoteEvent } from './noteExtraction';
 import type { TranscriptionStage, WorkerRequest, WorkerResponse } from './workerProtocol';
 import { analyzeLevel, decodeToRate, mixToMono } from './decode';
-import { mergeContinuations, mergeFragments, newNoteId, removeShortQuiet, sortNotes, suppressDrumHits, suppressHarmonics } from '../music/cleanup';
+import { RESTRIKE, mergeContinuations, mergeFragments, newNoteId, removeShortQuiet, sortNotes, suppressDrumHits, suppressHarmonics } from '../music/cleanup';
 import { assignHands } from '../music/hands';
 import { estimateTempo } from '../music/beats';
 import { detectKey } from '../music/theory';
@@ -267,7 +267,8 @@ export function cleanNotes(raw: RawNoteEvent[], rms: Float32Array, params: Extra
   const ref = sortedRms[Math.floor(sortedRms.length * 0.95)] || 1;
   const amplitude = new Map<number, number>();
   const onsetStrength = new Map<number, number>();
-  const rise = ctx.frames && ctx.nFrames ? new Map<number, number>() : undefined;
+  // re-strike test (music/cleanup.ts RestrikeRule): needs the frame posteriors, and only for presets with a strict continuation fold
+  const rise = ctx.frames && ctx.nFrames && (params.continuationOnset ?? 0) >= RESTRIKE.minContinuation ? new Map<number, number>() : undefined;
   let notes: Note[] = raw.map((r) => {
     const start = Math.max(0, frameToTime(r.startFrame) - ONSET_LATENCY);
     const end = Math.max(start + 0.03, frameToTime(r.endFrame) - ONSET_LATENCY);
