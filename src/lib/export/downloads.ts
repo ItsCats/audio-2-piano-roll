@@ -7,7 +7,7 @@ import { saveSong, newId } from '../storage/db';
 import { bumpNoteIds } from '../music/cleanup';
 
 export function safeFileName(s: string): string {
-  return s.replace(/[\\/:*?"<>|]+/g, '').replace(/\s+/g, ' ').trim().slice(0, 80) || 'pianovision';
+  return s.replace(/[\\/:*?"<>|]+/g, '').replace(/\s+/g, ' ').trim().slice(0, 80) || 'piano2vision';
 }
 
 export function downloadBlob(blob: Blob, name: string): void {
@@ -56,14 +56,15 @@ export async function renderWav(
 
 /** Portable project file (notes, arrangements, tempo — not the original audio). */
 export function exportProject(song: Song): void {
+  // the format id predates the Piano2Vision name; kept so older project files still import
   const data = { format: 'pianovision-project', version: 1, exportedAt: new Date().toISOString(), song: { ...song, thumbnail: undefined } };
-  downloadBlob(new Blob([JSON.stringify(data)], { type: 'application/json' }), `${safeFileName(song.title)}.pianovision.json`);
+  downloadBlob(new Blob([JSON.stringify(data)], { type: 'application/json' }), `${safeFileName(song.title)}.piano2vision.json`);
 }
 
 export async function importProject(file: File): Promise<Song> {
   if (file.size > 50 * 1024 * 1024) throw new Error('Project file is too large.');
   const data = JSON.parse(await file.text());
-  if (data?.format !== 'pianovision-project' || !data.song?.arrangements) throw new Error('Not a PianoVision project file.');
+  if (data?.format !== 'pianovision-project' || !data.song?.arrangements) throw new Error('Not a Piano2Vision project file.');
   const song: Song = { ...data.song, id: newId(), hasAudio: false, hasPosteriors: false, updatedAt: Date.now() };
   for (const d of ['easy', 'medium', 'hard'] as const) {
     if (!Array.isArray(song.arrangements[d]?.notes)) throw new Error('Project file is missing arrangement data.');

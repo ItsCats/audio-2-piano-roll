@@ -170,10 +170,18 @@ export function Transport() {
             aria-label={t.playing ? 'Pause (Space)' : 'Play (Space)'}
             title={t.playing ? 'Pause (Space)' : 'Play (Space)'}
             disabled={!song}
-            className="focus-ring flex h-11 w-11 items-center justify-center rounded-full bg-ink-50 text-ink-950 shadow-lg transition-transform hover:scale-105 active:scale-95 disabled:opacity-40"
+            className="focus-ring relative flex h-11 w-11 items-center justify-center rounded-full bg-ink-50 text-ink-950 shadow-lg transition-transform hover:scale-105 active:scale-95 disabled:opacity-40"
           >
             {t.playing ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" className="ml-0.5" />}
+            {!audioStatus.ready && !audioStatus.error && (
+              <span className="absolute -inset-1 animate-spin rounded-full border-2 border-transparent border-t-accent-400" aria-hidden />
+            )}
           </button>
+          {!audioStatus.ready && !audioStatus.error && (
+            <span className="ml-1 hidden text-[12px] text-ink-300 sm:inline" aria-live="polite">
+              Loading piano… {Math.round(audioStatus.progress * 100)}%
+            </span>
+          )}
           <div className="relative">
             <button
               type="button"
@@ -235,8 +243,8 @@ export function Transport() {
         </div>
 
         <div className="flex items-center gap-3">
-          {audioStatus.loading && (
-            <span className="flex items-center gap-1.5 text-[11.5px] text-ink-300" title="Loading piano samples">
+          {audioStatus.loading && audioStatus.ready && (
+            <span className="flex items-center gap-1.5 text-[11.5px] text-ink-300" title="Loading more piano velocity layers in the background">
               <Music4 size={14} className="animate-pulse text-accent-400" /> {Math.round(audioStatus.progress * 100)}%
             </span>
           )}

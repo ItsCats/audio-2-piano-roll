@@ -1,4 +1,4 @@
-# PianoVision processing server (optional)
+# Piano2Vision processing server (optional)
 
 A small FastAPI service that adds two capabilities the browser can't provide:
 
@@ -35,11 +35,11 @@ Requires `ffmpeg` on the PATH. Then set **Settings → Processing server** to `h
 ## Docker
 
 ```bash
-docker build -t pianovision-server .
+docker build -t piano2vision-server .
 ```
 
 ```bash
-docker run -p 8000:8000 -e SHARED_SECRET=change-me -e ALLOWED_ORIGINS=https://your-site.netlify.app pianovision-server
+docker run -p 8000:8000 -e SHARED_SECRET=change-me -e ALLOWED_ORIGINS=https://your-site.netlify.app piano2vision-server
 ```
 
 `--build-arg WITH_SEPARATION=0` builds a small image without PyTorch/Demucs.

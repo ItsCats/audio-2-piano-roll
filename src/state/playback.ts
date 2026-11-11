@@ -6,6 +6,8 @@
 import { create } from 'zustand';
 import { PlaybackController } from '../lib/audio/player';
 import { useSettings } from './settingsStore';
+import { getPreset } from '../lib/audio/presets';
+import { SampleLibrary } from '../lib/audio/sampleLibrary';
 
 interface AudioStatus {
   loading: boolean;
@@ -39,9 +41,17 @@ async function applyAudioSettings(): Promise<void> {
   if (!p) return;
   const s = useSettings.getState().audio;
   useAudioStatus.setState({ loading: true, error: null });
+  const libraryId = getPreset(s.presetId).library;
   const run = p
     .applyAudioSettings(s, (loaded, total) => useAudioStatus.setState({ progress: loaded / total }))
-    .then(() => useAudioStatus.setState({ loading: false, ready: true, progress: 1 }))
+    .then(() => {
+      // playable now; the remaining velocity layers keep streaming in the background
+      useAudioStatus.setState({ ready: true });
+      return SampleLibrary.load(libraryId, undefined, { complete: true });
+    })
+    .then(() => {
+      if (getPreset(useSettings.getState().audio.presetId).library === libraryId) useAudioStatus.setState({ loading: false, progress: 1 });
+    })
     .catch((err: unknown) =>
       useAudioStatus.setState({ loading: false, error: err instanceof Error ? err.message : String(err) }),
     );

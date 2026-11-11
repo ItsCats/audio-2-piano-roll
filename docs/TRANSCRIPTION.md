@@ -58,7 +58,7 @@ Quantisation strength is scaled by tempo confidence so a poorly tracked tempo ne
 
 `tests/e2e/harness.ts` renders pieces with known notes through the real piano engine (Salamander samples + hall reverb), transcribes the audio in the browser and scores note onsets mir_eval-style (pitch exact, onset within 50 ms):
 
-| Piece | Stock Basic Pitch settings | PianoVision "Piano solo" preset |
+| Piece | Stock Basic Pitch settings | Piano2Vision "Piano solo" preset |
 | --- | --- | --- |
 | Bach, Prelude in C (BWV 846), 517 notes, pedalled | F1 0.77 (P 0.63 / R 0.96) | **F1 0.94** (P 0.93 / R 0.94) |
 | Chord/melody study with octaves & repeated chords, 224 notes | F1 0.78 | **F1 0.88** (P 0.92 / R 0.84) |

@@ -1,4 +1,4 @@
-# PianoVision
+# Piano2Vision
 
 Turn songs, recordings, YouTube videos and MIDI files into an interactive **falling-note piano roll** — with a real sampled grand piano, Easy / Medium / Hard arrangements, note editing, practice tools with MIDI-keyboard scoring, and **1080p60 video export**.
 
@@ -91,7 +91,7 @@ The browser does all transcription. The server in [`server/`](server/README.md) 
 - **Demucs source separation** — returns the piano stem when the song has a piano, otherwise the mix without drums, which greatly improves transcription of full band recordings.
 
 ```bash
-cd server && docker build -t pianovision-server . && docker run -p 8000:8000 -e ALLOW_ANONYMOUS=1 -e ALLOWED_ORIGINS=http://localhost:5173 pianovision-server
+cd server && docker build -t piano2vision-server . && docker run -p 8000:8000 -e ALLOW_ANONYMOUS=1 -e ALLOWED_ORIGINS=http://localhost:5173 piano2vision-server
 ```
 
 Then enter `http://localhost:8000` in **Settings → Processing server**. See [server/README.md](server/README.md) for hosting options and costs.

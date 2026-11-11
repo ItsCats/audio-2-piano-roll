@@ -48,7 +48,7 @@ export function HomePage() {
               Hear a song. <span className="text-ink-300">See it on the keys.</span>
             </h1>
             <p className="mt-4 max-w-lg text-[15px] leading-relaxed text-ink-300">
-              PianoVision listens to your music with a neural pitch detector, writes out the notes, and turns them into an
+              Piano2Vision listens to your music with a neural pitch detector, writes out the notes, and turns them into an
               interactive falling-note piano roll — with a real sampled grand piano, three difficulty levels, editing,
               practice tools and video export.
             </p>

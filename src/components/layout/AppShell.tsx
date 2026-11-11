@@ -11,7 +11,7 @@ export function Logo({ compact }: { compact?: boolean }) {
       <img src="/favicon.svg" alt="" className="h-7 w-7" />
       {!compact && (
         <span className="text-[15px] font-semibold tracking-tight text-ink-50">
-          Piano<span className="text-accent-400">Vision</span>
+          Piano<span className="text-accent-400">2Vision</span>
         </span>
       )}
     </div>

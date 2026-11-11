@@ -85,60 +85,111 @@ export class SampleLibrary {
     }
   }
 
-  private static cache = new Map<string, Promise<SampleLibrary>>();
+  private static cache = new Map<
+    string,
+    { playable: Promise<SampleLibrary>; complete: Promise<SampleLibrary>; listeners: Set<(l: number, t: number) => void> }
+  >();
 
   /**
-   * Load a library. The middle velocity layers are fetched first so playback can begin
-   * quickly; `ready` resolves once those are available, `complete` once everything is.
+   * Load a library in two stages so playback can start quickly:
+   *  - "playable": one mid-velocity layer for every sampled pitch (≈30 files),
+   *  - "complete": the remaining velocity layers plus release/pedal noises.
+   * By default the promise resolves once playable; pass `{ complete: true }` to wait for
+   * everything (offline renders/exports always do, so they never lose quality). Notes played
+   * before the other layers arrive use the nearest loaded layer.
    */
-  static load(id: string, onProgress?: (loaded: number, total: number) => void): Promise<SampleLibrary> {
-    let p = SampleLibrary.cache.get(id);
-    if (!p) {
-      p = (async () => {
+  static load(
+    id: string,
+    onProgress?: (loaded: number, total: number) => void,
+    opts: { complete?: boolean } = {},
+  ): Promise<SampleLibrary> {
+    let entry = SampleLibrary.cache.get(id);
+    if (!entry) {
+      const listeners = new Set<(l: number, t: number) => void>();
+      let resolvePlayable!: (lib: SampleLibrary) => void;
+      let rejectPlayable!: (err: unknown) => void;
+      const playable = new Promise<SampleLibrary>((res, rej) => {
+        resolvePlayable = res;
+        rejectPlayable = rej;
+      });
+      const complete = (async () => {
         const manifest = await loadManifest();
         const def = manifest.libraries.find((l) => l.id === id);
         if (!def) throw new Error(`Unknown sample library "${id}"`);
         const lib = new SampleLibrary(def);
-        await lib.loadAll(onProgress);
+        await lib.loadAll(
+          (loaded, total) => listeners.forEach((l) => l(loaded, total)),
+          () => resolvePlayable(lib),
+        );
         return lib;
       })();
-      SampleLibrary.cache.set(id, p);
-      p.catch(() => SampleLibrary.cache.delete(id));
+      complete.catch((err) => {
+        rejectPlayable(err);
+        SampleLibrary.cache.delete(id);
+      });
+      playable.catch(() => {});
+      entry = { playable, complete, listeners };
+      SampleLibrary.cache.set(id, entry);
     }
-    return p;
+    if (onProgress) entry.listeners.add(onProgress);
+    return opts.complete ? entry.complete : entry.playable;
   }
 
-  private async loadAll(onProgress?: (loaded: number, total: number) => void) {
-    const layerFiles = this.def.zones.flatMap((z) => z.layers.map((l) => l.file));
-    const extra = [...this.def.release.map((r) => r.file), ...(this.def.pedal ? [this.def.pedal.down, this.def.pedal.up] : [])];
-    const all = [...layerFiles, ...extra];
+  /** Index of the layer closest to a medium velocity: the one loaded first. */
+  private static coreLayer(zone: { layers: LayerDef[] }): LayerDef {
+    return zone.layers.reduce((a, b) => (Math.abs(b.vel - 72) < Math.abs(a.vel - 72) ? b : a));
+  }
+
+  private async loadAll(onProgress: (loaded: number, total: number) => void, onPlayable: () => void) {
+    const core = this.def.zones.map((z) => SampleLibrary.coreLayer(z).file);
+    const coreSet = new Set(core);
+    const rest = [
+      ...this.def.zones.flatMap((z) => z.layers.map((l) => l.file)).filter((f) => !coreSet.has(f)),
+      ...this.def.release.map((r) => r.file),
+      ...(this.def.pedal ? [this.def.pedal.down, this.def.pedal.up] : []),
+    ];
+    const total = core.length + rest.length;
     let loaded = 0;
-    const queue = [...all];
-    const worker = async () => {
-      while (queue.length) {
-        const file = queue.shift()!;
-        try {
-          this.samples.set(file, await fetchDecode(file));
-        } catch (err) {
-          // release/pedal noises are optional garnish; note samples are not
-          if (layerFiles.includes(file)) throw err;
-          console.warn(err);
+    const run = async (files: string[]) => {
+      const queue = [...files];
+      const worker = async () => {
+        while (queue.length) {
+          const file = queue.shift()!;
+          try {
+            this.samples.set(file, await fetchDecode(file));
+          } catch (err) {
+            // the core layer is required; other layers fall back to their neighbours and
+            // release/pedal noises are optional garnish
+            if (coreSet.has(file)) throw err;
+            console.warn(err);
+          }
+          loaded++;
+          onProgress(loaded, total);
         }
-        loaded++;
-        onProgress?.(loaded, all.length);
-      }
+      };
+      await Promise.all(Array.from({ length: 8 }, worker));
     };
-    await Promise.all(Array.from({ length: 8 }, worker));
+    await run(core);
+    onPlayable();
+    await run(rest);
   }
 
   /** Pick the sample for a note: nearest sampled pitch, nearest velocity layer. */
   pick(midi: number, velocity127: number): { sample: LoadedSample; root: number; layerVel: number } | null {
     const zone = this.def.zones[this.zoneFor[Math.max(0, Math.min(127, midi))]];
-    let layer = zone.layers[0];
-    for (const l of zone.layers) if (Math.abs(l.vel - velocity127) < Math.abs(layer.vel - velocity127)) layer = l;
-    const sample = this.samples.get(layer.file);
-    if (!sample) return null;
-    return { sample, root: zone.midi, layerVel: layer.vel };
+    // nearest velocity layer that has finished loading (all of them once loading completes)
+    let best: LayerDef | null = null;
+    let bestSample: LoadedSample | undefined;
+    for (const l of zone.layers) {
+      const sample = this.samples.get(l.file);
+      if (!sample) continue;
+      if (!best || Math.abs(l.vel - velocity127) < Math.abs(best.vel - velocity127)) {
+        best = l;
+        bestSample = sample;
+      }
+    }
+    if (!best || !bestSample) return null;
+    return { sample: bestSample, root: zone.midi, layerVel: best.vel };
   }
 
   release(midi: number): LoadedSample | undefined {

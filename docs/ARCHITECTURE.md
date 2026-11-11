@@ -1,6 +1,6 @@
 # Architecture
 
-PianoVision is a **local-first single-page app**. The browser does the heavy lifting — neural transcription, sampled-piano synthesis, rendering and video encoding — so the site can be hosted as static files on Netlify with no per-user compute cost. An optional processing server covers the two things a browser cannot do well or legitimately on its own: fetching YouTube audio and AI source separation.
+Piano2Vision is a **local-first single-page app**. The browser does the heavy lifting — neural transcription, sampled-piano synthesis, rendering and video encoding — so the site can be hosted as static files on Netlify with no per-user compute cost. An optional processing server covers the two things a browser cannot do well or legitimately on its own: fetching YouTube audio and AI source separation.
 
 ```
 ┌──────────────────────────── Browser ────────────────────────────┐
