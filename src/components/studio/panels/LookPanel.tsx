@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react';
 import { ImagePlus, Trash2, RotateCcw, Ban, Shapes, Image as ImageIcon } from 'lucide-react';
 import { useSettings } from '../../../state/settingsStore';
 import { BACKGROUND_PRESETS } from '../../../lib/render/backgrounds';
@@ -33,20 +33,28 @@ function PresetThumb({ id, active, onClick, name }: { id: string; active: boolea
   );
 }
 
+/** Pattern tile size used for gallery thumbnails (cached by decals.ts, so generated once per pattern). */
+const THUMB_TILE = 256;
+
 /** Draws a pattern tile into a small canvas, clipped like a note with a glowing outline. */
 function PatternThumb({ id, name, active, onClick }: { id: string; name: string; active: boolean; onClick: () => void }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const c = ref.current;
     if (!c) return;
-    const S = 112;
+    // back the canvas with as many device pixels as it covers so thumbs stay crisp on HiDPI screens
+    const css = c.clientWidth || 72;
+    const S = Math.max(64, Math.min(THUMB_TILE, Math.round(css * (window.devicePixelRatio || 1))));
     c.width = S;
     c.height = S;
     const ctx = c.getContext('2d');
     if (!ctx) return;
     ctx.clearRect(0, 0, S, S);
-    const tile = getPatternTile(id, 128);
-    if (tile) ctx.drawImage(tile as CanvasImageSource, 0, 0, 128, 128, 0, 0, S, S);
+    const tile = getPatternTile(id, THUMB_TILE);
+    if (tile) {
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(tile as CanvasImageSource, 0, 0, THUMB_TILE, THUMB_TILE, 0, 0, S, S);
+    }
     else {
       ctx.fillStyle = '#1b1b22';
       ctx.fillRect(0, 0, S, S);
@@ -84,6 +92,13 @@ function PatternSwatch({ id }: { id: string }) {
   return <canvas ref={ref} className="h-4 w-4 rounded-[4px] ring-1 ring-white/40" aria-hidden />;
 }
 
+/**
+ * What an upload was added for. Stored as an extra field on the IndexedDB record (structured clone keeps it);
+ * records without one predate decals and count as backgrounds.
+ */
+type MediaPurpose = 'background' | 'decal';
+type PickerMedia = MediaItem & { purpose?: MediaPurpose };
+
 // Background and decal pickers share the media store; this lets each list refresh when the other changes it.
 const mediaListeners = new Set<() => void>();
 const notifyMedia = () => mediaListeners.forEach((f) => f());
@@ -94,17 +109,20 @@ const notifyMedia = () => mediaListeners.forEach((f) => f());
  */
 function MediaPicker({
   kind,
+  purpose,
   selectedId,
   onSelect,
   what,
 }: {
   kind: 'image' | 'video';
+  /** only files uploaded for this purpose are listed (plus the current selection) */
+  purpose: MediaPurpose;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
   /** user-facing noun for error messages, e.g. "background" or "decal" */
   what: string;
 }) {
-  const [items, setItems] = useState<MediaItem[]>([]);
+  const [items, setItems] = useState<PickerMedia[]>([]);
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => {
     let alive = true;
@@ -126,7 +144,7 @@ function MediaPicker({
       toast.error('File too large', `${what[0].toUpperCase()}${what.slice(1)}s are limited to 200 MB.`);
       return;
     }
-    const item: MediaItem = { id: newId(), name: f.name, type: f.type, kind, blob: f, createdAt: Date.now() };
+    const item: PickerMedia = { id: newId(), name: f.name, type: f.type, kind, blob: f, createdAt: Date.now(), purpose };
     try {
       await saveMedia(item);
       onSelect(item.id);
@@ -143,7 +161,7 @@ function MediaPicker({
     if (st.visual.decal.mediaId === m.id) st.setDecal({ mediaId: null });
     notifyMedia();
   };
-  const list = items.filter((i) => i.kind === kind);
+  const list = items.filter((i) => i.kind === kind && ((i.purpose ?? 'background') === purpose || i.id === selectedId));
   return (
     <div className="flex flex-col gap-2">
       <Button size="sm" variant="subtle" icon={<ImagePlus size={15} />} onClick={() => input.current?.click()}>
@@ -182,6 +200,54 @@ function MediaPicker({
         </ul>
       )}
     </div>
+  );
+}
+
+/**
+ * A Slider that shows every value instantly but pushes it to the settings store at most once per
+ * `every` ms (plus the final value). For settings that are expensive to apply live: decal size,
+ * strength and tint make decals.ts resample / rebake the decal for each new value.
+ */
+function CoalescedSlider({ value, onChange, every = 120, ...rest }: ComponentProps<typeof Slider> & { every?: number }) {
+  const [local, setLocal] = useState<number | null>(null);
+  const pending = useRef<number | null>(null);
+  const timer = useRef<number | null>(null);
+  const last = useRef(0);
+  const cb = useRef(onChange);
+  cb.current = onChange;
+  const flush = () => {
+    timer.current = null;
+    if (pending.current === null) return;
+    const x = pending.current;
+    pending.current = null;
+    last.current = performance.now();
+    cb.current(x);
+  };
+  useEffect(
+    () => () => {
+      // unmounting mid-drag: don't lose the last value
+      if (timer.current !== null) window.clearTimeout(timer.current);
+      flush();
+    },
+    [],
+  );
+  // once the store has caught up with the final value, follow the store again (e.g. theme switches)
+  useEffect(() => {
+    if (local !== null && pending.current === null && timer.current === null && value === local) setLocal(null);
+  }, [value, local]);
+  return (
+    <Slider
+      {...rest}
+      value={local ?? value}
+      onChange={(x) => {
+        setLocal(x);
+        pending.current = x;
+        if (timer.current !== null) return;
+        const wait = Math.max(0, every - (performance.now() - last.current));
+        if (wait === 0) flush();
+        else timer.current = window.setTimeout(flush, wait);
+      }}
+    />
   );
 }
 
@@ -293,15 +359,16 @@ export function LookPanel() {
           ))}
         {decal.source === 'image' && (
           <>
-            <MediaPicker kind="image" what="decal" selectedId={decal.mediaId} onSelect={(mediaId) => setDecal({ mediaId })} />
+            <MediaPicker kind="image" purpose="decal" what="decal" selectedId={decal.mediaId} onSelect={(mediaId) => setDecal({ mediaId })} />
             {!decal.mediaId && <p className="text-[12px] leading-relaxed text-ink-300">Upload a picture (flowers, a texture, a photo…) or pick one you added before.</p>}
           </>
         )}
         {decal.source !== 'none' && (
           <>
-            <Slider label="Size" min={0.25} max={3} value={decal.scale} onChange={(scale) => setDecal({ scale })} format={(x) => `${x.toFixed(2)}×`} />
-            <Slider label="Strength" min={0} max={1} value={decal.opacity} onChange={(opacity) => setDecal({ opacity })} format={pct} />
-            <Slider label="Colour tint" min={0} max={1} value={decal.tint} onChange={(tint) => setDecal({ tint })} format={pct} />
+            <CoalescedSlider label="Size" min={0.25} max={3} value={decal.scale} onChange={(scale) => setDecal({ scale })} format={(x) => `${x.toFixed(2)}×`} />
+            <CoalescedSlider label="Strength" min={0} max={1} value={decal.opacity} onChange={(opacity) => setDecal({ opacity })} format={pct} />
+            {/* step matches the tint quantisation in decals.ts baked(), so no drag step is a wasted rebake */}
+            <CoalescedSlider label="Colour tint" min={0} max={1} step={0.02} value={decal.tint} onChange={(tint) => setDecal({ tint })} format={pct} />
             <Segmented
               size="sm"
               ariaLabel="Decal anchor"
@@ -433,7 +500,7 @@ export function LookPanel() {
         )}
         {bg.kind === 'color' && <ColorInput label="Colour" value={bg.color} onChange={(color) => setBackground({ color })} />}
         {(bg.kind === 'image' || bg.kind === 'video') && (
-          <MediaPicker kind={bg.kind} what="background" selectedId={bg.mediaId} onSelect={(mediaId) => setBackground({ mediaId })} />
+          <MediaPicker kind={bg.kind} purpose="background" what="background" selectedId={bg.mediaId} onSelect={(mediaId) => setBackground({ mediaId })} />
         )}
         <Slider label="Brightness" min={0.2} max={1.6} value={bg.brightness} onChange={(brightness) => setBackground({ brightness })} format={pct} />
         {(bg.kind === 'image' || bg.kind === 'video') && (

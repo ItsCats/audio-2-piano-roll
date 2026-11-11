@@ -45,6 +45,9 @@ export function useDecalImage(decal: DecalSettings): DecalImage | null {
         if (alive) setState(null);
       };
       img.src = url;
+    }).catch(() => {
+      // IndexedDB unavailable / blocked: fall back to "no decal image" instead of keeping a stale one
+      if (alive) setState(null);
     });
     return () => {
       alive = false;

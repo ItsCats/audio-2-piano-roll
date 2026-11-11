@@ -216,3 +216,148 @@ import { PianoRollRenderer } from '../../src/lib/render/renderer';
   r.render({ time: t });
   return c.toDataURL('image/png');
 };
+
+// ---- review-fix checks -------------------------------------------------------------------
+const NOTE1 = (over: Partial<FxNote> = {}): FxNote => ({ id: 1, midi: 60, x: 300, w: 37, black: false, color: { r: 125, g: 255, b: 176 }, start: 1, end: 5, vel: 0.8, ...over });
+const DEF_FX: EffectSettings = { ...DEFAULT_VISUAL.effects, bursts: true, dust: true, keyLight: true };
+(window as unknown as { chk: unknown }).chk = {
+  /** single burst on black, 1080p scale, default intensity: luminance profile + hot-pixel extent */
+  profile(t: number, end = 5) {
+    const c = document.createElement('canvas');
+    c.width = 600; c.height = 400;
+    const x = c.getContext('2d', { willReadFrequently: true })!;
+    x.fillStyle = '#000'; x.fillRect(0, 0, 600, 400);
+    const g: FxGeometry = { width: 600, height: 400, hitY: 300, kbH: 100, scale: 1 };
+    drawBursts(x, [NOTE1({ end })], t, g, DEF_FX);
+    const d = x.getImageData(0, 0, 600, 400).data;
+    const L = (px: number, py: number) => { const i = (py * 600 + px) * 4; return Math.round((d[i] + d[i + 1] + d[i + 2]) / 3); };
+    const up: number[] = []; for (let dy = 0; dy <= 120; dy += 10) up.push(L(300, 300 - dy));
+    let hot = 0, x0 = 600, x1 = -1, y0 = 400, y1 = -1;
+    for (let py = 0; py < 400; py++) for (let px = 0; px < 600; px++) {
+      const i = (py * 600 + px) * 4;
+      if (d[i] + d[i + 1] + d[i + 2] > 600) { hot++; if (py >= 295 && py <= 305 || true) { x0 = Math.min(x0, px); x1 = Math.max(x1, px); } y0 = Math.min(y0, py); y1 = Math.max(y1, py); }
+    }
+    // width of the hot region on rows away from the thin horizontal streak (5..40 px above hit)
+    let wMax = 0;
+    for (let py = 260; py <= 295; py++) { let a = -1, b = -1; for (let px = 0; px < 600; px++) { const i = (py * 600 + px) * 4; if (d[i] + d[i + 1] + d[i + 2] > 600) { if (a < 0) a = px; b = px; } } if (a >= 0) wMax = Math.max(wMax, b - a + 1); }
+    return { up, hotPx: hot, hotW: wMax, hotTop: 300 - y0, url: c.toDataURL() };
+  },
+  stateCheck() {
+    const c = document.createElement('canvas');
+    c.width = 400; c.height = 300;
+    const x = c.getContext('2d')!;
+    const notes: FxNote[] = [NOTE1({ x: 200, w: 20, start: 0 })];
+    const res: Record<string, unknown> = {};
+    for (const [name, fn, kb] of [['key', drawKeyLight, 40], ['keyTinyKb', drawKeyLight, 1.4], ['burst', drawBursts, 40], ['dust', drawDust, 40]] as const) {
+      const g: FxGeometry = { width: 400, height: 300, hitY: 250, kbH: kb, scale: 300 / 1080 };
+      x.globalAlpha = 0.5; x.globalCompositeOperation = 'source-over';
+      x.save(); x.globalAlpha = 0.3; x.globalCompositeOperation = 'xor';
+      (fn as typeof drawKeyLight)(x, notes, 1, g, DEF_FX);
+      x.restore();
+      res[name] = [x.globalAlpha, x.globalCompositeOperation];
+      for (let i = 0; i < 5; i++) x.restore();
+    }
+    return res;
+  },
+  /** stress the sprite budget: many distinct colours at 1440p, all effects */
+  evictAll(n = 600) {
+    const c = document.createElement('canvas');
+    c.width = 2560; c.height = 1440;
+    const x = c.getContext('2d')!;
+    const g: FxGeometry = { width: 2560, height: 1440, hitY: 1210, kbH: 230, scale: 1440 / 1080 };
+    const errs: string[] = [];
+    for (let i = 0; i < n; i++) {
+      const notes: FxNote[] = [0, 1].map((j) => ({ id: j, midi: 60 + j, x: 900 + j * 300, w: 49, black: false, color: { r: (i * 37 + j * 50) % 256, g: (i * 91 + 40) % 256, b: (i * 53 + 100 + j * 70) % 256 }, start: 1, end: 5, vel: 0.8 }));
+      for (const fn of [drawKeyLight, drawBursts, drawDust]) {
+        try { fn(x, notes, 1.02 + (i % 3) * 0.5, g, DEF_FX); } catch (e) { errs.push(`${i} ${fn.name}: ${(e as Error).message}`); }
+      }
+    }
+    return { count: errs.length, first: errs.slice(0, 3), op: x.globalCompositeOperation, alpha: x.globalAlpha };
+  },
+  colourDrag(frames = 400) {
+    const c = document.createElement('canvas');
+    const v = { ...DEFAULT_VISUAL, rightColor: '#b49cff', leftColor: '#7dffb0', decal: { ...DEFAULT_VISUAL.decal, source: 'pattern' as const }, effects: { ...DEF_FX, outlineGlow: 0.6 } };
+    const r = new PianoRollRenderer(c, v);
+    r.resize(2560, 1440);
+    r.setNotes(song.map((n, i) => ({ id: i + 1, midi: n.midi, start: n.start, dur: n.dur, vel: n.vel, hand: n.hand })), [], null);
+    const errs: string[] = [];
+    const hx = (v: number) => Math.round(v).toString(16).padStart(2, '0');
+    for (let i = 0; i < frames; i++) {
+      const col = `#${hx(127 + 127 * Math.sin(i * 0.11))}${hx(127 + 127 * Math.sin(i * 0.17 + 2))}${hx(127 + 127 * Math.sin(i * 0.23 + 4))}`;
+      r.setSettings({ ...v, rightColor: col, leftColor: `#${hx(255 - parseInt(col.slice(1, 3), 16))}${hx(255 - parseInt(col.slice(3, 5), 16))}${hx(255 - parseInt(col.slice(5, 7), 16))}` });
+      try { r.render({ time: 1.05 + (i % 20) * 0.1 }); } catch (e) { errs.push(`${i}:${(e as Error).message}`); }
+    }
+    const x = c.getContext('2d')!;
+    return { count: errs.length, first: errs.slice(0, 3), op: x.globalCompositeOperation };
+  },
+  /** effects-only timing with notes spread across the keyboard */
+  perfFx(frames = 120, w = 1920, h = 1080) {
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const x = c.getContext('2d', { alpha: false })!;
+    const s = h / 1080;
+    const kb = 0.16 * h;
+    const g: FxGeometry = { width: w, height: h, hitY: h - kb, kbH: kb, scale: s };
+    const kw = w / 52;
+    const mk = (now: number) => {
+      const out: FxNote[] = [];
+      for (let i = 0; i < 20; i++) out.push({ id: 100 + i, midi: 30 + i * 3, x: (i * 2.5 + 3) * kw, w: kw, black: false, color: i % 2 ? { r: 180, g: 156, b: 255 } : { r: 125, g: 255, b: 176 }, start: now - 1.4 - i * 0.07, end: now - 0.4 - i * 0.05, vel: 0.7 });
+      for (let i = 0; i < 10; i++) out.push({ id: i, midi: 40 + i * 5, x: (i * 4 + 6) * kw, w: kw, black: false, color: i % 2 ? { r: 180, g: 156, b: 255 } : { r: 125, g: 255, b: 176 }, start: now - 0.05 - i * 0.13, end: now + 5, vel: 0.8 });
+      return out.sort((a, b) => a.start - b.start);
+    };
+    const run = () => {
+      let tk = 0, tb = 0, td = 0;
+      for (let i = 0; i < frames; i++) {
+        const now = 10 + i / 60;
+        const notes = mk(10);
+        x.fillStyle = '#060608'; x.fillRect(0, 0, w, h);
+        x.fillStyle = '#eee'; x.fillRect(0, g.hitY, w, kb);
+        x.getImageData(0, 0, 1, 1);
+        const a = performance.now(); drawKeyLight(x, notes, now, g, DEF_FX); x.getImageData(0, 0, 1, 1);
+        const b = performance.now(); drawBursts(x, notes, now, g, DEF_FX); x.getImageData(0, 0, 1, 1);
+        const d = performance.now(); drawDust(x, notes, now, g, DEF_FX); x.getImageData(0, 0, 1, 1);
+        const e = performance.now();
+        tk += b - a; tb += d - b; td += e - d;
+      }
+      const r2 = (v: number) => Math.round((v / frames) * 100) / 100;
+      return { key: r2(tk), burst: r2(tb), dust: r2(td), total: r2(tk + tb + td) };
+    };
+    run();
+    return run();
+  },
+  /** brightness (sum of R) of a 50 ms note's burst+key light just before/after note-off */
+  release() {
+    const c = document.createElement('canvas');
+    c.width = 600; c.height = 400;
+    const x = c.getContext('2d', { willReadFrequently: true })!;
+    const g: FxGeometry = { width: 600, height: 400, hitY: 300, kbH: 100, scale: 1 };
+    const out: Record<string, number> = {};
+    for (const t of [1.03, 1.0467, 1.0634, 1.08, 1.0967, 1.1134, 1.13, 1.1467, 1.17, 1.19]) {
+      x.globalCompositeOperation = 'source-over'; x.globalAlpha = 1;
+      x.fillStyle = '#000'; x.fillRect(0, 0, 600, 400);
+      const n = [NOTE1({ end: 1.05 })];
+      drawKeyLight(x, n, t, g, DEF_FX);
+      drawBursts(x, n, t, g, DEF_FX);
+      const d = x.getImageData(0, 0, 600, 400).data;
+      let sum = 0; for (let i = 0; i < d.length; i += 4) sum += d[i];
+      out[t.toFixed(4)] = Math.round(sum / 1000);
+    }
+    return out;
+  },
+  /** grains visible above a single held note (count of bright small spots in a window) */
+  fountain(t: number) {
+    const c = document.createElement('canvas');
+    c.width = 600; c.height = 500;
+    const x = c.getContext('2d', { willReadFrequently: true })!;
+    x.fillStyle = '#000'; x.fillRect(0, 0, 600, 500);
+    const g: FxGeometry = { width: 600, height: 500, hitY: 400, kbH: 100, scale: 1 };
+    let cores = 0;
+    const fr = x.fillRect.bind(x);
+    x.fillRect = (...a: [number, number, number, number]) => { cores++; fr(...a); };
+    drawDust(x, [NOTE1({ end: 30 })], t, g, DEF_FX);
+    x.fillRect = fr;
+    (window as unknown as { __cores: number }).__cores = cores - 1;
+    return c.toDataURL();
+  },
+};
+(window as unknown as { __fx: unknown }).__fx = { drawDust, drawBursts, drawKeyLight };

@@ -227,6 +227,8 @@ export const VISUAL_THEMES: { id: string; name: string; patch: ThemePatch }[] = 
       trails: false,
       particles: false,
       guides: 'octaves',
+      // the floral decal is the star: no letters on the notes or keys (ThemePatch takes a whole LabelSettings)
+      labels: { ...DEFAULT_VISUAL.labels, style: 'none', showOnKeys: false },
       keyboardTheme: 'classic',
       keyboardStyle: 'realistic',
       background: { kind: 'color', color: '#08080b' },

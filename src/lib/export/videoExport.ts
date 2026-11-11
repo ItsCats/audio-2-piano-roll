@@ -404,21 +404,26 @@ async function exportWithMediaRecorder(job: ExportJob): Promise<ExportResult> {
     decal?.close();
   };
 
+  // audio graph + capture stream: released in `finally` so a cancelled or failed export doesn't leak a running AudioContext
+  let ctx: AudioContext | null = null;
+  let engine: PianoEngine | null = null;
+  let stream: MediaStream | null = null;
   try {
-    const ctx = new AudioContext({ sampleRate: 48000 });
-    const dest = ctx.createMediaStreamDestination();
-    const gain = ctx.createGain();
+    const ac = new AudioContext({ sampleRate: 48000 });
+    ctx = ac;
+    const dest = ac.createMediaStreamDestination();
+    const gain = ac.createGain();
     gain.gain.value = s.volume;
     gain.connect(dest);
-    const engine = new PianoEngine(ctx, gain);
+    engine = new PianoEngine(ac, gain);
     await engine.applySettings(job.audio);
-    const stream = new MediaStream([...canvas.captureStream(s.fps).getVideoTracks(), ...dest.stream.getAudioTracks()]);
+    stream = new MediaStream([...canvas.captureStream(s.fps).getVideoTracks(), ...dest.stream.getAudioTracks()]);
     const mime = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'].find((m) => MediaRecorder.isTypeSupported(m)) ?? '';
     const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: bitrateFor(width, height, s.fps, s.quality) });
     const chunks: Blob[] = [];
     rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
 
-    const startCtx = ctx.currentTime + 0.3;
+    const startCtx = ac.currentTime + 0.3;
     for (const e of buildEvents(arr.notes, arr.pedal, { L: true, R: true })) {
       if (e.t < range.start || e.t > range.end + 10) continue;
       const when = startCtx + lead + (e.t - range.start) / rate;
@@ -434,7 +439,7 @@ async function exportWithMediaRecorder(job: ExportJob): Promise<ExportResult> {
           reject(new DOMException('Export cancelled', 'AbortError'));
           return;
         }
-        const o = ctx.currentTime - startCtx;
+        const o = ac.currentTime - startCtx;
         renderer.render({ time: range.start + (o - lead) * rate });
         job.onProgress?.({ phase: 'video', fraction: Math.max(0, Math.min(1, o / duration)) });
         if (o >= duration) resolve();
@@ -446,9 +451,6 @@ async function exportWithMediaRecorder(job: ExportJob): Promise<ExportResult> {
       rec.onstop = () => resolve(new Blob(chunks, { type: rec.mimeType || 'video/webm' }));
       rec.stop();
     });
-    stream.getTracks().forEach((t) => t.stop());
-    engine.dispose();
-    void ctx.close();
     const isMp4 = blob.type.includes('mp4');
     return {
       blob,
@@ -462,6 +464,9 @@ async function exportWithMediaRecorder(job: ExportJob): Promise<ExportResult> {
       method: 'mediarecorder',
     };
   } finally {
+    stream?.getTracks().forEach((t) => t.stop());
+    engine?.dispose();
+    if (ctx && ctx.state !== 'closed') void ctx.close().catch(() => {});
     disposeVisuals();
   }
 }

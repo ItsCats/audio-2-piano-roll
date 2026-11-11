@@ -7,6 +7,7 @@
 //   /tests/e2e/fx-decals.html?mode=real&id=meadow   the real PianoRollRenderer with a decal
 //   /tests/e2e/fx-decals.html?mode=perf             150 decal notes at 1920×1080: decal cost per frame
 //        (&nostroke=1 drops the glow outline, &tint=x, &alpha=x, &one=1 single pattern)
+//   /tests/e2e/fx-decals.html?mode=notebench        per-note cost breakdown (clip / copy / fill / pattern fill)
 import { DECAL_PATTERNS, getPatternTile, paintNoteDecal } from '../../src/lib/render/decals';
 import { BLACK_RGB, WHITE, hash, hexToRgb, mix, rgba, roundRect, type Ctx2D, type RGB } from '../../src/lib/render/color';
 import { DEFAULT_VISUAL, type DecalSettings, type VisualSettings } from '../../src/lib/render/settings';
@@ -287,6 +288,83 @@ function tints() {
   ctx.globalAlpha = 1;
 }
 
+/** Per-note overhead breakdown: 170 small (30×60) notes, what each piece costs per frame. */
+function notebench() {
+  const W = 1920;
+  const H = 1080;
+  const ctx = canvas(W, H);
+  ctx.fillStyle = '#123';
+  ctx.fillRect(0, 0, W, H);
+  const mk = (alpha: number) => {
+    const c = document.createElement('canvas');
+    c.width = 600;
+    c.height = 600;
+    const g = c.getContext('2d')!;
+    g.globalAlpha = alpha;
+    g.drawImage(getPatternTile('meadow')!, 0, 0, 600, 600);
+    return c;
+  };
+  const opaque = mk(1);
+  const translucent = mk(0.7);
+  const pat = ctx.createPattern(translucent, 'repeat')!;
+  const rects: { x: number; y: number }[] = [];
+  for (let i = 0; i < 170; i++) rects.push({ x: 20.3 + (i % 34) * 55.7, y: 30.6 + Math.floor(i / 34) * 180.2 });
+  const variants: Record<string, (x: number, y: number) => void> = {
+    clipDrawOpaque: (x, y) => {
+      ctx.save();
+      roundRect(ctx, x, y, 30, 60, 6);
+      ctx.clip();
+      ctx.drawImage(opaque, 10, 10, 31, 61, Math.floor(x), Math.floor(y), 31, 61);
+      ctx.restore();
+    },
+    clipDrawTranslucent: (x, y) => {
+      ctx.save();
+      roundRect(ctx, x, y, 30, 60, 6);
+      ctx.clip();
+      ctx.drawImage(translucent, 10, 10, 31, 61, Math.floor(x), Math.floor(y), 31, 61);
+      ctx.restore();
+    },
+    drawOnly: (x, y) => ctx.drawImage(translucent, 10, 10, 31, 61, Math.floor(x), Math.floor(y), 31, 61),
+    clipOnly: (x, y) => {
+      ctx.save();
+      roundRect(ctx, x, y, 30, 60, 6);
+      ctx.clip();
+      ctx.restore();
+    },
+    fillOnly: (x, y) => {
+      ctx.fillStyle = '#f0c';
+      roundRect(ctx, x, y, 30, 60, 6);
+      ctx.fill();
+    },
+    patternFill: (x, y) => {
+      pat.setTransform(new DOMMatrix([1, 0, 0, 1, Math.round(x) - 10, Math.round(y) - 10]));
+      ctx.fillStyle = pat;
+      roundRect(ctx, x, y, 30, 60, 6);
+      ctx.fill();
+    },
+    patternFillNoSmooth: (x, y) => {
+      ctx.imageSmoothingEnabled = false;
+      pat.setTransform(new DOMMatrix([1, 0, 0, 1, Math.round(x) - 10, Math.round(y) - 10]));
+      ctx.fillStyle = pat;
+      roundRect(ctx, x, y, 30, 60, 6);
+      ctx.fill();
+      ctx.imageSmoothingEnabled = true;
+    },
+    real: (x, y) =>
+      paintNoteDecal(ctx, { x, y, w: 30, h: 60 }, 6, { image: getPatternTile('meadow')!, imageWidth: 512, imageHeight: 512, settings: { ...DEFAULT_VISUAL.decal, patternId: 'meadow', tint: 0.15 }, color: WHITE, noteId: Math.round(x), anchorY: y + 60, scale: 1, active: false }),
+  };
+  const res: Record<string, number[]> = {};
+  for (let k = 0; k < 5; k++)
+    for (const [name, fn] of Object.entries(variants)) {
+      ctx.getImageData(0, 0, 1, 1);
+      const t0 = performance.now();
+      for (let f = 0; f < 20; f++) for (const r of rects) fn(r.x, r.y);
+      ctx.getImageData(0, 0, 1, 1);
+      (res[name] ??= []).push(+((performance.now() - t0) / 20).toFixed(2));
+    }
+  log.textContent = JSON.stringify(res);
+}
+
 try {
   if (mode === 'gallery') gallery();
   else if (mode === 'real') real();
@@ -294,7 +372,8 @@ try {
   else if (mode === 'scene') scene();
   else if (mode === 'perf') perf();
   else if (mode === 'tints') tints();
-  if (mode !== 'perf') log.textContent = 'ready';
+  else if (mode === 'notebench') notebench();
+  if (mode !== 'perf' && mode !== 'notebench') log.textContent = 'ready';
   document.body.dataset.done = '1';
 } catch (e) {
   log.textContent = 'ERROR ' + (e as Error).stack;
