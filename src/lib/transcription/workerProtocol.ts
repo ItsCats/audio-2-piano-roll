@@ -18,6 +18,8 @@ export type WorkerRequest =
       modelUrl: string;
       options: NoteExtractionOptions;
       preferredBackend?: string;
+      /** main-thread device facts the worker can't read itself (WorkerNavigator has no maxTouchPoints) */
+      device?: { maxTouchPoints: number; deviceMemory?: number };
     }
   | {
       type: 'extract';
