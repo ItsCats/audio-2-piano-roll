@@ -70,11 +70,18 @@ export class PlaybackController {
     this.master = this.ctx.createGain();
     this.master.connect(this.ctx.destination);
     this.engine = new PianoEngine(this.ctx, this.master);
+    // metronome and original recording bypass the piano's compressors: delay them to match
+    const align = () => {
+      const d = this.ctx.createDelay(0.1);
+      d.delayTime.value = PianoEngine.LATENCY;
+      d.connect(this.master);
+      return d;
+    };
     this.clickBus = this.ctx.createGain();
-    this.clickBus.connect(this.master);
+    this.clickBus.connect(align());
     this.originalGain = this.ctx.createGain();
     this.originalGain.gain.value = 0;
-    this.originalGain.connect(this.master);
+    this.originalGain.connect(align());
   }
 
   subscribe(l: Listener): () => void {
@@ -169,7 +176,7 @@ export class PlaybackController {
   /** Song time of what the listener hears right now (compensates output latency). */
   getVisualTime(): number {
     if (!this.playing) return this.pausedAt;
-    const latency = (this.ctx.outputLatency || 0) + (this.ctx.baseLatency || 0);
+    const latency = (this.ctx.outputLatency || 0) + (this.ctx.baseLatency || 0) + PianoEngine.LATENCY;
     return this.getTime() - latency * this.opts.rate;
   }
 
@@ -256,7 +263,7 @@ export class PlaybackController {
     for (const n of recent) this.engine.noteOn(n.midi, n.vel, ctxStart, n.id);
     if (pedalDownAt(this.pedal, songTime)) this.engine.setPedal(true, ctxStart);
     this.beatIdx = this.tempo ? this.tempo.beats.findIndex((b) => b >= songTime) : -1;
-    this.syncOriginal(songTime, ctxStart);
+    this.syncOriginal(ctxStart);
     this.tick();
     this.timer = window.setInterval(() => this.tick(), TICK_MS);
   }
@@ -272,7 +279,7 @@ export class PlaybackController {
     return a.ctxTime + (t - a.songTime) / a.rate;
   }
 
-  private syncOriginal(songTime: number, ctxStart: number) {
+  private syncOriginal(ctxStart: number) {
     const el = this.originalEl;
     if (!el) return;
     el.playbackRate = this.opts.rate;

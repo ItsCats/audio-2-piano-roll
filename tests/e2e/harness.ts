@@ -189,3 +189,25 @@ async function runTune(piece: 'bach' | 'chords', grid: Partial<ExtractionParams>
 
 Object.assign(window, { runAccuracy, scoreNotes, runDiagnose, runTune });
 document.getElementById('log')!.textContent = 'ready';
+
+async function sampleOnsets() {
+  const { SampleLibrary } = await import('../../src/lib/audio/sampleLibrary');
+  const lib = await SampleLibrary.load('salamander');
+  const out: Record<string, unknown> = {};
+  for (const m of [21, 48, 60, 69, 84, 105]) {
+    const p = lib.pick(m, 69)!;
+    const d = p.sample.buffer.getChannelData(0);
+    let first = -1;
+    for (let i = 0; i < d.length; i++) if (Math.abs(d[i]) > 0.0006) { first = i; break; }
+    let firstTiny = -1;
+    for (let i = 0; i < d.length; i++) if (Math.abs(d[i]) > 1e-6) { firstTiny = i; break; }
+    out[m] = { offsetMs: +(p.sample.offset * 1000).toFixed(2), firstAboveThrMs: +((first / p.sample.buffer.sampleRate) * 1000).toFixed(2), firstNonZeroMs: +((firstTiny / p.sample.buffer.sampleRate) * 1000).toFixed(2), sr: p.sample.buffer.sampleRate };
+  }
+  const buf = await renderOffline({ notes: [{ id: 1, midi: 60, start: 0.5, dur: 1, vel: 0.6, hand: 'R' }], pedal: [], settings: { ...DEFAULT_AUDIO_SETTINGS, reverbType: 'off' }, start: 0, end: 2, rate: 1, sampleRate: 48000 });
+  const d = buf.getChannelData(0);
+  let on = -1;
+  for (let i = 0; i < d.length; i++) if (Math.abs(d[i]) > 1e-4) { on = i; break; }
+  out.renderedOnsetMs = +((on / 48000) * 1000).toFixed(2);
+  return out;
+}
+Object.assign(window, { sampleOnsets });

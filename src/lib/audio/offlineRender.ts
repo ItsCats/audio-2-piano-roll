@@ -55,7 +55,9 @@ export async function renderOfflineChunks(
     if (opts.signal?.aborted) throw new DOMException('Render cancelled', 'AbortError');
     const c1 = Math.min(outDuration, c0 + chunk);
     const pre = c0 === 0 ? 0 : PREROLL;
-    const len = Math.ceil((c1 - c0 + pre) * sr);
+    // render the engine's processing latency extra and drop it, so output is sample-aligned
+    const lat = PianoEngine.LATENCY;
+    const len = Math.ceil((c1 - c0 + pre + lat) * sr);
     const ctx = new OfflineAudioContext(2, len, sr);
     const engine = new PianoEngine(ctx, ctx.destination);
     await engine.applySettings({ ...opts.settings, volume: opts.settings.volume * vol });
@@ -64,7 +66,7 @@ export async function renderOfflineChunks(
     for (const e of events) {
       const ct = toCtx(e.t);
       if (ct < 0 && e.kind === 'on') continue; // starts before the pre-roll window
-      if (ct >= (c1 - c0 + pre)) break;
+      if (ct >= c1 - c0 + pre) break;
       const t = Math.max(0, ct);
       if (e.kind === 'on') {
         if (e.t < opts.start - 0.001 || e.t > opts.end) continue;
@@ -77,7 +79,7 @@ export async function renderOfflineChunks(
     if (endCtx > 0 && endCtx < len / sr) engine.setPedal(false, endCtx);
     const rendered = await ctx.startRendering();
     // fades (output timeline)
-    const preFrames = Math.round(pre * sr);
+    const preFrames = Math.round((pre + lat) * sr);
     for (let ch = 0; ch < rendered.numberOfChannels; ch++) {
       const d = rendered.getChannelData(ch);
       for (let i = preFrames; i < d.length; i++) {

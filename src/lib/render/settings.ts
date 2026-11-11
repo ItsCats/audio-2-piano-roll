@@ -1,0 +1,169 @@
+import type { LabelStyle } from '../music/theory';
+
+export type KeyboardRange = 'full' | 'auto' | '76' | '61' | '49';
+export type ColorMode = 'hand' | 'pitch' | 'single';
+export type BackgroundKind = 'preset' | 'color' | 'image' | 'video';
+
+export interface LabelSettings {
+  style: LabelStyle;
+  accidentals: 'sharps' | 'flats' | 'auto';
+  font: string;
+  size: number; // px at 1080p-equivalent height
+  color: string;
+  position: 'bottom' | 'center' | 'top';
+  opacity: number;
+  /** hide labels on notes shorter than this many px (at 1080p-equivalent) */
+  minNoteHeight: number;
+  showOnKeys: boolean;
+  bold: boolean;
+  custom: string[]; // 12 custom labels by pitch class
+}
+
+export interface BackgroundSettings {
+  kind: BackgroundKind;
+  presetId: string;
+  color: string;
+  mediaId: string | null; // IndexedDB media key for user image/video
+  blur: number; // px
+  brightness: number; // 0..2
+  contrast: number; // 0..2
+  opacity: number; // 0..1
+  overlayColor: string;
+  overlayOpacity: number; // 0..1
+  fit: 'cover' | 'contain';
+  scale: number; // 1..3
+  posX: number; // 0..1
+  posY: number; // 0..1
+}
+
+export interface VisualSettings {
+  rightColor: string;
+  leftColor: string;
+  singleColor: string;
+  colorMode: ColorMode;
+  gradient: boolean;
+  noteOpacity: number;
+  cornerRadius: number;
+  glow: number; // 0..1
+  shadow: boolean;
+  borderWidth: number;
+  borderColor: string;
+  trails: boolean;
+  particles: boolean;
+  noteWidth: number; // fraction of key width 0.4..1
+  /** seconds of music visible above the keyboard (note speed) */
+  lookahead: number;
+  upcomingHighlight: boolean; // brighten notes about to be played
+  keyboardTheme: 'classic' | 'ivory' | 'dark' | 'custom';
+  whiteKeyColor: string;
+  blackKeyColor: string;
+  keyBorderColor: string;
+  keyHighlight: 'hand' | 'custom';
+  keyHighlightColor: string;
+  keyboardHeight: number; // fraction of canvas height
+  showKeyboard: boolean;
+  range: KeyboardRange;
+  guides: 'none' | 'octaves' | 'all';
+  beatLines: boolean;
+  showPedal: boolean;
+  hitLine: boolean;
+  labels: LabelSettings;
+  background: BackgroundSettings;
+}
+
+export const KEYBOARD_THEMES = {
+  classic: { white: '#f4f4f1', black: '#141418', border: '#1d1d22' },
+  ivory: { white: '#fbf6e6', black: '#221d17', border: '#3b3328' },
+  dark: { white: '#2b2c33', black: '#0b0b0e', border: '#0e0e12' },
+} as const;
+
+export const DEFAULT_VISUAL: VisualSettings = {
+  rightColor: '#4f9dff',
+  leftColor: '#f5a524',
+  singleColor: '#8b7cff',
+  colorMode: 'hand',
+  gradient: true,
+  noteOpacity: 0.95,
+  cornerRadius: 5,
+  glow: 0.55,
+  shadow: true,
+  borderWidth: 1,
+  borderColor: '#ffffff',
+  trails: true,
+  particles: true,
+  noteWidth: 0.86,
+  lookahead: 3,
+  upcomingHighlight: true,
+  keyboardTheme: 'classic',
+  whiteKeyColor: KEYBOARD_THEMES.classic.white,
+  blackKeyColor: KEYBOARD_THEMES.classic.black,
+  keyBorderColor: KEYBOARD_THEMES.classic.border,
+  keyHighlight: 'hand',
+  keyHighlightColor: '#4f9dff',
+  keyboardHeight: 0.16,
+  showKeyboard: true,
+  range: 'full',
+  guides: 'octaves',
+  beatLines: false,
+  showPedal: true,
+  hitLine: true,
+  labels: {
+    style: 'letter',
+    accidentals: 'auto',
+    font: 'Inter Variable, Inter, system-ui, sans-serif',
+    size: 15,
+    color: '#ffffff',
+    position: 'bottom',
+    opacity: 0.9,
+    minNoteHeight: 18,
+    showOnKeys: true,
+    bold: true,
+    custom: ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'],
+  },
+  background: {
+    kind: 'preset',
+    presetId: 'midnight',
+    color: '#0b0b10',
+    mediaId: null,
+    blur: 0,
+    brightness: 1,
+    contrast: 1,
+    opacity: 1,
+    overlayColor: '#000000',
+    overlayOpacity: 0.35,
+    fit: 'cover',
+    scale: 1,
+    posX: 0.5,
+    posY: 0.5,
+  },
+};
+
+/** Visual themes: one-click looks that set several options at once. */
+export type ThemePatch = Omit<Partial<VisualSettings>, 'background'> & { background?: Partial<BackgroundSettings> };
+
+export const VISUAL_THEMES: { id: string; name: string; patch: ThemePatch }[] = [
+  { id: 'studio', name: 'Studio Blue', patch: { rightColor: '#4f9dff', leftColor: '#f5a524', colorMode: 'hand', glow: 0.55, keyboardTheme: 'classic', background: { kind: 'preset', presetId: 'midnight' } } },
+  { id: 'aurora', name: 'Aurora', patch: { rightColor: '#34d3a6', leftColor: '#a78bfa', colorMode: 'hand', glow: 0.8, keyboardTheme: 'classic', background: { kind: 'preset', presetId: 'aurora' } } },
+  { id: 'sunset', name: 'Sunset', patch: { rightColor: '#ff7a59', leftColor: '#ffc857', colorMode: 'hand', glow: 0.6, keyboardTheme: 'ivory', background: { kind: 'preset', presetId: 'sunset' } } },
+  { id: 'rainbow', name: 'Rainbow Keys', patch: { colorMode: 'pitch', glow: 0.7, keyboardTheme: 'dark', background: { kind: 'preset', presetId: 'nebula' } } },
+  { id: 'mono', name: 'Minimal Mono', patch: { colorMode: 'single', singleColor: '#e8e8ea', glow: 0, particles: false, trails: false, gradient: false, keyboardTheme: 'classic', background: { kind: 'color', color: '#0d0d10' } } },
+  { id: 'neon', name: 'Night Drive', patch: { rightColor: '#ff4fd8', leftColor: '#3ee6ff', colorMode: 'hand', glow: 0.9, keyboardTheme: 'dark', background: { kind: 'preset', presetId: 'grid' } } },
+];
+
+export const PITCH_COLORS = [
+  '#ff5a5f', '#ff8a4c', '#ffb547', '#ffd84d', '#c6e95b', '#6fdc7c', '#3fd2b5', '#3cb8f0', '#5b8cff', '#8c6cff', '#c35cf2', '#f25cb6',
+];
+
+export function applyTheme(v: VisualSettings, themeId: string): VisualSettings {
+  const theme = VISUAL_THEMES.find((t) => t.id === themeId);
+  if (!theme) return v;
+  const { background, ...rest } = theme.patch;
+  const next: VisualSettings = { ...v, ...rest, background: { ...v.background, ...(background ?? {}) } };
+  if (rest.keyboardTheme && rest.keyboardTheme !== 'custom') {
+    const k = KEYBOARD_THEMES[rest.keyboardTheme];
+    next.whiteKeyColor = k.white;
+    next.blackKeyColor = k.black;
+    next.keyBorderColor = k.border;
+  }
+  return next;
+}

@@ -1,0 +1,696 @@
+/**
+ * Falling-note piano roll renderer (Canvas 2D).
+ *
+ * The same class renders the live Studio view and every frame of exported videos, so
+ * exports match what users see. All animation (glow, sparks, trails) is a pure function of
+ * song time, which keeps seeking stable and video export frame-exact.
+ */
+import type { Note, PedalRange, TempoInfo } from '../music/types';
+import { formatLabel, isBlack, pitchClass, prefersFlats } from '../music/theory';
+import { computeLayout, rangeFor, type KeyboardLayout } from './layout';
+import { getBackgroundPreset } from './backgrounds';
+import { PITCH_COLORS, type VisualSettings } from './settings';
+
+type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
+type AnyCanvas = HTMLCanvasElement | OffscreenCanvas;
+
+export interface EditOverlay {
+  selected: Set<number>;
+  hover: number | null;
+  /** grid line times (beats / subdivisions) */
+  grid: { t: number; strong: boolean }[];
+  ghost?: Note | null;
+  marquee?: { x0: number; y0: number; x1: number; y1: number } | null;
+}
+
+export interface FrameOptions {
+  time: number;
+  /** keys currently held on a MIDI/computer keyboard */
+  liveKeys?: Map<number, string>;
+  /** practice feedback flashes */
+  keyMarks?: Map<number, 'correct' | 'wrong'>;
+  mutedHands?: { L: boolean; R: boolean };
+  loop?: { start: number; end: number } | null;
+  edit?: EditOverlay | null;
+  countIn?: number;
+  /** override for which notes are "active" (e.g. wait mode) */
+  pedalOverride?: boolean;
+}
+
+interface RGB {
+  r: number;
+  g: number;
+  b: number;
+}
+
+function hexToRgb(hex: string): RGB {
+  let h = hex.replace('#', '');
+  if (h.length === 3) h = h.split('').map((c) => c + c).join('');
+  const n = parseInt(h.slice(0, 6), 16);
+  if (Number.isNaN(n)) return { r: 128, g: 128, b: 128 };
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+}
+const rgba = (c: RGB, a: number) => `rgba(${c.r},${c.g},${c.b},${a})`;
+const mix = (a: RGB, b: RGB, t: number): RGB => ({
+  r: Math.round(a.r + (b.r - a.r) * t),
+  g: Math.round(a.g + (b.g - a.g) * t),
+  b: Math.round(a.b + (b.b - a.b) * t),
+});
+const WHITE: RGB = { r: 255, g: 255, b: 255 };
+const BLACK_RGB: RGB = { r: 0, g: 0, b: 0 };
+
+function hash(a: number, b: number): number {
+  let h = (a * 374761393 + b * 668265263) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+function roundRect(ctx: Ctx2D, x: number, y: number, w: number, h: number, r: number) {
+  const rr = Math.max(0, Math.min(r, w / 2, h / 2));
+  ctx.beginPath();
+  if ('roundRect' in ctx && typeof ctx.roundRect === 'function') {
+    ctx.roundRect(x, y, w, h, rr);
+  } else {
+    (ctx as CanvasRenderingContext2D).moveTo(x + rr, y);
+    ctx.arcTo(x + w, y, x + w, y + h, rr);
+    ctx.arcTo(x + w, y + h, x, y + h, rr);
+    ctx.arcTo(x, y + h, x, y, rr);
+    ctx.arcTo(x, y, x + w, y, rr);
+    ctx.closePath();
+  }
+}
+
+export class PianoRollRenderer {
+  readonly canvas: AnyCanvas;
+  private ctx: Ctx2D;
+  private w = 1;
+  private h = 1;
+  private notes: Note[] = [];
+  private maxDur = 0;
+  private pedal: PedalRange[] = [];
+  private tempo: TempoInfo | null = null;
+  private s: VisualSettings;
+  private layout: KeyboardLayout;
+  private bgMedia: CanvasImageSource | null = null;
+  private bgMediaKind: 'image' | 'video' | null = null;
+  private bgCache: AnyCanvas | null = null;
+  private bgCacheKey = '';
+  private flats = false;
+  private supportsFilter: boolean;
+
+  constructor(canvas: AnyCanvas, settings: VisualSettings) {
+    this.canvas = canvas;
+    const ctx = canvas.getContext('2d', { alpha: false }) as Ctx2D | null;
+    if (!ctx) throw new Error('Canvas 2D is not available');
+    this.ctx = ctx;
+    this.s = settings;
+    this.supportsFilter = typeof (ctx as CanvasRenderingContext2D).filter === 'string';
+    this.layout = computeLayout(1, 21, 108);
+  }
+
+  resize(w: number, h: number): void {
+    const W = Math.max(1, Math.round(w));
+    const H = Math.max(1, Math.round(h));
+    if (W === this.w && H === this.h) return;
+    this.w = W;
+    this.h = H;
+    this.canvas.width = W;
+    this.canvas.height = H;
+    this.relayout();
+    this.bgCacheKey = '';
+  }
+
+  get width() {
+    return this.w;
+  }
+  get height() {
+    return this.h;
+  }
+
+  setNotes(notes: Note[], pedal: PedalRange[], tempo: TempoInfo | null, keyTonic?: { tonic: number; mode: 'major' | 'minor' }): void {
+    this.notes = [...notes].sort((a, b) => a.start - b.start);
+    this.maxDur = this.notes.reduce((m, n) => Math.max(m, n.dur), 0);
+    this.pedal = pedal;
+    this.tempo = tempo;
+    if (keyTonic) this.flats = prefersFlats(keyTonic.tonic, keyTonic.mode);
+    this.relayout();
+  }
+
+  setSettings(s: VisualSettings): void {
+    const relayout = s.range !== this.s.range;
+    this.s = s;
+    if (relayout) this.relayout();
+  }
+
+  setBackgroundMedia(src: CanvasImageSource | null, kind: 'image' | 'video' | null): void {
+    this.bgMedia = src;
+    this.bgMediaKind = kind;
+    this.bgCacheKey = '';
+  }
+
+  private relayout() {
+    const [lo, hi] = rangeFor(this.s.range, this.notes);
+    this.layout = computeLayout(this.w, lo, hi);
+  }
+
+  /** Geometry helpers (also used for hit testing in edit mode). */
+  get scale(): number {
+    return this.h / 1080;
+  }
+  get keyboardHeight(): number {
+    return this.s.showKeyboard ? Math.round(this.h * this.s.keyboardHeight) : 0;
+  }
+  get hitY(): number {
+    return this.h - this.keyboardHeight;
+  }
+  get pxPerSec(): number {
+    return this.hitY / Math.max(0.5, this.s.lookahead);
+  }
+  get keyLayout(): KeyboardLayout {
+    return this.layout;
+  }
+  timeToY(t: number, now: number): number {
+    return this.hitY - (t - now) * this.pxPerSec;
+  }
+  yToTime(y: number, now: number): number {
+    return now + (this.hitY - y) / this.pxPerSec;
+  }
+  noteRect(n: Note, now: number): { x: number; y: number; w: number; h: number } | null {
+    const k = this.layout.keys[n.midi];
+    if (!k) return null;
+    const frac = k.black ? Math.min(1, this.s.noteWidth + 0.08) : this.s.noteWidth;
+    const w = k.w * frac;
+    const x = k.x + (k.w - w) / 2;
+    const yb = this.timeToY(n.start, now);
+    const yt = this.timeToY(n.start + n.dur, now);
+    return { x, y: yt, w, h: Math.max(2, yb - yt) };
+  }
+  hitTest(x: number, y: number, now: number): { note: Note; edge: 'top' | 'bottom' | 'body' } | null {
+    // iterate topmost (latest drawn) first; black keys drawn after white
+    const t0 = now - this.maxDur - 1;
+    const t1 = now + this.s.lookahead + 1;
+    let best: { note: Note; edge: 'top' | 'bottom' | 'body' } | null = null;
+    for (const n of this.notes) {
+      if (n.start > t1) break;
+      if (n.start + n.dur < t0) continue;
+      const r = this.noteRect(n, now);
+      if (!r) continue;
+      const pad = 3;
+      if (x >= r.x - pad && x <= r.x + r.w + pad && y >= r.y - pad && y <= r.y + r.h + pad) {
+        const edgeZone = Math.min(8, r.h / 4);
+        const edge = y <= r.y + edgeZone ? 'top' : y >= r.y + r.h - edgeZone ? 'bottom' : 'body';
+        if (!best || isBlack(n.midi)) best = { note: n, edge };
+      }
+    }
+    return best;
+  }
+
+  private noteColor(n: Note): RGB {
+    const s = this.s;
+    if (s.colorMode === 'pitch') return hexToRgb(PITCH_COLORS[pitchClass(n.midi)]);
+    if (s.colorMode === 'single') return hexToRgb(s.singleColor);
+    return hexToRgb(n.hand === 'L' ? s.leftColor : s.rightColor);
+  }
+
+  private drawBackground(ctx: Ctx2D) {
+    const b = this.s.background;
+    const key = JSON.stringify([b, this.w, this.h, this.bgMediaKind === 'image' ? 1 : 0]);
+    const isVideo = b.kind === 'video' && this.bgMediaKind === 'video' && this.bgMedia;
+    if (!isVideo) {
+      if (key !== this.bgCacheKey || !this.bgCache) {
+        this.bgCache = this.makeCanvas(this.w, this.h);
+        const c = this.bgCache.getContext('2d') as Ctx2D;
+        this.paintBackground(c);
+        this.bgCacheKey = key;
+      }
+      ctx.drawImage(this.bgCache, 0, 0);
+      return;
+    }
+    this.paintBackground(ctx);
+  }
+
+  private makeCanvas(w: number, h: number): AnyCanvas {
+    if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(w, h);
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    return c;
+  }
+
+  private paintBackground(c: Ctx2D) {
+    const b = this.s.background;
+    const { w, h } = this;
+    c.save();
+    c.fillStyle = '#000';
+    c.fillRect(0, 0, w, h);
+    if (b.kind === 'color') {
+      c.fillStyle = b.color;
+      c.fillRect(0, 0, w, h);
+    } else if ((b.kind === 'image' || b.kind === 'video') && this.bgMedia) {
+      const src = this.bgMedia as HTMLImageElement & HTMLVideoElement & VideoFrame;
+      const sw = src.videoWidth || src.naturalWidth || src.displayWidth || (src as unknown as { width: number }).width || 1;
+      const sh = src.videoHeight || src.naturalHeight || src.displayHeight || (src as unknown as { height: number }).height || 1;
+      const fit = b.fit === 'cover' ? Math.max(w / sw, h / sh) : Math.min(w / sw, h / sh);
+      const scale = fit * b.scale;
+      const dw = sw * scale;
+      const dh = sh * scale;
+      const dx = (w - dw) * b.posX;
+      const dy = (h - dh) * b.posY;
+      c.globalAlpha = b.opacity;
+      if (this.supportsFilter) {
+        (c as CanvasRenderingContext2D).filter =
+          `blur(${b.blur * this.scale}px) brightness(${b.brightness}) contrast(${b.contrast})`;
+      }
+      try {
+        c.drawImage(src, dx, dy, dw, dh);
+      } catch {
+        /* media not ready yet */
+      }
+      if (this.supportsFilter) (c as CanvasRenderingContext2D).filter = 'none';
+      c.globalAlpha = 1;
+      if (!this.supportsFilter && b.brightness < 1) {
+        c.fillStyle = `rgba(0,0,0,${1 - b.brightness})`;
+        c.fillRect(0, 0, w, h);
+      }
+    } else {
+      getBackgroundPreset(b.presetId).draw(c, w, h);
+      if (b.brightness !== 1) {
+        c.fillStyle = b.brightness < 1 ? `rgba(0,0,0,${1 - b.brightness})` : `rgba(255,255,255,${(b.brightness - 1) * 0.3})`;
+        c.fillRect(0, 0, w, h);
+      }
+    }
+    if (b.overlayOpacity > 0 && b.kind !== 'preset' && b.kind !== 'color') {
+      c.fillStyle = rgba(hexToRgb(b.overlayColor), b.overlayOpacity);
+      c.fillRect(0, 0, w, h);
+    }
+    c.restore();
+  }
+
+  render(opts: FrameOptions): void {
+    const ctx = this.ctx;
+    const s = this.s;
+    const now = opts.time;
+    const { w } = this;
+    const sc = this.scale;
+    const hitY = this.hitY;
+    const kbH = this.keyboardHeight;
+    const L = this.layout;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    this.drawBackground(ctx);
+
+    // lane guides
+    if (s.guides !== 'none') {
+      ctx.fillStyle = 'rgba(255,255,255,0.025)';
+      if (s.guides === 'all') {
+        for (let m = L.lo; m <= L.hi; m++) {
+          const k = L.keys[m];
+          if (k?.black) ctx.fillRect(k.x, 0, k.w, hitY);
+        }
+      }
+      ctx.strokeStyle = 'rgba(255,255,255,0.07)';
+      ctx.lineWidth = Math.max(1, sc);
+      ctx.beginPath();
+      for (let m = L.lo; m <= L.hi; m++) {
+        if (m % 12 !== 0) continue;
+        const k = L.keys[m];
+        if (!k) continue;
+        ctx.moveTo(Math.round(k.x) + 0.5, 0);
+        ctx.lineTo(Math.round(k.x) + 0.5, hitY);
+      }
+      ctx.stroke();
+    }
+
+    // beat / bar lines
+    if ((s.beatLines || opts.edit) && this.tempo?.beats.length) {
+      const beats = this.tempo.beats;
+      const tTop = this.yToTime(0, now);
+      ctx.lineWidth = Math.max(1, sc);
+      for (let i = 0; i < beats.length; i++) {
+        const b = beats[i];
+        if (b < now - 0.05 || b > tTop) continue;
+        const y = Math.round(this.timeToY(b, now)) + 0.5;
+        const bar = (i - this.tempo.downbeatIndex) % this.tempo.beatsPerBar === 0;
+        ctx.strokeStyle = bar ? 'rgba(255,255,255,0.16)' : 'rgba(255,255,255,0.06)';
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(w, y);
+        ctx.stroke();
+      }
+    }
+    if (opts.edit) {
+      ctx.lineWidth = 1;
+      for (const g of opts.edit.grid) {
+        if (g.strong) continue;
+        const y = Math.round(this.timeToY(g.t, now)) + 0.5;
+        if (y < 0 || y > hitY) continue;
+        ctx.strokeStyle = 'rgba(255,255,255,0.035)';
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(w, y);
+        ctx.stroke();
+      }
+    }
+
+    // loop region
+    if (opts.loop) {
+      const ya = this.timeToY(opts.loop.start, now);
+      const yb = this.timeToY(opts.loop.end, now);
+      ctx.fillStyle = 'rgba(120,160,255,0.06)';
+      ctx.fillRect(0, Math.max(0, yb), w, Math.min(hitY, ya) - Math.max(0, yb));
+      ctx.strokeStyle = 'rgba(140,170,255,0.6)';
+      ctx.setLineDash([6 * sc, 6 * sc]);
+      ctx.lineWidth = Math.max(1, 1.5 * sc);
+      for (const y of [ya, yb]) {
+        if (y < 0 || y > hitY) continue;
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(w, y);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+    }
+
+    // pedal lane
+    if (s.showPedal && this.pedal.length) {
+      const laneW = Math.max(4, 6 * sc);
+      ctx.fillStyle = 'rgba(200,205,215,0.13)';
+      for (const p of this.pedal) {
+        const y0 = this.timeToY(p.end, now);
+        const y1 = this.timeToY(p.start, now);
+        if (y1 < 0 || y0 > hitY) continue;
+        ctx.fillRect(w - laneW - 2 * sc, Math.max(0, y0), laneW, Math.min(hitY, y1) - Math.max(0, y0) - 1);
+      }
+    }
+
+    // visible notes
+    const t0 = now - 0.05;
+    const t1 = this.yToTime(-10, now);
+    const visible: Note[] = [];
+    let lo = 0;
+    let hi = this.notes.length;
+    const startFrom = now - this.maxDur - 0.1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (this.notes[mid].start < startFrom) lo = mid + 1;
+      else hi = mid;
+    }
+    const active = new Map<number, Note>();
+    for (let i = lo; i < this.notes.length; i++) {
+      const n = this.notes[i];
+      if (n.start > t1) break;
+      if (n.start + n.dur < t0) continue;
+      visible.push(n);
+      if (n.start <= now && n.start + n.dur > now) {
+        const prev = active.get(n.midi);
+        if (!prev || n.start > prev.start) active.set(n.midi, n);
+      }
+    }
+
+    // light trails above active keys
+    if (s.trails && s.glow > 0) {
+      for (const n of active.values()) {
+        const k = L.keys[n.midi];
+        if (!k) continue;
+        if (opts.mutedHands?.[n.hand]) continue;
+        const c = this.noteColor(n);
+        const age = now - n.start;
+        const fade = Math.max(0.25, 1 - age * 0.8);
+        const th = hitY * 0.35;
+        const g = ctx.createLinearGradient(0, hitY - th, 0, hitY);
+        g.addColorStop(0, rgba(c, 0));
+        g.addColorStop(1, rgba(c, 0.22 * s.glow * fade));
+        ctx.fillStyle = g;
+        ctx.fillRect(k.x - k.w * 0.2, hitY - th, k.w * 1.4, th);
+      }
+    }
+
+    // notes: white-key notes first so black-key notes sit on top
+    const order = visible.sort((a, b) => Number(isBlack(a.midi)) - Number(isBlack(b.midi)));
+    const radius = s.cornerRadius * sc;
+    const labelSize = s.labels.size * sc;
+    const showLabels = s.labels.style !== 'none';
+    const flats = s.labels.accidentals === 'flats' || (s.labels.accidentals === 'auto' && this.flats);
+    ctx.textAlign = 'center';
+    for (const n of order) {
+      const r = this.noteRect(n, now);
+      if (!r) continue;
+      const muted = opts.mutedHands?.[n.hand];
+      const isActive = active.get(n.midi) === n;
+      const base = this.noteColor(n);
+      let c = base;
+      if (isActive) c = mix(base, WHITE, 0.25);
+      else if (s.upcomingHighlight && n.start > now && n.start - now < 0.35) c = mix(base, WHITE, 0.12 * (1 - (n.start - now) / 0.35));
+      const alpha = s.noteOpacity * (muted ? 0.22 : 1);
+      ctx.globalAlpha = alpha;
+      if (s.shadow && !muted) {
+        ctx.shadowColor = 'rgba(0,0,0,0.45)';
+        ctx.shadowBlur = 6 * sc;
+        ctx.shadowOffsetY = 2 * sc;
+      }
+      if (isActive && s.glow > 0 && !muted) {
+        ctx.shadowColor = rgba(base, 0.9);
+        ctx.shadowBlur = 26 * sc * s.glow;
+        ctx.shadowOffsetY = 0;
+      }
+      if (s.gradient) {
+        const g = ctx.createLinearGradient(0, r.y, 0, r.y + r.h);
+        g.addColorStop(0, rgba(mix(c, WHITE, 0.22), 1));
+        g.addColorStop(1, rgba(mix(c, BLACK_RGB, 0.12), 1));
+        ctx.fillStyle = g;
+      } else {
+        ctx.fillStyle = rgba(c, 1);
+      }
+      roundRect(ctx, r.x, r.y, r.w, r.h, radius);
+      ctx.fill();
+      ctx.shadowColor = 'transparent';
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetY = 0;
+      if (s.borderWidth > 0) {
+        ctx.lineWidth = s.borderWidth * sc;
+        ctx.strokeStyle = rgba(hexToRgb(s.borderColor), isActive ? 0.55 : 0.22);
+        ctx.stroke();
+      }
+      // edit selection
+      if (opts.edit && (opts.edit.selected.has(n.id) || opts.edit.hover === n.id)) {
+        ctx.globalAlpha = 1;
+        ctx.lineWidth = Math.max(1.5, 2 * sc);
+        ctx.strokeStyle = opts.edit.selected.has(n.id) ? '#ffffff' : 'rgba(255,255,255,0.55)';
+        roundRect(ctx, r.x - 1, r.y - 1, r.w + 2, r.h + 2, radius);
+        ctx.stroke();
+      }
+      // label
+      if (showLabels && r.h >= s.labels.minNoteHeight * sc && r.w >= labelSize * 0.8) {
+        const text = formatLabel(n.midi, s.labels.style, flats ? 'flats' : 'sharps', s.labels.custom);
+        if (text) {
+          let size = labelSize;
+          ctx.font = `${s.labels.bold ? 650 : 450} ${size}px ${s.labels.font}`;
+          let tw = ctx.measureText(text).width;
+          if (tw > r.w - 4 * sc) {
+            size = Math.max(7 * sc, (size * (r.w - 4 * sc)) / tw);
+            ctx.font = `${s.labels.bold ? 650 : 450} ${size}px ${s.labels.font}`;
+            tw = ctx.measureText(text).width;
+          }
+          const pad = 4 * sc + size * 0.15;
+          const ty =
+            s.labels.position === 'bottom'
+              ? Math.min(r.y + r.h, hitY) - pad
+              : s.labels.position === 'top'
+                ? Math.max(r.y, 0) + pad + size * 0.8
+                : Math.max(r.y, 0) + (Math.min(r.y + r.h, hitY) - Math.max(r.y, 0)) / 2 + size * 0.35;
+          if (ty > Math.max(r.y, 0) + size * 0.6 && ty < hitY) {
+            ctx.globalAlpha = alpha * s.labels.opacity;
+            ctx.fillStyle = s.labels.color;
+            ctx.fillText(text, r.x + r.w / 2, ty);
+          }
+        }
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // ghost note (edit: add preview)
+    if (opts.edit?.ghost) {
+      const r = this.noteRect(opts.edit.ghost, now);
+      if (r) {
+        ctx.globalAlpha = 0.45;
+        ctx.fillStyle = rgba(this.noteColor(opts.edit.ghost), 1);
+        roundRect(ctx, r.x, r.y, r.w, r.h, radius);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+    }
+    if (opts.edit?.marquee) {
+      const m = opts.edit.marquee;
+      ctx.fillStyle = 'rgba(120,160,255,0.12)';
+      ctx.strokeStyle = 'rgba(140,170,255,0.8)';
+      ctx.lineWidth = 1;
+      const x = Math.min(m.x0, m.x1);
+      const y = Math.min(m.y0, m.y1);
+      ctx.fillRect(x, y, Math.abs(m.x1 - m.x0), Math.abs(m.y1 - m.y0));
+      ctx.strokeRect(x + 0.5, y + 0.5, Math.abs(m.x1 - m.x0), Math.abs(m.y1 - m.y0));
+    }
+
+    // sparks at the hit line (deterministic)
+    if (s.particles && kbH > 0) {
+      ctx.globalCompositeOperation = 'lighter';
+      for (const n of active.values()) {
+        if (opts.mutedHands?.[n.hand]) continue;
+        const k = L.keys[n.midi];
+        if (!k) continue;
+        const c = mix(this.noteColor(n), WHITE, 0.35);
+        const elapsed = now - n.start;
+        const period = 0.07;
+        const life = 0.45;
+        const first = Math.max(0, Math.floor((elapsed - life) / period));
+        const last = Math.floor(elapsed / period);
+        for (let i = first; i <= last; i++) {
+          const born = i * period;
+          const age = elapsed - born;
+          if (age < 0 || age > life || born > n.dur) continue;
+          for (let j = 0; j < 2; j++) {
+            const r1 = hash(n.id * 31 + i, j);
+            const r2 = hash(n.id * 17 + j, i);
+            const vx = (r1 - 0.5) * 140 * sc;
+            const vy = -(120 + r2 * 220) * sc;
+            const x = k.x + k.w / 2 + vx * age;
+            const y = hitY + vy * age + 300 * sc * age * age;
+            const a = (1 - age / life) * 0.9;
+            ctx.fillStyle = rgba(c, a);
+            const size = (1.2 + r2 * 1.8) * sc;
+            ctx.fillRect(x - size / 2, y - size / 2, size, size);
+          }
+        }
+      }
+      ctx.globalCompositeOperation = 'source-over';
+    }
+
+    // keyboard
+    if (kbH > 0) this.drawKeyboard(ctx, active, opts);
+
+    // pedal indicator
+    const pedalDown = opts.pedalOverride ?? this.pedal.some((p) => p.start <= now && p.end > now);
+    if (s.showPedal && this.pedal.length) {
+      const pw = 46 * sc;
+      const ph = 18 * sc;
+      const px = w - pw - 10 * sc;
+      const py = hitY - ph - 10 * sc;
+      ctx.globalAlpha = pedalDown ? 0.95 : 0.35;
+      ctx.fillStyle = pedalDown ? 'rgba(230,232,240,0.95)' : 'rgba(255,255,255,0.15)';
+      roundRect(ctx, px, py, pw, ph, ph / 2);
+      ctx.fill();
+      ctx.fillStyle = pedalDown ? '#111' : '#fff';
+      ctx.font = `650 ${11 * sc}px Inter Variable, Inter, system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText('PED', px + pw / 2, py + ph * 0.7);
+      ctx.globalAlpha = 1;
+    }
+
+    // count-in
+    if (opts.countIn && opts.countIn > 0) {
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.font = `700 ${120 * sc}px Inter Variable, Inter, system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText(String(opts.countIn), w / 2, hitY / 2);
+    }
+    ctx.restore();
+  }
+
+  private drawKeyboard(ctx: Ctx2D, active: Map<number, Note>, opts: FrameOptions) {
+    const s = this.s;
+    const L = this.layout;
+    const sc = this.scale;
+    const top = this.hitY;
+    const kbH = this.keyboardHeight;
+    const white = hexToRgb(s.whiteKeyColor);
+    const black = hexToRgb(s.blackKeyColor);
+    const border = s.keyBorderColor;
+    const blackH = kbH * 0.63;
+    const keyColor = (m: number): RGB | null => {
+      const mark = opts.keyMarks?.get(m);
+      if (mark === 'correct') return { r: 52, g: 211, b: 153 };
+      if (mark === 'wrong') return { r: 248, g: 82, b: 82 };
+      const live = opts.liveKeys?.get(m);
+      if (live) return hexToRgb(live);
+      const n = active.get(m);
+      if (!n || opts.mutedHands?.[n.hand]) return null;
+      return s.keyHighlight === 'custom' ? hexToRgb(s.keyHighlightColor) : this.noteColor(n);
+    };
+
+    // felt strip + hit line
+    const felt = Math.max(2, 5 * sc);
+    ctx.fillStyle = '#4a1019';
+    ctx.fillRect(0, top, this.w, felt);
+    if (s.hitLine) {
+      const g = ctx.createLinearGradient(0, top - 14 * sc, 0, top);
+      g.addColorStop(0, 'rgba(255,255,255,0)');
+      g.addColorStop(1, 'rgba(255,255,255,0.10)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, top - 14 * sc, this.w, 14 * sc);
+    }
+    const ky = top + felt;
+    const kh = kbH - felt;
+
+    // white keys
+    for (let m = L.lo; m <= L.hi; m++) {
+      const k = L.keys[m];
+      if (!k || k.black) continue;
+      const hc = keyColor(m);
+      const pressed = hc !== null;
+      const c = pressed ? mix(hc!, white, 0.15) : white;
+      const g = ctx.createLinearGradient(0, ky, 0, ky + kh);
+      g.addColorStop(0, rgba(mix(c, BLACK_RGB, pressed ? 0.05 : 0.12), 1));
+      g.addColorStop(0.12, rgba(c, 1));
+      g.addColorStop(1, rgba(mix(c, BLACK_RGB, pressed ? 0.15 : 0.05), 1));
+      ctx.fillStyle = g;
+      const r = Math.min(4 * sc, k.w / 5);
+      roundRect(ctx, k.x + 0.5, ky, k.w - 1, kh - (pressed ? 0 : 2 * sc), r);
+      ctx.fill();
+      ctx.strokeStyle = border;
+      ctx.lineWidth = Math.max(1, sc);
+      ctx.stroke();
+      if (s.labels.showOnKeys && m % 12 === 0 && k.w > 9 * sc) {
+        ctx.fillStyle = pressed ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.38)';
+        if (white.r + white.g + white.b < 300) ctx.fillStyle = 'rgba(255,255,255,0.5)';
+        ctx.font = `600 ${Math.min(12 * sc, k.w * 0.45)}px Inter Variable, Inter, system-ui, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.fillText(`C${Math.floor(m / 12) - 1}`, k.x + k.w / 2, ky + kh - 8 * sc);
+      }
+      if (pressed && s.glow > 0) {
+        const gg = ctx.createLinearGradient(0, ky, 0, ky + kh * 0.4);
+        gg.addColorStop(0, rgba(hc!, 0.55 * s.glow));
+        gg.addColorStop(1, rgba(hc!, 0));
+        ctx.fillStyle = gg;
+        ctx.fillRect(k.x, ky, k.w, kh * 0.4);
+      }
+    }
+    // black keys
+    for (let m = L.lo; m <= L.hi; m++) {
+      const k = L.keys[m];
+      if (!k || !k.black) continue;
+      const hc = keyColor(m);
+      const pressed = hc !== null;
+      const c = pressed ? mix(hc!, BLACK_RGB, 0.15) : black;
+      const g = ctx.createLinearGradient(0, ky, 0, ky + blackH);
+      g.addColorStop(0, rgba(mix(c, BLACK_RGB, 0.25), 1));
+      g.addColorStop(0.85, rgba(mix(c, WHITE, pressed ? 0.1 : 0.08), 1));
+      g.addColorStop(1, rgba(mix(c, WHITE, pressed ? 0.2 : 0.18), 1));
+      ctx.fillStyle = g;
+      const r = Math.min(3 * sc, k.w / 5);
+      roundRect(ctx, k.x, ky - 1, k.w, blackH - (pressed ? 0 : 2 * sc), r);
+      ctx.fill();
+      ctx.strokeStyle = border;
+      ctx.lineWidth = Math.max(1, sc);
+      ctx.stroke();
+      if (!pressed) {
+        ctx.fillStyle = 'rgba(255,255,255,0.10)';
+        ctx.fillRect(k.x + k.w * 0.2, ky + blackH - 9 * sc, k.w * 0.6, 3 * sc);
+      }
+    }
+    // top shadow over keys
+    const sh = ctx.createLinearGradient(0, ky, 0, ky + 10 * sc);
+    sh.addColorStop(0, 'rgba(0,0,0,0.35)');
+    sh.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = sh;
+    ctx.fillRect(0, ky, this.w, 10 * sc);
+  }
+}
