@@ -82,7 +82,7 @@ export function separationSupport(): SeparationSupport {
     return {
       ok: true,
       recommended: false,
-      reason: 'Separating vocals & drums needs about 2.5 GB of memory and several minutes per song; phones and tablets often run out of memory.',
+      reason: 'Needs about 2.5 GB of memory and several minutes per song.',
       estSecondsPerMinute: est * 2,
     };
   }

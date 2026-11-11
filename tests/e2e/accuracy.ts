@@ -7,7 +7,7 @@ import type { Note } from '../../src/lib/music/types';
 type Preset = keyof typeof EXTRACTION_PRESETS;
 
 const slim = (notes: Note[]) =>
-  notes.map((n) => ({ midi: n.midi, start: +n.start.toFixed(4), dur: +n.dur.toFixed(4), vel: +n.vel.toFixed(3), hand: n.hand }));
+  notes.map((n) => ({ midi: n.midi, start: +n.start.toFixed(4), dur: +n.dur.toFixed(4), vel: +n.vel.toFixed(3), hand: n.hand, ...(n.role ? { role: n.role } : {}) }));
 
 function toB64(u8: Uint8Array): string {
   let s = '';

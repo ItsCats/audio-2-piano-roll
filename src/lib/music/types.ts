@@ -79,6 +79,21 @@ export interface ExtractionParams {
    * continuation of a still-ringing note rather than a re-strike (0 disables).
    */
   continuationOnset?: number;
+  /**
+   * Register-dependent detection: thresholds (and the minimum note length) are scaled towards the
+   * keyboard ends, ramping linearly from lowMidi down to A0 and from highMidi up to C8 (factors are
+   * multipliers; 1 or omitted = unchanged). Same shape as RegisterCurve in transcription/noteExtraction.ts.
+   */
+  register?: {
+    lowMidi: number;
+    highMidi: number;
+    lowOnset?: number;
+    lowFrame?: number;
+    lowMinFrames?: number;
+    highOnset?: number;
+    highFrame?: number;
+    highMinFrames?: number;
+  };
 }
 
 export interface TranscriptionInfo {

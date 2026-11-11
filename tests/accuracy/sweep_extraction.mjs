@@ -188,7 +188,7 @@ for (const cfg of configs) {
       Object.entries(per)
         .map(([k, s]) => `${k.replace(/^m-/, '').slice(0, 8)} ${s.F.toFixed(3)}`)
         .join(' ') +
-      `  | bias ${mean(Object.values(per).map((s) => s.biasMs)).toFixed(1)} ms`,
+      `  | median onset bias, MAESTRO mean ${mean([...TUNE, ...HOLDOUT].filter((p) => per[p]).map((p) => per[p].biasMs)).toFixed(1)} ms`,
   );
 }
 console.error(`${configs.length} configs x ${data.length} pieces in ${((Date.now() - t0) / 1000).toFixed(1)} s`);

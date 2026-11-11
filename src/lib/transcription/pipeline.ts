@@ -25,22 +25,32 @@ import type { StoredPosteriors } from './posteriors';
 import { separateStems, stemsFromBlobs, type SeparationResult } from '../separation';
 
 /**
- * Detection presets. "piano" was tuned on rendered piano recordings with known ground truth
- * (tests/e2e): the melodia trick (designed for voice-like continuous pitch) and a low frame
- * threshold mostly add re-detections of ringing piano strings, so they are off/raised here.
- * Note-onset F1 (50 ms): Bach BWV 846 0.77 → 0.92, chord/melody study 0.78 → 0.86 vs stock defaults.
+ * Piano register curve: the top and bottom octaves get lower thresholds (Basic Pitch's posteriors
+ * are weaker there), shorter minimum notes at the top. Recovers C6 recall .22 -> .41 and C7
+ * .06 -> .24 on MAESTRO at unchanged precision.
+ */
+const PIANO_REGISTER: NonNullable<ExtractionParams['register']> = { lowMidi: 48, lowFrame: 0.5, lowOnset: 0.6, highMidi: 76, highFrame: 0.3, highMinFrames: 0.4 };
+
+/**
+ * Detection presets. "piano" and "sensitive" were tuned on 5 MAESTRO pieces with exact MIDI
+ * (tests/accuracy/sweep_extraction.mjs), with Liszt held out and the synthetic e2e gate enforced
+ * (tests/e2e); the register curve recovers the top and bottom octaves. The melodia trick
+ * (designed for voice-like continuous pitch) and a low frame threshold mostly add re-detections of
+ * ringing piano strings, so they are off/raised for "piano". Onset F1@50 (mean of 5 pieces):
+ * piano 0.824 -> 0.836, sensitive 0.794 -> 0.824 vs the previous values.
  */
 export const EXTRACTION_PRESETS: Record<'piano' | 'mix' | 'sensitive', ExtractionParams> = {
   piano: {
-    onsetThreshold: 0.5,
+    onsetThreshold: 0.55,
     frameThreshold: 0.4,
-    minNoteMs: 70,
+    minNoteMs: 60,
     minMidi: 21,
     maxMidi: 108,
     melodiaTrick: false,
     suppressHarmonics: true,
     inferOnsets: false,
     continuationOnset: 0.7,
+    register: PIANO_REGISTER,
   },
   mix: {
     onsetThreshold: 0.5,
@@ -54,15 +64,16 @@ export const EXTRACTION_PRESETS: Record<'piano' | 'mix' | 'sensitive', Extractio
     continuationOnset: 0.6,
   },
   sensitive: {
-    onsetThreshold: 0.4,
-    frameThreshold: 0.3,
+    onsetThreshold: 0.55,
+    frameThreshold: 0.25,
     minNoteMs: 50,
     minMidi: 21,
     maxMidi: 108,
     melodiaTrick: false,
-    suppressHarmonics: false,
+    suppressHarmonics: true,
     inferOnsets: true,
     continuationOnset: 0.5,
+    register: PIANO_REGISTER,
   },
 };
 
@@ -90,8 +101,12 @@ export const VOCAL_EXTRACTION: ExtractionParams = {
 /** Fewer melody notes than this over a whole song: treat the vocal stem as noise, not a melody. */
 const MIN_MELODY_NOTES = 8;
 
-/** Systematic delay between a piano hammer strike and the model's onset frame (measured). */
-const ONSET_LATENCY = 0.007;
+/**
+ * Systematic delay between a piano hammer strike and the model's onset frame. Measured on MAESTRO:
+ * Basic Pitch onset frames already align with the hammer strike to within 1 ms (median bias
+ * +0.4 ms at 0; it was -6.5 ms at the earlier 0.007).
+ */
+const ONSET_LATENCY = 0;
 
 export interface ProgressEvent {
   stage: TranscriptionStage;
@@ -129,6 +144,7 @@ export function toWorkerOptions(p: ExtractionParams): NoteExtractionOptions {
     energyTolerance: 11,
     minMidi: p.minMidi,
     maxMidi: p.maxMidi,
+    ...(p.register ? { register: p.register } : {}),
   };
 }
 

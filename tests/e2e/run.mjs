@@ -8,7 +8,7 @@
  */
 import { createServer } from 'vite';
 
-const THRESHOLDS = { bach: 0.9, chords: 0.82 };
+const THRESHOLDS = { bach: 0.92, chords: 0.86 };
 
 let chromium;
 try {

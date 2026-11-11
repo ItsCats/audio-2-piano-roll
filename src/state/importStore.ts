@@ -170,6 +170,24 @@ function planFor(kind: SongSource['kind'], sep: SeparationEngine | undefined, yo
 }
 
 /** "Separating vocals & drums: part 3 of 12" and "… part 4 of 12" are the same phase; numbers are dropped. */
+/** Human-readable text for a processing-server job stage (server 2.0: queued → decoding → separating → encoding → done). */
+function serverStageDetail(stage: string): string {
+  switch (stage) {
+    case 'queued':
+      return 'Waiting for your processing server';
+    case 'downloading':
+      return 'Fetching audio on your processing server';
+    case 'decoding':
+      return 'Preparing the audio on your processing server';
+    case 'separating':
+      return 'Separating vocals & drums on your server';
+    case 'encoding':
+      return 'Saving the separated stems on your server';
+    default:
+      return `Processing on your server (${stage})`;
+  }
+}
+
 const phaseKey = (stage: ImportStage, detail?: string) => `${stage}|${(detail ?? '').replace(/[\d.,]+/g, '#')}`;
 
 let seq = 1;
@@ -271,12 +289,12 @@ export const useImport = create<ImportState>((set, get) => {
         update({
           stage: 'separating',
           progress: j.progress,
-          detail: j.stage === 'queued' ? 'Waiting for your processing server' : j.stage === 'separating' ? 'Separating vocals & drums on your server' : `Separating vocals & drums on your server (${j.stage})`,
+          detail: serverStageDetail(j.stage),
         }),
       signal,
     );
     update({ stage: 'downloading', progress: null, detail: 'Downloading the separated vocals and accompaniment' });
-    const stems = await backendApi.fetchStems(url, job.id);
+    const stems = await backendApi.fetchStems(url, job.id, signal);
     if (signal.aborted) throw new DOMException('Cancelled', 'AbortError');
     return stems;
   };
@@ -290,15 +308,19 @@ export const useImport = create<ImportState>((set, get) => {
     original: Blob,
     meta: { title: string; artist?: string; source: SongSource; fileName: string },
     engine: SeparationEngine | undefined,
+    /** stems the server already produced (a separated YouTube job): used as they are */
+    prefetched?: { vocals: Blob; accomp: Blob },
+    /** warnings from earlier steps of this import */
+    earlier: string[] = [],
   ) => {
     const { update, onProgress, signal } = ctx;
     const params = detectionParams();
-    const extraWarnings: string[] = [];
+    const extraWarnings: string[] = [...earlier];
     let opts: TranscribeOptions = {};
     let progress = onProgress;
     if (engine === 'server') {
       try {
-        opts = { stems: await serverStems(ctx, original, meta.fileName) };
+        opts = { stems: prefetched ?? (await serverStems(ctx, original, meta.fileName)) };
         // the pipeline's "separating" step for ready-made stems is only decoding them
         progress = (e) => onProgress(e.stage === 'separating' ? { ...e, stage: 'decoding', progress: null } : e);
       } catch (err) {
@@ -333,10 +355,12 @@ export const useImport = create<ImportState>((set, get) => {
       hasAudio: true,
       hasPosteriors: true,
     });
-    update({ warnings: result.info.warnings, stage: 'saving', progress: null });
+    update({ warnings: result.info.warnings, stage: 'saving', progress: null, detail: 'Saving to your library' });
     try {
       await saveAudio(song.id, original, meta.source.fileName ?? meta.title);
-      await savePosteriors(song.id, result.posteriors);
+      // the vocal stem's posteriors ride along in the same record (same store and key), so a later
+      // re-detection can rebuild the melody line from them
+      await savePosteriors(song.id, result.melodyPosteriors ? { ...result.posteriors, melody: result.melodyPosteriors } : result.posteriors);
     } catch (err) {
       song.hasAudio = false;
       song.hasPosteriors = false;
@@ -408,9 +432,53 @@ export const useImport = create<ImportState>((set, get) => {
         if (!backend) throw new Error('No processing server is configured (Settings → Processing server).');
         const engine = await pickEngine(separate);
         if (signal.aborted) return null;
-        update({ plan: planFor('youtube', engine, true), separation: engine });
+        const meta0 = { title: meta?.title ?? 'YouTube video', artist: meta?.artist };
+        const sourceOf = (blob: Blob): SongSource => ({ kind: 'youtube', youtubeId: videoId, url: videoUrl, mimeType: blob.type, fileSize: blob.size });
+        const earlier: string[] = [];
+        let browserFallback = false;
+
+        if (engine === 'server') {
+          // one server job fetches the video's audio and separates it: the original mix (for playback
+          // in the Studio) and both stems come back from the same job, nothing is uploaded again
+          update({ plan: [...new Set<ImportStage>(['validating', 'downloading', 'separating', ...TRANSCRIBE])], separation: 'server' });
+          try {
+            update({ stage: 'downloading', progress: null, detail: 'Fetching audio on your processing server' });
+            const job = await createYouTubeJob(backend, videoUrl, true);
+            const done = await waitForJob(
+              backend,
+              job.id,
+              (j) =>
+                update({
+                  stage: j.stage === 'downloading' || j.stage === 'queued' ? 'downloading' : 'separating',
+                  progress: j.progress,
+                  detail: serverStageDetail(j.stage),
+                  title: j.title ?? meta0.title,
+                }),
+              signal,
+            );
+            update({ stage: 'downloading', progress: null, detail: 'Transferring the audio and the separated stems to the browser' });
+            const [mix, stems] = await Promise.all([getJobAudio(backend, job.id, 'mix', signal), backendApi.fetchStems(backend, job.id, signal)]);
+            if (signal.aborted) return null;
+            const title = done.title ?? meta0.title;
+            return await transcribeAndSave(ctx, mix, { title, artist: done.artist ?? meta0.artist, source: sourceOf(mix), fileName: `${title}.m4a` }, 'server', stems);
+          } catch (err) {
+            if (isAbort(err) || signal.aborted) throw err;
+            // e.g. the server could fetch but not separate: fetch the audio alone and separate here
+            const why = (err as Error)?.message ?? String(err);
+            browserFallback = separationSupport().ok;
+            earlier.push(
+              browserFallback
+                ? `The processing server could not separate this video (${why}); it was separated in the browser instead.`
+                : `The processing server could not separate this video (${why}); the full mix was transcribed.`,
+            );
+            update({ warnings: [...earlier] });
+          }
+        }
+
+        const engine2: SeparationEngine | undefined = engine === 'server' ? (browserFallback ? 'browser' : undefined) : engine;
+        update({ plan: planFor('youtube', engine2, true), separation: engine2 });
         update({ stage: 'downloading', progress: null, detail: 'Fetching audio on your processing server' });
-        // always fetch the original mix: it is what plays back in the Studio; separation follows as for files
+        // fetch the original mix: it is what plays back in the Studio; separation follows as for files
         const job = await createYouTubeJob(backend, videoUrl, false);
         const done = await waitForJob(
           backend,
@@ -420,23 +488,20 @@ export const useImport = create<ImportState>((set, get) => {
               stage: 'downloading',
               progress: j.progress,
               detail: j.stage === 'downloading' ? 'Fetching audio on your processing server' : `Preparing audio on your processing server (${j.stage})`,
-              title: j.title ?? meta?.title ?? 'YouTube video',
+              title: j.title ?? meta0.title,
             }),
           signal,
         );
         update({ stage: 'downloading', progress: null, detail: 'Transferring audio to the browser' });
-        const blob = await getJobAudio(backend, job.id);
-        const title = done.title ?? meta?.title ?? 'YouTube video';
+        const blob = await getJobAudio(backend, job.id, undefined, signal);
+        const title = done.title ?? meta0.title;
         return await transcribeAndSave(
           ctx,
           blob,
-          {
-            title,
-            artist: done.artist ?? meta?.artist,
-            source: { kind: 'youtube', youtubeId: videoId, url: videoUrl, mimeType: blob.type, fileSize: blob.size },
-            fileName: `${title}.m4a`,
-          },
-          engine,
+          { title, artist: done.artist ?? meta0.artist, source: sourceOf(blob), fileName: `${title}.m4a` },
+          engine2,
+          undefined,
+          earlier,
         );
       } catch (err) {
         return fail(ctx, err);

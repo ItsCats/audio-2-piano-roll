@@ -18,9 +18,14 @@ piano_transcription_inference, remotezip). Node 22 + Playwright Chromium.
 | strong piano transcriber (eval aid only) | `pti_transcribe.py CKPT WORK/refs/pti FILES...` | `refs/pti/<id>.pti.json` |
 | score-informed snapping | `snap_ref.py ALIGNED.json PTI.json OUT.json [--truth PERF.midi]` | `refs/snapped/<id>.json` |
 | metric sanity checks | `sanity.py REF AUDIO [VOCAL.f0.npz] [--no-proxies]` | stdout, `$SANITY_OUT` |
+| posterior dump | `node tests/accuracy/transcribe.mjs --dump-posteriors WORK/posteriors WORK/maestro/m-*.wav` | `posteriors/<id>.{frames.u8,onsets.u8,rms.f32,post.json}` |
+| synthetic e2e posteriors | `node tests/accuracy/sweep_extraction.e2e.mjs --dump WORK/posteriors` | `posteriors/e2e-*` |
+| detection sweep (no model) | `node tests/accuracy/sweep_extraction.mjs --post WORK/posteriors --ref WORK/maestro --configs tests/accuracy/sweep_extraction.configs.mjs [--json OUT]` | stdout / JSON |
 | evaluation | `evaluate.py --work WORK --out WORK/eval/x FILES...` (config: `songs.json`) | `eval/x.json` |
 | Easy RH source analysis | `rh_source.py WORK OUT.json ids...` (needs the app run on stems) | JSON |
 | report | `make_report.py EVAL.json OUT.md --refs ... --sanity ... --prepend ... --append ...` | Markdown |
+
+`transcribe.mjs --override '{"piano":{...}}'` merges candidate values into the app's presets in the page, so candidate presets run through the full browser path.
 
 The separation oracle is the app run on `<id>.vocals.wav` / `<id>.accomp-nodrums.wav`, using the same
 transcribe.mjs. evaluate.py picks those runs up automatically when
