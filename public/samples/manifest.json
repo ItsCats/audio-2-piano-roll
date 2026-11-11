@@ -1,0 +1,1365 @@
+{
+ "version": 1,
+ "libraries": [
+  {
+   "id": "salamander",
+   "name": "Salamander Grand Piano V3 (Yamaha C5)",
+   "license": "CC-BY 3.0 \u2014 Alexander Holm",
+   "zones": [
+    {
+     "midi": 21,
+     "layers": [
+      {
+       "vel": 31,
+       "file": "grand/A0v2.mp3"
+      },
+      {
+       "vel": 49,
+       "file": "grand/A0v6.mp3"
+      },
+      {
+       "vel": 69,
+       "file": "grand/A0v9.mp3"
+      },
+      {
+       "vel": 93,
+       "file": "grand/A0v12.mp3"
+      },
+      {
+       "vel": 117,
+       "file": "grand/A0v15.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 24,
+     "layers": [
+      {
+       "vel": 31,
+       "file": "grand/C1v2.mp3"
+      },
+      {
+       "vel": 49,
+       "file": "grand/C1v6.mp3"
+      },
+      {
+       "vel": 69,
+       "file": "grand/C1v9.mp3"
+      },
+      {
+       "vel": 93,
+       "file": "grand/C1v12.mp3"
+      },
+      {
+       "vel": 117,
+       "file": "grand/C1v15.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 27,
+     "layers": [
+      {
+       "vel": 31,
+       "file": "grand/Ds1v2.mp3"
+      },
+      {
+       "vel": 49,
+       "file": "grand/Ds1v6.mp3"
+      },
+      {
+       "vel": 69,
+       "file": "grand/Ds1v9.mp3"
+      },
+      {
+       "vel": 93,
+       "file": "grand/Ds1v12.mp3"
+      },
+      {
+       "vel": 117,
+       "file": "grand/Ds1v15.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 30,
+     "layers": [
+      {
+       "vel": 31,
+       "file": "grand/Fs1v2.mp3"
+      },
+      {
+       "vel": 49,
+       "file": "grand/Fs1v6.mp3"
+      },
+      {
+       "vel": 69,
+       "file": "grand/Fs1v9.mp3"
+      },
+      {
+       "vel": 93,
+       "file": "grand/Fs1v12.mp3"
+      },
+      {
+       "vel": 117,
+       "file": "grand/Fs1v15.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 33,
+     "layers": [
+      {
+       "vel": 31,
+       "file": "grand/A1v2.mp3"
+      },
+      {
+       "vel": 49,
+       "file": "grand/A1v6.mp3"
+      },
+      {
+       "vel": 69,
+       "file": "grand/A1v9.mp3"
+      },
+      {
+       "vel": 93,
+       "file": "grand/A1v12.mp3"
+      },
+      {
+       "vel": 117,
+       "file": "grand/A1v15.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 36,
+     "layers": [
+      {
+       "vel": 31,
+       "file": "grand/C2v2.mp3"
+      },
+      {
+       "vel": 49,
+       "file": "grand/C2v6.mp3"
+      },
+      {
+       "vel": 69,
+       "file": "grand/C2v9.mp3"
+      },
+      {
+       "vel": 93,
+       "file": "grand/C2v12.mp3"
+      },
+      {
+       "vel": 117,
+       "file": "grand/C2v15.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 39,
+     "layers": [
+      {
+       "vel": 31,
+       "file": "grand/Ds2v2.mp3"
+      },
+      {
+       "vel": 49,
+       "file": "grand/Ds2v6.mp3"
+      },
+      {
+       "vel": 69,
+       "file": "grand/Ds2v9.mp3"
+      },
+      {
+       "vel": 93,
+       "file": "grand/Ds2v12.mp3"
+      },
+      {
+       "vel": 117,
+       "file": "grand/Ds2v15.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 42,
+     "layers": [
+      {
+       "vel": 31,
+       "file": "grand/Fs2v2.mp3"
+      },
+      {
+       "vel": 49,
+       "file": "grand/Fs2v6.mp3"
+      },
+      {
+       "vel": 69,
+       "file": "grand/Fs2v9.mp3"
+      },
+      {
+       "vel": 93,
+       "file": "grand/Fs2v12.mp3"
+      },
+      {
+       "vel": 117,
+       "file": "grand/Fs2v15.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 45,
+     "layers": [
+      {
+       "vel": 31,
+       "file": "grand/A2v2.mp3"
+      },
+      {
+       "vel": 49,
+       "file": "grand/A2v6.mp3"
+      },
+      {
+       "vel": 69,
+       "file": "grand/A2v9.mp3"
+      },
+      {
+       "vel": 93,
+       "file": "grand/A2v12.mp3"
+      },
+      {
+       "vel": 117,
+       "file": "grand/A2v15.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 48,
+     "layers": [
+      {
+       "vel": 31,
+       "file": "grand/C3v2.mp3"
+      },
+      {
+       "vel": 49,
+       "file": "grand/C3v6.mp3"
+      },
+      {
+       "vel": 69,
+       "file": "grand/C3v9.mp3"
+      },
+      {
+       "vel": 93,
+       "file": "grand/C3v12.mp3"
+      },
+      {
+       "vel": 117,
+       "file": "grand/C3v15.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 51,
+     "layers": [
+      {
+       "vel": 31,
+       "file": "grand/Ds3v2.mp3"
+      },
+      {
+       "vel": 49,
+       "file": "grand/Ds3v6.mp3"
+      },
+      {
+       "vel": 69,
+       "file": "grand/Ds3v9.mp3"
+      },
+      {
+       "vel": 93,
+       "file": "grand/Ds3v12.mp3"
+      },
+      {
+       "vel": 117,
+       "file": "grand/Ds3v15.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 54,
+     "layers": [
+      {
+       "vel": 31,
+       "file": "grand/Fs3v2.mp3"
+      },
+      {
+       "vel": 49,
+       "file": "grand/Fs3v6.mp3"
+      },
+      {
+       "vel": 69,
+       "file": "grand/Fs3v9.mp3"
+      },
+      {
+       "vel": 93,
+       "file": "grand/Fs3v12.mp3"
+      },
+      {
+       "vel": 117,
+       "file": "grand/Fs3v15.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 57,
+     "layers": [
+      {
+       "vel": 31,
+       "file": "grand/A3v2.mp3"
+      },
+      {
+       "vel": 49,
+       "file": "grand/A3v6.mp3"
+      },
+      {
+       "vel": 69,
+       "file": "grand/A3v9.mp3"
+      },
+      {
+       "vel": 93,
+       "file": "grand/A3v12.mp3"
+      },
+      {
+       "vel": 117,
+       "file": "grand/A3v15.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 60,
+     "layers": [
+      {
+       "vel": 31,
+       "file": "grand/C4v2.mp3"
+      },
+      {
+       "vel": 49,
+       "file": "grand/C4v6.mp3"
+      },
+      {
+       "vel": 69,
+       "file": "grand/C4v9.mp3"
+      },
+      {
+       "vel": 93,
+       "file": "grand/C4v12.mp3"
+      },
+      {
+       "vel": 117,
+       "file": "grand/C4v15.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 63,
+     "layers": [
+      {
+       "vel": 31,
+       "file": "grand/Ds4v2.mp3"
+      },
+      {
+       "vel": 49,
+       "file": "grand/Ds4v6.mp3"
+      },
+      {
+       "vel": 69,
+       "file": "grand/Ds4v9.mp3"
+      },
+      {
+       "vel": 93,
+       "file": "grand/Ds4v12.mp3"
+      },
+      {
+       "vel": 117,
+       "file": "grand/Ds4v15.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 66,
+     "layers": [
+      {
+       "vel": 31,
+       "file": "grand/Fs4v2.mp3"
+      },
+      {
+       "vel": 49,
+       "file": "grand/Fs4v6.mp3"
+      },
+      {
+       "vel": 69,
+       "file": "grand/Fs4v9.mp3"
+      },
+      {
+       "vel": 93,
+       "file": "grand/Fs4v12.mp3"
+      },
+      {
+       "vel": 117,
+       "file": "grand/Fs4v15.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 69,
+     "layers": [
+      {
+       "vel": 31,
+       "file": "grand/A4v2.mp3"
+      },
+      {
+       "vel": 49,
+       "file": "grand/A4v6.mp3"
+      },
+      {
+       "vel": 69,
+       "file": "grand/A4v9.mp3"
+      },
+      {
+       "vel": 93,
+       "file": "grand/A4v12.mp3"
+      },
+      {
+       "vel": 117,
+       "file": "grand/A4v15.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 72,
+     "layers": [
+      {
+       "vel": 31,
+       "file": "grand/C5v2.mp3"
+      },
+      {
+       "vel": 49,
+       "file": "grand/C5v6.mp3"
+      },
+      {
+       "vel": 69,
+       "file": "grand/C5v9.mp3"
+      },
+      {
+       "vel": 93,
+       "file": "grand/C5v12.mp3"
+      },
+      {
+       "vel": 117,
+       "file": "grand/C5v15.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 75,
+     "layers": [
+      {
+       "vel": 31,
+       "file": "grand/Ds5v2.mp3"
+      },
+      {
+       "vel": 49,
+       "file": "grand/Ds5v6.mp3"
+      },
+      {
+       "vel": 69,
+       "file": "grand/Ds5v9.mp3"
+      },
+      {
+       "vel": 93,
+       "file": "grand/Ds5v12.mp3"
+      },
+      {
+       "vel": 117,
+       "file": "grand/Ds5v15.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 78,
+     "layers": [
+      {
+       "vel": 31,
+       "file": "grand/Fs5v2.mp3"
+      },
+      {
+       "vel": 49,
+       "file": "grand/Fs5v6.mp3"
+      },
+      {
+       "vel": 69,
+       "file": "grand/Fs5v9.mp3"
+      },
+      {
+       "vel": 93,
+       "file": "grand/Fs5v12.mp3"
+      },
+      {
+       "vel": 117,
+       "file": "grand/Fs5v15.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 81,
+     "layers": [
+      {
+       "vel": 31,
+       "file": "grand/A5v2.mp3"
+      },
+      {
+       "vel": 49,
+       "file": "grand/A5v6.mp3"
+      },
+      {
+       "vel": 69,
+       "file": "grand/A5v9.mp3"
+      },
+      {
+       "vel": 93,
+       "file": "grand/A5v12.mp3"
+      },
+      {
+       "vel": 117,
+       "file": "grand/A5v15.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 84,
+     "layers": [
+      {
+       "vel": 31,
+       "file": "grand/C6v2.mp3"
+      },
+      {
+       "vel": 49,
+       "file": "grand/C6v6.mp3"
+      },
+      {
+       "vel": 69,
+       "file": "grand/C6v9.mp3"
+      },
+      {
+       "vel": 93,
+       "file": "grand/C6v12.mp3"
+      },
+      {
+       "vel": 117,
+       "file": "grand/C6v15.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 87,
+     "layers": [
+      {
+       "vel": 31,
+       "file": "grand/Ds6v2.mp3"
+      },
+      {
+       "vel": 49,
+       "file": "grand/Ds6v6.mp3"
+      },
+      {
+       "vel": 69,
+       "file": "grand/Ds6v9.mp3"
+      },
+      {
+       "vel": 93,
+       "file": "grand/Ds6v12.mp3"
+      },
+      {
+       "vel": 117,
+       "file": "grand/Ds6v15.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 90,
+     "layers": [
+      {
+       "vel": 31,
+       "file": "grand/Fs6v2.mp3"
+      },
+      {
+       "vel": 49,
+       "file": "grand/Fs6v6.mp3"
+      },
+      {
+       "vel": 69,
+       "file": "grand/Fs6v9.mp3"
+      },
+      {
+       "vel": 93,
+       "file": "grand/Fs6v12.mp3"
+      },
+      {
+       "vel": 117,
+       "file": "grand/Fs6v15.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 93,
+     "layers": [
+      {
+       "vel": 31,
+       "file": "grand/A6v2.mp3"
+      },
+      {
+       "vel": 49,
+       "file": "grand/A6v6.mp3"
+      },
+      {
+       "vel": 69,
+       "file": "grand/A6v9.mp3"
+      },
+      {
+       "vel": 93,
+       "file": "grand/A6v12.mp3"
+      },
+      {
+       "vel": 117,
+       "file": "grand/A6v15.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 96,
+     "layers": [
+      {
+       "vel": 31,
+       "file": "grand/C7v2.mp3"
+      },
+      {
+       "vel": 49,
+       "file": "grand/C7v6.mp3"
+      },
+      {
+       "vel": 69,
+       "file": "grand/C7v9.mp3"
+      },
+      {
+       "vel": 93,
+       "file": "grand/C7v12.mp3"
+      },
+      {
+       "vel": 117,
+       "file": "grand/C7v15.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 99,
+     "layers": [
+      {
+       "vel": 31,
+       "file": "grand/Ds7v2.mp3"
+      },
+      {
+       "vel": 49,
+       "file": "grand/Ds7v6.mp3"
+      },
+      {
+       "vel": 69,
+       "file": "grand/Ds7v9.mp3"
+      },
+      {
+       "vel": 93,
+       "file": "grand/Ds7v12.mp3"
+      },
+      {
+       "vel": 117,
+       "file": "grand/Ds7v15.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 102,
+     "layers": [
+      {
+       "vel": 31,
+       "file": "grand/Fs7v2.mp3"
+      },
+      {
+       "vel": 49,
+       "file": "grand/Fs7v6.mp3"
+      },
+      {
+       "vel": 69,
+       "file": "grand/Fs7v9.mp3"
+      },
+      {
+       "vel": 93,
+       "file": "grand/Fs7v12.mp3"
+      },
+      {
+       "vel": 117,
+       "file": "grand/Fs7v15.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 105,
+     "layers": [
+      {
+       "vel": 31,
+       "file": "grand/A7v2.mp3"
+      },
+      {
+       "vel": 49,
+       "file": "grand/A7v6.mp3"
+      },
+      {
+       "vel": 69,
+       "file": "grand/A7v9.mp3"
+      },
+      {
+       "vel": 93,
+       "file": "grand/A7v12.mp3"
+      },
+      {
+       "vel": 117,
+       "file": "grand/A7v15.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 108,
+     "layers": [
+      {
+       "vel": 31,
+       "file": "grand/C8v2.mp3"
+      },
+      {
+       "vel": 49,
+       "file": "grand/C8v6.mp3"
+      },
+      {
+       "vel": 69,
+       "file": "grand/C8v9.mp3"
+      },
+      {
+       "vel": 93,
+       "file": "grand/C8v12.mp3"
+      },
+      {
+       "vel": 117,
+       "file": "grand/C8v15.mp3"
+      }
+     ]
+    }
+   ],
+   "release": [
+    {
+     "midi": 21,
+     "file": "grand/rel1.mp3"
+    },
+    {
+     "midi": 22,
+     "file": "grand/rel2.mp3"
+    },
+    {
+     "midi": 23,
+     "file": "grand/rel3.mp3"
+    },
+    {
+     "midi": 24,
+     "file": "grand/rel4.mp3"
+    },
+    {
+     "midi": 25,
+     "file": "grand/rel5.mp3"
+    },
+    {
+     "midi": 26,
+     "file": "grand/rel6.mp3"
+    },
+    {
+     "midi": 27,
+     "file": "grand/rel7.mp3"
+    },
+    {
+     "midi": 28,
+     "file": "grand/rel8.mp3"
+    },
+    {
+     "midi": 29,
+     "file": "grand/rel9.mp3"
+    },
+    {
+     "midi": 30,
+     "file": "grand/rel10.mp3"
+    },
+    {
+     "midi": 31,
+     "file": "grand/rel11.mp3"
+    },
+    {
+     "midi": 32,
+     "file": "grand/rel12.mp3"
+    },
+    {
+     "midi": 33,
+     "file": "grand/rel13.mp3"
+    },
+    {
+     "midi": 34,
+     "file": "grand/rel14.mp3"
+    },
+    {
+     "midi": 35,
+     "file": "grand/rel15.mp3"
+    },
+    {
+     "midi": 36,
+     "file": "grand/rel16.mp3"
+    },
+    {
+     "midi": 37,
+     "file": "grand/rel17.mp3"
+    },
+    {
+     "midi": 38,
+     "file": "grand/rel18.mp3"
+    },
+    {
+     "midi": 39,
+     "file": "grand/rel19.mp3"
+    },
+    {
+     "midi": 40,
+     "file": "grand/rel20.mp3"
+    },
+    {
+     "midi": 41,
+     "file": "grand/rel21.mp3"
+    },
+    {
+     "midi": 42,
+     "file": "grand/rel22.mp3"
+    },
+    {
+     "midi": 43,
+     "file": "grand/rel23.mp3"
+    },
+    {
+     "midi": 44,
+     "file": "grand/rel24.mp3"
+    },
+    {
+     "midi": 45,
+     "file": "grand/rel25.mp3"
+    },
+    {
+     "midi": 46,
+     "file": "grand/rel26.mp3"
+    },
+    {
+     "midi": 47,
+     "file": "grand/rel27.mp3"
+    },
+    {
+     "midi": 48,
+     "file": "grand/rel28.mp3"
+    },
+    {
+     "midi": 49,
+     "file": "grand/rel29.mp3"
+    },
+    {
+     "midi": 50,
+     "file": "grand/rel30.mp3"
+    },
+    {
+     "midi": 51,
+     "file": "grand/rel31.mp3"
+    },
+    {
+     "midi": 52,
+     "file": "grand/rel32.mp3"
+    },
+    {
+     "midi": 53,
+     "file": "grand/rel33.mp3"
+    },
+    {
+     "midi": 54,
+     "file": "grand/rel34.mp3"
+    },
+    {
+     "midi": 55,
+     "file": "grand/rel35.mp3"
+    },
+    {
+     "midi": 56,
+     "file": "grand/rel36.mp3"
+    },
+    {
+     "midi": 57,
+     "file": "grand/rel37.mp3"
+    },
+    {
+     "midi": 58,
+     "file": "grand/rel38.mp3"
+    },
+    {
+     "midi": 59,
+     "file": "grand/rel39.mp3"
+    },
+    {
+     "midi": 60,
+     "file": "grand/rel40.mp3"
+    },
+    {
+     "midi": 61,
+     "file": "grand/rel41.mp3"
+    },
+    {
+     "midi": 62,
+     "file": "grand/rel42.mp3"
+    },
+    {
+     "midi": 63,
+     "file": "grand/rel43.mp3"
+    },
+    {
+     "midi": 64,
+     "file": "grand/rel44.mp3"
+    },
+    {
+     "midi": 65,
+     "file": "grand/rel45.mp3"
+    },
+    {
+     "midi": 66,
+     "file": "grand/rel46.mp3"
+    },
+    {
+     "midi": 67,
+     "file": "grand/rel47.mp3"
+    },
+    {
+     "midi": 68,
+     "file": "grand/rel48.mp3"
+    },
+    {
+     "midi": 69,
+     "file": "grand/rel49.mp3"
+    },
+    {
+     "midi": 70,
+     "file": "grand/rel50.mp3"
+    },
+    {
+     "midi": 71,
+     "file": "grand/rel51.mp3"
+    },
+    {
+     "midi": 72,
+     "file": "grand/rel52.mp3"
+    },
+    {
+     "midi": 73,
+     "file": "grand/rel53.mp3"
+    },
+    {
+     "midi": 74,
+     "file": "grand/rel54.mp3"
+    },
+    {
+     "midi": 75,
+     "file": "grand/rel55.mp3"
+    },
+    {
+     "midi": 76,
+     "file": "grand/rel56.mp3"
+    },
+    {
+     "midi": 77,
+     "file": "grand/rel57.mp3"
+    },
+    {
+     "midi": 78,
+     "file": "grand/rel58.mp3"
+    },
+    {
+     "midi": 79,
+     "file": "grand/rel59.mp3"
+    },
+    {
+     "midi": 80,
+     "file": "grand/rel60.mp3"
+    },
+    {
+     "midi": 81,
+     "file": "grand/rel61.mp3"
+    },
+    {
+     "midi": 82,
+     "file": "grand/rel62.mp3"
+    },
+    {
+     "midi": 83,
+     "file": "grand/rel63.mp3"
+    },
+    {
+     "midi": 84,
+     "file": "grand/rel64.mp3"
+    },
+    {
+     "midi": 85,
+     "file": "grand/rel65.mp3"
+    },
+    {
+     "midi": 86,
+     "file": "grand/rel66.mp3"
+    },
+    {
+     "midi": 87,
+     "file": "grand/rel67.mp3"
+    },
+    {
+     "midi": 88,
+     "file": "grand/rel68.mp3"
+    },
+    {
+     "midi": 89,
+     "file": "grand/rel69.mp3"
+    },
+    {
+     "midi": 90,
+     "file": "grand/rel70.mp3"
+    },
+    {
+     "midi": 91,
+     "file": "grand/rel71.mp3"
+    },
+    {
+     "midi": 92,
+     "file": "grand/rel72.mp3"
+    },
+    {
+     "midi": 93,
+     "file": "grand/rel73.mp3"
+    },
+    {
+     "midi": 94,
+     "file": "grand/rel74.mp3"
+    },
+    {
+     "midi": 95,
+     "file": "grand/rel75.mp3"
+    },
+    {
+     "midi": 96,
+     "file": "grand/rel76.mp3"
+    },
+    {
+     "midi": 97,
+     "file": "grand/rel77.mp3"
+    },
+    {
+     "midi": 98,
+     "file": "grand/rel78.mp3"
+    },
+    {
+     "midi": 99,
+     "file": "grand/rel79.mp3"
+    },
+    {
+     "midi": 100,
+     "file": "grand/rel80.mp3"
+    },
+    {
+     "midi": 101,
+     "file": "grand/rel81.mp3"
+    },
+    {
+     "midi": 102,
+     "file": "grand/rel82.mp3"
+    },
+    {
+     "midi": 103,
+     "file": "grand/rel83.mp3"
+    },
+    {
+     "midi": 104,
+     "file": "grand/rel84.mp3"
+    },
+    {
+     "midi": 105,
+     "file": "grand/rel85.mp3"
+    },
+    {
+     "midi": 106,
+     "file": "grand/rel86.mp3"
+    },
+    {
+     "midi": 107,
+     "file": "grand/rel87.mp3"
+    },
+    {
+     "midi": 108,
+     "file": "grand/rel88.mp3"
+    }
+   ],
+   "releaseGainDb": -30,
+   "pedal": {
+    "down": "grand/pedalD1.mp3",
+    "up": "grand/pedalU1.mp3"
+   },
+   "pedalGainDb": -22
+  },
+  {
+   "id": "upright-kw",
+   "name": "Upright Piano KW",
+   "license": "CC0 \u2014 freepats.zenvoid.org",
+   "zones": [
+    {
+     "midi": 24,
+     "layers": [
+      {
+       "vel": 96,
+       "file": "upright/C1.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 30,
+     "layers": [
+      {
+       "vel": 96,
+       "file": "upright/Fs1.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 35,
+     "layers": [
+      {
+       "vel": 96,
+       "file": "upright/B1.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 39,
+     "layers": [
+      {
+       "vel": 96,
+       "file": "upright/Ds2.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 42,
+     "layers": [
+      {
+       "vel": 96,
+       "file": "upright/Fs2.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 47,
+     "layers": [
+      {
+       "vel": 96,
+       "file": "upright/B2.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 51,
+     "layers": [
+      {
+       "vel": 96,
+       "file": "upright/Ds3.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 54,
+     "layers": [
+      {
+       "vel": 96,
+       "file": "upright/Fs3.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 57,
+     "layers": [
+      {
+       "vel": 96,
+       "file": "upright/A3.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 60,
+     "layers": [
+      {
+       "vel": 96,
+       "file": "upright/C4.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 63,
+     "layers": [
+      {
+       "vel": 96,
+       "file": "upright/Ds4.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 66,
+     "layers": [
+      {
+       "vel": 96,
+       "file": "upright/Fs4.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 69,
+     "layers": [
+      {
+       "vel": 96,
+       "file": "upright/A4.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 72,
+     "layers": [
+      {
+       "vel": 96,
+       "file": "upright/C5.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 75,
+     "layers": [
+      {
+       "vel": 96,
+       "file": "upright/Ds5.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 78,
+     "layers": [
+      {
+       "vel": 96,
+       "file": "upright/Fs5.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 81,
+     "layers": [
+      {
+       "vel": 96,
+       "file": "upright/A5.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 84,
+     "layers": [
+      {
+       "vel": 96,
+       "file": "upright/C6.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 87,
+     "layers": [
+      {
+       "vel": 96,
+       "file": "upright/Ds6.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 90,
+     "layers": [
+      {
+       "vel": 96,
+       "file": "upright/Fs6.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 93,
+     "layers": [
+      {
+       "vel": 96,
+       "file": "upright/A6.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 96,
+     "layers": [
+      {
+       "vel": 96,
+       "file": "upright/C7.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 99,
+     "layers": [
+      {
+       "vel": 96,
+       "file": "upright/Ds7.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 102,
+     "layers": [
+      {
+       "vel": 96,
+       "file": "upright/Fs7.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 105,
+     "layers": [
+      {
+       "vel": 96,
+       "file": "upright/A7.mp3"
+      }
+     ]
+    },
+    {
+     "midi": 107,
+     "layers": [
+      {
+       "vel": 96,
+       "file": "upright/B7.mp3"
+      }
+     ]
+    }
+   ],
+   "release": [],
+   "pedal": null
+  }
+ ]
+}
