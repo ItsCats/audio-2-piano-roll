@@ -191,3 +191,28 @@ const api = {
 };
 (window as unknown as { fx: typeof api }).fx = api;
 (document.getElementById('log') as HTMLElement).textContent = 'ready';
+
+// Full pipeline check: the real renderer with all effects on (and a decal, if available).
+import { PianoRollRenderer } from '../../src/lib/render/renderer';
+(window as unknown as { real: (t: number, theme?: Record<string, unknown>) => string }).real = (t, theme = {}) => {
+  const c = document.createElement('canvas');
+  c.width = W;
+  c.height = H;
+  const v = {
+    ...DEFAULT_VISUAL,
+    rightColor: '#b49cff',
+    leftColor: '#7dffb0',
+    decal: { ...DEFAULT_VISUAL.decal, source: 'pattern' as const },
+    effects: { ...DEFAULT_VISUAL.effects, bursts: true, dust: true, keyLight: true, outlineGlow: 0.6 },
+    ...theme,
+  };
+  const r = new PianoRollRenderer(c, v);
+  r.resize(W, H);
+  r.setNotes(
+    song.map((n, i) => ({ id: i + 1, midi: n.midi, start: n.start, dur: n.dur, vel: n.vel, hand: n.hand })),
+    [],
+    null,
+  );
+  r.render({ time: t });
+  return c.toDataURL('image/png');
+};

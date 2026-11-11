@@ -62,6 +62,8 @@ type Sprite = AnyCanvas | ImageBitmap;
 function sprite(key: string, w: number, h: number, paint: (c: Ctx2D, w: number, h: number) => void): Sprite {
   const hit = sprites.get(key);
   if (hit) return hit;
+  w = Math.max(1, Math.round(w));
+  h = Math.max(1, Math.round(h));
   if (spritePx + w * h > MAX_SPRITE_PX) {
     for (const sp of sprites.values()) if ('close' in sp) sp.close();
     sprites.clear(); // rebuilt sprites are pixel-identical, so this never changes the output
@@ -304,11 +306,13 @@ function keyBloomSprite(c: RGB, W: number, H: number): Sprite {
 // helpers
 // ---------------------------------------------------------------------------------------------
 
-/** Stable per-note seed (from pitch + onset, so live view and exports agree regardless of ids). */
-const noteSeed = (n: FxNote) => Math.floor(hash(n.midi * 7 + 3, Math.round(n.start * 1000)) * 0x3fffffff);
+/**
+ * Stable per-note seed (from pitch + onset, so live view and exports agree regardless of ids).
+ * Kept below 2^20 so `hash(seed + i, j)` stays within exact double-integer range.
+ */
+const noteSeed = (n: FxNote) => Math.floor(hash(n.midi * 7 + 3, Math.round(n.start * 1000)) * 0xfffff);
 
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
-
 
 // ---------------------------------------------------------------------------------------------
 // key light
@@ -331,6 +335,7 @@ export function drawKeyLight(ctx: Ctx2D, notes: FxNote[], now: number, g: FxGeom
   ctx.save();
   const top = Math.round(g.hitY);
   const h = Math.round(g.kbH);
+  if (h < 2) return;
   // 1) tint the keys (multiply: white keys take on the colour, black keys stay dark)
   ctx.globalCompositeOperation = 'multiply';
   for (const { n, c, e } of active) {
@@ -410,13 +415,13 @@ export function drawBursts(ctx: Ctx2D, notes: FxNote[], now: number, g: FxGeomet
 // ---------------------------------------------------------------------------------------------
 
 const DUST_DT = 1 / 30; // emission tick (s)
-const DUST_PER_TICK = 2; // particles per tick while the note sounds
+const DUST_PER_TICK = 3; // particles per tick while the note sounds
 const DUST_ONSET = 10; // extra particles in the onset puff
 const DUST_TAIL = 0.35; // emission continues (thinning) this long after note-off
 const DUST_LIFE_MIN = 1.5;
 const DUST_LIFE_MAX = 2.6; // TAIL + LIFE_MAX must stay <= DUST_LOOKBACK
 const DUST_CAP = 700; // max particles drawn per frame
-const DUST_LEVELS = 10; // brightness quantisation for batched grain drawing
+const DUST_LEVELS = 10; // brightness levels of the (cached) grain-core fill styles
 
 const STRANDS = 3;
 const strandVx = new Float64Array(STRANDS);
@@ -543,7 +548,7 @@ export function drawDust(ctx: Ctx2D, notes: FxNote[], now: number, g: FxGeometry
         // faint coloured smoke around some grains gives the streams a wispy body
         if (r0 < keepAll * 0.14) {
           const wd = (16 + 18 * r2) * sc * (0.6 + p);
-          ctx.globalAlpha = clamp01(fade * 0.16);
+          ctx.globalAlpha = clamp01(fade * 0.2);
           ctx.drawImage(wisp as CanvasImageSource, x - wd / 2, y - wd / 2, wd, wd);
         }
         // soft glow for the bigger / currently twinkling grains
@@ -555,7 +560,7 @@ export function drawDust(ctx: Ctx2D, notes: FxNote[], now: number, g: FxGeometry
         // crisp core
         ctx.globalAlpha = 1;
         ctx.fillStyle = (ci === 0 ? warmCore : ci === 1 ? goldCore : tintCore)[level];
-        const cs = Math.max(1, size * 0.62);
+        const cs = Math.max(1, size * 0.72);
         ctx.fillRect(x - cs / 2, y - cs / 2, cs, cs);
         // occasional bright glint
         if (twinkle > 0.82 && r4 < 0.35) {

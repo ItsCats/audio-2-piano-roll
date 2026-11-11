@@ -171,7 +171,7 @@ function perf() {
   const H = 1080;
   const ctx = canvas(W, H);
   const tintQ = q.get('tint');
-  const groups: Partial<DecalSettings>[] = [{ patternId: 'meadow' }, { patternId: 'sakura', tint: 0.4 }, { patternId: 'galaxy', anchor: 'screen' }].map((g) =>
+  const groups: Partial<DecalSettings>[] = (q.get('one') ? [{ patternId: 'meadow' }] : [{ patternId: 'meadow' }, { patternId: 'sakura', tint: 0.4 }, { patternId: 'galaxy', anchor: 'screen' }]).map((g) =>
     tintQ !== null ? { ...g, tint: Number(tintQ) } : g,
   );
   const notes = buildScene(W, H, 1, 150, groups);
@@ -188,7 +188,7 @@ function perf() {
   const t0 = performance.now();
   for (let f = 0; f < 60; f++) {
     background(ctx, W, H, 1);
-    for (const n of notes) n.y -= 2;
+    if (!q.get('still')) for (const n of notes) n.y -= 2;
     drawNotes(ctx, notes, 1, timing);
   }
   // force GPU/raster flush
@@ -370,6 +370,69 @@ if (mode === 'micro') {
     ctx.globalAlpha = 0.95;
     paintNoteDecal(ctx, n, 6, { image: tile, imageWidth: 512, imageHeight: 512, settings: n.settings, color: n.color, noteId: n.id, anchorY: n.y + n.h, scale: 1, active: false });
     ctx.globalAlpha = 1;
+  });
+  run('solidThenDecal', (n) => {
+    ctx.globalAlpha = 0.95;
+    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
+    ctx.fillStyle = '#88f';
+    ctx.fill();
+    paintNoteDecal(ctx, n, 6, { image: tile, imageWidth: 512, imageHeight: 512, settings: n.settings, color: n.color, noteId: n.id, anchorY: n.y + n.h, scale: 1, active: false });
+    ctx.globalAlpha = 1;
+  });
+  run('gradOnly', (n) => {
+    ctx.globalAlpha = 0.95;
+    const g = ctx.createLinearGradient(0, n.y, 0, n.y + n.h);
+    g.addColorStop(0, '#99f');
+    g.addColorStop(1, '#559');
+    ctx.fillStyle = g;
+    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  });
+  run('gradThenDecal', (n) => {
+    ctx.globalAlpha = 0.95;
+    const g = ctx.createLinearGradient(0, n.y, 0, n.y + n.h);
+    g.addColorStop(0, '#99f');
+    g.addColorStop(1, '#559');
+    ctx.fillStyle = g;
+    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
+    ctx.fill();
+    paintNoteDecal(ctx, n, 6, { image: tile, imageWidth: 512, imageHeight: 512, settings: n.settings, color: n.color, noteId: n.id, anchorY: n.y + n.h, scale: 1, active: false });
+    ctx.globalAlpha = 1;
+  });
+  run('gradThenPatInt', (n) => {
+    ctx.globalAlpha = 0.95;
+    const g = ctx.createLinearGradient(0, n.y, 0, n.y + n.h);
+    g.addColorStop(0, '#99f');
+    g.addColorStop(1, '#559');
+    ctx.fillStyle = g;
+    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    pat.setTransform({ a: 1, b: 0, c: 0, d: 1, e: Math.round(n.x), f: Math.round(n.y) });
+    ctx.fillStyle = pat;
+    ctx.fill();
+  });
+  const g1 = ctx.createLinearGradient(0, 0, 0, 1080);
+  g1.addColorStop(0, '#99f');
+  g1.addColorStop(1, '#559');
+  run('sharedGradThenPatInt', (n) => {
+    ctx.globalAlpha = 0.95;
+    ctx.fillStyle = g1;
+    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    pat.setTransform({ a: 1, b: 0, c: 0, d: 1, e: Math.round(n.x), f: Math.round(n.y) });
+    ctx.fillStyle = pat;
+    ctx.fill();
+  });
+  run('solidThenPatInt', (n) => {
+    ctx.fillStyle = '#88f';
+    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
+    ctx.fill();
+    pat.setTransform({ a: 1, b: 0, c: 0, d: 1, e: Math.round(n.x), f: Math.round(n.y) });
+    ctx.fillStyle = pat;
+    ctx.fill();
   });
   run('multiplyFill', (n) => {
     ctx.globalCompositeOperation = 'multiply';
