@@ -115,9 +115,10 @@ export function Transport() {
     t.set({ loop: next, loopEnabled: true });
   };
 
-  const handMode = t.hands.L && t.hands.R ? 'both' : t.hands.L ? 'L' : 'R';
+  const handMode = t.hands.L && t.hands.R ? 'both' : t.hands.L ? 'L' : t.hands.R ? 'R' : 'none';
   const cycleHands = () => {
     const next = handMode === 'both' ? { L: false, R: true } : handMode === 'R' ? { L: true, R: false } : { L: true, R: true };
+    // (from 'none' — practice with both hands — this returns to computer playing both)
     t.set({ hands: next });
   };
 
@@ -206,10 +207,14 @@ export function Transport() {
         </div>
 
         <div className="flex items-center gap-1">
-          <IconButton label={`Playing hands: ${handMode === 'both' ? 'both' : handMode === 'L' ? 'left only' : 'right only'}`} active={handMode !== 'both'} onClick={cycleHands}>
+          <IconButton
+            label={`Computer plays: ${handMode === 'both' ? 'both hands' : handMode === 'L' ? 'left hand only' : handMode === 'R' ? 'right hand only' : 'nothing (you play)'}`}
+            active={handMode !== 'both'}
+            onClick={cycleHands}
+          >
             <span className="flex items-center gap-0.5 text-[11px] font-semibold">
               <Hand size={15} />
-              {handMode === 'both' ? 'LR' : handMode}
+              {handMode === 'both' ? 'LR' : handMode === 'none' ? '–' : handMode}
             </span>
           </IconButton>
           <IconButton label="Loop section (shift-drag on the timeline)" active={t.loopEnabled} onClick={() => t.set({ loopEnabled: !t.loopEnabled, loop: t.loop ?? { start: player.getTime(), end: Math.min(duration, player.getTime() + 8) } })}>

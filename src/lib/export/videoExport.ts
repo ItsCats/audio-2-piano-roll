@@ -270,7 +270,9 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
     if (lead > 0) {
       const frames = Math.round(lead * sr);
       const data = new Float32Array(frames * 2);
-      await audioSource.add(new AudioSample({ data, format: 'f32-planar', numberOfChannels: 2, sampleRate: sr, timestamp: 0 }));
+      const silence = new AudioSample({ data, format: 'f32-planar', numberOfChannels: 2, sampleRate: sr, timestamp: 0 });
+      await audioSource.add(silence);
+      silence.close();
     }
     await renderOfflineChunks(
       {

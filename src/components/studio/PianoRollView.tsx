@@ -125,7 +125,8 @@ export function PianoRollView() {
         time: t,
         liveKeys: liveKeys.size ? liveKeys : undefined,
         keyMarks: marks,
-        mutedHands: { L: !tr.hands.L, R: !tr.hands.R },
+        // in practice mode the muted hands are the ones the user plays: keep them bright
+        mutedHands: tr.practiceActive ? undefined : { L: !tr.hands.L, R: !tr.hands.R },
         loop: tr.loopEnabled ? tr.loop : null,
         edit,
         countIn: countIn > 0 ? Math.ceil(countIn / (60 / (st.song?.tempo.bpm ?? 120) / tr.rate)) : 0,
