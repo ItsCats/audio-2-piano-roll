@@ -20,7 +20,9 @@ async function fetchModel(url: string): Promise<ArrayBuffer> {
   return res.arrayBuffer();
 }
 
-self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
+// onnxruntime-web starts its WASM threads as copies of this script (worker name em-pthread…); its own
+// message handler must stay in place there.
+if (!(self.name ?? '').startsWith('em-pthread')) self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
   const req = e.data;
   if (req.type !== 'track') return;
   let session: ort.InferenceSession | null = null;

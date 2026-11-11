@@ -42,8 +42,13 @@ export function useSeparationChoice(): {
   };
 }
 
-const EXPLAIN_BROWSER =
-  'Better melody and fewer false notes on songs with drums or singing; downloads a 13 MB model once and takes about 2–3× the song’s length';
+/** "about N× the song's length", from the measured seconds of work per minute of audio */
+export function lengthMultiple(estSecondsPerMinute: number): string {
+  const x = Math.max(1, Math.round(estSecondsPerMinute / 60));
+  return `about ${x}× the song’s length`;
+}
+const explainBrowser = (est: number) =>
+  `Better melody and fewer false notes on songs with drums or singing; downloads a 13 MB model once and takes ${lengthMultiple(est)}`;
 const EXPLAIN_SERVER = 'Better melody and fewer false notes on songs with drums or singing; runs on your processing server';
 
 export function SeparationOption({ className }: { className?: string }) {
@@ -76,7 +81,7 @@ export function SeparationOption({ className }: { className?: string }) {
             )}
           </span>
           <span id="sep-explain" className="text-[12px] leading-relaxed text-ink-300">
-            {avail.engine === 'server' ? EXPLAIN_SERVER : EXPLAIN_BROWSER}
+            {avail.engine === 'server' ? EXPLAIN_SERVER : explainBrowser(avail.browser.estSecondsPerMinute)}
           </span>
           {disabled && avail.reason && <span className="text-[11.5px] text-ink-400">Not available: {avail.reason}</span>}
           {lowMemory && (

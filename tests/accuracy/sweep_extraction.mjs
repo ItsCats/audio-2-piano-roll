@@ -36,7 +36,7 @@ const configFile = opt('configs', null);
 const jsonOut = opt('json', null);
 const tol = +opt('tol', '0.05');
 /** ONSET_LATENCY currently applied by pipeline.ts cleanNotes(); a config's `latency` shifts relative to it. */
-const APP_LATENCY = +opt('app-latency', '0.007');
+const APP_LATENCY = +opt('app-latency', '0');
 const TUNE = ['m-debussy-pas-neige', 'm-bach-bwv850', 'm-mozart-k280-1', 'm-chopin-noct15-1', 'm-chopin-ballade1'];
 const HOLDOUT = ['m-liszt-waldesrauschen'];
 /** Synthetic e2e benchmark (sweep_extraction.e2e.mjs --dump): reported separately, gates Bach >= 0.93, chords >= 0.87. */
@@ -138,11 +138,12 @@ function score(refMap, est) {
 
 function transcribe(d, cfg) {
   // { browser: 'piano' | 'sensitive' | 'pianoFirstPass' } scores the notes the browser produced in the dump run
-  if (cfg.browser) return d.meta.notes[cfg.browser].map((n) => ({ midi: n.midi, start: n.start }));
+  if (cfg.browser) return d.meta.notes?.[cfg.browser]?.map((n) => ({ midi: n.midi, start: n.start })) ?? null;
   const params = { ...EXTRACTION_PRESETS[cfg.preset ?? 'piano'], ...(cfg.params ?? {}) };
   const wopts = { ...toWorkerOptions(params), ...(cfg.extraction ?? {}) };
   const raw = extractNotes(d.frames, d.onsets, d.meta.nFrames, wopts);
-  const notes = cleanNotes(raw, d.rms, params, d.meta.duration);
+  // frames let cleanNotes apply the re-strike rule exactly as the app does (RESTRIKE / frameRise)
+  const notes = cleanNotes(raw, d.rms, params, d.meta.duration, { frames: d.frames, nFrames: d.meta.nFrames });
   const shift = cfg.latency === undefined ? 0 : APP_LATENCY - cfg.latency;
   return notes.map((n) => ({ midi: n.midi, start: Math.max(0, n.start + shift) }));
 }
@@ -164,7 +165,11 @@ const results = [];
 const t0 = Date.now();
 for (const cfg of configs) {
   const per = {};
-  for (const d of data) per[d.name] = score(d.ref, transcribe(d, cfg));
+  for (const d of data) {
+    const est = transcribe(d, cfg);
+    // (synthetic e2e-* pieces have no browser notes: a `browser` config skips them)
+    if (est) per[d.name] = score(d.ref, est);
+  }
   const tune = TUNE.filter((p) => per[p]).map((p) => per[p]);
   const hold = HOLDOUT.filter((p) => per[p]).map((p) => per[p]);
   const row = {

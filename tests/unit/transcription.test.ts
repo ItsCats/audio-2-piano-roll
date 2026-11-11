@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { extractNotes, DEFAULT_EXTRACTION } from '../../src/lib/transcription/noteExtraction';
 import { BP_FPS, BP_KEPT_FRAMES, frameToTime, timeToFrame } from '../../src/lib/transcription/constants';
 import { EXTRACTION_PRESETS, VOCAL_EXTRACTION, cleanNotes, drumOnsetMax, frameRise, melodyFromRaw } from '../../src/lib/transcription/pipeline';
@@ -124,18 +124,34 @@ describe('re-strike rise (frame posteriors)', () => {
     expect(cleanNotes(raw, rms, params, 10, { frames: ringing, nFrames: n })).toHaveLength(1);
     // without posteriors (older stored songs) the merge behaves as before
     expect(cleanNotes(raw, rms, params, 10)).toHaveLength(1);
+    // presets with a permissive continuation fold ("sensitive") do not use the test
+    const sens = { ...EXTRACTION_PRESETS.sensitive, continuationOnset: 0.5 };
+    expect(cleanNotes([ev(40, 10, 60, 0.9), ev(40, 60, 120, 0.45)], rms, sens, 10, { frames: struck, nFrames: n })).toHaveLength(
+      cleanNotes([ev(40, 10, 60, 0.9), ev(40, 60, 120, 0.45)], rms, sens, 10).length,
+    );
+  });
+
+  it('does not split off a rise right after a short first fragment (an unstable start of one note)', () => {
+    const fr = track(40, [[0, 0], [50, 0.4], [55, 0.35], [58, 0.75], [120, 0]]);
+    const raw = [ev(40, 50, 58, 0.9), ev(40, 58, 120, 0.45)];
+    expect(cleanNotes(raw, rms, params, 10, { frames: fr, nFrames: n })).toHaveLength(1);
   });
 });
 
-describe('drum-hit false low notes', () => {
+describe('drum-hit false low notes (rule enabled)', () => {
+  const enabled = DRUM_HIT_RULE.enabled;
+  beforeAll(() => {
+    DRUM_HIT_RULE.enabled = true;
+  });
+  afterAll(() => {
+    DRUM_HIT_RULE.enabled = enabled;
+  });
   const rms = new Float32Array(3000).fill(0.1);
   const params = EXTRACTION_PRESETS.mix;
   const fps = 100;
-  // frame index for a time in seconds (frameToTime is not uniform; search)
-  const frameAt = (t: number) => timeToFrame(t);
-  const ev = (midi: number, t: number, dur: number, onset = 0.55): RawNoteEvent => ({
-    startFrame: frameAt(t),
-    endFrame: frameAt(t + dur),
+  const ev = (midi: number, t: number, dur: number, onset = 0.5): RawNoteEvent => ({
+    startFrame: timeToFrame(t),
+    endFrame: timeToFrame(t + dur),
     midi,
     amplitude: 0.6,
     onset,
@@ -145,8 +161,15 @@ describe('drum-hit false low notes', () => {
     for (const h of hits) d[Math.round(h * fps)] = value;
     return d;
   }
-  // a sustained bass line on A1 (33) with E (40) under it, and a short C#2 (37) on a kick at 4.0 s
-  const bassLine = [ev(33, 2, 1.8, 0.9), ev(33, 4.5, 1.5, 0.9), ev(40, 3.0, 0.9, 0.9)];
+  /** 8-bit frame posteriors: each [midi, t, dur, level] block */
+  function frames(blocks: [number, number, number, number][]) {
+    const nFrames = timeToFrame(20);
+    const fr = new Uint8Array(nFrames * P);
+    for (const [m, t, d, v] of blocks) for (let f = timeToFrame(t); f < timeToFrame(t + d); f++) fr[f * P + m - 21] = Math.round(v * 255);
+    return { frames: fr, nFrames };
+  }
+  const bassLine = [ev(33, 2, 1.8, 0.9), ev(33, 4.5, 1.5, 0.9)];
+  const strong = DRUM_HIT_RULE.minHit + 10;
 
   it('drumOnsetMax reads the strongest hit in a window', () => {
     const d = drums([1, 1.5], 50);
@@ -157,25 +180,50 @@ describe('drum-hit false low notes', () => {
     expect(drumOnsetMax(d, 25, 30)).toBe(0);
   });
 
-  it('drops a short, weakly-onset low note that starts on a drum hit off the bass line', () => {
+  it('drops a short, weakly-onset low note that starts on a strong drum hit', () => {
     const raw = [...bassLine, ev(37, 4.0, 0.15)];
-    const kept = cleanNotes(raw, rms, params, 20, { drums: drums([4.0], DRUM_HIT_RULE.minHit + 10) });
+    const kept = cleanNotes(raw, rms, params, 20, { drums: drums([4.0], strong) });
     expect(kept.map((x) => x.midi)).not.toContain(37);
     expect(kept.filter((x) => x.midi === 33)).toHaveLength(2);
     // no drum envelope (server stems, unseparated audio): nothing is dropped
     expect(cleanNotes(raw, rms, params, 20).map((x) => x.midi)).toContain(37);
-    // a soft hit is not enough
+    // a soft hit, or a hit 60 ms away, is not enough
     expect(cleanNotes(raw, rms, params, 20, { drums: drums([4.0], DRUM_HIT_RULE.minHit - 10) }).map((x) => x.midi)).toContain(37);
+    expect(cleanNotes(raw, rms, params, 20, { drums: drums([4.06], strong) }).map((x) => x.midi)).toContain(37);
   });
 
-  it('keeps bass notes on the beat: same pitch class as the bass line, long, or confidently onset', () => {
+  it('keeps notes on the beat that ring on, have a confident onset, or lie above the drum register', () => {
     const d = drums([4.0], 120);
-    const cases: RawNoteEvent[] = [
-      ev(45, 4.0, 0.15), // A2: the bass line's pitch class, an octave up
-      ev(37, 4.0, 0.6), // rings on
-      ev(37, 4.0, 0.15, 0.85), // confident onset
-      ev(55, 4.0, 0.15), // above the drum register
-    ];
+    const cases: RawNoteEvent[] = [ev(37, 4.0, 0.6), ev(37, 4.0, 0.15, 0.85), ev(55, 4.0, 0.15)];
     for (const c of cases) expect(cleanNotes([...bassLine, c], rms, params, 20, { drums: d }).some((x) => x.midi === c.midi && Math.abs(x.start - 4) < 0.02)).toBe(true);
+    // ... or continue the bass line's pitch class (C#1 sounding until just before the C#2)
+    const line = [ev(25, 3.0, 0.97, 0.9), ev(33, 4.5, 1.5, 0.9)];
+    expect(cleanNotes([...line, ev(37, 4.0, 0.15)], rms, params, 20, { drums: d }).some((x) => x.midi === 37)).toBe(true);
+    expect(cleanNotes([...line.slice(1), ev(26, 3.0, 0.97, 0.9), ev(37, 4.0, 0.15)], rms, params, 20, { drums: d }).some((x) => x.midi === 37)).toBe(false);
+  });
+
+  it('with frame posteriors: keeps a clearly pitched short bass note, drops a broadband thump', () => {
+    const d = drums([4.0], strong);
+    const pitched = frames([[37, 4.0, 0.15, 0.7]]);
+    const thump = frames([[37, 4.0, 0.15, 0.7], [36, 4.0, 0.05, 0.5], [38, 4.0, 0.05, 0.45]]);
+    const weak = frames([[37, 4.0, 0.15, 0.35]]);
+    const has37 = (ctx: Parameters<typeof cleanNotes>[4]) => cleanNotes([...bassLine, ev(37, 4.0, 0.15)], rms, params, 20, ctx).some((x) => x.midi === 37);
+    expect(has37({ drums: d, ...pitched })).toBe(true);
+    expect(has37({ drums: d, ...thump })).toBe(false);
+    expect(has37({ drums: d, ...weak })).toBe(false);
+  });
+});
+
+describe('drum-hit filter default', () => {
+  it('is off by default: a drum envelope changes nothing', () => {
+    expect(DRUM_HIT_RULE.enabled).toBe(false);
+    const ev = (midi: number, t: number, dur: number, onset: number): RawNoteEvent => ({ startFrame: timeToFrame(t), endFrame: timeToFrame(t + dur), midi, amplitude: 0.6, onset });
+    const raw = [ev(33, 2, 1.8, 0.9), ev(37, 4.0, 0.15, 0.5)];
+    const d = new Uint8Array(2000);
+    d[400] = 200;
+    const rms = new Float32Array(3000).fill(0.1);
+    const strip = (ns: { midi: number; start: number; dur: number }[]) => ns.map(({ midi, start, dur }) => ({ midi, start, dur }));
+    expect(strip(cleanNotes(raw, rms, EXTRACTION_PRESETS.mix, 20, { drums: d }))).toEqual(strip(cleanNotes(raw, rms, EXTRACTION_PRESETS.mix, 20)));
+    expect(cleanNotes(raw, rms, EXTRACTION_PRESETS.mix, 20, { drums: d })).toHaveLength(2);
   });
 });

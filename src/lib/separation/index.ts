@@ -6,11 +6,12 @@
  *   vocals  — stem 3
  *   accomp  — stems 1 + 2 (bass + other: no drums, no vocals)
  * plus a vocal-presence estimate so instrumentals can skip the vocal-melody path, and the onset
- * envelope of the drums stem (stem 0; the drum audio itself is not kept), which the pipeline uses
- * to drop the false low notes that drum hits leaking into the accompaniment produce.
+ * envelope of the drums stem (stem 0; the drum audio itself is not kept), stored with the posteriors
+ * for the drum-hit false-note filter (music/cleanup.ts DRUM_HIT_RULE, measured and currently off).
  */
 import { decodeToRate, mixToMono } from '../transcription/decode';
 import { DEFAULT_STEP, DRUM_ENV_FPS, SCNET_RATE, planSegments, vocalPresence } from './dsp';
+import { wasmThreads } from '../isolation';
 
 export { DRUM_ENV_FPS };
 import type { WorkerResponse, WorkerStats } from './protocol';
@@ -36,6 +37,8 @@ export interface SeparationResult {
   drumOnsets?: Uint8Array;
   engine: 'scnet-browser' | 'scnet-server';
   ms: number;
+  /** WASM threads the browser separation actually used (absent for server stems) */
+  threads?: number;
 }
 
 export interface SeparationSupport {
@@ -50,11 +53,22 @@ export const SCNET_MODEL_PATH = 'models/scnet/scnet.int8.onnx';
 export const SCNET_MODEL_SHA256 = '98228931494151762a1c4ab1ec7899a894b1f81fd4a509921a9d2f9bacc50845';
 export const SCNET_MODEL_BYTES = 12_900_277;
 /**
- * Measured wall time per minute of audio, single-threaded WASM in headless Chromium on a shared
+ * Measured wall time per minute of audio, SINGLE-THREADED WASM in headless Chromium on a shared
  * 4-core x86 box (tests/e2e/separation.mjs: 127.5 s/min on two 90 s songs, 170 s/min on a 30 s excerpt
  * where model load weighs more). Real desktops are usually faster.
  */
 export const EST_SECONDS_PER_MINUTE = 130;
+/**
+ * Speed-up over one thread by WASM thread count (index = threads), measured on the same box
+ * (tests/e2e/isolation.mjs bench): 137 s/min with 1 thread, 72.9 with 2, ~57.5 with 3; 4 assumes a
+ * free 4th core.
+ */
+const SPEEDUP = [1, 1, 1.9, 2.4, 2.6];
+
+/** WASM threads the separation worker will use here (it needs a cross-origin-isolated page). */
+export function separationThreads(): number {
+  return wasmThreads(4);
+}
 
 // a tiny module using a v128 instruction: onnxruntime-web 1.31 ships SIMD builds only
 const SIMD_PROBE = new Uint8Array([
@@ -73,7 +87,7 @@ function isMobileDevice(): boolean {
 
 /** Whether in-browser separation can run here, and whether it is a good idea on this device. */
 export function separationSupport(): SeparationSupport {
-  const est = EST_SECONDS_PER_MINUTE;
+  const est = Math.round(EST_SECONDS_PER_MINUTE / SPEEDUP[Math.min(4, separationThreads())]);
   if (typeof WebAssembly !== 'object' || typeof Worker === 'undefined') {
     return { ok: false, recommended: false, reason: 'This browser has no WebAssembly or Web Worker support.', estSecondsPerMinute: est };
   }
@@ -224,6 +238,7 @@ export async function separateStems(
     drumOnsets: raw.drumOnsets,
     engine: 'scnet-browser',
     ms: performance.now() - t0,
+    threads: raw.stats.threads,
   };
 }
 

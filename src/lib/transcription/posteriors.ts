@@ -6,8 +6,8 @@ export interface StoredPosteriors {
   rms: Float32Array;
   /**
    * Separated songs (in-browser SCNet): onset strength of the drums stem, 8-bit at
-   * DRUM_ENV_FPS (separation/dsp.ts drumOnsetEnvelope). Re-detection uses it to drop the false
-   * low notes that drum hits leaking into the accompaniment produce. ~6 KB per minute.
+   * DRUM_ENV_FPS (separation/dsp.ts drumOnsetEnvelope), for the drum-hit false-note filter
+   * (music/cleanup.ts DRUM_HIT_RULE, currently off). ~6 KB per minute.
    */
   drums?: Uint8Array;
   /**

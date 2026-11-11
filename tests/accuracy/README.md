@@ -24,6 +24,13 @@ piano_transcription_inference, remotezip). Node 22 + Playwright Chromium.
 | evaluation | `evaluate.py --work WORK --out WORK/eval/x FILES...` (config: `songs.json`) | `eval/x.json` |
 | Easy RH source analysis | `rh_source.py WORK OUT.json ids...` (needs the app run on stems) | JSON |
 | report | `make_report.py EVAL.json OUT.md --refs ... --sanity ... --prepend ... --append ...` | Markdown |
+| separated app path (in-browser SCNet + vocal melody) | `node tests/accuracy/transcribe.mjs --separate --out WORK/sep --presets mix FILES...` (~2.5 GB, one run at a time) | `sep/<id>.<preset>.json` |
+| offline melody / arrangement regeneration from saved runs with posteriors | `node tests/accuracy/melody_regen.mjs [--keep-base] OUTDIR RUN.json ...` (env `MELODY_OPTS` = JSON MelodyOptions overrides) | `OUTDIR/<id>.json` (base/easy/medium/hard/vocalNotes/speech) |
+| melody evaluation | `melody_eval.py --work WORK [--out OUT.json] RUN.json ...` | Easy/Medium RH, melody line and ceiling as RPA/RCA/OA/OA-chroma; RPA/RCA on stable-periodicity frames; RH register, LH clearance, speech-section stats, Easy LH bass RCA |
+| CREPE-tiny ONNX export (parity-checked) | `crepe_export.py OUT.onnx` | ONNX file |
+| CREPE + Basic Pitch vocal path in Chromium (speed, RSS) | `node tests/accuracy/crepe_track.mjs --out WORK/crepe [--hop 10] [--no-bp] [--coi] ID=VOCALS.wav ...` | `crepe/<id>.*.json` |
+| CREPE line variants without re-running models | `node tests/accuracy/crepe_lines.mjs --in DIR --out DIR2 [--variants FILE.mjs]` | `DIR2/*` |
+| CREPE parity vs torchcrepe / pYIN references / scoring | `crepe_eval.py parity STEM.wav X.crepe.json`; `crepe_eval.py pyin OUTDIR id=STEM.wav ...`; `crepe_eval.py score --tracks DIR --work WORK --pyin-demucs D1 --pyin-scnet D2 ids...` | stdout / JSON (CREPE reference is circular; pYIN-Demucs is the independent check; P\|V and note-onset F1) |
 
 `transcribe.mjs --override '{"piano":{...}}'` merges candidate values into the app's presets in the page, so candidate presets run through the full browser path.
 
@@ -37,3 +44,17 @@ Build the oracle inputs from the stems (16-bit stereo, 44.1 kHz; the stems are s
     ffmpeg -i $S/vocals.wav -c:a pcm_s16le WORK/oracle/<id>.vocals.wav
     ffmpeg -i $S/bass.wav -i $S/guitar.wav -i $S/piano.wav -i $S/other.wav \
       -filter_complex amix=inputs=4:normalize=0 -c:a pcm_s16le WORK/oracle/<id>.accomp-nodrums.wav
+
+## Notes on the separated path
+
+- Easy/Medium move the sung line by octaves on purpose (median E4–E5, at least 5 semitones above the
+  left hand), so score them with RCA / OA-chroma; RPA is only meaningful for Hard and the melody line.
+- Separated songs store the drums stem's onset envelope with the posteriors (`StoredPosteriors.drums`,
+  8-bit at 100 fps, `separation/dsp.ts drumOnsetEnvelope`). The drum-hit false-note filter
+  (`music/cleanup.ts DRUM_HIT_RULE`) is off by default because it lowered bass RCA; flip `enabled` to
+  re-measure.
+- `sweep_extraction.mjs` passes the frame posteriors to `cleanNotes`, so it scores the bass re-strike
+  rule (`RESTRIKE`) exactly as the app applies it.
+- The CREPE-tiny tracker (`src/lib/pitch`) is built and measured but not wired into the app: against
+  the independent pYIN-on-Demucs reference its gain was small and mixed (+0.02 RPA mean, worse on one
+  song of five).

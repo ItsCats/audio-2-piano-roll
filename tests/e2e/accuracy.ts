@@ -15,7 +15,7 @@ function toB64(u8: Uint8Array): string {
   return btoa(s);
 }
 
-async function transcribeUrl(url: string, preset: Preset, withPosteriors = false) {
+async function transcribeUrl(url: string, preset: Preset, withPosteriors = false, separate = false) {
   const t0 = performance.now();
   const blob = await (await fetch(url)).blob();
   const fetchMs = performance.now() - t0;
@@ -23,14 +23,20 @@ async function transcribeUrl(url: string, preset: Preset, withPosteriors = false
   let last = performance.now();
   let lastStage = '';
   const t1 = performance.now();
-  const res = await transcribeAudio(blob, EXTRACTION_PRESETS[preset], (e) => {
-    if (e.stage !== lastStage) {
-      const now = performance.now();
-      if (lastStage) stageTimes[lastStage] = (stageTimes[lastStage] ?? 0) + now - last;
-      last = now;
-      lastStage = e.stage;
-    }
-  });
+  const res = await transcribeAudio(
+    blob,
+    EXTRACTION_PRESETS[preset],
+    (e) => {
+      if (e.stage !== lastStage) {
+        const now = performance.now();
+        if (lastStage) stageTimes[lastStage] = (stageTimes[lastStage] ?? 0) + now - last;
+        last = now;
+        lastStage = e.stage;
+      }
+    },
+    undefined,
+    { separate },
+  );
   const transcribeMs = performance.now() - t1;
   if (lastStage) stageTimes[lastStage] = (stageTimes[lastStage] ?? 0) + performance.now() - last;
   const t2 = performance.now();
@@ -38,6 +44,7 @@ async function transcribeUrl(url: string, preset: Preset, withPosteriors = false
   const arrangeMs = performance.now() - t2;
   return {
     preset,
+    separate,
     params: EXTRACTION_PRESETS[preset],
     duration: res.duration,
     tempo: { bpm: res.tempo.bpm, confidence: res.tempo.confidence, beatsPerBar: res.tempo.beatsPerBar, downbeatIndex: res.tempo.downbeatIndex, beats: res.tempo.beats.map((b) => +b.toFixed(4)) },

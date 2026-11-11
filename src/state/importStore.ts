@@ -358,9 +358,8 @@ export const useImport = create<ImportState>((set, get) => {
     update({ warnings: result.info.warnings, stage: 'saving', progress: null, detail: 'Saving to your library' });
     try {
       await saveAudio(song.id, original, meta.source.fileName ?? meta.title);
-      // the vocal stem's posteriors ride along in the same record (same store and key), so a later
-      // re-detection can rebuild the melody line from them
-      await savePosteriors(song.id, result.melodyPosteriors ? { ...result.posteriors, melody: result.melodyPosteriors } : result.posteriors);
+      // (separated songs: includes the drums stem's onset envelope)
+      await savePosteriors(song.id, result.posteriors);
     } catch (err) {
       song.hasAudio = false;
       song.hasPosteriors = false;

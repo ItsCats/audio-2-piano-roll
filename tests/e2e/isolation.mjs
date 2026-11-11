@@ -5,8 +5,9 @@
  *   npx vite build --outDir /tmp/p2v-dist
  *   node tests/e2e/isolation.mjs app --dist /tmp/p2v-dist --audio excerpt.mp3 --image bg.png [--port 5391] [--skip-import]
  *
- *   # separation speed and peak RSS, 1 thread (not isolated) vs N threads (isolated), dev server
- *   node tests/e2e/isolation.mjs bench --audio excerpt.mp3 [--threads 1,3,4] [--port 5392]
+ *   # separation speed and peak RSS, not isolated (1 thread) vs isolated (the worker's own
+ *   # min(4, cores - 1) rule), dev server
+ *   node tests/e2e/isolation.mjs bench --audio excerpt.mp3 [--runs single,isolated] [--port 5392]
  *
  * `app` checks: crossOriginIsolated on every app route and NOT on /import/youtube; full page loads
  * when entering/leaving the YouTube route (and none between other routes); the legacy
@@ -15,8 +16,8 @@
  * image upload; the YouTube tab UI. Audio and images are passed by path (never copied into the
  * repo; songs may be copyrighted). Prints one PASS/FAIL line per check and a JSON summary.
  *
- * `bench` thread counts other than 1 use Chromium's hardware-concurrency override, so the worker's
- * min(4, cores - 1) rule picks them; the result reports the thread count the worker really used.
+ * `bench` reports the thread count the worker really used (Chromium's hardware-concurrency
+ * override does not reach dedicated workers, so other counts can't be forced from here).
  */
 import { spawn, execSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -87,6 +88,8 @@ async function appMode() {
   const image = opt('image', null);
   const port = +opt('port', '5391');
   const skipImport = flag('skip-import');
+  const onlyImport = flag('only-import');
+  const verbose = flag('verbose');
   if (!dist || !fs.existsSync(path.join(dist, 'index.html'))) throw new Error('--dist DIR (a vite build) is required');
   const server = spawn('python3', [path.join(root, 'tests/e2e/isolation.server.py'), dist, path.join(root, 'netlify.toml'), String(port)], { stdio: ['ignore', 'ignore', 'pipe'] });
   let serverErr = '';
@@ -120,7 +123,7 @@ async function appMode() {
     const sameDoc = () => page.evaluate(() => window.__sameDoc === true);
     const settle = async () => {
       await page.waitForLoadState('load');
-      await page.waitForFunction(() => !!document.querySelector('main') && !document.querySelector('main .animate-spin'), null, { timeout: 30000 });
+      await page.waitForFunction(() => !!document.querySelector('main')?.firstElementChild && !document.querySelector('main .animate-spin'), null, { timeout: 30000 });
       await page.waitForTimeout(400);
     };
 
@@ -133,9 +136,10 @@ async function appMode() {
       );
     });
 
+    page.on('worker', (w) => verbose && console.error(`[worker] ${w.url().slice(-60)}`));
     // 1. every route: isolation state and a clean render
     const routes = ['/', '/import', '/studio', '/library', '/settings', '/accuracy', '/credits', '/import/youtube', '/studio/does-not-exist'];
-    for (const r of routes) {
+    for (const r of onlyImport ? [] : routes) {
       await page.goto(base + r);
       await settle();
       const isolated = await coi();
@@ -150,6 +154,7 @@ async function appMode() {
     }
     check('no duplicate header rules in netlify.toml for any tested path', !/DUPLICATE/.test(serverErr), serverErr.trim());
 
+    if (!onlyImport) {
     // 2. entering / leaving the YouTube route
     await page.goto(base + '/import');
     await settle();
@@ -160,6 +165,7 @@ async function appMode() {
     await page.waitForURL(/\/import\/youtube$/);
     await settle();
     check('Import → YouTube tab is a full page load, not isolated', !(await sameDoc()) && !(await coi()));
+    await page.waitForSelector('input#yt', { timeout: 15000 }).catch(() => undefined);
     const ytUi = await page.evaluate(() => ({
       tabs: [...document.querySelectorAll('[role=tab]')].map((t) => `${t.textContent?.trim()}${t.getAttribute('aria-selected') === 'true' ? '*' : ''}`),
       urlField: !!document.querySelector('input#yt'),
@@ -256,6 +262,8 @@ async function appMode() {
       await page.keyboard.press('Escape');
     }
 
+    }
+
     // 7. audio import with separation (Full song preset → "Separate vocals & drums" ticked)
     if (audio && !skipImport) {
       await page.goto(base + '/import');
@@ -273,6 +281,7 @@ async function appMode() {
         const d = await page.evaluate(() => document.querySelector('[aria-live=polite] p.mt-0\\.5')?.textContent ?? '').catch(() => '');
         if (d !== lastDetail) {
           lastDetail = d;
+          if (verbose) console.error(`[import ${((Date.now() - t0) / 1000).toFixed(1)} s] ${d}`);
           const key = d.replace(/[\d.,]+/g, '#').replace(/ · .*$/, '');
           marks[key] ??= (Date.now() - t0) / 1000;
           if (/failed/i.test(d)) break;
@@ -288,6 +297,45 @@ async function appMode() {
       summary.import = { totalSec, separatingSec: sepStart && sepEnd ? +(sepEnd - sepStart).toFixed(1) : null, rssBaseMB: Math.round(rss.base), rssPeakMB: peak, marks, loadavg: os.loadavg().map((x) => +x.toFixed(2)) };
       check('audio import with separation reaches the studio, isolated', /\/studio\//.test(page.url()) && (await coi()) && errs.length === 0, { ...summary.import, errs });
     }
+
+    // 8. YouTube tab opened while an import runs: no reload (it would cancel the import), so the
+    //    document stays isolated and the tab offers to load the player once the import is done
+    if (audio) {
+      await page.goto(base + '/import');
+      await settle();
+      const sepBox = page.getByRole('checkbox', { name: /Separate vocals/ });
+      const was = await sepBox.isChecked().catch(() => false);
+      if (was) await sepBox.uncheck(); // quicker import; restored below
+      await page.setInputFiles('input[type=file]', audio);
+      await page.waitForSelector('[aria-live=polite]');
+      await mark();
+      await page.getByRole('tab', { name: 'YouTube' }).click();
+      await page.waitForURL(/\/import\/youtube$/);
+      await page.fill('input#yt', 'https://www.youtube.com/watch?v=aqz-KE-bpKQ');
+      const btn = page.getByRole('button', { name: 'Load the video player' });
+      await btn.waitFor({ timeout: 10000 });
+      const during = { sameDoc: await sameDoc(), isolated: await coi(), disabled: await btn.isDisabled(), iframe: await page.evaluate(() => !!document.querySelector('iframe')) };
+      check('YouTube tab during an import: same document, player deferred', during.sameDoc && during.isolated && during.disabled && !during.iframe, during);
+      await page.waitForFunction(() => !document.querySelector('[aria-live=polite]') || /complete|failed/i.test(document.querySelector('[aria-live=polite]')?.textContent ?? ''), null, { timeout: 600000 });
+      await page.waitForTimeout(1500); // an import started on the Import page jumps to its song when done
+      if (/\/import\/youtube/.test(page.url())) {
+        await btn.click();
+        await page.waitForLoadState('load');
+        await settle();
+        const after = { sameDoc: await sameDoc(), isolated: await coi(), url: await page.inputValue('input#yt').catch(() => null) };
+        check('after the import: "Load the video player" reloads without isolation, keeps the link', !after.sameDoc && !after.isolated && after.url?.includes('aqz-KE-bpKQ'), after);
+      } else {
+        await settle();
+        check('after the import: jumped to the new song, isolated', /\/studio\/.+/.test(page.url()) && (await coi()), page.url());
+      }
+      if (was) {
+        await page.goto(base + '/import');
+        await settle();
+        await page.getByRole('checkbox', { name: /Separate vocals/ }).check();
+      }
+      const errs = takeErrors();
+      check('busy-import YouTube steps: no console errors', errs.length === 0, errs.join(' | '));
+    }
   } finally {
     await browser.close();
     server.kill();
@@ -298,7 +346,7 @@ async function appMode() {
 async function benchMode() {
   const audio = opt('audio', null);
   const port = +opt('port', '5392');
-  const threads = (opt('threads', '1,3') || '1').split(',').map(Number);
+  const runs = (opt('runs', 'single,isolated') || 'single').split(',');
   if (!audio) throw new Error('--audio FILE is required');
   const { createServer } = await import('vite');
   const plugin = {
@@ -316,20 +364,17 @@ async function benchMode() {
   const browser = await launch();
   const out = [];
   try {
-    for (const n of threads) {
+    for (const run of runs) {
+      const isolated = run === 'isolated';
       // fresh page per run: a separation worker's WASM heap is returned when it is terminated
       const page = await browser.newPage();
       page.on('pageerror', (e) => console.error('[pageerror]', e.message));
       page.on('console', (m) => m.type() === 'error' && console.error('[console]', m.text().slice(0, 300)));
-      if (n > 1) {
-        const cdp = await page.context().newCDPSession(page);
-        await cdp.send('Emulation.setHardwareConcurrencyOverride', { hardwareConcurrency: n + 1 });
-      }
-      await page.goto(`http://localhost:${port}/tests/e2e/isolation.html${n > 1 ? '?coi=1' : ''}`);
+      await page.goto(`http://localhost:${port}/tests/e2e/isolation.html${isolated ? '?coi=1' : ''}`);
       await page.waitForFunction(() => document.getElementById('log')?.textContent === 'ready', null, { timeout: 180000 });
       const rss = peakSampler();
       const r = await page.evaluate((u) => window.bench(u), `http://localhost:${port}/__isoaudio`);
-      r.requestedThreads = n;
+      r.run = run;
       r.rssBaseMB = Math.round(rss.base);
       r.rssPeakMB = rss.stop();
       r.loadavg = os.loadavg().map((x) => +x.toFixed(2));

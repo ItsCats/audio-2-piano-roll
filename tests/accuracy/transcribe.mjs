@@ -3,10 +3,14 @@
  * in a Web Worker → extraction → cleanup → hands → beats → key) plus the Easy/Medium/Hard
  * arrangement generator on local audio files, in Playwright Chromium.
  *
- *   node tests/accuracy/transcribe.mjs --out DIR [--port 5302] [--presets piano,mix] [--posteriors] song1.mp3 [song2.mp3 ...]
+ *   node tests/accuracy/transcribe.mjs --out DIR [--port 5302] [--presets piano,mix] [--posteriors] [--separate] song1.mp3 [song2.mp3 ...]
  *   node tests/accuracy/transcribe.mjs --dump-posteriors DIR [--port 5302] song1.wav [...]
  *
  * Writes DIR/<basename>.<preset>.json.
+ *
+ * --separate runs the shipped separated path (transcribeAudio(..., { separate: true }): in-browser
+ * SCNet, accompaniment + vocal melody). It needs ~2.5 GB per run and ~2 min per minute of audio
+ * single-threaded (the harness page is not cross-origin isolated); run one at a time.
  *
  * --override '{"piano":{...}}' merges partial ExtractionParams into the app's EXTRACTION_PRESETS
  * in the page before transcribing (candidate presets through the full browser path).
@@ -45,11 +49,12 @@ const outDir = opt('out', dumpDir);
 const port = +opt('port', '5302');
 const presets = opt('presets', 'piano,mix').split(',');
 const withPosteriors = flag('posteriors');
+const separate = flag('separate');
 const override = JSON.parse(opt('override', 'null'));
 const force = flag('force');
 const songs = args;
 if (!outDir || !songs.length) {
-  console.error('usage: node tests/accuracy/transcribe.mjs --out DIR [--port N] [--presets piano,mix] [--posteriors] [--force] files...');
+  console.error('usage: node tests/accuracy/transcribe.mjs --out DIR [--port N] [--presets piano,mix] [--posteriors] [--separate] [--force] files...');
   console.error('       node tests/accuracy/transcribe.mjs --dump-posteriors DIR [--port N] [--force] files...');
   process.exit(2);
 }
@@ -152,8 +157,8 @@ try {
       let r;
       try {
         r = await page.evaluate(
-          ([u, p, w]) => window.transcribeUrl(u, p, w),
-          [`http://localhost:${port}/__accaudio/${i}`, preset, withPosteriors],
+          ([u, p, w, s]) => window.transcribeUrl(u, p, w, s),
+          [`http://localhost:${port}/__accaudio/${i}`, preset, withPosteriors, separate],
         );
       } catch (err) {
         console.error(`FAILED ${name} ${preset}: ${err.message}`);

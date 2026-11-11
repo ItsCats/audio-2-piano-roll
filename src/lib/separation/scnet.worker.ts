@@ -54,14 +54,16 @@ async function loadModel(url: string, sha256: string): Promise<{ bytes: ArrayBuf
   return { bytes, fromCache: false };
 }
 
-self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
+// onnxruntime-web starts its WASM threads as copies of this script (worker name em-pthread…); its own
+// message handler must stay in place there.
+if (!(self.name ?? '').startsWith('em-pthread')) self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
   const req = e.data;
   if (req.type !== 'separate') return;
   let session: ort.InferenceSession | null = null;
   try {
     const t0 = performance.now();
     ort.env.wasm.wasmPaths = { wasm: new URL(ortWasmUrl, self.location.href).href };
-    // threads need cross-origin isolation (SharedArrayBuffer), which this app does not enable
+    // threads need cross-origin isolation (SharedArrayBuffer), enabled on every route except /import/youtube (src/lib/isolation.ts)
     ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1)) : 1;
     ort.env.wasm.proxy = false;
     const { bytes, fromCache } = await loadModel(req.modelUrl, req.modelSha256);

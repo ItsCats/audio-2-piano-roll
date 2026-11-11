@@ -279,6 +279,19 @@ describe('right-hand register of the sung line (Easy / Medium)', () => {
     expect(new Set(rightHandShifts(line, [n(48, 0, 3, 0.7, 'L')]).values())).toEqual(new Set([0]));
   });
 
+  it('does not push an already high phrase above the median cap with the line-wide shift', () => {
+    // a low sung line (median ~C4, so the line moves up an octave) with one short high phrase
+    // (e.g. instrument bleed in the vocal stem around G5) after a silence
+    const low = [60, 62, 59, 60, 62, 60, 59, 62, 60, 62].map((m, i) => n(m, i * 0.5, 0.45, 0.8));
+    const high = [79, 81, 79].map((m, i) => n(m, 8 + i * 0.5, 0.45, 0.8));
+    const s = rightHandShifts([...low, ...high], [n(43, 0, 10, 0.7, 'L')]);
+    expect(new Set(low.map((x) => s.get(x)))).toEqual(new Set([12]));
+    expect(new Set(high.map((x) => s.get(x)))).toEqual(new Set([0]));
+    // ...unless the left hand under it would then be too close
+    const s2 = rightHandShifts([...low, ...high], [n(43, 0, 10, 0.7, 'L'), n(77, 8, 2, 0.7, 'L')]);
+    expect(new Set(high.map((x) => s2.get(x)))).toEqual(new Set([12]));
+  });
+
   it('splits phrases at silences and keeps every phrase octave-consistent', () => {
     expect(phrases(sung, 1).map((p) => p.length)).toEqual([8, 8]);
     const s = rightHandShifts(sung, acc.filter((x) => x.hand === 'L'));

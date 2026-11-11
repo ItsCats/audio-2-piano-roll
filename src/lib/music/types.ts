@@ -105,7 +105,7 @@ export interface TranscriptionInfo {
   processingMs?: number;
   separated?: boolean;
   /** Source separation that ran before transcription (SCNet, in the browser or on the server). */
-  separation?: { engine: 'scnet-browser' | 'scnet-server'; vocals: boolean; ms: number };
+  separation?: { engine: 'scnet-browser' | 'scnet-server'; vocals: boolean; ms: number; threads?: number };
   warnings: string[];
   /** Rough 0..1 indicator of how clean the model output was (mean peak note confidence). */
   confidence?: number;

@@ -6,19 +6,19 @@
  *   → tempo/beat tracking → key detection.
  *
  * With separation the accompaniment stem (bass + other: no drums, no vocals) is transcribed with
- * the user's detection parameters. Drum hits still leak into that stem and produce short false
- * low notes, so the drums stem's onset envelope (separation/dsp.ts) is used to drop low notes that
- * start on a drum hit and do not belong to the bass line (music/cleanup.ts suppressDrumHits).
+ * the user's detection parameters. The drums stem is reduced to an onset envelope
+ * (separation/dsp.ts) that is stored with the posteriors for a drum-hit false-note filter
+ * (music/cleanup.ts suppressDrumHits; measured, currently off: see DrumHitRule).
  * When the vocal stem actually contains singing, the vocal stem is transcribed with
  * VOCAL_EXTRACTION and reduced to a single melody line (music/melody.ts) that goes on the right
  * hand (role 'melody').
  */
 import type { ExtractionParams, KeyInfo, Note, TempoInfo, TranscriptionInfo } from '../music/types';
-import { BP_FPS, BP_MIDI_OFFSET, BP_N_PITCHES, BP_SAMPLE_RATE, frameToTime } from './constants';
+import { BP_FPS, BP_MIDI_OFFSET, BP_N_PITCHES, BP_SAMPLE_RATE, frameToTime, timeToFrame } from './constants';
 import type { NoteExtractionOptions, RawNoteEvent } from './noteExtraction';
 import type { TranscriptionStage, WorkerRequest, WorkerResponse } from './workerProtocol';
 import { analyzeLevel, decodeToRate, mixToMono } from './decode';
-import { RESTRIKE, mergeContinuations, mergeFragments, newNoteId, removeShortQuiet, sortNotes, suppressDrumHits, suppressHarmonics } from '../music/cleanup';
+import { DRUM_HIT_RULE, RESTRIKE, mergeContinuations, mergeFragments, newNoteId, removeShortQuiet, sortNotes, suppressDrumHits, suppressHarmonics } from '../music/cleanup';
 import { assignHands } from '../music/hands';
 import { estimateTempo } from '../music/beats';
 import { detectKey } from '../music/theory';
@@ -127,11 +127,6 @@ export interface TranscriptionResult {
    * plus the drum onset envelope when separated in the browser.
    */
   posteriors: StoredPosteriors;
-  /**
-   * @deprecated Never set. The vocal stem's posteriors (~7 MB per song) used to be returned for
-   * storage, but nothing read them: re-detection keeps the song's melody notes.
-   */
-  melodyPosteriors?: undefined;
   info: TranscriptionInfo;
 }
 
@@ -255,6 +250,31 @@ export function frameRise(frames: Uint8Array | Float32Array, nFrames: number, st
   return Math.max(0, peak - dip) * scale;
 }
 
+/**
+ * Frame evidence of a cleaned note: mean activation of its pitch over the note, and the
+ * strongest neighbouring-semitone (±1, ±2) activation over its first 3 frames relative to its own
+ * there (a broadband drum thump lights a cluster of low pitches; a bass note lights one).
+ */
+export function noteActivation(frames: Uint8Array | Float32Array, nFrames: number, n: Note): { mean: number; spread: number } {
+  const f = n.midi - BP_MIDI_OFFSET;
+  if (f < 0 || f >= BP_N_PITCHES || nFrames < 1) return { mean: 0, spread: 0 };
+  const P = BP_N_PITCHES;
+  const s0 = Math.min(nFrames - 1, timeToFrame(n.start));
+  const s1 = Math.min(nFrames - 1, Math.max(s0, timeToFrame(n.start + n.dur)));
+  let sum = 0;
+  for (let t = s0; t <= s1; t++) sum += frames[t * P + f];
+  let own = 0;
+  let nb = 0;
+  const e = Math.min(nFrames - 1, s0 + 2);
+  for (let t = s0; t <= e; t++) {
+    own += frames[t * P + f];
+    for (const d of [-2, -1, 1, 2]) if (f + d >= 0 && f + d < P) nb = Math.max(nb, frames[t * P + f + d]);
+  }
+  own /= e - s0 + 1;
+  const scale = frames instanceof Uint8Array ? 1 / 255 : 1;
+  return { mean: (sum / (s1 - s0 + 1)) * scale, spread: own > 0 ? nb / own : nb > 0 ? Infinity : 0 };
+}
+
 /** Turn raw model note events into cleaned, hand-assigned notes. */
 export function postProcess(raw: RawNoteEvent[], rms: Float32Array, params: ExtractionParams, duration: number, ctx: CleanContext = {}): Note[] {
   return assignHands(cleanNotes(raw, rms, params, duration, ctx), duration);
@@ -288,7 +308,14 @@ export function cleanNotes(raw: RawNoteEvent[], rms: Float32Array, params: Extra
   if (params.continuationOnset) notes = mergeContinuations(notes, onsetStrength, params.continuationOnset, 0.3, { rise });
   if (params.suppressHarmonics) notes = suppressHarmonics(notes, amplitude);
   const drums = ctx.drums;
-  if (drums?.length) notes = suppressDrumHits(notes, (t0, t1) => drumOnsetMax(drums, t0, t1), onsetStrength);
+  if (drums?.length && DRUM_HIT_RULE.enabled) {
+    const w = DRUM_HIT_RULE.window;
+    notes = suppressDrumHits(notes, (n) => ({
+      hit: drumOnsetMax(drums, n.start - w, n.start + w),
+      onset: onsetStrength.get(n.id) ?? 1,
+      ...(ctx.frames && ctx.nFrames ? noteActivation(ctx.frames, ctx.nFrames, n) : {}),
+    }));
+  }
   notes = removeShortQuiet(notes, Math.min(0.045, params.minNoteMs / 1000), 0.1);
   notes = notes.filter((n) => n.start < duration);
   return sortNotes(notes);
@@ -429,7 +456,7 @@ export async function transcribeAudio(
       params,
       backend: result.backend,
       processingMs: Math.round(performance.now() - t0),
-      ...(sep ? { separated: true, separation: { engine: sep.engine, vocals: melody.length > 0, ms: Math.round(sep.ms) } } : {}),
+      ...(sep ? { separated: true, separation: { engine: sep.engine, vocals: melody.length > 0, ms: Math.round(sep.ms), ...(sep.threads ? { threads: sep.threads } : {}) } } : {}),
       warnings,
       confidence: Math.round(meanConf * 100) / 100,
     },

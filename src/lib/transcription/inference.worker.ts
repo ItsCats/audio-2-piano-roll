@@ -25,6 +25,10 @@ import { extractNotes, type NoteExtractionOptions } from './noteExtraction';
 import type { WorkerRequest, WorkerResponse } from './workerProtocol';
 import { dequantize } from './posteriors';
 
+// Stays single-threaded: on a cross-origin-isolated page the threaded build starts blob: scripts
+// that the CSP does not allow.
+tf.env().set('WASM_HAS_MULTITHREAD_SUPPORT', false);
+
 setWasmPaths({
   'tfjs-backend-wasm.wasm': wasmPlain,
   'tfjs-backend-wasm-simd.wasm': wasmSimd,

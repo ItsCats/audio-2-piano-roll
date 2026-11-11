@@ -133,65 +133,100 @@ export function mergeContinuations(notes: Note[], onsetStrength: Map<number, num
  * False low notes from drum hits. SCNet's drum-less accompaniment still carries some of each kick
  * and tom (separation leakage), and Basic Pitch hears a short low "note" in it. A low note is
  * dropped when ALL of these hold:
- *  - it lies below `maxMidi` and starts on a drum hit: the drums stem's onset strength within
- *    ±`window` s of its start reaches `minHit` (8-bit scale of separation/dsp.ts drumOnsetEnvelope);
- *  - it is short (< `maxDur` s) and its model onset is not strong (< `maxOnset`): a plucked or
- *    struck bass note on the beat has a confident onset and usually rings on;
- *  - its pitch class is not the bass line's: no sustained (>= `sustainDur` s) low note of the
- *    same pitch class sounds within ±`context` s, while some other low pitch class does.
- * Measured with tests/accuracy (suspectDrumLowNotesPerMin, bass raw chroma accuracy) on 7 band
- * songs separated in the browser.
+ *  - it lies below `maxMidi` and starts on a strong drum hit: the drums stem's onset strength
+ *    within ±`window` s of its start reaches `minHit` (8-bit scale of separation/dsp.ts
+ *    drumOnsetEnvelope; a typical kick/snare peaks at 40-60);
+ *  - it is short (< `maxDur` s) and its model onset is weak (< `maxOnset`): a plucked or struck
+ *    bass note on the beat has a confident onset and usually rings on;
+ *  - it is not clearly a sustained pitched note: its mean frame activation stays below `maxMean`,
+ *    or the neighbouring semitones are lit almost as much as its own pitch at the start
+ *    (spread >= `minSpread`: a broadband thump rather than a pitch);
+ *  - it does not continue the bass line: the lowest other note sounding just before it and just
+ *    after it (below `contextMaxMidi`, `contextGap` s away) are of another pitch class.
+ * Without frame evidence (no posteriors) only the first two tests are made.
+ *
+ * OFF by default (`enabled`): measured on the 6 band songs separated in the browser (SCNet stems
+ * + this envelope, tests/accuracy evaluate.py metrics), these thresholds cut
+ * suspectDrumLowNotesPerMin only 15.1 -> 14.0 ("mix") / 13.4 -> 12.8 ("piano") while bass raw
+ * chroma accuracy fell 0.0006 / 0.0013; stricter thresholds that keep the bass line intact
+ * (minHit 50, maxOnset 0.55, maxMean 0.4) remove ~1 % of the suspects. The low notes left in
+ * SCNet's drum-less accompaniment on drum hits are mostly pitched (a rising frame activation at
+ * one pitch; the drums stem holds < 5 % of the energy at that pitch) and are not separable from
+ * real on-beat bass notes by these features: leave-one-song-out, the best rule removed more
+ * bass-line notes than suspects for "piano".
  */
 export interface DrumHitRule {
+  enabled: boolean;
   maxMidi: number;
   window: number;
   minHit: number;
   maxDur: number;
   maxOnset: number;
-  sustainDur: number;
-  context: number;
-  /** register ceiling of the "bass line" notes consulted for the pitch-class test */
+  maxMean: number;
+  minSpread: number;
   contextMaxMidi: number;
+  contextGap: number;
 }
 
 export const DRUM_HIT_RULE: DrumHitRule = {
+  enabled: false,
   maxMidi: 48,
-  window: 0.03,
-  minHit: 35,
+  window: 0.02,
+  minHit: 40,
   maxDur: 0.3,
-  maxOnset: 0.7,
-  sustainDur: 0.25,
-  context: 1.5,
+  maxOnset: 0.6,
+  maxMean: 0.45,
+  minSpread: 0.3,
   contextMaxMidi: 55,
+  contextGap: 0.06,
 };
 
-/**
- * Drop probable drum-hit notes (see DrumHitRule). `drumAt(t0, t1)` returns the strongest drum
- * onset in [t0, t1] (8-bit scale); `onsetStrength` maps note ids to their model onset.
- */
+/** What the model and the drums stem say about one note (see DrumHitRule). */
+export interface DrumHitEvidence {
+  /** strongest drum onset (8-bit) within ±window of the note's start */
+  hit: number;
+  /** the note's model onset */
+  onset: number;
+  /** mean frame activation of the note's pitch over the note */
+  mean?: number;
+  /** strongest neighbouring-semitone (±1, ±2) activation over the first frames / the note's own */
+  spread?: number;
+}
+
+export function isDrumHit(n: Note, e: DrumHitEvidence, rule: DrumHitRule = DRUM_HIT_RULE): boolean {
+  if (!rule.enabled) return false;
+  if (n.midi >= rule.maxMidi || n.dur >= rule.maxDur || e.onset >= rule.maxOnset || e.hit < rule.minHit) return false;
+  if (e.mean === undefined || e.spread === undefined) return true;
+  return e.mean < rule.maxMean || e.spread >= rule.minSpread;
+}
+
+/** Whether the lowest other note sounding at time `t` (below `maxMidi`) has the pitch class of `n`. */
+function bottomSharesPitchClass(sorted: Note[], n: Note, t: number, maxMidi: number): boolean {
+  let bottom: Note | null = null;
+  for (const m of sorted) {
+    if (m.start > t) break;
+    if (m === n || m.midi >= maxMidi || m.start + m.dur < t) continue;
+    if (!bottom || m.midi < bottom.midi) bottom = m;
+  }
+  return !!bottom && (((bottom.midi - n.midi) % 12) + 12) % 12 === 0;
+}
+
+/** Drop probable drum-hit notes (DrumHitRule); `evidence` is asked only for candidate low, short notes. */
 export function suppressDrumHits(
   notes: Note[],
-  drumAt: (t0: number, t1: number) => number,
-  onsetStrength: Map<number, number>,
+  evidence: (n: Note) => DrumHitEvidence,
   rule: DrumHitRule = DRUM_HIT_RULE,
 ): Note[] {
-  const context = notes.filter((n) => n.midi < rule.contextMaxMidi && n.dur >= rule.sustainDur).sort((a, b) => a.start - b.start);
-  const removed = new Set<number>();
-  for (const n of notes) {
-    if (n.midi >= rule.maxMidi || n.dur >= rule.maxDur) continue;
-    if ((onsetStrength.get(n.id) ?? 1) >= rule.maxOnset) continue;
-    if (drumAt(n.start - rule.window, n.start + rule.window) < rule.minHit) continue;
-    let same = false;
-    let other = false;
-    for (const m of context) {
-      if (m.start > n.start + rule.context) break;
-      if (m === n || m.start + m.dur < n.start - rule.context) continue;
-      if ((((m.midi - n.midi) % 12) + 12) % 12 === 0) same = true;
-      else other = true;
-    }
-    if (!same && other) removed.add(n.id);
-  }
-  return removed.size ? notes.filter((n) => !removed.has(n.id)) : notes;
+  if (!rule.enabled) return notes;
+  const context = notes.filter((n) => n.midi < rule.contextMaxMidi).sort((a, b) => a.start - b.start);
+  return notes.filter((n) => {
+    if (n.midi >= rule.maxMidi || n.dur >= rule.maxDur || !isDrumHit(n, evidence(n), rule)) return true;
+    // a note that continues the bass line's pitch class (repeated or octave-jumping bass) stays
+    return (
+      bottomSharesPitchClass(context, n, n.start - rule.contextGap, rule.contextMaxMidi) ||
+      bottomSharesPitchClass(context, n, n.start + n.dur + rule.contextGap, rule.contextMaxMidi)
+    );
+  });
 }
 
 /**

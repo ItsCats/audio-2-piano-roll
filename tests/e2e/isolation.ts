@@ -24,6 +24,8 @@ async function bench(url: string) {
     seconds: +seconds.toFixed(2),
     segments,
     ms: Math.round(ms),
+    loadMs: Math.round(raw.stats.loadMs),
+    createMs: Math.round(raw.stats.createMs),
     separateMs: Math.round(raw.stats.separateMs),
     secondsPerMinute: +((ms / 1000 / seconds) * 60).toFixed(1),
     modelSecondsPerMinute: +((raw.stats.separateMs / 1000 / seconds) * 60).toFixed(1),

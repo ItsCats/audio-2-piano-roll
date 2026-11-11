@@ -409,7 +409,7 @@ export interface RightHandRegister {
   clearance: number;
   /** a silence this long (s) separates phrases */
   phraseGap: number;
-  /** a phrase is never moved so that its median goes above this */
+  /** a phrase is never moved up so that its median goes above this (unless the left hand forces it) */
   maxMedian: number;
 }
 
@@ -473,10 +473,13 @@ export function rightHandShifts(line: Note[], left: Note[], opts: Partial<RightH
     const low = weightedQuantile(pm, 0.1);
     const phMed = weightedQuantile(pm, 0.5);
     let s = global;
+    const lhTop = over.length ? weightedQuantile(over, 0.9) : -Infinity;
     if (over.length) {
-      const lhTop = weightedQuantile(over, 0.9);
       while (low + s - lhTop < o.clearance && phMed + s + 12 <= o.maxMedian) s += 12;
     }
+    // the line-wide shift must not push an already high phrase (often instrument bleed in the
+    // vocal stem) above maxMedian either: undo upward octaves while the left hand stays clear
+    while (s > 0 && phMed + s > o.maxMedian && low + s - 12 - lhTop >= o.clearance) s -= 12;
     for (const n of ph) out.set(n, s);
   }
   return out;
