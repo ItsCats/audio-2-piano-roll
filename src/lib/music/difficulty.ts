@@ -70,14 +70,16 @@ const MELODY_GAP_BEATS = 8;
 
 /**
  * Stretches of at least `minBeats` beats in which no melody note sounds, shrunk by one beat at
- * each end (so instrumental fills never butt against the sung line).
+ * each end (so instrumental fills never butt against the sung line). `factor` (gridFactor) is how
+ * many real beats one tracked beat spans: on a half-time estimate (factor 2) the threshold and the
+ * trim are still counted in real beats, so two real bars without singing are a gap.
  */
-export function melodyGaps(melody: Note[], tempo: TempoInfo, duration: number, minBeats = MELODY_GAP_BEATS): [number, number][] {
+export function melodyGaps(melody: Note[], tempo: TempoInfo, duration: number, minBeats = MELODY_GAP_BEATS, factor = 1): [number, number][] {
   const gaps: [number, number][] = [];
   const mel = sortNotes(melody);
   let cursor = 0;
   const push = (a: number, b: number, last: boolean) => {
-    const beat = beatPeriodAt(tempo.beats, a, tempo.bpm);
+    const beat = beatPeriodAt(tempo.beats, a, tempo.bpm) / Math.max(1, factor);
     if (b - a >= beat * minBeats) gaps.push([a === 0 ? -Infinity : a + beat, last ? Infinity : b - beat]);
   };
   for (const m of mel) {
@@ -104,7 +106,7 @@ export function generateMedium(base: Note[], tempo: TempoInfo): Note[] {
   const clusters = clusterOnsets(accomp, 0.04);
   // with a sung line the right hand follows it; the accompaniment's right hand only fills long
   // instrumental stretches
-  const gaps = melody.length ? melodyGaps(melody, tempo, songDuration(base)) : [[-Infinity, Infinity] as [number, number]];
+  const gaps = melody.length ? melodyGaps(melody, tempo, songDuration(base), MELODY_GAP_BEATS, fine) : [[-Infinity, Infinity] as [number, number]];
   const rh: Note[][] = [];
   const lh: Note[][] = [];
   for (const c of clusters) {
@@ -293,7 +295,7 @@ export function generateEasy(base: Note[], tempo: TempoInfo, duration: number): 
 
   // 1) instruments' tune: the right-hand skyline of the accompaniment, in long instrumental
   //    stretches of a song with singing (intro, interludes, solos, rap), else everywhere
-  const gaps = sung.length ? melodyGaps(sung, tempo, duration) : [[-Infinity, Infinity] as [number, number]];
+  const gaps = sung.length ? melodyGaps(sung, tempo, duration, MELODY_GAP_BEATS, gridFactor(tempo)) : [[-Infinity, Infinity] as [number, number]];
   const skyline: Note[] = [];
   const rhShare = accomp.filter((n) => n.hand === 'R').length / (accomp.length || 1);
   for (const c of clusterOnsets(accomp, 0.05)) {

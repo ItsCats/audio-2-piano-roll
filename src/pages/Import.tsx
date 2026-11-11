@@ -4,7 +4,7 @@ import { FileAudio, SquarePlay, Music2, Mic, Loader2, CheckCircle2, XCircle, Cir
 import { Dropzone } from '../components/import/Dropzone';
 import { SeparationOption, useSeparationChoice } from '../components/import/SeparationOption';
 import { Badge, Button, ProgressBar, Segmented, cn } from '../components/ui';
-import { STAGE_LABELS, useImport, type ImportJob, type ImportStage } from '../state/importStore';
+import { STAGE_LABELS, rememberServerHealth, useImport, type ImportJob, type ImportStage } from '../state/importStore';
 import { useSettings } from '../state/settingsStore';
 import { configuredBackendUrl, health, type BackendHealth } from '../lib/backend/client';
 import { createPlayer, fetchVideoMeta, parseYouTubeId, startTabCapture, tabCaptureSupported, type TabCapture, type VideoMeta, type YTPlayer } from '../lib/youtube/youtube';
@@ -22,8 +22,14 @@ function useBackend() {
     let alive = true;
     setState({ health: null, checking: true });
     health(url)
-      .then((h) => alive && setState({ health: h, checking: false }))
-      .catch(() => alive && setState({ health: null, checking: false }));
+      .then((h) => {
+        rememberServerHealth(url, h); // the separation option and the import use the same answer
+        if (alive) setState({ health: h, checking: false });
+      })
+      .catch(() => {
+        rememberServerHealth(url, null);
+        if (alive) setState({ health: null, checking: false });
+      });
     return () => {
       alive = false;
     };
@@ -77,12 +83,32 @@ function formatEta(sec: number): string {
   return m <= 1 ? 'about 1 min left' : `about ${m} min left`;
 }
 
-/** time remaining extrapolated from the measured speed of the current phase (null until measured) */
+/**
+ * The step the speed measurement covers ("separation", "pitch detection 1 of 2"): the ETA is for
+ * this step only, so it says which one (more steps follow, see the checklist below the bar).
+ */
+function etaStep(job: Pick<ImportJob, 'stage' | 'detail'>): string {
+  const part = job.detail?.match(/\((\d+) of (\d+)\)/);
+  switch (job.stage) {
+    case 'separating':
+      return 'separation';
+    case 'analyzing':
+      return part ? `pitch detection ${part[1]} of ${part[2]}` : 'pitch detection';
+    case 'downloading':
+      return 'download';
+    case 'uploading':
+      return 'upload';
+    default:
+      return STAGE_LABELS[job.stage].toLowerCase();
+  }
+}
+
+/** time remaining in the current step, extrapolated from its measured speed (null until measured) */
 function etaText(job: ImportJob): string | null {
   const r = job.rate;
   if (!r || r.etaSec === undefined || r.at === undefined) return null;
   const left = r.etaSec - (Date.now() - r.at) / 1000;
-  return left > 0 ? formatEta(left) : 'finishing…';
+  return `${etaStep(job)}: ${left > 0 ? formatEta(left) : 'finishing…'}`;
 }
 
 function JobProgress() {
@@ -124,7 +150,7 @@ function JobProgress() {
           <ProgressBar value={job.progress} />
           {job.progress !== null && (
             <p className="mt-1.5 flex justify-between gap-3 font-mono text-[11px] text-ink-300">
-              <span>{eta ?? ((job.stage === 'separating' || job.stage === 'analyzing') && job.progress < 0.99 ? 'measuring speed…' : '')}</span>
+              <span>{eta ?? ((job.stage === 'separating' || job.stage === 'analyzing') && job.progress < 0.99 ? `${etaStep(job)}: measuring speed…` : '')}</span>
               <span>{Math.round(job.progress * 100)}%</span>
             </p>
           )}

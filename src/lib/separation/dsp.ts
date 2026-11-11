@@ -335,15 +335,22 @@ export interface SegmentRunner {
 }
 
 /**
- * Run segmented separation of a stereo signal and return each group as a MONO (L+R)/2 signal at the
- * input rate, de-normalised (the stems sum to the mixture minus its DC offset).
+ * Run segmented separation of a stereo signal and return each group as a MONO (L+R)/2 signal,
+ * de-normalised (the stems sum to the mixture minus its DC offset).
+ *
+ * With `half` the groups come back at HALF the input rate (decimate2's filter and timebase,
+ * length floor(n/2)): each segment's cross-faded contribution is decimated before it is added,
+ * which is exact because both the overlap-add and the FIR are linear. That keeps one
+ * half-length accumulator per group instead of a full-rate one, so a long song needs far less
+ * memory. The sum of the cross-fade weights is computed from the plan (it is 1 wherever the
+ * default fades overlap) instead of being stored for every sample.
  */
 export async function separateSegments(
   left: Float32Array,
   right: Float32Array,
   groups: StemGroup[],
   run: SegmentRunner,
-  opts: { step?: number; fade?: number; onSegment?: (done: number, total: number) => void; shouldStop?: () => boolean } = {},
+  opts: { step?: number; fade?: number; half?: boolean; onSegment?: (done: number, total: number) => void; shouldStop?: () => boolean } = {},
 ): Promise<Record<string, Float32Array>> {
   const n = left.length;
   if (right.length !== n) throw new Error('channel length mismatch');
@@ -354,12 +361,27 @@ export async function separateSegments(
   const segL = new Float64Array(SEGMENT);
   const segR = new Float64Array(SEGMENT);
   const y = new Float64Array(SEGMENT);
-  const w = new Float32Array(SEGMENT);
+  const w = new Float64Array(SEGMENT);
+  const half = !!opts.half;
+  const outLen = half ? Math.floor(n / 2) : n;
   const acc: Record<string, Float32Array> = {};
-  for (const g of groups) acc[g.name] = new Float32Array(n);
-  const ws = new Float32Array(n);
+  for (const g of groups) acc[g.name] = new Float32Array(outLen);
   const planes = groups.map((g) => stemPlanes(g.stems));
   const count = plan.starts.length;
+  // the part of each segment that is kept (inside the original signal), in working-signal coordinates
+  const keptLo: number[] = [];
+  const keptHi: number[] = [];
+  for (const st of plan.starts) {
+    const len = Math.min(SEGMENT, plan.m - st);
+    keptLo.push(st + Math.max(0, plan.offset - st));
+    keptHi.push(st + Math.min(len, plan.offset + n - st));
+  }
+  // half rate: one segment's contribution with zero padding for the decimation filter
+  const K = HALFBAND_K;
+  // outputs whose filter reaches the kept range start K input samples before it and read up to K - 1 further
+  const P = 2 * K + 2;
+  const h = half ? halfbandTaps() : null;
+  const cb = half ? new Float64Array(SEGMENT + 2 * P) : null;
   for (let k = 0; k < count; k++) {
     if (opts.shouldStop?.()) throw new DOMException('Separation cancelled', 'AbortError');
     const st = plan.starts[k];
@@ -370,23 +392,40 @@ export async function separateSegments(
     stft.forward(segR, spec.subarray(2 * plane, 3 * plane), spec.subarray(3 * plane, 4 * plane));
     const out = await run(spec);
     spec = null;
-    for (let i = 0; i < SEGMENT; i++) w[i] = segmentWeight(i, k, count, plan.fadeN);
     // only the part of this segment inside the original signal is kept
     const lo = Math.max(0, plan.offset - st);
     const hi = Math.min(len, plan.offset + n - st);
     const base = st - plan.offset;
+    // this segment's weight divided by the sum of the weights of every segment kept at that sample
+    for (let i = lo; i < hi; i++) {
+      const x = st + i;
+      let sum = 0;
+      for (let j = k; j >= 0 && plan.starts[j] + SEGMENT > x; j--) if (x >= keptLo[j] && x < keptHi[j]) sum += segmentWeight(x - plan.starts[j], j, count, plan.fadeN);
+      for (let j = k + 1; j < count && plan.starts[j] <= x; j++) if (x >= keptLo[j] && x < keptHi[j]) sum += segmentWeight(x - plan.starts[j], j, count, plan.fadeN);
+      w[i] = sum > 0 ? segmentWeight(i, k, count, plan.fadeN) / sum : 0;
+    }
     for (let g = 0; g < groups.length; g++) {
       stft.inverseSum(out.data, planes[g], 0.5 * stats.std, y);
       const a = acc[groups[g].name];
-      for (let i = lo; i < hi; i++) a[base + i] += y[i] * w[i];
+      if (!half) {
+        for (let i = lo; i < hi; i++) a[base + i] += y[i] * w[i];
+        continue;
+      }
+      // decimate this segment's contribution (zero outside lo..hi) into the half-rate accumulator:
+      // cb[P + i] holds input sample base + i
+      cb!.fill(0);
+      for (let i = lo; i < hi; i++) cb![P + i] = y[i] * w[i];
+      const j0 = Math.max(0, Math.ceil((base + lo - K) / 2));
+      const j1 = Math.min(outLen - 1, Math.floor((base + hi - 1 + K) / 2));
+      for (let j = j0; j <= j1; j++) {
+        const c = 2 * j - base + P;
+        let s = h![K] * cb![c];
+        for (let t = 1; t <= K; t += 2) s += h![K + t] * (cb![c - t] + cb![c + t]);
+        a[j] += s;
+      }
     }
     out.release?.();
-    for (let i = lo; i < hi; i++) ws[base + i] += w[i];
     opts.onSegment?.(k + 1, count);
-  }
-  for (const g of groups) {
-    const a = acc[g.name];
-    for (let i = 0; i < n; i++) a[i] = ws[i] > 0 ? a[i] / ws[i] : 0;
   }
   return acc;
 }

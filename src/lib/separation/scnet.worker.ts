@@ -6,7 +6,7 @@
  */
 import * as ort from 'onnxruntime-web/wasm';
 import ortWasmUrl from 'onnxruntime-web/ort-wasm-simd-threaded.wasm?url';
-import { BINS, FRAMES, SCNET_RATE, decimate2, drumOnsetEnvelope, separateSegments } from './dsp';
+import { BINS, DEFAULT_STEP, FRAMES, SCNET_RATE, decimate2, drumOnsetEnvelope, planSegments, separateSegments } from './dsp';
 import type { WorkerRequest, WorkerResponse } from './protocol';
 
 declare const self: DedicatedWorkerGlobalScope;
@@ -82,15 +82,22 @@ if (!(self.name ?? '').startsWith('em-pthread')) self.onmessage = async (e: Mess
     const outName = s.outputNames[0];
     const { left, right } = req;
     const n = left.length;
+    // full rate only when something needs it (the drums envelope is measured at 44.1 kHz, tests
+    // want the 44.1 kHz stems); otherwise the stems are overlap-added straight at 22.05 kHz
+    const drumsOn = !!req.wantDrums || !!req.keep44;
+    const groups = [
+      { name: 'vocals', stems: [3] },
+      { name: 'accomp', stems: [1, 2] },
+      // only reduced to an onset envelope below (drum-hit false notes), never returned as audio
+      ...(drumsOn ? [{ name: 'drums', stems: [0] }] : []),
+    ];
+    // the first part takes as long as every other one: say it has started
+    const segCount = planSegments(n, req.step ?? DEFAULT_STEP).starts.length;
+    post({ type: 'progress', phase: 'separate', done: 0, total: segCount });
     const stems = await separateSegments(
       left,
       right,
-      [
-        { name: 'vocals', stems: [3] },
-        { name: 'accomp', stems: [1, 2] },
-        // only reduced to an onset envelope below (drum-hit false notes), never returned as audio
-        { name: 'drums', stems: [0] },
-      ],
+      groups,
       async (spec) => {
         const input = new ort.Tensor('float32', spec, [1, 4, BINS, FRAMES]);
         const out = await s.run({ [inName]: input });
@@ -98,21 +105,22 @@ if (!(self.name ?? '').startsWith('em-pthread')) self.onmessage = async (e: Mess
         const t = out[outName];
         return { data: t.data as Float32Array, release: () => t.dispose() };
       },
-      { step: req.step, onSegment: (done, total) => post({ type: 'progress', phase: 'separate', done, total }) },
+      { step: req.step, half: !drumsOn, onSegment: (done, total) => post({ type: 'progress', phase: 'separate', done, total }) },
     );
     await session.release();
     session = null;
     const t3 = performance.now();
 
-    // mono mixture (same downmix as the stems) for the presence gate, then 44.1 → 22.05 kHz
+    // mono mixture (same downmix as the stems) for the presence gate, built in place in `left`
+    // (the input is not needed any more), then 44.1 → 22.05 kHz
     const outLen = Math.floor(n / 2);
-    const mono = new Float32Array(n);
+    const mono = left;
     for (let i = 0; i < n; i++) mono[i] = (left[i] + right[i]) * 0.5;
     const mix22 = decimate2(mono, outLen);
-    const vocals22 = decimate2(stems.vocals, outLen);
-    const accomp22 = decimate2(stems.accomp, outLen);
+    const vocals22 = drumsOn ? decimate2(stems.vocals, outLen) : stems.vocals;
+    const accomp22 = drumsOn ? decimate2(stems.accomp, outLen) : stems.accomp;
     const t4 = performance.now();
-    const drumOnsets = drumOnsetEnvelope(stems.drums, mono, SCNET_RATE);
+    const drumOnsets = drumsOn ? drumOnsetEnvelope(stems.drums, mono, SCNET_RATE) : new Uint8Array(0);
     const t5 = performance.now();
     const result: WorkerResponse = {
       type: 'result',

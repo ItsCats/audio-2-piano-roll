@@ -11,6 +11,12 @@ export interface SeparateRequest {
   step?: number;
   /** also return the 44.1 kHz mono stems, drums included (tests) */
   keep44?: boolean;
+  /**
+   * Separate the drums stem too and return its onset envelope (only while the drum-hit filter,
+   * music/cleanup.ts DRUM_HIT_RULE, is enabled). Otherwise drumOnsets comes back empty and the
+   * stems are overlap-added at 22.05 kHz, which needs far less memory.
+   */
+  wantDrums?: boolean;
 }
 
 export type WorkerRequest = SeparateRequest;
@@ -35,7 +41,7 @@ export type WorkerResponse =
       vocals: Float32Array;
       accomp: Float32Array;
       mix: Float32Array;
-      /** onset strength of the drums stem, 8-bit at DRUM_ENV_FPS (dsp.drumOnsetEnvelope) */
+      /** onset strength of the drums stem, 8-bit at DRUM_ENV_FPS (dsp.drumOnsetEnvelope); empty unless wantDrums */
       drumOnsets: Uint8Array;
       vocals44?: Float32Array;
       accomp44?: Float32Array;

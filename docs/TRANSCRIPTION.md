@@ -2,7 +2,7 @@
 
 ```
 file ─► validate (type, ≤300 MB, ≤20 min) ─► decode + resample to 22 050 Hz mono
-     ─► [optional: Demucs separation on the processing server]
+     ─► [optional: SCNet separation into vocals + accompaniment, in the browser or on the processing server]
      ─► level normalisation ─► Basic Pitch CNN (Web Worker, TF.js)
      ─► note extraction ─► cleanup ─► hand assignment ─► beat tracking ─► key detection
      ─► Easy / Medium / Hard arrangements

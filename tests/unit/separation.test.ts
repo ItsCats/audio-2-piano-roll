@@ -158,6 +158,35 @@ describe('separateSegments', () => {
     expect(stemPlanes([3])[0][0]).toBe(12 * plane);
   });
 
+  for (const [secs, step] of [
+    [2, undefined],
+    [30.4, undefined],
+    [25, 0.5],
+  ] as const) {
+    it(`half rate equals decimating the full-rate result (${secs} s${step ? `, step ${step}` : ''})`, async () => {
+      const n = Math.round(44100 * secs) + 1;
+      const left = noise(n, 11);
+      const right = noise(n, 12);
+      const groups = [{ name: 'all', stems: [0] }];
+      const full = await separateSegments(left, right, groups, identity, { step });
+      const half = await separateSegments(left, right, groups, identity, { step, half: true });
+      const ref = decimate2(full.all);
+      expect(half.all.length).toBe(Math.floor(n / 2));
+      expect(maxAbsDiff(half.all, ref)).toBeLessThan(2e-6);
+    });
+  }
+
+  it('overlapping segments (step 0.5) still reconstruct the mixture (weights from the plan)', async () => {
+    const n = 44100 * 25;
+    const left = noise(n, 13);
+    const right = noise(n, 14);
+    const res = await separateSegments(left, right, [{ name: 'all', stems: [0] }], identity, { step: 0.5 });
+    const { mean } = mixStats(left, right);
+    const mono = new Float32Array(n);
+    for (let i = 0; i < n; i++) mono[i] = (left[i] + right[i]) / 2 - mean;
+    expect(maxAbsDiff(res.all, mono)).toBeLessThan(2e-5);
+  });
+
   it('stops when asked', async () => {
     const n = 44100 * 30;
     let k = 0;

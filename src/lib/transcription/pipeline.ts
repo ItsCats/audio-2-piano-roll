@@ -24,7 +24,7 @@ import { estimateTempo } from '../music/beats';
 import { detectKey } from '../music/theory';
 import { extractMelodyLine, mergeMelody } from '../music/melody';
 import type { StoredPosteriors } from './posteriors';
-import { DRUM_ENV_FPS, separateStems, stemsFromBlobs, type SeparationResult } from '../separation';
+import { DRUM_ENV_FPS, longReason, separateStems, separationSupport, stemsFromBlobs, type SeparationResult } from '../separation';
 
 /**
  * Piano register curve: the top and bottom octaves get lower thresholds (Basic Pitch's posteriors
@@ -128,15 +128,55 @@ export interface TranscriptionResult {
    */
   posteriors: StoredPosteriors;
   info: TranscriptionInfo;
+  /**
+   * Set when separation was asked for but did not run: 'memory' (it ran out of memory, or the
+   * worker died, which on a big song almost always means the same), 'error' (anything else),
+   * 'too-long' (the recording is longer than this device should separate in the browser).
+   */
+  separationFailure?: 'memory' | 'error' | 'too-long';
 }
 
 export interface TranscribeOptions {
   /** Separate vocals and drums in the browser (SCNet) before transcribing. */
   separate?: boolean;
-  /** Stems that were already separated (processing server); used instead of `separate`. */
-  stems?: { vocals: Blob; accomp: Blob };
-  /** An in-page separation result of this same audio (tests, accuracy harness); used instead of both. */
+  /**
+   * Stems that were already separated (processing server); used instead of `separate`.
+   * `serverMs`: the server's separation time, when it reported one.
+   */
+  stems?: { vocals: Blob; accomp: Blob; serverMs?: number };
+  /**
+   * An in-page separation result of this same audio (tests, accuracy harness); used instead of
+   * both. Not consumed: its arrays are copied, so the same result can be passed to several calls.
+   */
   separation?: SeparationResult;
+}
+
+/**
+ * Tempo of a transcription: beats from the cleaned accompaniment notes (before the melody is merged
+ * in), because vocal onsets are rhythmically loose. Shared by import and re-detection so the two
+ * cannot drift apart.
+ */
+function transcriptionTempo(accomp: Note[], merged: Note[], duration: number): TempoInfo {
+  return estimateTempo(accomp.length ? accomp : merged, duration);
+}
+
+/** Errors that mean the browser ran out of memory (onnxruntime, Emscripten, V8), or a worker that died without a message. */
+const MEMORY_ERROR = /bad_alloc|out of memory|\bOOM\b|allocation failed|could not allocate|ERROR_CODE: 6\b|RangeError|WebAssembly\.Memory|worker failed/i;
+
+/** The warning for a separation that failed (memory errors get advice instead of the raw engine message). */
+export function separationFailureWarning(err: unknown): { kind: 'memory' | 'error'; warning: string } {
+  const e = err as Error | undefined;
+  const raw = `${e?.name ?? ''} ${e?.message ?? String(err)}`.trim();
+  if (MEMORY_ERROR.test(raw)) {
+    const detail = (e?.message ?? String(err)).replace(/\s+/g, ' ').slice(0, 80);
+    return {
+      kind: 'memory',
+      warning:
+        'Separating vocals & drums ran out of memory on this device, so the full mix was transcribed and the right hand does not follow the singer. ' +
+        `Close other tabs and try again, or use a processing server with separation (Settings → Processing server). (${detail})`,
+    };
+  }
+  return { kind: 'error', warning: `Separating vocals and drums failed (${e?.message ?? err}); the full mix was transcribed instead.` };
 }
 
 export function toWorkerOptions(p: ExtractionParams): NoteExtractionOptions {
@@ -380,22 +420,29 @@ export async function transcribeAudio(
 ): Promise<TranscriptionResult> {
   const t0 = performance.now();
   onProgress({ stage: 'decoding', progress: null, detail: 'Decoding and resampling audio' });
-  const buffer = await decodeToRate(blob, BP_SAMPLE_RATE);
+  // (the decoded AudioBuffer is not kept: separation decodes again at 44.1 kHz and memory is tight)
+  let { audio, duration } = await decodeMono(blob);
   if (signal?.aborted) throw aborted();
-  let audio = mixToMono(buffer);
-  const duration = buffer.duration;
   const warnings: string[] = [];
+  let separationFailure: TranscriptionResult['separationFailure'];
   const level = analyzeLevel(audio);
   if (level.peak < 0.01) throw new Error('The audio is (nearly) silent — nothing to transcribe.');
   if (level.rms < 0.01) warnings.push('The recording is very quiet; quiet notes may be missed.');
 
   // ---- optional source separation
-  let sep: SeparationResult | null = opts.separation ?? null;
-  if (!sep && (opts.stems || opts.separate)) {
+  // a reused in-page result is copied: its arrays are normalised in place and transferred below
+  let sep: SeparationResult | null = opts.separation ? { ...opts.separation, accomp: opts.separation.accomp.slice(), vocals: opts.separation.vocals.slice() } : null;
+  const support = !sep && !opts.stems && opts.separate ? separationSupport(duration) : null;
+  if (support && support.ok && duration > support.maxSeconds) {
+    warnings.push(
+      `${longReason(duration)} It was skipped, so the full mix was transcribed and the right hand does not follow the singer; a processing server with separation can handle long recordings.`,
+    );
+    separationFailure = 'too-long';
+  } else if (!sep && (opts.stems || opts.separate)) {
     try {
       if (opts.stems) {
         onProgress({ stage: 'separating', progress: null, detail: 'Reading the separated stems' });
-        sep = await stemsFromBlobs(opts.stems.vocals, opts.stems.accomp, duration);
+        sep = await stemsFromBlobs(opts.stems.vocals, opts.stems.accomp, duration, opts.stems.serverMs);
       } else {
         onProgress({ stage: 'separating', progress: 0, detail: 'Separating vocals and drums' });
         sep = await separateStems(
@@ -406,7 +453,9 @@ export async function transcribeAudio(
       }
     } catch (err) {
       if (signal?.aborted || (err as Error)?.name === 'AbortError') throw aborted();
-      warnings.push(`Separating vocals and drums failed (${(err as Error)?.message ?? err}); the full mix was transcribed instead.`);
+      const f = separationFailureWarning(err);
+      warnings.push(f.warning);
+      separationFailure = f.kind;
       sep = null;
     }
     if (signal?.aborted) throw aborted();
@@ -440,8 +489,7 @@ export async function transcribeAudio(
   }
   if (vocal && !melody.length) warnings.push('Singing was detected but no clear melody line could be extracted from it.');
   if (notes.length === 0) warnings.push('No notes were detected. Try the "Sensitive" detection preset.');
-  // beats from the accompaniment: vocal onsets are rhythmically loose
-  const tempo = estimateTempo(accompNotes.length ? accompNotes : notes, duration);
+  const tempo = transcriptionTempo(accompNotes, notes, duration);
   if (tempo.confidence < 0.15) warnings.push('Tempo could not be detected reliably; the beat grid and quantisation may be off.');
   const meanConf = result.notes.length ? result.notes.reduce((s, n) => s + n.amplitude, 0) / result.notes.length : 0;
   return {
@@ -449,7 +497,7 @@ export async function transcribeAudio(
     duration,
     tempo,
     key: detectKey(notes),
-    posteriors: toStored(result, drums),
+    posteriors: toStored(result, drums?.length ? drums : undefined),
     info: {
       method: 'basic-pitch',
       estimated: true,
@@ -460,7 +508,14 @@ export async function transcribeAudio(
       warnings,
       confidence: Math.round(meanConf * 100) / 100,
     },
+    ...(separationFailure ? { separationFailure } : {}),
   };
+}
+
+/** Decode at the model rate and mix down; only the mono samples and the duration are kept. */
+async function decodeMono(blob: Blob): Promise<{ audio: Float32Array; duration: number }> {
+  const buffer = await decodeToRate(blob, BP_SAMPLE_RATE);
+  return { audio: mixToMono(buffer), duration: buffer.duration };
 }
 
 async function extractRaw(post: StoredPosteriors, params: ExtractionParams): Promise<RawNoteEvent[]> {
@@ -492,8 +547,23 @@ export async function reextractNotes(
   duration: number,
   opts: ReextractOptions = {},
 ): Promise<Note[]> {
+  return (await reextract(post, params, duration, opts)).notes;
+}
+
+/** reextractNotes plus the tempo estimated exactly as an import does (from the accompaniment only). */
+export async function redetectNotes(
+  post: StoredPosteriors,
+  params: ExtractionParams,
+  duration: number,
+  opts: ReextractOptions = {},
+): Promise<{ notes: Note[]; tempo: TempoInfo }> {
+  const { accomp, notes } = await reextract(post, params, duration, opts);
+  return { notes, tempo: transcriptionTempo(accomp, notes, duration) };
+}
+
+async function reextract(post: StoredPosteriors, params: ExtractionParams, duration: number, opts: ReextractOptions): Promise<{ accomp: Note[]; notes: Note[] }> {
   const raw = await extractRaw(post, params);
   const accomp = cleanNotes(raw, post.rms, params, duration, { frames: post.frames, nFrames: post.nFrames, drums: post.drums });
   const melody = (opts.melody ?? []).filter((n) => n.role === 'melody').map((n) => ({ ...n, hand: 'R' as const }));
-  return mergeMelody(accomp, melody, duration);
+  return { accomp, notes: mergeMelody(accomp, melody, duration) };
 }

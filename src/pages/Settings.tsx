@@ -9,6 +9,7 @@ import { storageEstimate } from '../lib/storage/db';
 import type { Difficulty } from '../lib/music/types';
 import { PIANO_PRESETS } from '../lib/audio/presets';
 import { toast } from '../state/toastStore';
+import { rememberServerHealth } from '../state/importStore';
 
 const SHORTCUTS: [string, string][] = [
   ['Space', 'Play / pause'],
@@ -37,8 +38,11 @@ function BackendSettings() {
     if (!url) return setStatus({ state: 'idle' });
     setStatus({ state: 'checking' });
     try {
-      setStatus({ state: 'ok', health: await health(url) });
+      const h = await health(url);
+      rememberServerHealth(url, h); // the Import page's separation option uses the same answer
+      setStatus({ state: 'ok', health: h });
     } catch (e) {
+      rememberServerHealth(url, null);
       setStatus({ state: 'error', error: (e as Error).message });
     }
   };

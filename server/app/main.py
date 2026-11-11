@@ -55,6 +55,7 @@ def separation_enabled() -> bool:
 
 def _separate_into(job: Job, source_path: str, out_dir: str) -> None:
     """SCNet -> vocals.flac + accomp.flac (mono 22.05 kHz, sample-aligned with the source)."""
+    t0 = time.perf_counter()
     job.stage = "decoding"
     job.progress = None
     audio = decode(source_path, sr=separation.SR, channels=2)
@@ -78,6 +79,7 @@ def _separate_into(job: Job, source_path: str, out_dir: str) -> None:
         job.stems[name] = path
     job.detail = "vocals + accompaniment (SCNet)"
     job.result_path = job.stems["accomp"]
+    job.separation_ms = round((time.perf_counter() - t0) * 1000)
 
 
 @app.get("/api/health")
@@ -123,7 +125,19 @@ def create_youtube_job(req: YouTubeRequest) -> dict:
         job.stems["mix"] = mix
         job.result_path = mix
         if separate:
-            _separate_into(job, info["path"], d)  # default download becomes the accompaniment
+            try:
+                _separate_into(job, info["path"], d)  # default download becomes the accompaniment
+            except Exception as e:  # noqa: BLE001 - the download is still useful: the client separates it itself
+                # keep the job done with the mix only, so the client can fetch it instead of making
+                # the server download the video a second time
+                for name in ("vocals", "accomp"):
+                    path = job.stems.pop(name, None)
+                    if path and os.path.exists(path):
+                        os.remove(path)
+                job.result_path = mix
+                job.separation_ms = None
+                job.separation_error = str(e) or type(e).__name__
+                job.detail = "separation failed; the audio is available without it"
 
     return manager.create("youtube", work).public()
 

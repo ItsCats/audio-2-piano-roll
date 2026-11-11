@@ -12,6 +12,25 @@ What the CDN serves: the app (~0.8 MB gzipped for the first page; the transcript
 
 **Bandwidth**: a first-time visitor who imports and plays one song downloads roughly 12 MB; returning visitors mostly hit their browser cache.
 
+### Cross-origin isolation (other static hosts)
+
+In-browser separation runs multi-threaded only when the page is cross-origin isolated (SharedArrayBuffer).
+`netlify.toml` sends, on every app route:
+
+```
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: credentialless
+```
+
+* **Not** on `/import/youtube`: the YouTube player iframe sends no COEP header, so an isolated page cannot
+  embed it. The app reloads the page when entering or leaving that route (`src/lib/isolation.ts`).
+* Each route must receive exactly one copy of each header (overlapping rules can send two, which browsers
+  treat as invalid). `tests/e2e/isolation.mjs app` checks every route against `netlify.toml`.
+* The route list lives in `src/lib/isolation.ts` (`ISOLATED_ROUTES`) and in `netlify.toml`; keep them in sync.
+
+On another static host, set the same headers per route. Without them everything still works, but separation
+falls back to one thread (about 2–3× slower).
+
 ## Optional processing server
 
 Needed only for YouTube fetching and for faster source separation. Transcription never needs it, and the

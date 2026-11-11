@@ -4,7 +4,7 @@ import { Badge, cn } from '../ui';
 import { useSettings } from '../../state/settingsStore';
 import { separationAvailability, separationChoice, serverHasStems, serverHealth, useImport, type PresetId, type SeparationAvailability } from '../../state/importStore';
 import { configuredBackendUrl } from '../../lib/backend/client';
-import { separationSupport } from '../../lib/separation';
+import { estimateSeparationMB, formatMemory, separationSupport } from '../../lib/separation';
 
 /**
  * Where "Separate vocals & drums" would run and whether it is ticked for the current detection
@@ -36,7 +36,7 @@ export function useSeparationChoice(): {
   return {
     avail,
     checked: separationChoice(prefs, preset, avail),
-    setChecked: (v) => setPref(preset, v),
+    setChecked: (v) => setPref(preset, v, avail.engine),
     preset,
     checkingServer: !!url && server?.url !== url,
   };
@@ -47,8 +47,9 @@ export function lengthMultiple(estSecondsPerMinute: number): string {
   const x = Math.max(1, Math.round(estSecondsPerMinute / 60));
   return `about ${x}× the song’s length`;
 }
-const explainBrowser = (est: number) =>
-  `Better melody and fewer false notes on songs with drums or singing; downloads a 13 MB model once and takes ${lengthMultiple(est)}`;
+const explainBrowser = (est: number, maxSeconds: number) =>
+  `Better melody and fewer false notes on songs with drums or singing; downloads a 13 MB model once and takes ${lengthMultiple(est)}. ` +
+  `Memory grows with length (${formatMemory(estimateSeparationMB(240))} for a 4-minute song), so recordings over ${Math.round(maxSeconds / 60)} minutes are transcribed without it`;
 const EXPLAIN_SERVER = 'Better melody and fewer false notes on songs with drums or singing; runs on your processing server';
 
 export function SeparationOption({ className }: { className?: string }) {
@@ -81,7 +82,7 @@ export function SeparationOption({ className }: { className?: string }) {
             )}
           </span>
           <span id="sep-explain" className="text-[12px] leading-relaxed text-ink-300">
-            {avail.engine === 'server' ? EXPLAIN_SERVER : explainBrowser(avail.browser.estSecondsPerMinute)}
+            {avail.engine === 'server' ? EXPLAIN_SERVER : explainBrowser(avail.browser.estSecondsPerMinute, avail.browser.maxSeconds)}
           </span>
           {disabled && avail.reason && <span className="text-[11.5px] text-ink-400">Not available: {avail.reason}</span>}
           {lowMemory && (

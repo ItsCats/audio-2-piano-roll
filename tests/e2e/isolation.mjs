@@ -13,7 +13,8 @@
  * when entering/leaving the YouTube route (and none between other routes); the legacy
  * /import?tab=youtube link; back/forward; no console errors on any page; demo playback; an audio
  * import with "Separate vocals & drums" (timed, peak RSS); a short video export; a background
- * image upload; the YouTube tab UI. Audio and images are passed by path (never copied into the
+ * image upload; the YouTube tab UI; Back across the YouTube route during an import asks first
+ * (beforeunload) instead of silently ending it. Audio and images are passed by path (never copied into the
  * repo; songs may be copyrighted). Prints one PASS/FAIL line per check and a JSON summary.
  *
  * `bench` reports the thread count the worker really used (Chromium's hardware-concurrency
@@ -335,6 +336,50 @@ async function appMode() {
       }
       const errs = takeErrors();
       check('busy-import YouTube steps: no console errors', errs.length === 0, errs.join(' | '));
+    }
+
+    // 9. Back across the YouTube route's document boundary while an import runs: that is a page
+    //    load, which would end the import, so the browser asks first (beforeunload); staying keeps it
+    if (audio) {
+      await page.goto(base + '/import');
+      await settle();
+      await page.getByRole('tab', { name: 'YouTube' }).click();
+      await page.waitForURL(/\/import\/youtube$/);
+      await settle();
+      await page.getByRole('tab', { name: 'Audio / Video' }).click();
+      await page.waitForURL(/tab=audio$/);
+      await settle();
+      const sepBox = page.getByRole('checkbox', { name: /Separate vocals/ });
+      const was = await sepBox.isChecked().catch(() => false);
+      if (was) await sepBox.uncheck();
+      await page.setInputFiles('input[type=file]', audio);
+      await page.waitForSelector('[aria-live=polite]');
+      await mark();
+      await page.locator('h1').first().click(); // user activation: browsers only prompt on pages the user interacted with
+      const dialogs = [];
+      const onDialog = (d) => {
+        dialogs.push(d.type());
+        void d.dismiss(); // "stay on this page"
+      };
+      page.on('dialog', onDialog);
+      await page.goBack({ timeout: 5000 }).catch(() => undefined);
+      await page.waitForTimeout(1000);
+      const stayed = { dialogs: [...dialogs], url: page.url(), sameDoc: await sameDoc().catch(() => false), running: await page.evaluate(() => !!document.querySelector('[aria-live=polite]') && !/complete|failed/i.test(document.querySelector('[aria-live=polite]')?.textContent ?? '')).catch(() => false) };
+      check('Back during an import: the browser asks first, staying keeps the import', stayed.dialogs.includes('beforeunload') && /tab=audio$/.test(stayed.url) && stayed.sameDoc && stayed.running, stayed);
+      await page.waitForFunction(() => /\/studio\//.test(location.pathname) || /complete|failed/i.test(document.querySelector('[aria-live=polite]')?.textContent ?? ''), null, { timeout: 600000 });
+      await settle();
+      dialogs.length = 0;
+      await page.goto(base + '/import/youtube');
+      await settle();
+      check('after the import: leaving the page does not ask', dialogs.length === 0 && /\/import\/youtube$/.test(page.url()), { dialogs, url: page.url() });
+      page.off('dialog', onDialog);
+      if (was) {
+        await page.goto(base + '/import');
+        await settle();
+        await page.getByRole('checkbox', { name: /Separate vocals/ }).check();
+      }
+      const errs = takeErrors();
+      check('Back-during-import steps: no console errors', errs.length === 0, errs.join(' | '));
     }
   } finally {
     await browser.close();

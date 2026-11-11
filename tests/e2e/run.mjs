@@ -31,12 +31,20 @@ try {
     const r = await page.evaluate((p) => window.runAccuracy(p, 'piano'), piece);
     const ok = r.score.f1 >= THRESHOLDS[piece];
     failed ||= !ok;
+    const reOk = r.redetect.sameNotes && r.redetect.sameTempo;
+    failed ||= !reOk;
+    console.log(`${reOk ? 'PASS' : 'FAIL'} ${piece.padEnd(7)} re-detect with the import's parameters reproduces its notes and tempo ${JSON.stringify(r.redetect)}`);
     console.log(
       `${ok ? 'PASS' : 'FAIL'} ${piece.padEnd(7)} F1 ${r.score.f1} (P ${r.score.precision} / R ${r.score.recall}) ` +
         `onset ${r.score.meanOffsetMs} ms (early ${r.score.earlyOffsetMs} / late ${r.score.lateOffsetMs}) ` +
         `tempo ${r.tempo.bpm} BPM, key ${r.key}, ${r.backend}, ${r.transcribeMs} ms`,
     );
   }
+  // a reused in-page separation result is not consumed (its buffers are copied, not transferred)
+  const reuse = await page.evaluate(() => window.runSeparationReuse());
+  const reuseOk = reuse.intact && reuse.notes[0] > 0 && reuse.notes[0] === reuse.notes[1] && reuse.melody[0] === reuse.melody[1];
+  failed ||= !reuseOk;
+  console.log(`${reuseOk ? 'PASS' : 'FAIL'} separation  the same in-page separation result transcribes twice identically ${JSON.stringify(reuse)}`);
 } finally {
   await browser.close();
   await server.close();

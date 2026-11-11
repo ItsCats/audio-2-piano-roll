@@ -2,7 +2,7 @@
 
 Turn songs, recordings, YouTube videos and MIDI files into an interactive **falling-note piano roll** — with a real sampled grand piano, Easy / Medium / Hard arrangements, note editing, practice tools with MIDI-keyboard scoring, and **1080p60 video export**.
 
-Everything runs in the browser. Audio is transcribed on the user's device by a neural network; songs are stored locally. An optional self-hosted processing server adds YouTube fetching and AI source separation.
+Everything runs in the browser. Audio is transcribed on the user's device by a neural network; songs are stored locally. An optional self-hosted processing server adds YouTube fetching and faster source separation (separation also runs in the browser).
 
 ---
 
@@ -136,6 +136,7 @@ tests/               unit tests and the browser accuracy harness
 - [Salamander Grand Piano V3](https://freepats.zenvoid.org/Piano/acoustic-grand-piano.html) by Alexander Holm — CC-BY 3.0
 - Upright Piano KW (freepats.zenvoid.org) — CC0
 - [SCNet](https://github.com/starrytong/SCNet) source-separation model by starrytong (Tong et al., ICASSP 2024) — MIT; int8 ONNX export by [audiojs](https://huggingface.co/audiojs/scnet); redistribution confirmed in [starrytong/SCNet#35](https://github.com/starrytong/SCNet/issues/35). Used in the browser and on the optional server; see [public/models/scnet/README.md](public/models/scnet/README.md)
+- [CREPE](https://github.com/marl/crepe) "tiny" pitch model by Jong Wook Kim et al. — MIT; PyTorch weights from [torchcrepe](https://github.com/maxrmorrison/torchcrepe) by Max Morrison (MIT), converted to ONNX for this project. Shipped in `public/models/crepe/` (not yet run by the import); see [public/models/crepe/README.md](public/models/crepe/README.md)
 - [ONNX Runtime](https://github.com/microsoft/onnxruntime) (onnxruntime-web in the browser, onnxruntime on the server) — MIT
 - TensorFlow.js (Apache-2.0), mediabunny (MPL-2.0), @tonejs/midi (MIT), React (MIT), yt-dlp (Unlicense, server only)
 

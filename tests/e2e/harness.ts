@@ -3,11 +3,13 @@ import { bachPreludeDemo } from '../../src/lib/music/demo';
 import { renderOffline } from '../../src/lib/audio/offlineRender';
 import { WavWriter } from '../../src/lib/audio/wav';
 import { DEFAULT_AUDIO_SETTINGS } from '../../src/lib/audio/types';
-import { transcribeAudio, reextractNotes, EXTRACTION_PRESETS, type TranscriptionResult } from '../../src/lib/transcription/pipeline';
+import { transcribeAudio, reextractNotes, redetectNotes, EXTRACTION_PRESETS, type TranscriptionResult } from '../../src/lib/transcription/pipeline';
 import type { ExtractionParams } from '../../src/lib/music/types';
 import { generateAllArrangements } from '../../src/lib/music/difficulty';
 import type { Note } from '../../src/lib/music/types';
 import { newNoteId } from '../../src/lib/music/cleanup';
+import { decodeToRate, mixToMono } from '../../src/lib/transcription/decode';
+import type { SeparationResult } from '../../src/lib/separation';
 
 function scoreNotes(ref: Note[], est: Note[], tol = 0.05) {
   const used = new Set<number>();
@@ -91,8 +93,15 @@ async function runAccuracy(piece: 'bach' | 'chords', preset: keyof typeof EXTRAC
     if (stages[stages.length - 1] !== s) stages.push(s);
   });
   const arr = generateAllArrangements(res.notes, [], res.tempo, res.duration);
+  // Studio "Re-detect" with unchanged parameters must reproduce the import (notes and beat grid)
+  const re = await redetectNotes(res.posteriors, EXTRACTION_PRESETS[preset], res.duration, { melody: res.notes.filter((n) => n.role === 'melody') });
+  const redetect = {
+    sameNotes: re.notes.length === res.notes.length && re.notes.every((n, i) => n.midi === res.notes[i].midi && Math.abs(n.start - res.notes[i].start) < 1e-6),
+    sameTempo: re.tempo.bpm === res.tempo.bpm && re.tempo.confidence === res.tempo.confidence && re.tempo.beats.length === res.tempo.beats.length,
+  };
   return {
     piece,
+    redetect,
     preset,
     renderMs: Math.round(renderMs),
     transcribeMs: res.info.processingMs,
@@ -187,7 +196,37 @@ async function runTune(piece: 'bach' | 'chords', grid: Partial<ExtractionParams>
   return out;
 }
 
-Object.assign(window, { runAccuracy, scoreNotes, runDiagnose, runTune });
+/**
+ * TranscribeOptions.separation must not be consumed: the same in-page result is passed to two
+ * calls (the accompaniment = the rendered piece, the "vocals" = the same audio at half level).
+ */
+async function runSeparationReuse() {
+  const src = bachPreludeDemo();
+  const end = Math.min(src.duration, 12);
+  const audio = await renderOffline({ notes: src.notes.filter((n) => n.start < end), pedal: [], settings: DEFAULT_AUDIO_SETTINGS, start: 0, end, rate: 1, sampleRate: 44100 });
+  const wav = new WavWriter(44100);
+  wav.append(audio);
+  const blob = wav.finish();
+  const mono = mixToMono(await decodeToRate(blob, 22050));
+  const separation: SeparationResult = {
+    sampleRate: 22050,
+    accomp: mono,
+    vocals: mono.map((v) => v * 0.5),
+    vocalPresence: { activeFraction: 1, relDb: -6, present: true },
+    engine: 'scnet-browser',
+    ms: 1,
+  };
+  const before = { accomp: separation.accomp.length, vocals: separation.vocals.length, v0: separation.vocals.find((v) => v !== 0) };
+  const a = await transcribeAudio(blob, EXTRACTION_PRESETS.mix, () => {}, undefined, { separation });
+  const b = await transcribeAudio(blob, EXTRACTION_PRESETS.mix, () => {}, undefined, { separation });
+  return {
+    intact: separation.accomp.length === before.accomp && separation.vocals.length === before.vocals && separation.vocals.find((v) => v !== 0) === before.v0,
+    notes: [a.notes.length, b.notes.length],
+    melody: [a.notes.filter((n) => n.role === 'melody').length, b.notes.filter((n) => n.role === 'melody').length],
+  };
+}
+
+Object.assign(window, { runAccuracy, scoreNotes, runDiagnose, runTune, runSeparationReuse });
 document.getElementById('log')!.textContent = 'ready';
 
 async function sampleOnsets() {

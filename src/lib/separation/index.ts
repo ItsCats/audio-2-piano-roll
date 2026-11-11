@@ -5,13 +5,15 @@
  * module worker and returns, at 22.05 kHz mono on the same timebase as decodeToRate(blob, 22050):
  *   vocals  — stem 3
  *   accomp  — stems 1 + 2 (bass + other: no drums, no vocals)
- * plus a vocal-presence estimate so instrumentals can skip the vocal-melody path, and the onset
- * envelope of the drums stem (stem 0; the drum audio itself is not kept), stored with the posteriors
- * for the drum-hit false-note filter (music/cleanup.ts DRUM_HIT_RULE, measured and currently off).
+ * plus a vocal-presence estimate so instrumentals can skip the vocal-melody path. While the drum-hit
+ * false-note filter (music/cleanup.ts DRUM_HIT_RULE, measured and currently off) is enabled, the
+ * drums stem (stem 0) is separated too and reduced to an onset envelope that is stored with the
+ * posteriors; while it is off the drums are not computed at all (less memory and CPU).
  */
 import { decodeToRate, mixToMono } from '../transcription/decode';
 import { DEFAULT_STEP, DRUM_ENV_FPS, SCNET_RATE, planSegments, vocalPresence } from './dsp';
 import { wasmThreads } from '../isolation';
+import { DRUM_HIT_RULE } from '../music/cleanup';
 
 export { DRUM_ENV_FPS };
 import type { WorkerResponse, WorkerStats } from './protocol';
@@ -32,7 +34,8 @@ export interface SeparationResult {
   vocalPresence: VocalPresence;
   /**
    * Onset strength of the drums stem, 8-bit at DRUM_ENV_FPS (separation/dsp.ts drumOnsetEnvelope).
-   * Absent for server stems (the server returns vocals + accompaniment only).
+   * Only while DRUM_HIT_RULE is enabled; absent for server stems (the server returns vocals +
+   * accompaniment only).
    */
   drumOnsets?: Uint8Array;
   engine: 'scnet-browser' | 'scnet-server';
@@ -46,6 +49,11 @@ export interface SeparationSupport {
   recommended: boolean;
   reason?: string;
   estSecondsPerMinute: number;
+  /**
+   * Longest recording this device should separate in the browser (memory grows with length, see
+   * estimateSeparationMB). Longer recordings are transcribed from the full mix with a warning.
+   */
+  maxSeconds: number;
 }
 
 export const SEPARATION_RATE = 22050;
@@ -64,6 +72,29 @@ export const EST_SECONDS_PER_MINUTE = 130;
  * free 4th core.
  */
 const SPEEDUP = [1, 1, 1.9, 2.4, 2.6];
+
+/**
+ * Rough peak memory of the tab while separating `seconds` of audio in the browser: ~2 GB measured
+ * for short songs (renderer, the ~1.2 GB WASM heap of the separation model, the transcription model)
+ * plus what grows with length: the worker's 44.1 kHz stereo input and 22.05 kHz stems (~14 bytes per
+ * 44.1 kHz sample) and the main thread's 44.1 kHz decode and 22.05 kHz mix (~16 bytes per sample).
+ */
+export function estimateSeparationMB(seconds: number): number {
+  return 2000 + (seconds * SCNET_RATE * 30) / 1e6;
+}
+
+/** "about 2.4 GB" */
+export function formatMemory(mb: number): string {
+  return `about ${(mb / 1000).toFixed(1)} GB`;
+}
+
+/**
+ * Recordings longer than this are not separated in the browser unless the device reports 8 GB or
+ * more (navigator.deviceMemory is capped at 8): at 10 min the tab needs ~2.8 GB, at 20 min ~3.6 GB.
+ * Browsers that report no memory (Firefox, Safari) get the lower limit.
+ */
+export const BROWSER_SEPARATION_MAX_SECONDS = 10 * 60;
+const LARGE_DEVICE_MAX_SECONDS = 20 * 60;
 
 /** WASM threads the separation worker will use here (it needs a cross-origin-isolated page). */
 export function separationThreads(): number {
@@ -85,11 +116,29 @@ function isMobileDevice(): boolean {
   return /Macintosh/.test(ua) && (navigator.maxTouchPoints ?? 0) > 1;
 }
 
-/** Whether in-browser separation can run here, and whether it is a good idea on this device. */
-export function separationSupport(): SeparationSupport {
+/**
+ * Whether in-browser separation can run here, and whether it is a good idea on this device. With
+ * `seconds` (the recording's length, when known) a recording above `maxSeconds` is not recommended.
+ */
+export function separationSupport(seconds?: number): SeparationSupport {
   const est = Math.round(EST_SECONDS_PER_MINUTE / SPEEDUP[Math.min(4, separationThreads())]);
+  const mem = typeof navigator === 'undefined' ? undefined : (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
+  const maxSeconds = typeof mem === 'number' && mem >= 8 ? LARGE_DEVICE_MAX_SECONDS : BROWSER_SEPARATION_MAX_SECONDS;
+  const base = separationSupportBase(est, mem, maxSeconds);
+  if (base.ok && base.recommended && seconds !== undefined && seconds > maxSeconds) {
+    return { ...base, recommended: false, reason: longReason(seconds) };
+  }
+  return base;
+}
+
+/** why a recording of `seconds` is not separated in this browser */
+export function longReason(seconds: number): string {
+  return `A ${Math.round(seconds / 60)}-minute recording needs ${formatMemory(estimateSeparationMB(seconds))} of memory to separate in this browser.`;
+}
+
+function separationSupportBase(est: number, mem: number | undefined, maxSeconds: number): SeparationSupport {
   if (typeof WebAssembly !== 'object' || typeof Worker === 'undefined') {
-    return { ok: false, recommended: false, reason: 'This browser has no WebAssembly or Web Worker support.', estSecondsPerMinute: est };
+    return { ok: false, recommended: false, reason: 'This browser has no WebAssembly or Web Worker support.', estSecondsPerMinute: est, maxSeconds };
   }
   let simd = false;
   try {
@@ -98,26 +147,28 @@ export function separationSupport(): SeparationSupport {
     simd = false;
   }
   if (!simd) {
-    return { ok: false, recommended: false, reason: 'This browser does not support WebAssembly SIMD, which the separation model needs.', estSecondsPerMinute: est };
+    return { ok: false, recommended: false, reason: 'This browser does not support WebAssembly SIMD, which the separation model needs.', estSecondsPerMinute: est, maxSeconds };
   }
-  const mem = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
+  const typical = formatMemory(estimateSeparationMB(240));
   if (isMobileDevice()) {
     return {
       ok: true,
       recommended: false,
-      reason: 'Needs about 2.5 GB of memory and several minutes per song.',
+      reason: `Needs ${typical} of memory for a 4-minute song (more for longer ones) and several minutes per song.`,
       estSecondsPerMinute: est * 2,
+      maxSeconds,
     };
   }
   if (typeof mem === 'number' && mem < 4) {
     return {
       ok: true,
       recommended: false,
-      reason: `This device reports ${mem} GB of memory; separating vocals & drums needs about 2.5 GB.`,
+      reason: `This device reports ${mem} GB of memory; separating vocals & drums needs ${typical} for a 4-minute song.`,
       estSecondsPerMinute: est,
+      maxSeconds,
     };
   }
-  return { ok: true, recommended: true, estSecondsPerMinute: est };
+  return { ok: true, recommended: true, estSecondsPerMinute: est, maxSeconds };
 }
 
 /** Per-100 ms vocal-stem vs mixture energy gate (both mono, same rate and timebase). */
@@ -204,7 +255,7 @@ export function separateStereo44k(
     };
     onProgress(0, `Loading the separation model (${segments} parts to separate)`);
     worker.postMessage(
-      { type: 'separate', left, right, modelUrl, modelSha256: SCNET_MODEL_SHA256, step: opts.step, keep44: opts.keep44 },
+      { type: 'separate', left, right, modelUrl, modelSha256: SCNET_MODEL_SHA256, step: opts.step, keep44: opts.keep44, wantDrums: DRUM_HIT_RULE.enabled },
       [left.buffer, right.buffer],
     );
   });
@@ -235,7 +286,7 @@ export async function separateStems(
     vocals: raw.vocals,
     accomp: raw.accomp,
     vocalPresence,
-    drumOnsets: raw.drumOnsets,
+    ...(raw.drumOnsets.length ? { drumOnsets: raw.drumOnsets } : {}),
     engine: 'scnet-browser',
     ms: performance.now() - t0,
     threads: raw.stats.threads,
@@ -253,9 +304,10 @@ function fitLength(x: Float32Array, n: number): Float32Array {
  * Stems separated by the processing server (SCNet there too). Decoded at 22.05 kHz and fitted to
  * the mixture's length. The presence gate compares against vocals + accompaniment (the server
  * does not return the drums), which is within ~1 dB of the full mix for this purpose.
+ * `serverMs` is the server's own separation time when it reports one; otherwise ms is 0 (unknown:
+ * the time spent here is only decoding the downloaded stems).
  */
-export async function stemsFromBlobs(vocals: Blob, accomp: Blob, mixDuration: number): Promise<SeparationResult> {
-  const t0 = performance.now();
+export async function stemsFromBlobs(vocals: Blob, accomp: Blob, mixDuration: number, serverMs?: number): Promise<SeparationResult> {
   const n = Math.max(1, Math.round(mixDuration * SEPARATION_RATE));
   const [vb, ab] = await Promise.all([decodeToRate(vocals, SEPARATION_RATE), decodeToRate(accomp, SEPARATION_RATE)]);
   const v = fitLength(mixToMono(vb), n);
@@ -268,7 +320,7 @@ export async function stemsFromBlobs(vocals: Blob, accomp: Blob, mixDuration: nu
     accomp: a,
     vocalPresence: measureVocalPresence(v, mix, SEPARATION_RATE),
     engine: 'scnet-server',
-    ms: performance.now() - t0,
+    ms: serverMs !== undefined && Number.isFinite(serverMs) && serverMs > 0 ? serverMs : 0,
   };
 }
 

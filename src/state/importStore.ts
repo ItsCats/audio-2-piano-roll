@@ -63,14 +63,16 @@ export type PresetId = 'piano' | 'mix' | 'sensitive' | 'custom';
 export interface ImportPrefs {
   /** the user's last explicit "Separate vocals & drums" choice, per detection preset */
   separate: Partial<Record<PresetId, boolean>>;
+  /** where separation would have run when that choice was made (a "yes" for the server is not a "yes" for a phone's browser) */
+  engine?: Partial<Record<PresetId, SeparationEngine>>;
 }
 
 interface ImportState {
   job: ImportJob | null;
   controller: AbortController | null;
   prefs: ImportPrefs;
-  /** remember the user's separation choice for a detection preset */
-  setSeparatePref: (preset: PresetId, value: boolean) => void;
+  /** remember the user's separation choice for a detection preset (and where it would have run) */
+  setSeparatePref: (preset: PresetId, value: boolean, engine?: SeparationEngine | null) => void;
   /** `separate` defaults to the user's choice for the current detection preset */
   importFile: (file: File, opts?: { separate?: boolean; title?: string }) => Promise<string | null>;
   importAudioBlob: (blob: Blob, meta: { title: string; artist?: string; source: SongSource; separate?: boolean }) => Promise<string | null>;
@@ -90,10 +92,13 @@ function loadPrefs(): ImportPrefs {
     if (!raw) return { separate: {} };
     const p = JSON.parse(raw) as Partial<ImportPrefs>;
     const sep: ImportPrefs['separate'] = {};
+    const engine: NonNullable<ImportPrefs['engine']> = {};
     for (const k of ['piano', 'mix', 'sensitive', 'custom'] as PresetId[]) {
       if (typeof p.separate?.[k] === 'boolean') sep[k] = p.separate[k];
+      const e = p.engine?.[k];
+      if (e === 'server' || e === 'browser') engine[k] = e;
     }
-    return { separate: sep };
+    return { separate: sep, engine };
   } catch {
     return { separate: {} };
   }
@@ -121,13 +126,25 @@ export function serverHasStems(h: BackendHealth | null | undefined): boolean {
 
 const healthCache = new Map<string, { at: number; value: Promise<BackendHealth | null> }>();
 
-/** Health of the processing server, cached for a minute (null when unreachable). */
+/**
+ * Health of the processing server (null when unreachable). A reachable server is cached for a
+ * minute; an unreachable one is not cached at all, so a server that just came up is used at once.
+ */
 export function serverHealth(url: string): Promise<BackendHealth | null> {
   const hit = healthCache.get(url);
   if (hit && Date.now() - hit.at < 60_000) return hit.value;
-  const value = health(url).catch(() => null);
+  const value = health(url).catch(() => {
+    if (healthCache.get(url)?.value === value) healthCache.delete(url);
+    return null;
+  });
   healthCache.set(url, { at: Date.now(), value });
   return value;
+}
+
+/** Record a health check made elsewhere (Settings, the YouTube tab), so the import uses the same answer. */
+export function rememberServerHealth(url: string, h: BackendHealth | null): void {
+  if (h) healthCache.set(url, { at: Date.now(), value: Promise.resolve(h) });
+  else healthCache.delete(url);
 }
 
 export interface SeparationAvailability {
@@ -148,12 +165,101 @@ export function separationAvailability(serverStems: boolean, browser: Separation
   return { available: true, engine: 'browser', recommended: browser.recommended, reason: browser.recommended ? undefined : browser.reason, browser };
 }
 
-/** The separation default for a preset: the user's last choice, else on for "Full song" (when recommended). */
+/**
+ * The separation default for a preset: the user's last choice, else on for "Full song" (when
+ * recommended). A "yes" given while the server would have separated does not carry over to this
+ * browser when separating here is not recommended (phones, low memory).
+ */
 export function separationChoice(prefs: ImportPrefs, preset: PresetId, avail: SeparationAvailability): boolean {
   if (!avail.available) return false;
   const remembered = prefs.separate[preset];
+  if (remembered === true && avail.engine === 'browser' && !avail.recommended && prefs.engine?.[preset] === 'server') return false;
   if (remembered !== undefined) return remembered;
   return preset === 'mix' && avail.recommended;
+}
+
+/** Whether a failed server separation may fall back to separating in this browser: only where that is recommended. */
+export function browserFallback(browser: SeparationSupport = separationSupport()): { ok: boolean; why?: string } {
+  if (browser.ok && browser.recommended) return { ok: true };
+  return { ok: false, why: browser.ok ? `separating in this browser is not recommended on this device: ${browser.reason ?? 'not enough memory'}` : browser.reason };
+}
+
+// ---------------------------------------------------------------- crash marker for in-browser separation
+
+/**
+ * Set while this browser separates (own key; the settings and prefs keys are untouched), together
+ * with a Web Lock held for as long as the separating tab lives. A marker left behind without the
+ * lock means that tab died mid-separation (almost always out of memory): the next load says so and
+ * turns the option off for that preset. A normal unload (reload, close, navigation) removes it.
+ */
+const SEPARATING_KEY = 'piano2vision-separating';
+const SEPARATING_LOCK = 'piano2vision-separating';
+let ownsSeparatingMarker = false;
+
+function markSeparating(preset: PresetId): () => void {
+  const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
+  if (!locks) return () => {};
+  let release: () => void = () => {};
+  const held = new Promise<void>((r) => (release = r));
+  void locks.request(SEPARATING_LOCK, () => held).catch(() => undefined);
+  try {
+    localStorage.setItem(SEPARATING_KEY, JSON.stringify({ preset, at: Date.now() }));
+    ownsSeparatingMarker = true;
+  } catch {
+    /* storage blocked: no crash detection */
+  }
+  return () => {
+    if (ownsSeparatingMarker) {
+      ownsSeparatingMarker = false;
+      try {
+        localStorage.removeItem(SEPARATING_KEY);
+      } catch {
+        /* ignore */
+      }
+    }
+    release();
+  };
+}
+
+async function checkCrashedSeparation(turnOff: (preset: PresetId) => void): Promise<void> {
+  let raw: string | null = null;
+  try {
+    raw = localStorage.getItem(SEPARATING_KEY);
+  } catch {
+    return;
+  }
+  if (!raw || typeof navigator === 'undefined' || !navigator.locks) return;
+  const state = await navigator.locks.query().catch(() => null);
+  // another tab is separating right now
+  if (!state || state.held?.some((l) => l.name === SEPARATING_LOCK)) return;
+  try {
+    localStorage.removeItem(SEPARATING_KEY);
+  } catch {
+    /* ignore */
+  }
+  let m: { preset?: PresetId; at?: number } = {};
+  try {
+    m = JSON.parse(raw) as typeof m;
+  } catch {
+    return;
+  }
+  if (!m.preset || !['piano', 'mix', 'sensitive', 'custom'].includes(m.preset) || !m.at || Date.now() - m.at > 6 * 3600_000) return;
+  turnOff(m.preset);
+  toast.warn(
+    'The last import stopped while separating vocals & drums',
+    'The page most likely ran out of memory. "Separate vocals & drums" is now off for this detection preset. Close other tabs and tick it again to retry, or use a processing server with separation.',
+  );
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', () => {
+    if (!ownsSeparatingMarker) return;
+    try {
+      localStorage.removeItem(SEPARATING_KEY);
+    } catch {
+      /* ignore */
+    }
+  });
 }
 
 // ---------------------------------------------------------------- timeline plans
@@ -195,6 +301,8 @@ let seq = 1;
 /** One import's handle: its updates are dropped once it was cancelled or replaced by a newer import. */
 interface Ctx {
   id: number;
+  /** detection preset when the import started */
+  preset: PresetId;
   signal: AbortSignal;
   update: (patch: Partial<ImportJob>) => void;
   onProgress: (e: ProgressEvent) => void;
@@ -234,7 +342,13 @@ export const useImport = create<ImportState>((set, get) => {
     const update = (patch: Partial<ImportJob>) => {
       if (!controller.signal.aborted) apply(id, patch);
     };
-    return { id, signal: controller.signal, update, onProgress: (e) => update({ stage: e.stage, progress: e.progress, detail: e.detail }) };
+    return {
+      id,
+      preset: useSettings.getState().detectionPreset as PresetId,
+      signal: controller.signal,
+      update,
+      onProgress: (e) => update({ stage: e.stage, progress: e.progress, detail: e.detail }),
+    };
   };
 
   const finish = async ({ update }: Ctx, song: Song) => {
@@ -282,7 +396,7 @@ export const useImport = create<ImportState>((set, get) => {
     update({ stage: 'uploading', progress: null, detail: 'Uploading to your processing server' });
     const job = await createSeparationJob(url, blob, name);
     if (signal.aborted) throw new DOMException('Cancelled', 'AbortError');
-    await waitForJob(
+    const done = await waitForJob(
       url,
       job.id,
       (j) =>
@@ -296,7 +410,7 @@ export const useImport = create<ImportState>((set, get) => {
     update({ stage: 'downloading', progress: null, detail: 'Downloading the separated vocals and accompaniment' });
     const stems = await backendApi.fetchStems(url, job.id, signal);
     if (signal.aborted) throw new DOMException('Cancelled', 'AbortError');
-    return stems;
+    return { ...stems, serverMs: done.separationMs ?? undefined };
   };
 
   /**
@@ -309,7 +423,7 @@ export const useImport = create<ImportState>((set, get) => {
     meta: { title: string; artist?: string; source: SongSource; fileName: string },
     engine: SeparationEngine | undefined,
     /** stems the server already produced (a separated YouTube job): used as they are */
-    prefetched?: { vocals: Blob; accomp: Blob },
+    prefetched?: { vocals: Blob; accomp: Blob; serverMs?: number },
     /** warnings from earlier steps of this import */
     earlier: string[] = [],
   ) => {
@@ -325,22 +439,37 @@ export const useImport = create<ImportState>((set, get) => {
         progress = (e) => onProgress(e.stage === 'separating' ? { ...e, stage: 'decoding', progress: null } : e);
       } catch (err) {
         if (isAbort(err) || signal.aborted) throw err;
-        const browser = separationSupport();
+        // fall back to this browser only where that is recommended (not on phones / low memory)
+        const fb = browserFallback();
         const why = (err as Error)?.message ?? String(err);
-        if (browser.ok) {
+        if (fb.ok) {
           extraWarnings.push(`The processing server could not separate this song (${why}); it was separated in the browser instead.`);
           opts = { separate: true };
           const job = get().job;
           if (job) update({ plan: planFor(job.kind, 'browser', job.plan[1] === 'downloading'), separation: 'browser' });
         } else {
-          extraWarnings.push(`The processing server could not separate this song (${why}); the full mix was transcribed.`);
+          extraWarnings.push(`The processing server could not separate this song (${why}); the full mix was transcribed${fb.why ? ` (${fb.why})` : ''}.`);
+          const job = get().job;
+          if (job) update({ plan: planFor(job.kind, undefined, job.plan[1] === 'downloading'), separation: undefined });
         }
         update({ warnings: [...(get().job?.warnings ?? []), ...extraWarnings] });
       }
     } else if (engine === 'browser') {
       opts = { separate: true };
     }
-    const result = await transcribeAudio(original, params, progress, signal, opts);
+    // in-browser separation: leave a marker in case the tab dies of it (see markSeparating)
+    const unmark = opts.separate ? markSeparating(ctx.preset) : () => {};
+    let result: Awaited<ReturnType<typeof transcribeAudio>>;
+    try {
+      result = await transcribeAudio(original, params, progress, signal, opts);
+    } finally {
+      unmark();
+    }
+    if (result.separationFailure === 'memory' && opts.separate) {
+      // the next import of this preset would fail the same way
+      get().setSeparatePref(ctx.preset, false, 'browser');
+      result.info.warnings.push('"Separate vocals & drums" is now off for this detection preset; tick it again to retry.');
+    }
     result.info.warnings = [...extraWarnings, ...result.info.warnings];
     const song = buildSong({
       title: meta.title,
@@ -373,8 +502,12 @@ export const useImport = create<ImportState>((set, get) => {
     controller: null,
     prefs: loadPrefs(),
 
-    setSeparatePref: (preset, value) => {
-      const prefs = { ...get().prefs, separate: { ...get().prefs.separate, [preset]: value } };
+    setSeparatePref: (preset, value, engine) => {
+      const cur = get().prefs;
+      const eng = { ...cur.engine };
+      if (engine) eng[preset] = engine;
+      else delete eng[preset];
+      const prefs = { ...cur, separate: { ...cur.separate, [preset]: value }, engine: eng };
       set({ prefs });
       savePrefs(prefs);
     },
@@ -434,12 +567,18 @@ export const useImport = create<ImportState>((set, get) => {
         const meta0 = { title: meta?.title ?? 'YouTube video', artist: meta?.artist };
         const sourceOf = (blob: Blob): SongSource => ({ kind: 'youtube', youtubeId: videoId, url: videoUrl, mimeType: blob.type, fileSize: blob.size });
         const earlier: string[] = [];
-        let browserFallback = false;
+        let fallBackToBrowser = false;
 
+        // the original mix of a separated job, when the server got that far (reused by the fallback)
+        let mixFromServer: { blob: Blob; title: string; artist?: string } | null = null;
         if (engine === 'server') {
           // one server job fetches the video's audio and separates it: the original mix (for playback
           // in the Studio) and both stems come back from the same job, nothing is uploaded again
           update({ plan: [...new Set<ImportStage>(['validating', 'downloading', 'separating', ...TRANSCRIBE])], separation: 'server' });
+          // only the server's part is inside this try: transcription and saving errors are not
+          // separation failures and must not start the fallback
+          let served: { mix: Blob; stems: { vocals: Blob; accomp: Blob; serverMs?: number }; title: string; artist?: string } | null = null;
+          let why = '';
           try {
             update({ stage: 'downloading', progress: null, detail: 'Fetching audio on your processing server' });
             const job = await createYouTubeJob(backend, videoUrl, true);
@@ -455,27 +594,44 @@ export const useImport = create<ImportState>((set, get) => {
                 }),
               signal,
             );
-            update({ stage: 'downloading', progress: null, detail: 'Transferring the audio and the separated stems to the browser' });
-            const [mix, stems] = await Promise.all([getJobAudio(backend, job.id, 'mix', signal), backendApi.fetchStems(backend, job.id, signal)]);
-            if (signal.aborted) return null;
             const title = done.title ?? meta0.title;
-            return await transcribeAndSave(ctx, mix, { title, artist: done.artist ?? meta0.artist, source: sourceOf(mix), fileName: `${title}.m4a` }, 'server', stems);
+            const artist = done.artist ?? meta0.artist;
+            update({ stage: 'downloading', progress: null, detail: 'Transferring the audio and the separated stems to the browser' });
+            const mix = await getJobAudio(backend, job.id, 'mix', signal);
+            mixFromServer = { blob: mix, title, artist };
+            const hasStems = !!done.stems?.includes('vocals') && done.stems.includes('accomp');
+            if (!hasStems) {
+              why = done.separationError || 'it returned no separated stems';
+            } else {
+              const stems = await backendApi.fetchStems(backend, job.id, signal);
+              served = { mix, stems: { ...stems, serverMs: done.separationMs ?? undefined }, title, artist };
+            }
           } catch (err) {
             if (isAbort(err) || signal.aborted) throw err;
-            // e.g. the server could fetch but not separate: fetch the audio alone and separate here
-            const why = (err as Error)?.message ?? String(err);
-            browserFallback = separationSupport().ok;
-            earlier.push(
-              browserFallback
-                ? `The processing server could not separate this video (${why}); it was separated in the browser instead.`
-                : `The processing server could not separate this video (${why}); the full mix was transcribed.`,
-            );
-            update({ warnings: [...earlier] });
+            why = (err as Error)?.message ?? String(err);
           }
+          if (signal.aborted) return null;
+          if (served) {
+            return await transcribeAndSave(ctx, served.mix, { title: served.title, artist: served.artist, source: sourceOf(served.mix), fileName: `${served.title}.m4a` }, 'server', served.stems);
+          }
+          // e.g. the server could fetch but not separate: separate here (where recommended) or transcribe the full mix
+          const fb = browserFallback();
+          fallBackToBrowser = fb.ok;
+          earlier.push(
+            fb.ok
+              ? `The processing server could not separate this video (${why}); it was separated in the browser instead.`
+              : `The processing server could not separate this video (${why}); the full mix was transcribed${fb.why ? ` (${fb.why})` : ''}.`,
+          );
+          update({ warnings: [...earlier] });
         }
 
-        const engine2: SeparationEngine | undefined = engine === 'server' ? (browserFallback ? 'browser' : undefined) : engine;
+        const engine2: SeparationEngine | undefined = engine === 'server' ? (fallBackToBrowser ? 'browser' : undefined) : engine;
         update({ plan: planFor('youtube', engine2, true), separation: engine2 });
+        if (mixFromServer) {
+          // the separated job already fetched the video: no second download on the server
+          const { blob, title, artist } = mixFromServer;
+          return await transcribeAndSave(ctx, blob, { title, artist, source: sourceOf(blob), fileName: `${title}.m4a` }, engine2, undefined, earlier);
+        }
         update({ stage: 'downloading', progress: null, detail: 'Fetching audio on your processing server' });
         // fetch the original mix: it is what plays back in the Studio; separation follows as for files
         const job = await createYouTubeJob(backend, videoUrl, false);
@@ -523,6 +679,30 @@ export const useImport = create<ImportState>((set, get) => {
     },
   };
 });
+
+/** an import is running (not finished, failed or cancelled) */
+export function importBusy(job: ImportJob | null): boolean {
+  return !!job && job.stage !== 'done' && job.stage !== 'error';
+}
+
+if (typeof window !== 'undefined') {
+  // A page load ends the document and the import with it. Router navigations keep the document
+  // (App.tsx IsolationGate), but Back/Forward into a history entry of another document (the YouTube
+  // route is its own document), a reload or closing the tab do not: ask first while an import runs.
+  const onBeforeUnload = (e: BeforeUnloadEvent) => {
+    e.preventDefault();
+    e.returnValue = '';
+  };
+  let guarded = false;
+  useImport.subscribe((st) => {
+    const busy = importBusy(st.job);
+    if (busy === guarded) return;
+    guarded = busy;
+    if (busy) window.addEventListener('beforeunload', onBeforeUnload);
+    else window.removeEventListener('beforeunload', onBeforeUnload);
+  });
+  setTimeout(() => void checkCrashedSeparation((preset) => useImport.getState().setSeparatePref(preset, false, 'browser')), 0);
+}
 
 export const STAGE_LABELS: Record<ImportStage, string> = {
   validating: 'Checking file',

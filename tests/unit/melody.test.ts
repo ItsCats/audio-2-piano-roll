@@ -14,7 +14,7 @@ import {
   smoothLine,
   speechSections,
 } from '../../src/lib/music/melody';
-import { easyBassLine, easySungLine, generateEasy, generateHard, generateMedium, gridFactor, placeSungGroups } from '../../src/lib/music/difficulty';
+import { easyBassLine, easySungLine, generateEasy, generateHard, generateMedium, gridFactor, melodyGaps, placeSungGroups } from '../../src/lib/music/difficulty';
 import { regularBeats } from '../../src/lib/music/beats';
 
 let id = 1;
@@ -382,6 +382,49 @@ describe('Easy rhythm: the sung line on 8th notes, Medium on 16ths', () => {
     const line = [60, 62, 64, 65, 67, 65, 64, 62].map((m, i) => n(m + 12, i * 0.5, 0.45, 0.8, 'R', 'melody'));
     const rh = generateEasy([...line, n(48, 0, 4, 0.7, 'L')], slow, 5).filter((x) => x.hand === 'R');
     expect(rh).toHaveLength(8);
+  });
+});
+
+describe('instrumental stretches on a half-time tempo estimate', () => {
+  // the tracker says 65 BPM (confidence 0.12) for a ~130 BPM song: one tracked beat = two real beats
+  const half: TempoInfo = { ...tempo(65, 40), confidence: 0.12 };
+  const realBeat = 60 / 130;
+  const sing = (t0: number, t1: number) => {
+    const out: Note[] = [];
+    for (let t = t0; t < t1 - 1e-6; t += realBeat) out.push(n(72, t, realBeat * 0.9, 0.8, 'R', 'melody'));
+    return out;
+  };
+  // melody, then 3 real bars (12 real beats, ~5.54 s) without singing, then melody again
+  const breakStart = 8 * realBeat * 2;
+  const breakEnd = breakStart + 12 * realBeat;
+  const melody = [...sing(0, breakStart), ...sing(breakEnd, breakEnd + 8 * realBeat * 2)];
+  const duration = breakEnd + 16 * realBeat;
+
+  it('melodyGaps counts the threshold and the trim in real beats', () => {
+    expect(gridFactor(half)).toBe(2);
+    const gaps = melodyGaps(melody, half, duration, 8, 2);
+    const inner = gaps.find(([a, b]) => Number.isFinite(a) && Number.isFinite(b));
+    expect(inner).toBeDefined();
+    // trimmed by ONE real beat at each end
+    const lastSung = melody.filter((m) => m.start < breakStart).at(-1)!;
+    expect(inner![0]).toBeCloseTo(lastSung.start + lastSung.dur + realBeat, 2);
+    expect(inner![1]).toBeCloseTo(breakEnd - realBeat, 2);
+    // without the factor the 3-bar break is missed (needs 16 real beats)
+    expect(melodyGaps(melody, half, duration).filter(([a, b]) => Number.isFinite(a) && Number.isFinite(b))).toHaveLength(0);
+  });
+
+  it("Easy and Medium play the instruments' tune in a 3-bar break", () => {
+    const tune: Note[] = [];
+    for (let t = 0; t < duration; t += realBeat) tune.push(n(t % (4 * realBeat) < realBeat ? 76 : 74, t, realBeat * 0.9, 0.7, 'R'));
+    const bass: Note[] = [];
+    for (let t = 0; t < duration; t += 4 * realBeat) bass.push(n(43, t, 4 * realBeat * 0.95, 0.7, 'L'));
+    const base = [...melody, ...tune, ...bass];
+    const mid = (x: Note) => x.start > breakStart + 2 * realBeat && x.start < breakEnd - 2 * realBeat;
+    for (const arr of [generateEasy(base, half, duration), generateMedium(base, half)]) {
+      const rh = arr.filter((x) => x.hand === 'R' && mid(x));
+      expect(rh.length).toBeGreaterThan(3);
+      expect(rh.every((x) => x.role !== 'melody')).toBe(true);
+    }
   });
 });
 

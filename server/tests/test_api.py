@@ -160,3 +160,36 @@ def test_youtube_job_with_separation_has_mix_and_stems(client, monkeypatch, tmp_
     assert j["stems"] == ["accomp", "mix", "vocals"] and j["title"] == "Tone"
     assert client.get(f"/api/jobs/{j['id']}/audio", params={"stem": "mix"}).headers["content-type"] == "audio/mp4"
     assert client.get(f"/api/jobs/{j['id']}/audio").headers["content-type"] == "audio/flac"  # default = accomp
+
+
+def test_youtube_job_keeps_the_mix_when_separation_fails(client, monkeypatch):
+    """A failed separation must not cost a second YouTube download: the job is done with the mix only."""
+    from app import youtube
+
+    def fake_download(url, out_dir, on_progress):
+        p = f"{out_dir}/source.wav"
+        with open(p, "wb") as fh:
+            fh.write(_wav(2.0))
+        return {"path": p, "title": "Tone", "artist": "Test", "duration": 2.0}
+
+    def broken_separate(audio, on_progress=None, step=None, run=None):
+        raise MemoryError("bad_alloc")
+
+    monkeypatch.setattr(youtube, "available", lambda: True)
+    monkeypatch.setattr(youtube, "download_audio", fake_download)
+    monkeypatch.setattr(separation, "separate", broken_separate)
+    j = _wait(client, client.post("/api/jobs/youtube", json={"url": "https://youtu.be/abc", "separate": True}).json()["id"])
+    assert j["status"] == "done", j
+    assert j["stems"] == ["mix"]
+    assert j["separationError"] == "bad_alloc" and j["separationMs"] is None
+    r = client.get(f"/api/jobs/{j['id']}/audio", params={"stem": "mix"})
+    assert r.status_code == 200 and r.headers["content-type"] == "audio/mp4"
+    assert client.get(f"/api/jobs/{j['id']}/audio").headers["content-type"] == "audio/mp4"  # default = mix
+    assert client.get(f"/api/jobs/{j['id']}/audio", params={"stem": "vocals"}).status_code == 404
+
+
+def test_separation_jobs_report_their_time(client):
+    j = _wait(client, client.post("/api/jobs/separate", files={"file": ("tone.wav", _wav(1.0), "audio/wav")}).json()["id"])
+    assert j["status"] == "done", j
+    assert isinstance(j["separationMs"], int) and j["separationMs"] >= 0
+    assert j["separationError"] is None

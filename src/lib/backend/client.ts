@@ -31,6 +31,10 @@ export interface BackendJob {
   kind?: string;
   /** stems available for download once done (server 2.0+) */
   stems?: BackendStem[];
+  /** server's time for separating the stems (decode + SCNet + encode), when it ran */
+  separationMs?: number | null;
+  /** a YouTube job whose separation failed is still done, with the mix only and this error */
+  separationError?: string | null;
 }
 
 function base(url: string): string {
