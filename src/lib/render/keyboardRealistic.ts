@@ -193,7 +193,8 @@ function drawWhiteKey(ctx: Ctx2D, g: Geo, midi: number, x: number, w: number, hc
 function drawWhiteLabel(ctx: Ctx2D, g: Geo, midi: number, x: number, w: number, hc: RGB | null): void {
   const pressed = hc !== null;
   const { xl, kw, c, ySurf } = whiteParams(g, midi, x, w, hc);
-  const size = Math.min(11 * g.sc, kw * 0.42);
+  // never smaller than a readable 7.5 px (small live views), but always fits the key
+  const size = Math.min(Math.max(11 * g.sc, 7.5), kw * 0.42);
   if (g.labels && midi % 12 === 0 && size >= 6) {
     const lc = lum(c);
     ctx.fillStyle = pressed

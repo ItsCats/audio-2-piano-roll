@@ -83,10 +83,11 @@ export function PianoRollView() {
   useEffect(() => {
     const el = containerRef.current!;
     const ro = new ResizeObserver(() => {
+      const canvas = canvasRef.current;
+      if (!canvas) return; // observer fired after the Studio unmounted
       const r = el.getBoundingClientRect();
       setNarrow(r.width < 700);
       const dpr = Math.min(2, window.devicePixelRatio || 1);
-      const canvas = canvasRef.current!;
       canvas.style.width = `${r.width}px`;
       canvas.style.height = `${r.height}px`;
       rendererRef.current?.resize(r.width * dpr, r.height * dpr);

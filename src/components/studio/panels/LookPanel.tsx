@@ -210,6 +210,7 @@ function MediaPicker({
  */
 function CoalescedSlider({ value, onChange, every = 120, ...rest }: ComponentProps<typeof Slider> & { every?: number }) {
   const [local, setLocal] = useState<number | null>(null);
+  const [flushes, setFlushes] = useState(0);
   const pending = useRef<number | null>(null);
   const timer = useRef<number | null>(null);
   const last = useRef(0);
@@ -222,6 +223,7 @@ function CoalescedSlider({ value, onChange, every = 120, ...rest }: ComponentPro
     pending.current = null;
     last.current = performance.now();
     cb.current(x);
+    setFlushes((n) => n + 1);
   };
   useEffect(
     () => () => {
@@ -231,10 +233,11 @@ function CoalescedSlider({ value, onChange, every = 120, ...rest }: ComponentPro
     },
     [],
   );
-  // once the store has caught up with the final value, follow the store again (e.g. theme switches)
+  // once nothing is pending, follow the store again (it now holds the last value we sent, or a
+  // newer one from e.g. a theme switch). Re-checked after every flush, so it can't get stuck.
   useEffect(() => {
-    if (local !== null && pending.current === null && timer.current === null && value === local) setLocal(null);
-  }, [value, local]);
+    if (local !== null && pending.current === null && timer.current === null) setLocal(null);
+  }, [value, local, flushes]);
   return (
     <Slider
       {...rest}

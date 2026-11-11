@@ -61,7 +61,7 @@ export const useSettings = create<SettingsState>()(
       reducedMotion: false,
       setVisual: (patch) => set((s) => ({ visual: { ...s.visual, ...patch } })),
       replaceVisual: (v) => set({ visual: v }),
-      setLabels: (patch) => set((s) => ({ visual: { ...s.visual, labels: { ...s.visual.labels, ...patch } } })),
+      setLabels: (patch) => set((s) => ({ visual: { ...s.visual, labels: { ...s.visual.labels, ...patch }, labelsHiddenByTheme: false } })),
       setBackground: (patch) => set((s) => ({ visual: { ...s.visual, background: { ...s.visual.background, ...patch } } })),
       setDecal: (patch) => set((s) => ({ visual: { ...s.visual, decal: { ...s.visual.decal, ...patch } } })),
       setEffects: (patch) => set((s) => ({ visual: { ...s.visual, effects: { ...s.visual.effects, ...patch } } })),

@@ -112,6 +112,8 @@ export interface VisualSettings {
   fallingGlow: number;
   /** 0..1 — lifts note colours so they stand out (e.g. in compressed YouTube video) */
   noteBrightness: number;
+  /** set when a theme (e.g. Blossom) hid the labels, so the next theme can bring them back */
+  labelsHiddenByTheme?: boolean;
 }
 
 export const KEYBOARD_THEMES = {
@@ -119,6 +121,9 @@ export const KEYBOARD_THEMES = {
   ivory: { white: '#fbf6e6', black: '#221d17', border: '#3b3328' },
   dark: { white: '#2b2c33', black: '#0b0b0e', border: '#0e0e12' },
 } as const;
+
+const DEFAULT_GLOW = 0.35;
+const DEFAULT_BRIGHTNESS = 0.15;
 
 export const DEFAULT_VISUAL: VisualSettings = {
   rightColor: '#4f9dff',
@@ -182,8 +187,8 @@ export const DEFAULT_VISUAL: VisualSettings = {
     outlineGlow: 0,
   },
   keyboardStyle: 'flat',
-  fallingGlow: 0.35,
-  noteBrightness: 0.15,
+  fallingGlow: DEFAULT_GLOW,
+  noteBrightness: DEFAULT_BRIGHTNESS,
   background: {
     kind: 'preset',
     presetId: 'midnight',
@@ -218,7 +223,12 @@ const CLASSIC_NOTES: ThemePatch = {
   borderWidth: 1,
   trails: true,
   particles: true,
-  labels: { style: 'letter', showOnKeys: true },
+  fallingGlow: DEFAULT_GLOW,
+  noteBrightness: DEFAULT_BRIGHTNESS,
+  // base colours; each theme overrides the ones it uses
+  rightColor: '#4f9dff',
+  leftColor: '#f5a524',
+  singleColor: '#8b7cff',
 };
 
 export const VISUAL_THEMES: { id: string; name: string; patch: ThemePatch }[] = [
@@ -267,7 +277,12 @@ export function applyTheme(v: VisualSettings, themeId: string): VisualSettings {
   const next: VisualSettings = {
     ...v,
     ...rest,
-    labels: { ...v.labels, ...(labels ?? {}) },
+    labels: labels
+      ? { ...v.labels, ...labels }
+      : v.labelsHiddenByTheme
+        ? { ...v.labels, style: 'letter', showOnKeys: true } // undo the previous theme's hiding
+        : v.labels,
+    labelsHiddenByTheme: labels ? labels.style === 'none' : false,
     background: { ...v.background, ...(background ?? {}) },
     // themes without a decal/effects patch switch those features off so looks don't leak
     decal: { ...v.decal, ...(decal ?? { source: 'none' as const }) },
