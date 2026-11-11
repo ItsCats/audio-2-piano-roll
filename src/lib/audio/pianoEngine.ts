@@ -100,17 +100,23 @@ export class PianoEngine {
     return this.library !== null;
   }
 
-  async load(onProgress?: (loaded: number, total: number) => void): Promise<void> {
-    this.library = await SampleLibrary.load(this.preset.library, onProgress);
+  async load(onProgress?: (loaded: number, total: number) => void, complete = false): Promise<void> {
+    this.library = await SampleLibrary.load(this.preset.library, onProgress, { complete });
   }
 
   /** Apply user audio settings. Resolves once the preset's sample set is loaded. */
-  async applySettings(s: AudioSettings, onProgress?: (l: number, t: number) => void): Promise<void> {
+  /**
+   * @param complete wait for every sample layer (offline renders / exports); live playback
+   *                 starts as soon as a playable set is loaded.
+   */
+  async applySettings(s: AudioSettings, onProgress?: (l: number, t: number) => void, complete = false): Promise<void> {
     this.settings = { ...s };
     this.preset = getPreset(s.presetId);
     this.applyParams();
     if (!this.library || this.library.def.id !== this.preset.library) {
-      this.library = await SampleLibrary.load(this.preset.library, onProgress);
+      this.library = await SampleLibrary.load(this.preset.library, onProgress, { complete });
+    } else if (complete) {
+      await SampleLibrary.load(this.preset.library, onProgress, { complete: true });
     }
   }
 

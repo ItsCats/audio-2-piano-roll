@@ -17,7 +17,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, { error: E
           <p className="mt-2 text-sm text-ink-300">{this.state.error.message}</p>
           <p className="mt-2 text-xs text-ink-400">Your songs are stored locally and are not affected.</p>
           <button className="mt-4 rounded-lg bg-accent-500 px-4 py-2 text-sm font-medium text-white" onClick={() => location.reload()}>
-            Reload PianoVision
+            Reload Piano2Vision
           </button>
         </div>
       </div>

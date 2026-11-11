@@ -28,6 +28,7 @@ interface PVSchema extends DBSchema {
 let dbp: Promise<IDBPDatabase<PVSchema>> | null = null;
 function db() {
   if (!dbp) {
+    // database name predates the Piano2Vision rename; changing it would orphan users' libraries
     dbp = openDB<PVSchema>('pianovision', 1, {
       upgrade(d) {
         d.createObjectStore('songs', { keyPath: 'id' });

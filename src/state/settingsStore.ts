@@ -73,7 +73,7 @@ export const useSettings = create<SettingsState>()(
       resetAudio: () => set({ audio: DEFAULT_AUDIO_SETTINGS }),
     }),
     {
-      name: 'pianovision-settings',
+      name: 'pianovision-settings', // storage key predates the rename; keep so saved settings survive
       version: 1,
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as Partial<SettingsState>;

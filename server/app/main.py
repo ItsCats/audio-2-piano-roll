@@ -1,5 +1,5 @@
 """
-PianoVision processing server.
+Piano2Vision processing server.
 
 Optional companion to the web app: fetches YouTube audio (yt-dlp) and isolates the
 piano / harmonic content of full mixes (Demucs). Note transcription itself runs in the
@@ -24,7 +24,7 @@ from .jobs import Job, manager
 
 VERSION = "1.0.0"
 
-app = FastAPI(title="PianoVision processing server", version=VERSION)
+app = FastAPI(title="Piano2Vision processing server", version=VERSION)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins,

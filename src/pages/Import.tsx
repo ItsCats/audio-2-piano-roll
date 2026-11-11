@@ -297,7 +297,7 @@ function YouTubeTab({ busy }: { busy: boolean }) {
         </>
       )}
       <p className="text-[12px] leading-relaxed text-ink-400">
-        PianoVision never bypasses DRM or downloads YouTube videos inside the browser. If neither option suits you, download
+        Piano2Vision never bypasses DRM or downloads YouTube videos inside the browser. If neither option suits you, download
         the audio through a service you’re licensed for and upload the file instead.
       </p>
     </div>

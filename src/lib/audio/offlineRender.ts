@@ -60,7 +60,7 @@ export async function renderOfflineChunks(
     const len = Math.ceil((c1 - c0 + pre + lat) * sr);
     const ctx = new OfflineAudioContext(2, len, sr);
     const engine = new PianoEngine(ctx, ctx.destination);
-    await engine.applySettings({ ...opts.settings, volume: opts.settings.volume * vol });
+    await engine.applySettings({ ...opts.settings, volume: opts.settings.volume * vol }, undefined, true);
     // output time o (seconds) <-> context time (o - c0 + pre)
     const toCtx = (songT: number) => (songT - opts.start) / rate - c0 + pre;
     for (const e of events) {

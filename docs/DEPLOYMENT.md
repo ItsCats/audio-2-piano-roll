@@ -42,11 +42,11 @@ cd server
 ```
 
 ```bash
-docker build -t pianovision-server .
+docker build -t piano2vision-server .
 ```
 
 ```bash
-docker run -p 8000:8000 -e SHARED_SECRET=$(openssl rand -hex 32) -e ALLOWED_ORIGINS=https://your-site.netlify.app pianovision-server
+docker run -p 8000:8000 -e SHARED_SECRET=$(openssl rand -hex 32) -e ALLOWED_ORIGINS=https://your-site.netlify.app piano2vision-server
 ```
 
 Build with `--build-arg WITH_SEPARATION=0` for a ~150 MB image without PyTorch/Demucs (YouTube only).

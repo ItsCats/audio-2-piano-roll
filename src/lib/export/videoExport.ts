@@ -416,7 +416,7 @@ async function exportWithMediaRecorder(job: ExportJob): Promise<ExportResult> {
     gain.gain.value = s.volume;
     gain.connect(dest);
     engine = new PianoEngine(ac, gain);
-    await engine.applySettings(job.audio);
+    await engine.applySettings(job.audio, undefined, true);
     stream = new MediaStream([...canvas.captureStream(s.fps).getVideoTracks(), ...dest.stream.getAudioTracks()]);
     const mime = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'].find((m) => MediaRecorder.isTypeSupported(m)) ?? '';
     const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: bitrateFor(width, height, s.fps, s.quality) });

@@ -34,7 +34,7 @@ export default function AccuracyPage() {
       <div className="mx-auto flex max-w-5xl flex-col gap-8 px-5 py-8 md:px-10">
         <header>
           <p className="text-[12px] font-semibold tracking-[0.14em] text-accent-400 uppercase">Transparency</p>
-          <h1 className="mt-2 text-[28px] font-semibold tracking-tight text-ink-50 md:text-[32px]">How accurate is PianoVision?</h1>
+          <h1 className="mt-2 text-[28px] font-semibold tracking-tight text-ink-50 md:text-[32px]">How accurate is Piano2Vision?</h1>
           <p className="mt-3 max-w-3xl text-[14.5px] leading-relaxed text-ink-300">
             When you import audio, an AI model listens to the recording and estimates which notes were played. It’s good — but it is an
             estimate, not a perfect score. Here is what we’ve measured, what to expect for different kinds of music, and how to get the best
@@ -63,7 +63,7 @@ export default function AccuracyPage() {
           <h2 className="mb-1 text-[13px] font-semibold tracking-wide text-ink-200">Benchmark results</h2>
           <p className="mb-3 text-[12.5px] text-ink-300">
             Pieces with known notes, played through a sampled grand piano with reverb and transcribed by the app. “Stock settings” is the same
-            AI model with its default settings, before PianoVision’s piano-specific tuning.
+            AI model with its default settings, before Piano2Vision’s piano-specific tuning.
           </p>
           <div className="panel overflow-x-auto">
             <table className="w-full min-w-[640px] text-left text-[13px]">
@@ -164,7 +164,7 @@ export default function AccuracyPage() {
             A note counts as correct when its pitch is exact and it starts within 50 milliseconds of the real note (the standard “note onset”
             measure used in music-transcription research). F1 combines how many real notes were found (recall) with how many detected notes
             were real (precision). The benchmark runs the full app pipeline in a browser and is part of the project’s automated tests. Transcription
-            uses Spotify’s open-source Basic Pitch model with PianoVision’s own note detection tuned for piano. Last updated {ACCURACY_UPDATED}.
+            uses Spotify’s open-source Basic Pitch model with Piano2Vision’s own note detection tuned for piano. Last updated {ACCURACY_UPDATED}.
           </p>
         </section>
       </div>
