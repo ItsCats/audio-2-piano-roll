@@ -301,7 +301,7 @@ export default function StudioPage() {
     <div className="flex h-full min-h-0">
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex flex-wrap items-center gap-2 border-b border-ink-800 bg-ink-900/95 px-3 py-2 md:flex-nowrap md:px-4">
-          <div className="mr-auto flex min-w-0 flex-1 items-center gap-2">
+          <div className="mr-auto flex w-full min-w-0 items-center gap-2 md:w-auto md:flex-1">
             <input
               value={song.title}
               onChange={(e) => useStudio.getState().updateSong({ title: e.target.value })}
@@ -317,6 +317,9 @@ export default function StudioPage() {
               <Badge tone="ok">{song.source.kind === 'midi' ? 'MIDI' : 'Exact'}</Badge>
             )}
             <span className="hidden text-[11.5px] text-ink-400 2xl:inline">{saving ? 'Saving…' : 'Saved'}</span>
+            <IconButton className="ml-auto md:hidden" label={panelOpen ? 'Hide panel' : 'Show panel'} onClick={() => setPanelOpen((o) => !o)}>
+              {panelOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
+            </IconButton>
           </div>
           <Segmented<Difficulty>
             ariaLabel="Difficulty"
@@ -340,7 +343,7 @@ export default function StudioPage() {
             <span className="hidden lg:inline">Export Video</span>
           </Button>
           <ExportMenu onVideo={() => setExportOpen(true)} />
-          <IconButton label={panelOpen ? 'Hide panel' : 'Show panel'} onClick={() => setPanelOpen((o) => !o)}>
+          <IconButton className="hidden md:inline-flex" label={panelOpen ? 'Hide panel' : 'Show panel'} onClick={() => setPanelOpen((o) => !o)}>
             {panelOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
           </IconButton>
         </header>

@@ -110,9 +110,11 @@ export function generateEasy(base: Note[], tempo: TempoInfo, duration: number): 
   const medVel = median(base.map((n) => n.vel));
   // 1) skyline melody candidates
   let cands: Note[] = [];
+  // melody comes from the right hand; only if the song has (almost) no right-hand part do
+  // we fall back to the upper register of everything
+  const rhShare = base.filter((n) => n.hand === 'R').length / base.length;
   for (const c of clusters) {
-    const r = c.filter((n) => n.hand === 'R');
-    const pool = r.length ? r : c.filter((n) => n.midi >= 57);
+    const pool = rhShare > 0.1 ? c.filter((n) => n.hand === 'R') : c.filter((n) => n.midi >= 57);
     if (!pool.length) continue;
     const top = pool.reduce((a, b) => (b.midi > a.midi ? b : a));
     cands.push(top);
@@ -205,7 +207,16 @@ export function generateEasy(base: Note[], tempo: TempoInfo, duration: number): 
     quantizeDurations: false,
     window: 0.5,
   });
-  return fixSamePitchOverlaps(q);
+  // quantising can pull melody notes together again: re-enforce a single line
+  const qrh = q.filter((n) => n.hand === 'R').sort((a, b) => a.start - b.start || b.midi - a.midi);
+  const line: Note[] = [];
+  for (const n of qrh) {
+    const prev = line[line.length - 1];
+    if (prev && n.start - prev.start < 0.02) continue; // same slot after snapping: keep the first (highest)
+    if (prev) prev.dur = Math.max(0.06, Math.min(prev.dur, n.start - prev.start - 0.01));
+    line.push(n);
+  }
+  return fixSamePitchOverlaps([...line, ...q.filter((n) => n.hand === 'L')]);
 }
 
 export function generateArrangement(

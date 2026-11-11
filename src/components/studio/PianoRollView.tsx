@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { PianoRollRenderer, type EditOverlay } from '../../lib/render/renderer';
 import { midiAtX } from '../../lib/render/layout';
 import { useSettings } from '../../state/settingsStore';
@@ -28,7 +28,13 @@ export function PianoRollView() {
   const hover = useRef<number | null>(null);
   const ghost = useRef<Note | null>(null);
   const marquee = useRef<EditOverlay['marquee']>(null);
-  const visual = useSettings((s) => s.visual);
+  const storedVisual = useSettings((s) => s.visual);
+  const [narrow, setNarrow] = useState(false);
+  // on phones, 88 keys are too small to read: fit the keyboard to the song instead
+  const visual = useMemo(
+    () => (narrow && storedVisual.range === 'full' ? { ...storedVisual, range: 'auto' as const } : storedVisual),
+    [narrow, storedVisual],
+  );
   const song = useStudio((s) => s.song);
   const arrangement = useStudio(currentArrangement);
   const editMode = useStudio((s) => s.editMode);
@@ -39,7 +45,7 @@ export function PianoRollView() {
   // create renderer once
   useEffect(() => {
     const canvas = canvasRef.current!;
-    rendererRef.current = new PianoRollRenderer(canvas, useSettings.getState().visual);
+    rendererRef.current = new PianoRollRenderer(canvas, visual);
     return () => {
       rendererRef.current = null;
     };
@@ -70,6 +76,7 @@ export function PianoRollView() {
     const el = containerRef.current!;
     const ro = new ResizeObserver(() => {
       const r = el.getBoundingClientRect();
+      setNarrow(r.width < 700);
       const dpr = Math.min(2, window.devicePixelRatio || 1);
       const canvas = canvasRef.current!;
       canvas.style.width = `${r.width}px`;
