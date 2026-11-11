@@ -39,7 +39,9 @@ const tol = +opt('tol', '0.05');
 const APP_LATENCY = +opt('app-latency', '0.007');
 const TUNE = ['m-debussy-pas-neige', 'm-bach-bwv850', 'm-mozart-k280-1', 'm-chopin-noct15-1', 'm-chopin-ballade1'];
 const HOLDOUT = ['m-liszt-waldesrauschen'];
-const pieces = (opt('pieces', null)?.split(',') ?? [...TUNE, ...HOLDOUT]).filter((p) => fs.existsSync(path.join(postDir ?? '', `${p}.post.json`)));
+/** Synthetic e2e benchmark (sweep_extraction.e2e.mjs --dump): reported separately, gates Bach >= 0.93, chords >= 0.87. */
+const E2E = ['e2e-bach', 'e2e-chords'];
+const pieces = (opt('pieces', null)?.split(',') ?? [...TUNE, ...HOLDOUT, ...E2E]).filter((p) => fs.existsSync(path.join(postDir ?? '', `${p}.post.json`)));
 if (!postDir || !refDir || !pieces.length) {
   console.error('usage: node tests/accuracy/sweep_extraction.mjs --post DIR --ref DIR [--configs FILE.mjs] [--json OUT] [--pieces a,b] [--tol 0.05]');
   process.exit(2);
@@ -63,8 +65,10 @@ const data = pieces.map((name) => {
   const u8 = (ext) => new Uint8Array(fs.readFileSync(path.join(postDir, `${name}.${ext}`)));
   const rmsBuf = fs.readFileSync(path.join(postDir, `${name}.rms.f32`));
   const rms = new Float32Array(rmsBuf.buffer.slice(rmsBuf.byteOffset, rmsBuf.byteOffset + rmsBuf.byteLength));
-  const midi = new Midi(fs.readFileSync(path.join(refDir, `${name}.midi`)));
-  const ref = midi.tracks.flatMap((t) => t.notes.map((n) => ({ midi: n.midi, start: n.time })));
+  const midiPath = path.join(refDir, `${name}.midi`);
+  const ref = fs.existsSync(midiPath)
+    ? new Midi(fs.readFileSync(midiPath)).tracks.flatMap((t) => t.notes.map((n) => ({ midi: n.midi, start: n.time })))
+    : JSON.parse(fs.readFileSync(path.join(postDir, `${name}.ref.json`), 'utf8'));
   return { name, meta, frames: dequantize(u8('frames.u8')), onsets: dequantize(u8('onsets.u8')), rms, ref: byPitch(ref) };
 });
 
@@ -170,12 +174,16 @@ for (const cfg of configs) {
     tuneP: mean(tune.map((s) => s.P)),
     tuneR: mean(tune.map((s) => s.R)),
     holdF: hold.length ? mean(hold.map((s) => s.F)) : null,
+    e2e: Object.fromEntries(E2E.filter((p) => per[p]).map((p) => [p, per[p].F])),
     per,
   };
   results.push(row);
   console.log(
     `${cfg.name.padEnd(44)} tune F ${row.tuneF.toFixed(4)} (P ${row.tuneP.toFixed(3)} R ${row.tuneR.toFixed(3)})` +
       (row.holdF !== null ? `  liszt F ${row.holdF.toFixed(4)}` : '') +
+      Object.entries(row.e2e)
+        .map(([k, f]) => `  ${k} ${f.toFixed(3)}`)
+        .join('') +
       '  | ' +
       Object.entries(per)
         .map(([k, s]) => `${k.replace(/^m-/, '').slice(0, 8)} ${s.F.toFixed(3)}`)

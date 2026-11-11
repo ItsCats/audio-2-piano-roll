@@ -2,7 +2,11 @@
  * Checks candidate detection configs on the synthetic e2e benchmark (tests/e2e/harness.ts: Bach
  * prelude + chord study rendered through the app's piano engine) without editing the presets.
  *
- *   node tests/accuracy/sweep_extraction.e2e.mjs [--configs FILE.mjs] [--port 5343]
+ *   node tests/accuracy/sweep_extraction.e2e.mjs [--configs FILE.mjs] [--port 5343] [--dump DIR]
+ *
+ * --dump DIR also writes the two pieces' posteriors and reference notes as DIR/e2e-bach.* and
+ * DIR/e2e-chords.* (same format as transcribe.mjs --dump-posteriors, plus <name>.ref.json), so
+ * sweep_extraction.mjs can score the synthetic benchmark together with MAESTRO.
  *
  * Renders each piece once, runs the model once ('piano' preset), then re-detects on the stored
  * posteriors for every config with the app's own worker (extract message, so `extraction`
@@ -13,6 +17,7 @@
  * 8-bit stored ones, which matches it to within ~0.005 F1 since flat onset peaks are handled.
  */
 import { createServer } from 'vite';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -24,6 +29,7 @@ const opt = (name, def) => {
 };
 const port = +opt('port', '5343');
 const configFile = opt('configs', null);
+const dumpDir = opt('dump', null);
 const APP_LATENCY = +opt('app-latency', '0.007');
 let configs = [
   { name: 'piano (current)', preset: 'piano' },
@@ -44,7 +50,7 @@ try {
   await page.goto(`http://localhost:${port}/tests/e2e/harness.html`);
   await page.waitForFunction(() => document.getElementById('log')?.textContent === 'ready', null, { timeout: 180000 });
   const out = await page.evaluate(
-    async ([cfgs, appLatency]) => {
+    async ([cfgs, appLatency, dump]) => {
       const { transcribeAudio, cleanNotes, toWorkerOptions, transcriber, EXTRACTION_PRESETS } = await import('/src/lib/transcription/pipeline.ts');
       const { bachPreludeDemo } = await import('/src/lib/music/demo.ts');
       const { renderOffline } = await import('/src/lib/audio/offlineRender.ts');
@@ -84,6 +90,22 @@ try {
         const res = await transcribeAudio(wav.finish(), EXTRACTION_PRESETS.piano, () => {});
         const post = res.posteriors;
         results[piece] = { firstPass: window.scoreNotes(src.notes, res.notes), configs: [] };
+        if (dump) {
+          const b64 = (u8) => {
+            let s = '';
+            for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode(...u8.subarray(i, i + 0x8000));
+            return btoa(s);
+          };
+          results[piece].dump = {
+            nFrames: post.nFrames,
+            duration: res.duration,
+            frames: b64(post.frames),
+            onsets: b64(post.onsets),
+            rms: b64(new Uint8Array(post.rms.buffer, post.rms.byteOffset, post.rms.byteLength)),
+            ref: src.notes.map((n) => ({ midi: n.midi, start: n.start })),
+            notes: res.notes.map((n) => ({ midi: n.midi, start: n.start, dur: n.dur, vel: n.vel })),
+          };
+        }
         for (const cfg of cfgs) {
           const params = { ...EXTRACTION_PRESETS[cfg.preset ?? 'piano'], ...(cfg.params ?? {}) };
           const frames = post.frames.slice();
@@ -102,8 +124,20 @@ try {
       }
       return results;
     },
-    [configs, APP_LATENCY],
+    [configs, APP_LATENCY, !!dumpDir],
   );
+  if (dumpDir) {
+    fs.mkdirSync(dumpDir, { recursive: true });
+    for (const [piece, r] of Object.entries(out)) {
+      const d = r.dump;
+      const name = `e2e-${piece}`;
+      fs.writeFileSync(path.join(dumpDir, `${name}.frames.u8`), Buffer.from(d.frames, 'base64'));
+      fs.writeFileSync(path.join(dumpDir, `${name}.onsets.u8`), Buffer.from(d.onsets, 'base64'));
+      fs.writeFileSync(path.join(dumpDir, `${name}.rms.f32`), Buffer.from(d.rms, 'base64'));
+      fs.writeFileSync(path.join(dumpDir, `${name}.ref.json`), JSON.stringify(d.ref));
+      fs.writeFileSync(path.join(dumpDir, `${name}.post.json`), JSON.stringify({ song: name, nFrames: d.nFrames, duration: d.duration, notes: { pianoFirstPass: d.notes } }));
+    }
+  }
   for (const [piece, r] of Object.entries(out)) {
     const s = r.firstPass;
     console.log(`${piece.padEnd(7)} first pass (current piano preset, float posteriors): F1 ${s.f1} (P ${s.precision} / R ${s.recall}) onset ${s.meanOffsetMs} ms`);
