@@ -310,9 +310,9 @@ export default function StudioPage() {
               style={{ width: `${Math.min(36, Math.max(8, song.title.length + 1))}ch` }}
             />
             {song.transcription.estimated ? (
-              <Badge tone="warn" title="Notes were estimated from audio by AI and may contain mistakes">
-                AI transcription
-              </Badge>
+              <Link to="/accuracy" title="Notes were estimated from audio by AI and may contain mistakes — see how accurate it is" className="focus-ring rounded-md">
+                <Badge tone="warn">AI transcription</Badge>
+              </Link>
             ) : (
               <Badge tone="ok">{song.source.kind === 'midi' ? 'MIDI' : 'Exact'}</Badge>
             )}

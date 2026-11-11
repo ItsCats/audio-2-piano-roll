@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { Home, Upload, Piano, Library, Settings as SettingsIcon } from 'lucide-react';
+import { Home, Upload, Piano, Library, Settings as SettingsIcon, Gauge } from 'lucide-react';
 import { cn } from '../ui';
 import { Toaster } from './Toaster';
 import { useStudio } from '../../state/studioStore';
@@ -65,7 +65,15 @@ export function AppShell() {
         {!inStudio && (
           <div className="px-4 pb-4">
             <ImportStatusPill />
-            <p className="mt-3 text-[11px] leading-relaxed text-ink-400">
+            <NavLink
+              to="/accuracy"
+              className={({ isActive }) =>
+                cn('focus-ring mt-3 flex items-center gap-2 rounded-lg px-2 py-1.5 text-[12px]', isActive ? 'bg-ink-800 text-ink-50' : 'text-ink-300 hover:text-ink-100')
+              }
+            >
+              <Gauge size={14} /> How accurate is it?
+            </NavLink>
+            <p className="mt-2 text-[11px] leading-relaxed text-ink-400">
               Everything stays in your browser. Songs are stored locally on this device.
             </p>
           </div>

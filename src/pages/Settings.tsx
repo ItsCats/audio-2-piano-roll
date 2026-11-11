@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Server, HardDrive, Keyboard as KeyboardIcon, Music2, Info, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
 import { useSettings } from '../state/settingsStore';
 import { Button, Section, Segmented, Slider, Toggle } from '../components/ui';
@@ -197,6 +198,14 @@ export default function SettingsPage() {
           <div className="flex items-center gap-2 border-b border-ink-700 px-4 py-3 text-[14px] font-semibold text-ink-50">
             <Info size={16} className="text-accent-400" /> About & credits
           </div>
+          <Section title="Transcription accuracy">
+            <p className="text-[12.5px] leading-relaxed text-ink-300">
+              Audio transcription is an AI estimate.{' '}
+              <Link to="/accuracy" className="text-accent-400 hover:text-accent-300">
+                See measured accuracy and what to expect →
+              </Link>
+            </p>
+          </Section>
           <Section title="Open-source components">
             <ul className="flex flex-col gap-1 text-[12.5px] text-ink-300">
               <li>Basic Pitch model — Spotify (Apache-2.0)</li>

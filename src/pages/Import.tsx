@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { FileAudio, SquarePlay, Music2, Mic, Loader2, CheckCircle2, XCircle, Circle, ArrowRight, Square, Info, Server } from 'lucide-react';
 import { Dropzone } from '../components/import/Dropzone';
 import { Badge, Button, ProgressBar, Segmented, Toggle, cn } from '../components/ui';
@@ -394,6 +394,11 @@ export default function ImportPage() {
           <h1 className="text-[26px] font-semibold tracking-tight text-ink-50">Import music</h1>
           <p className="mt-1 text-[14px] text-ink-300">
             Audio is analysed on your device with Spotify’s Basic Pitch neural network. Nothing is uploaded unless you use your own processing server.
+            The result is an AI estimate —{' '}
+            <Link to="/accuracy" className="text-accent-400 hover:text-accent-300">
+              see how accurate it is
+            </Link>
+            .
           </p>
         </header>
 

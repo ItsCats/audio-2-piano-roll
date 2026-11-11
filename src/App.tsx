@@ -11,6 +11,7 @@ const ImportPage = lazy(() => import('./pages/Import'));
 const StudioPage = lazy(() => import('./pages/Studio'));
 const LibraryPage = lazy(() => import('./pages/Library'));
 const SettingsPage = lazy(() => import('./pages/Settings'));
+const AccuracyPage = lazy(() => import('./pages/Accuracy'));
 
 function PageFallback() {
   return (
@@ -36,6 +37,7 @@ export function App() {
             <Route path="studio/:id" element={<Suspense fallback={<PageFallback />}><StudioPage /></Suspense>} />
             <Route path="library" element={<Suspense fallback={<PageFallback />}><LibraryPage /></Suspense>} />
             <Route path="settings" element={<Suspense fallback={<PageFallback />}><SettingsPage /></Suspense>} />
+            <Route path="accuracy" element={<Suspense fallback={<PageFallback />}><AccuracyPage /></Suspense>} />
             <Route path="*" element={<HomePage />} />
           </Route>
         </Routes>

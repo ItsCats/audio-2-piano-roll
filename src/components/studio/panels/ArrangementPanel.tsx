@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, Wand2 } from 'lucide-react';
 import { useStudio } from '../../../state/studioStore';
 import { detectionParams } from '../../../state/settingsStore';
@@ -111,7 +112,10 @@ export function ArrangementPanel() {
               <p className="font-medium text-warn">Estimated from audio</p>
               <p className="mt-0.5 text-ink-200">
                 Notes were detected by a neural network and may contain mistakes — especially in dense mixes. Blend in the original recording
-                (Sound tab) to compare, then fix notes in Edit mode.
+                (Sound tab) to compare, then fix notes in Edit mode.{' '}
+                <Link to="/accuracy" className="text-accent-400 hover:text-accent-300">
+                  How accurate is it?
+                </Link>
               </p>
             </div>
           </div>
