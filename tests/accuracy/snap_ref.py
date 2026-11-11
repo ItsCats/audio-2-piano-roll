@@ -71,7 +71,13 @@ def snap(aligned: NoteArr, pti: NoteArr, tol1: float = 0.1, tol2: float = 0.12, 
         verified[i] = True
     out = NoteArr(on, off, base.pitch, base.vel, base.hand)
     o = np.lexsort((out.pitch, out.onset))
+    segs = []
+    for s0 in np.arange(0, float(out.onset.max()) + 30, 30.0):
+        k = (base.onset >= s0) & (base.onset < s0 + 30)
+        if k.sum() >= 10:
+            segs.append({"start": float(s0), "n": int(k.sum()), "verified": round(float(verified[k].mean()), 3)})
     return out.select(o), verified[o], {"verifiedFraction": round(float(verified.mean()), 4),
+                                         "segments": segs, "weakSegments": [x["start"] for x in segs if x["verified"] < 0.6],
                                          "medianCorrectionMs": round(float(np.median(np.abs(corr)) * 1000), 1),
                                          "ptiNotes": len(pti), "ptiUnmatched": int(len(pti) - len(m2))}
 

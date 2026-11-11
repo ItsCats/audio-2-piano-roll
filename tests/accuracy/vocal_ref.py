@@ -3,7 +3,8 @@ Reference melody (and bass line) from Demucs stems, for songs without note groun
 
     server/.venv/bin/python tests/accuracy/vocal_ref.py STEMS_DIR/<song> OUT_PREFIX [--stem vocals] [--fmin 65 --fmax 1100]
 
-Pitch tracking: torchcrepe ('full' model, 10 ms hop, Viterbi decoding). A frame is voiced when
+Pitch tracking: torchcrepe ('tiny' model by default — 'full' is ~40 min per song on a 4-core CPU —
+10 ms hop, Viterbi decoding). A frame is voiced when
 CREPE periodicity >= 0.5 (median-filtered over 30 ms) AND the stem's local RMS is within 35 dB of
 its 95th percentile (separation bleed is quiet). Notes: voiced runs are split where the pitch
 leaves the running segment median by > 0.75 semitone for >= 40 ms; segments >= 100 ms keep the
@@ -28,7 +29,7 @@ from acclib import NoteArr, load_audio, save_notes  # noqa: E402
 HOP_S = 0.01
 
 
-def track(path: str, fmin: float, fmax: float, per_thr: float = 0.5, rms_db: float = -35):
+def track(path: str, fmin: float, fmax: float, per_thr: float = 0.5, rms_db: float = -35, model: str = "tiny"):
     import torch
     import torchcrepe
 
@@ -37,7 +38,7 @@ def track(path: str, fmin: float, fmax: float, per_thr: float = 0.5, rms_db: flo
     y = load_audio(path, sr)
     hop = int(HOP_S * sr)
     with torch.no_grad():
-        f0, per = torchcrepe.predict(torch.from_numpy(y)[None], sr, hop, fmin, fmax, "full", batch_size=1024,
+        f0, per = torchcrepe.predict(torch.from_numpy(y)[None], sr, hop, fmin, fmax, model, batch_size=1024,
                                      device="cpu", decoder=torchcrepe.decode.viterbi, return_periodicity=True)
     per = torchcrepe.filter.median(per, 3)
     f0 = f0[0].numpy()
@@ -99,13 +100,14 @@ def main() -> None:
     ap.add_argument("--stem", default="vocals")
     ap.add_argument("--fmin", type=float, default=65)
     ap.add_argument("--fmax", type=float, default=1100)
+    ap.add_argument("--model", default="tiny", help="torchcrepe model: tiny (fast, default) or full")
     a = ap.parse_args()
     t0 = time.time()
-    times, f0, per = track(os.path.join(a.stem_dir, f"{a.stem}.wav"), a.fmin, a.fmax)
+    times, f0, per = track(os.path.join(a.stem_dir, f"{a.stem}.wav"), a.fmin, a.fmax, model=a.model)
     notes = segment(times, f0)
     np.savez_compressed(a.out_prefix + ".f0.npz", times=times, f0=f0, periodicity=per)
     v = f0 > 0
-    meta = {"stem": a.stem, "voicedFraction": round(float(v.mean()), 3), "nNotes": len(notes),
+    meta = {"stem": a.stem, "crepeModel": a.model, "voicedFraction": round(float(v.mean()), 3), "nNotes": len(notes),
             "medianMidi": float(np.median(69 + 12 * np.log2(f0[v] / 440))) if v.any() else None, "seconds": round(time.time() - t0, 1)}
     save_notes(a.out_prefix + ".notes.json", notes, meta)
     print(os.path.basename(a.stem_dir), a.stem, meta, flush=True)
