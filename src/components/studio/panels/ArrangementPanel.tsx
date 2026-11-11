@@ -11,7 +11,7 @@ import { generateAllArrangements } from '../../../lib/music/difficulty';
 import type { Difficulty, ExtractionParams } from '../../../lib/music/types';
 import { Badge, Button, Section, Slider, Toggle } from '../../ui';
 import { toast } from '../../../state/toastStore';
-import { makeThumbnail } from '../../../lib/songs';
+import { arrangementOptions, makeThumbnail } from '../../../lib/songs';
 
 function LevelStats() {
   const song = useStudio((s) => s.song)!;
@@ -80,7 +80,7 @@ export function ArrangementPanel() {
         base: notes,
         tempo,
         key: detectKey(notes),
-        arrangements: generateAllArrangements(notes, song.basePedal, tempo, song.duration),
+        arrangements: generateAllArrangements(notes, song.basePedal, tempo, song.duration, arrangementOptions(song)),
         transcription: { ...t, params },
         thumbnail: makeThumbnail(notes, song.duration),
         updatedAt: Date.now(),
@@ -101,7 +101,7 @@ export function ArrangementPanel() {
     }
     const first = song.tempo.beats[song.tempo.downbeatIndex] ?? song.base[0]?.start ?? 0;
     const tempo = { ...song.tempo, bpm: v, beats: regularBeats(v, first, song.duration), downbeatIndex: 0, source: 'manual' as const, confidence: 1 };
-    replaceSong({ ...song, tempo, arrangements: generateAllArrangements(song.base, song.basePedal, tempo, song.duration) });
+    replaceSong({ ...song, tempo, arrangements: generateAllArrangements(song.base, song.basePedal, tempo, song.duration, arrangementOptions(song)) });
     toast.success('Tempo updated', 'The beat grid and the Easy/Medium arrangements were regenerated.');
   };
 
@@ -207,7 +207,7 @@ export function ArrangementPanel() {
           <Button size="sm" variant="ghost" onClick={() => {
             if (!confirm('Rebuild Easy and Medium from the current Hard arrangement (including your Hard edits)?')) return;
             const hard = song.arrangements.hard.notes;
-            const all = generateAllArrangements(hard, song.basePedal, song.tempo, song.duration);
+            const all = generateAllArrangements(hard, song.basePedal, song.tempo, song.duration, arrangementOptions(song));
             replaceSong({ ...song, arrangements: { ...song.arrangements, easy: all.easy, medium: all.medium } });
           }}>
             Easy & Medium from Hard

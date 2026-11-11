@@ -4,6 +4,7 @@ import { cn } from '../ui';
 import { Toaster } from './Toaster';
 import { useStudio } from '../../state/studioStore';
 import { ImportStatusPill } from '../import/ImportStatusPill';
+import { InterruptedImportNotice } from '../import/InterruptedImportNotice';
 
 export function Logo({ compact }: { compact?: boolean }) {
   return (
@@ -99,6 +100,7 @@ export function AppShell() {
         ))}
       </nav>
       <Toaster />
+      <InterruptedImportNotice />
     </div>
   );
 }

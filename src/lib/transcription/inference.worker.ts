@@ -24,10 +24,19 @@ import {
 import { extractNotes, type NoteExtractionOptions } from './noteExtraction';
 import type { WorkerRequest, WorkerResponse } from './workerProtocol';
 import { dequantize } from './posteriors';
+import { WEBGL_MEMORY_FLAGS, batchFor, chooseBackendOrder, type DeviceInfo } from './backendChoice';
 
 // Stays single-threaded: on a cross-origin-isolated page the threaded build starts blob: scripts
 // that the CSP does not allow.
 tf.env().set('WASM_HAS_MULTITHREAD_SUPPORT', false);
+// Memory-safe WebGL (see backendChoice.ts): set before any WebGL kernel can run.
+for (const [flag, value] of Object.entries(WEBGL_MEMORY_FLAGS)) {
+  try {
+    tf.env().set(flag, value);
+  } catch (err) {
+    console.warn(`[transcribe] could not set ${flag}`, err);
+  }
+}
 
 setWasmPaths({
   'tfjs-backend-wasm.wasm': wasmPlain,
@@ -48,21 +57,29 @@ function webglIsSoftware(): boolean {
     if (!gl) return true;
     const ext = gl.getExtension('WEBGL_debug_renderer_info');
     const renderer = ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) : '';
+    gl.getExtension('WEBGL_lose_context')?.loseContext();
     return /swiftshader|llvmpipe|software|basic render/i.test(renderer);
   } catch {
     return true;
   }
 }
 
-async function initBackend(preferred?: string): Promise<string> {
-  const order: string[] = [];
-  if (preferred) order.push(preferred);
-  const hasOffscreen = typeof OffscreenCanvas !== 'undefined';
-  if (hasOffscreen && !webglIsSoftware()) order.push('webgl');
-  order.push('wasm');
-  if (hasOffscreen) order.push('webgl');
-  order.push('cpu');
-  for (const name of [...new Set(order)]) {
+async function initBackend(preferred?: string, device?: DeviceInfo): Promise<string> {
+  const nav = (self as unknown as { navigator?: Navigator & { deviceMemory?: number; userAgentData?: { mobile?: boolean } } }).navigator;
+  const offscreen = typeof OffscreenCanvas !== 'undefined';
+  const order = chooseBackendOrder(
+    {
+      ua: device?.ua ?? nav?.userAgent ?? '',
+      maxTouchPoints: device?.maxTouchPoints,
+      deviceMemory: device?.deviceMemory ?? nav?.deviceMemory,
+      mobile: device?.mobile ?? nav?.userAgentData?.mobile,
+      // a 1×1 WebGL2 context, released right after reading the renderer's name
+      softwareRenderer: offscreen ? webglIsSoftware() : true,
+      offscreen,
+    },
+    preferred,
+  );
+  for (const name of order) {
     try {
       if (name === 'wasm') await import('@tensorflow/tfjs-backend-wasm');
       const ok = await tf.setBackend(name);
@@ -77,9 +94,9 @@ async function initBackend(preferred?: string): Promise<string> {
   throw new Error('No TensorFlow.js backend could be initialised in this browser.');
 }
 
-async function ensureModel(modelUrl: string, preferredBackend?: string): Promise<void> {
+async function ensureModel(modelUrl: string, preferredBackend?: string, device?: DeviceInfo): Promise<void> {
   if (model) return;
-  backendName = await initBackend(preferredBackend);
+  backendName = await initBackend(preferredBackend, device);
   try {
     model = await loadGraphModel(modelUrl);
     // warm-up + sanity check (some backends lack an op the graph needs)
@@ -128,7 +145,7 @@ async function runModel(audio: Float32Array, jobId: number) {
   const nFrames = Math.min(numWindows * BP_KEPT_FRAMES, timeToFrame(audio.length / BP_SAMPLE_RATE) + 1);
   const frames = new Float32Array(nFrames * BP_N_PITCHES);
   const onsets = new Float32Array(nFrames * BP_N_PITCHES);
-  const batch = backendName === 'webgl' ? 4 : backendName === 'wasm' ? 2 : 1;
+  const batch = batchFor(backendName);
 
   for (let w0 = 0; w0 < numWindows; w0 += batch) {
     if (cancelled.has(jobId)) throw new Error('cancelled');
@@ -178,7 +195,7 @@ ctx.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
     if (msg.type === 'transcribe') {
       const t0 = performance.now();
       post({ type: 'progress', jobId, stage: 'loading-model', progress: 0 });
-      await ensureModel(msg.modelUrl, msg.preferredBackend);
+      await ensureModel(msg.modelUrl, msg.preferredBackend, msg.device);
       post({ type: 'progress', jobId, stage: 'loading-model', progress: 1, backend: backendName });
       const { frames, onsets, nFrames } = await runModel(msg.audio, jobId);
       post({ type: 'progress', jobId, stage: 'extracting', progress: 0 });

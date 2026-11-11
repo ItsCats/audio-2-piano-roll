@@ -10,6 +10,8 @@ export interface ParsedMidi {
   tempo: TempoInfo;
   duration: number;
   warnings: string[];
+  /** The hands come from the file (named hand tracks or the two-staff layout), not from assignHands. */
+  handsKnown: boolean;
 }
 
 const handFromName = (name: string): Note['hand'] | null => {
@@ -95,6 +97,7 @@ export function parseMidi(data: ArrayBuffer): ParsedMidi {
     },
     duration,
     warnings,
+    handsKnown: hintsKnown,
   };
 }
 

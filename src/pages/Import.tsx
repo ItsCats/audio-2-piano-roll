@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { FileAudio, SquarePlay, Music2, Mic, Loader2, CheckCircle2, XCircle, Circle, ArrowRight, Square, Info, Server } from 'lucide-react';
+import { FileAudio, SquarePlay, Music2, Mic, Loader2, CheckCircle2, XCircle, Circle, ArrowRight, Square, Info, Server, RotateCcw, Download, Smartphone } from 'lucide-react';
 import { Dropzone } from '../components/import/Dropzone';
 import { SeparationOption, useSeparationChoice } from '../components/import/SeparationOption';
 import { Badge, Button, ProgressBar, Segmented, cn } from '../components/ui';
@@ -10,6 +10,8 @@ import { configuredBackendUrl, health, type BackendHealth } from '../lib/backend
 import { createPlayer, fetchVideoMeta, parseYouTubeId, startTabCapture, tabCaptureSupported, type TabCapture, type VideoMeta, type YTPlayer } from '../lib/youtube/youtube';
 import { formatTime } from '../lib/music/theory';
 import { toast } from '../state/toastStore';
+import { isTouchDevice } from '../lib/wakeLock';
+import { saveBlobAs } from '../lib/saveBlob';
 import { YOUTUBE_IMPORT_PATH, documentIsolated, isYouTubeImportPath, switchDocument } from '../lib/isolation';
 
 type Tab = 'audio' | 'youtube' | 'midi' | 'record';
@@ -115,7 +117,9 @@ function JobProgress() {
   const job = useImport((s) => s.job);
   const cancel = useImport((s) => s.cancel);
   const clear = useImport((s) => s.clear);
+  const failed = useImport((s) => s.failed);
   const navigate = useNavigate();
+  const [touch] = useState(isTouchDevice);
   const [, force] = useState(0);
   useEffect(() => {
     const t = setInterval(() => force((x) => x + 1), 500);
@@ -130,6 +134,7 @@ function JobProgress() {
   const elapsed = ((job.finishedAt ?? Date.now()) - job.startedAt) / 1000;
   const done = job.stage === 'done';
   const err = job.stage === 'error';
+  const failedHere = err && failed?.jobId === job.id ? failed : null;
   return (
     <div className="panel animate-fade-in p-5" aria-live="polite">
       <div className="flex items-start justify-between gap-4">
@@ -148,6 +153,11 @@ function JobProgress() {
       {!done && !err && (
         <div className="mt-4">
           <ProgressBar value={job.progress} />
+          {touch && job.kind !== 'midi' && job.kind !== 'demo' && (
+            <p className="mt-2 flex items-center gap-1.5 text-[12px] text-ink-300">
+              <Smartphone size={13} className="shrink-0 text-accent-400" /> Keep this page open while it’s analysing.
+            </p>
+          )}
           {job.progress !== null && (
             <p className="mt-1.5 flex justify-between gap-3 font-mono text-[11px] text-ink-300">
               <span>{eta ?? ((job.stage === 'separating' || job.stage === 'analyzing') && job.progress < 0.99 ? `${etaStep(job)}: measuring speed…` : '')}</span>
@@ -179,10 +189,20 @@ function JobProgress() {
         </ul>
       )}
       {(done || err) && (
-        <div className="mt-4 flex gap-2">
+        <div className="mt-4 flex flex-wrap gap-2">
           {done && job.songId && (
             <Button variant="primary" onClick={() => navigate(`/studio/${job.songId}`)} icon={<ArrowRight size={16} />}>
               Open in Piano Studio
+            </Button>
+          )}
+          {err && failedHere && (
+            <Button variant="primary" onClick={() => void failedHere.retry()} icon={<RotateCcw size={15} />}>
+              Try again
+            </Button>
+          )}
+          {err && failedHere?.recording && (
+            <Button onClick={() => saveBlobAs(failedHere.recording!.blob, failedHere.recording!.fileName)} icon={<Download size={15} />}>
+              Download recording
             </Button>
           )}
           <Button variant="ghost" onClick={clear}>
@@ -423,6 +443,8 @@ function RecordTab({ busy }: { busy: boolean }) {
       r.onstop = () => {
         stream.getTracks().forEach((t) => t.stop());
         const blob = new Blob(chunks.current, { type: r.mimeType || 'audio/webm' });
+        // the Blob holds the data now: don't keep a second reference to every chunk
+        chunks.current = [];
         void importBlob(blob, { title: `Recording ${new Date().toLocaleString()}`, source: { kind: 'capture', mimeType: blob.type, fileSize: blob.size } });
       };
       r.start(500);

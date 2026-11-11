@@ -24,6 +24,7 @@ import { estimateTempo } from '../music/beats';
 import { detectKey } from '../music/theory';
 import { extractMelodyLine, mergeMelody } from '../music/melody';
 import type { StoredPosteriors } from './posteriors';
+import { pageDeviceInfo } from './backendChoice';
 import { DRUM_ENV_FPS, longReason, separateStems, separationSupport, stemsFromBlobs, type SeparationResult } from '../separation';
 
 /**
@@ -392,7 +393,7 @@ async function runModel(
 ): Promise<ModelRun> {
   let backend = '';
   return transcriber.run(
-    { type: 'transcribe', audio, modelUrl: modelUrl(), options: toWorkerOptions(params) },
+    { type: 'transcribe', audio, modelUrl: modelUrl(), options: toWorkerOptions(params), device: pageDeviceInfo() },
     [audio.buffer],
     (e) => {
       if (e.backend) backend = e.backend;

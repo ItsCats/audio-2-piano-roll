@@ -554,7 +554,10 @@ export function mergeMelody(accomp: Note[], melody: Note[], duration: number): N
  * per-note cost, pitch-jump costs with extra cost for octave / twelfth jumps), over the right
  * hand's notes plus left-hand notes high enough to belong to the tune. An instrument's salience
  * is its velocity plus a bonus for being the top voice at its onset (in piano writing the tune is
- * usually on top), minus a penalty per voice sounding above it (inner / accompanying voices).
+ * usually on top; more when it is also the loudest note struck with it), minus a penalty per
+ * voice sounding above it (inner / accompanying voices). A note counts as the top voice only until
+ * a higher one enters while it sounds: its credited length ends there, so a held pad or chord tone
+ * on top at its own onset does not outweigh the melody entering above it.
  * Because jumps cost, the line no longer hops between a band's piano chord tops and the lead
  * instrument below them (the per-cluster skyline did: C5↔D6 on every chord in Dress-Up Darling).
  * Same-pitch repeats are kept (instruments re-strike notes; sung lines are merged instead).
@@ -562,6 +565,8 @@ export function mergeMelody(accomp: Note[], melody: Note[], duration: number): N
 export interface TuneOptions {
   /** salience bonus of a note with no tune candidate sounding above it at its onset */
   topBonus: number;
+  /** extra bonus for a top voice that is also the loudest note struck with it (±40 ms) */
+  loudTopBonus: number;
   /** salience penalty per candidate voice sounding above it (at most 3 counted) */
   belowPenalty: number;
   /** left-hand notes at or above this pitch are tune candidates too */
@@ -578,9 +583,16 @@ export interface TuneOptions {
   fixOctaves: boolean;
 }
 
+/**
+ * Tuned on onset-level, duration-independent measures (tests/accuracy/inst_eval.py onsetPC and
+ * legatoRCA; 6 MAESTRO pieces, 4 solo piano recordings, Dress-Up Darling; 200+ settings): the
+ * landscape is flat (the best settings differ by < 0.01), a stronger penalty for voices above
+ * (0.15 → 0.3) is the one consistent gain (MAESTRO Easy onsetPC +0.01).
+ */
 export const DEFAULT_TUNE: TuneOptions = {
-  topBonus: 0.3,
-  belowPenalty: 0.15,
+  topBonus: 0.15,
+  loudTopBonus: 0.15,
+  belowPenalty: 0.3,
   leftMin: 67, // G4
   minSalience: 0.2,
   noteCost: 0.01,
@@ -589,6 +601,10 @@ export const DEFAULT_TUNE: TuneOptions = {
   leapCost: 0.01,
   fixOctaves: false,
 };
+
+/** A higher candidate starting at least this long (s) after a sounding note, at least TOP_ENTRY_VEL × its velocity, ends that note's time as the top voice. */
+const TOP_ENTRY_MIN = 0.1;
+const TOP_ENTRY_VEL = 0.7;
 
 /** Tune candidates (see instrumentLine): right-hand notes and left-hand notes >= leftMin. */
 export function tuneCandidates(accomp: Note[], leftMin = DEFAULT_TUNE.leftMin): Note[] {
@@ -612,13 +628,27 @@ export function instrumentLine(candidates: Note[], opts: Partial<TuneOptions> = 
     const t = n.start + 0.02;
     while (j < c.length && c[j].start < t - maxDur) j++;
     const above = new Set<number>();
+    let loudest = true;
     for (let k = j; k < c.length && c[k].start < n.start + 0.04; k++) {
       const m = c[k];
-      if (m !== n && m.midi > n.midi && m.start + m.dur > t + 0.03) above.add(m.midi);
+      if (m === n) continue;
+      if (m.midi > n.midi && m.start + m.dur > t + 0.03) above.add(m.midi);
+      if (Math.abs(m.start - n.start) <= 0.04 && m.vel > n.vel) loudest = false;
     }
-    const sal = n.vel + (above.size ? -o.belowPenalty * Math.min(3, above.size) : o.topBonus);
+    const sal = n.vel + (above.size ? -o.belowPenalty * Math.min(3, above.size) : o.topBonus + (loudest ? o.loudTopBonus : 0));
+    // a note is only the top voice until a higher voice enters while it sounds: its credit ends
+    // there (else a held pad / chord tone that is on top at its own onset outweighs the melody
+    // entering above it, and the line holds it and skips the tune)
+    let dur = n.dur;
+    for (let k = i + 1; k < c.length && c[k].start < n.start + dur; k++) {
+      const m = c[k];
+      if (m.midi > n.midi && m.start >= n.start + TOP_ENTRY_MIN && m.vel >= n.vel * TOP_ENTRY_VEL) {
+        dur = m.start - n.start;
+        break;
+      }
+    }
     byId.set(n.id, n);
-    weighted.push({ ...n, vel: sal });
+    weighted.push({ ...n, vel: sal, dur });
   }
   let line = reduceToLine(weighted, {
     minMidi: 21,
@@ -629,7 +659,13 @@ export function instrumentLine(candidates: Note[], opts: Partial<TuneOptions> = 
     octaveJumpCost: o.octaveJumpCost,
     leapCost: o.leapCost,
   });
-  line = line.map((n) => ({ ...n, vel: byId.get(n.id)?.vel ?? n.vel, hand: 'R' as const }));
+  // original velocities and lengths back (a note still ends where the next line note starts)
+  line = line.map((n, i) => {
+    const src = byId.get(n.id);
+    const next = line[i + 1];
+    const dur = src ? Math.max(n.dur, next ? Math.min(src.dur, next.start - n.start - 0.005) : src.dur) : n.dur;
+    return { ...n, vel: src?.vel ?? n.vel, dur, hand: 'R' as const };
+  });
   if (o.fixOctaves) line = fixOctaveOutliers(line);
   return line;
 }

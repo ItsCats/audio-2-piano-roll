@@ -39,6 +39,8 @@ export class PianoEngine {
   readonly ctx: BaseAudioContext;
   readonly output: GainNode;
   private library: SampleLibrary | null = null;
+  /** bumped by unload(): a load that was in flight then does not attach its (released) library */
+  private loadGen = 0;
   private preset: PianoPreset;
   private settings: AudioSettings = { ...DEFAULT_AUDIO_SETTINGS };
   private voices: Voice[] = [];
@@ -101,7 +103,16 @@ export class PianoEngine {
   }
 
   async load(onProgress?: (loaded: number, total: number) => void, complete = false): Promise<void> {
-    this.library = await SampleLibrary.load(this.preset.library, onProgress, { complete });
+    const gen = this.loadGen;
+    const lib = await SampleLibrary.load(this.preset.library, onProgress, { complete });
+    if (gen === this.loadGen) this.library = lib;
+  }
+
+  /** Let go of the samples (after SampleLibrary.releaseAll); the next load() or applySettings() loads again. */
+  unload(): void {
+    this.allNotesOff(this.ctx.currentTime, false);
+    this.loadGen++;
+    this.library = null;
   }
 
   /** Apply user audio settings. Resolves once the preset's sample set is loaded. */
@@ -114,7 +125,9 @@ export class PianoEngine {
     this.preset = getPreset(s.presetId);
     this.applyParams();
     if (!this.library || this.library.def.id !== this.preset.library) {
-      this.library = await SampleLibrary.load(this.preset.library, onProgress, { complete });
+      const gen = this.loadGen;
+      const lib = await SampleLibrary.load(this.preset.library, onProgress, { complete });
+      if (gen === this.loadGen) this.library = lib;
     } else if (complete) {
       await SampleLibrary.load(this.preset.library, onProgress, { complete: true });
     }

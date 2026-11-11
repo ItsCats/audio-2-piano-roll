@@ -28,12 +28,22 @@
  * (rap / spoken sections are not in the line, see melody.ts speechSections) the right hand plays
  * the instruments' tune there, as in a song without a singer.
  *
- * Measured (tests/accuracy/inst_eval.py: RH top line vs the reference tune, raw chroma accuracy),
- * old per-onset skyline → tune line: Easy on 6 MAESTRO pieces vs the performance MIDI's top voice
- * 0.395 → 0.438 (leaps over an octave 3.3 → 1.5 %), on 4 solo piano recordings vs a strong piano
- * transcriber's top voice 0.222 → 0.266, on a band track (Dress-Up Darling) vs a pYIN lead proxy
- * 0.334 → 0.407 (confident proxy frames 0.436 → 0.507); Medium 0.493 → 0.494, 0.289 → 0.288,
- * 0.388 → 0.390 (confident frames 0.547 → 0.535). Sung sections of vocal songs are unchanged.
+ * Measured (tests/accuracy/inst_eval.py, Easy RH vs the reference tune; old per-onset skyline →
+ * tune line; app-run base transcriptions). Raw chroma accuracy (RCA) only credits frames where
+ * Easy sounds, so it rises with voicing recall: the tune line's notes are held legato on the 8th
+ * grid (easySungLine), and that, not a better choice of notes, is most of its RCA gain (6 MAESTRO
+ * pieces 0.395 → 0.451 with voicing recall 0.637 → 0.721). Which notes are chosen, independent of
+ * their length: onsetPC (RH onset pitch class vs the reference) / legatoRCA (RCA with both
+ * versions' notes held to the next onset):
+ *   MAESTRO top voice (6 pieces)          0.600 / 0.546 → 0.636 / 0.563
+ *   4 solo piano recordings (PTI top)     0.353 / 0.382 → 0.380 / 0.408 (jazz piece 0.206 / 0.188
+ *                                         → 0.198 / 0.172: still slightly worse; Medium 0.124 → 0.108)
+ *   band track (Dress-Up Darling, lead)   0.584 / 0.479 → 0.580 / 0.477 (flat; confident lead
+ *                                         frames legatoRCA 0.553 → 0.551)
+ *   instrumental gaps of 4 sung songs     0.470 / 0.314 → 0.426 / 0.273 (114 → 104 scored onsets:
+ *                                         flat to slightly worse, not shown better)
+ * Smoothness is the clear gain: Easy leaps over an octave 3.3 → 1.4 % (MAESTRO), 6.0 → 0.8 %
+ * (Dress-Up). Sung sections of vocal songs and Easy LH are unchanged.
  */
 import type { Arrangement, Difficulty, Note, PedalRange, TempoInfo } from './types';
 import { clusterOnsets } from './hands';
@@ -120,8 +130,18 @@ function inRanges(ranges: [number, number][], t: number): boolean {
   return false;
 }
 
-export function generateHard(base: Note[]): Note[] {
-  return playable(sortNotes(base.map((n) => ({ ...n }))), 'hard');
+export interface ArrangementOptions {
+  /**
+   * The base's hands come from the score (TranscriptionInfo.handsFromScore): Hard is then the
+   * part exactly as written, without the hand-span pass (that pass is for transcriptions, whose
+   * hands are guessed).
+   */
+  handsFromScore?: boolean;
+}
+
+export function generateHard(base: Note[], opts: ArrangementOptions = {}): Note[] {
+  const notes = sortNotes(base.map((n) => ({ ...n })));
+  return opts.handsFromScore ? notes : playable(notes, 'hard');
 }
 
 /**
@@ -525,9 +545,10 @@ export function generateArrangement(
   basePedal: PedalRange[],
   tempo: TempoInfo,
   duration: number,
+  opts: ArrangementOptions = {},
 ): Arrangement {
   const notes =
-    difficulty === 'hard' ? generateHard(base) : difficulty === 'medium' ? generateMedium(base, tempo) : generateEasy(base, tempo, duration);
+    difficulty === 'hard' ? generateHard(base, opts) : difficulty === 'medium' ? generateMedium(base, tempo) : generateEasy(base, tempo, duration);
   return {
     notes,
     pedal: difficulty === 'easy' ? [] : basePedal.map((p) => ({ ...p })),
@@ -541,10 +562,11 @@ export function generateAllArrangements(
   basePedal: PedalRange[],
   tempo: TempoInfo,
   duration: number,
+  opts: ArrangementOptions = {},
 ): Record<Difficulty, Arrangement> {
   return {
-    easy: generateArrangement('easy', base, basePedal, tempo, duration),
-    medium: generateArrangement('medium', base, basePedal, tempo, duration),
-    hard: generateArrangement('hard', base, basePedal, tempo, duration),
+    easy: generateArrangement('easy', base, basePedal, tempo, duration, opts),
+    medium: generateArrangement('medium', base, basePedal, tempo, duration, opts),
+    hard: generateArrangement('hard', base, basePedal, tempo, duration, opts),
   };
 }

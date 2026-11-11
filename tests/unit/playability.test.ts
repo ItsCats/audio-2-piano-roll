@@ -99,6 +99,32 @@ describe('enforcePlayability', () => {
     }
   });
 
+  it('on Medium shortens a held bass rather than dropping a new left-hand note above it', () => {
+    // C2 held 2 s; at 1 s a left-hand D3 (14 above) while the right hand plays C5 (no room there)
+    const notes = [n(36, 0, 2, 'L'), n(50, 1, 0.5, 'L'), n(72, 1, 0.5, 'R')];
+    const { notes: out, report } = playabilityPass(notes, LEVEL_OPTIONS.medium);
+    expect(report.dropped).toBe(0);
+    expect(out.find((x) => x.midi === 50)!.hand).toBe('L');
+    const c2 = out.find((x) => x.midi === 36)!;
+    expect(c2.dur).toBeGreaterThan(0.9);
+    expect(c2.start + c2.dur).toBeLessThanOrEqual(1);
+    expect(widest(out, 'L')).toBeLessThanOrEqual(12);
+    // a left-hand arpeggio over a held low note keeps every arpeggio note (right hand busy)
+    const arp = [n(32, 0, 1.6, 'L'), n(39, 0.25, 0.3, 'L', 0.8), n(44, 0.5, 0.3, 'L', 0.8), n(48, 0.75, 0.3, 'L', 0.8), n(51, 1, 0.3, 'L', 0.8)];
+    arp.push(n(74, 0, 1.6, 'R'), n(77, 0, 1.6, 'R'), n(81, 0, 1.6, 'R'));
+    const kept = enforcePlayability(arp, 'medium');
+    expect(kept).toHaveLength(arp.length);
+    expect(widest(kept, 'L')).toBeLessThanOrEqual(12);
+    expect(kept.find((x) => x.midi === 32)!.dur).toBeLessThanOrEqual(0.75);
+    // but while most of a long bass is still to come, a quiet doubled new note goes instead
+    const long = [n(36, 0, 4, 'L'), n(60, 0.5, 0.2, 'L', 0.3), n(72, 0.5, 0.5, 'R'), n(84, 0.5, 0.5, 'R')];
+    const out2 = enforcePlayability(long, 'medium');
+    expect(out2.find((x) => x.midi === 36)!.dur).toBe(4);
+    expect(out2.some((x) => x.midi === 60)).toBe(false);
+    // Hard still never shortens it
+    expect(enforcePlayability(notes, 'hard').find((x) => x.midi === 36)!.dur).toBe(2);
+  });
+
   it('puts melody notes in the right hand even if they arrive in the left', () => {
     const out = enforcePlayability([n(60, 0, 0.5, 'L', 0.8, 'melody'), n(40, 0, 0.5, 'L')], 'hard');
     expect(out.find((x) => x.role === 'melody')!.hand).toBe('R');

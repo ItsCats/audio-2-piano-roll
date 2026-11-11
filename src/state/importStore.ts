@@ -8,7 +8,8 @@ import type { TranscriptionStage } from '../lib/transcription/workerProtocol';
 import { classifyFile } from '../lib/transcription/decode';
 import { parseMidi } from '../lib/music/midi';
 import { buildSong, demoSong, songFromMidi, titleFromFileName } from '../lib/songs';
-import { saveAudio, savePosteriors, saveSong } from '../lib/storage/db';
+import { deletePending, newId, saveAudio, savePending, savePosteriors, saveSong, type PendingImport } from '../lib/storage/db';
+import { createScreenWakeLock } from '../lib/wakeLock';
 import { detectionParams, useSettings } from './settingsStore';
 import { useLibrary } from './libraryStore';
 import {
@@ -57,6 +58,24 @@ export interface ImportJob {
   rate?: { key: string; t0: number; p0: number; etaSec?: number; at?: number };
 }
 
+/**
+ * What the error card offers after a failed import, while the page stays open: the same import
+ * again, and the recording itself (microphone / tab captures) so a failure never loses it.
+ */
+export interface FailedImport {
+  jobId: number;
+  retry: () => Promise<string | null>;
+  recording?: { blob: Blob; fileName: string };
+}
+
+/** Options shared by the audio imports (a resumed import passes the ones it was started with). */
+export interface ImportRunOptions {
+  /** detection preset to use (default: the current one) */
+  presetId?: PresetId;
+  /** reuse this interrupted-import record instead of writing a new one */
+  pendingId?: string;
+}
+
 /** Detection preset ids (mirrors settings.detectionPreset). */
 export type PresetId = 'piano' | 'mix' | 'sensitive' | 'custom';
 
@@ -73,9 +92,16 @@ interface ImportState {
   prefs: ImportPrefs;
   /** remember the user's separation choice for a detection preset (and where it would have run) */
   setSeparatePref: (preset: PresetId, value: boolean, engine?: SeparationEngine | null) => void;
+  /** the last failed import's retry and recording (cleared by the next import, Dismiss or Cancel) */
+  failed: FailedImport | null;
   /** `separate` defaults to the user's choice for the current detection preset */
-  importFile: (file: File, opts?: { separate?: boolean; title?: string }) => Promise<string | null>;
-  importAudioBlob: (blob: Blob, meta: { title: string; artist?: string; source: SongSource; separate?: boolean }) => Promise<string | null>;
+  importFile: (file: File, opts?: { separate?: boolean; title?: string } & ImportRunOptions) => Promise<string | null>;
+  importAudioBlob: (
+    blob: Blob,
+    meta: { title: string; artist?: string; source: SongSource; separate?: boolean } & ImportRunOptions,
+  ) => Promise<string | null>;
+  /** run an import that a killed tab left behind (see lib/storage/db.ts PendingImport) again */
+  resumePending: (rec: PendingImport) => Promise<string | null>;
   importYouTubeViaServer: (videoUrl: string, videoId: string, separate: boolean, meta?: { title?: string; artist?: string }) => Promise<string | null>;
   importDemo: () => Promise<string>;
   cancel: () => void;
@@ -262,6 +288,44 @@ if (typeof window !== 'undefined') {
   });
 }
 
+// ---------------------------------------------------------------- interrupted-import records
+
+/**
+ * Files above this size are not copied into the interrupted-import record (writing a 300 MB video
+ * to IndexedDB first would slow every import down); the notice then asks to choose the file again.
+ */
+export const PENDING_COPY_MAX_BYTES = 200 * 1024 * 1024;
+/** Web Lock held by the tab running an import: a record whose lock is held is not interrupted. */
+export const PENDING_LOCK_PREFIX = 'piano2vision-import:';
+
+/**
+ * Write the record before any decoding and hold its lock for as long as this import runs. Never
+ * throws and never holds the import up for long (a stuck IndexedDB must not block the import).
+ * Returns the cleanup that deletes the record (after the write settled) and releases the lock.
+ */
+function persistPending(rec: PendingImport): () => Promise<void> {
+  let release: () => void = () => {};
+  try {
+    const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
+    if (locks) {
+      const held = new Promise<void>((r) => (release = r));
+      void locks.request(PENDING_LOCK_PREFIX + rec.id, () => held).catch(() => undefined);
+    }
+  } catch {
+    /* no Web Locks: the record is still written */
+  }
+  const written = savePending(rec).catch((err: unknown) => console.warn('[import] could not keep a copy for crash recovery', err));
+  let cleaned: Promise<void> | null = null;
+  const cleanup = () =>
+    (cleaned ??= written
+      .then(() => deletePending(rec.id))
+      .catch((err: unknown) => console.warn('[import] could not delete the crash-recovery copy', err))
+      .finally(() => release()));
+  // the caller waits for the write, but at most a few seconds
+  (cleanup as unknown as { written: Promise<void> }).written = Promise.race([written, new Promise<void>((r) => setTimeout(r, 3000))]);
+  return cleanup;
+}
+
 // ---------------------------------------------------------------- timeline plans
 
 const TRANSCRIBE: ImportStage[] = ['decoding', 'loading-model', 'analyzing', 'arranging', 'saving'];
@@ -294,6 +358,16 @@ function serverStageDetail(stage: string): string {
   }
 }
 
+/** File extension for a recording's MIME type ("audio/webm;codecs=opus" → "webm", "audio/mp4" → "m4a"). */
+export function extFor(mime: string): string {
+  const m = mime.toLowerCase();
+  if (m.includes('mp4') || m.includes('aac') || m.includes('m4a')) return 'm4a';
+  if (m.includes('ogg')) return 'ogg';
+  if (m.includes('wav')) return 'wav';
+  if (m.includes('mpeg') || m.includes('mp3')) return 'mp3';
+  return 'webm';
+}
+
 const phaseKey = (stage: ImportStage, detail?: string) => `${stage}|${(detail ?? '').replace(/[\d.,]+/g, '#')}`;
 
 let seq = 1;
@@ -306,6 +380,8 @@ interface Ctx {
   signal: AbortSignal;
   update: (patch: Partial<ImportJob>) => void;
   onProgress: (e: ProgressEvent) => void;
+  /** deletes this import's interrupted-import record (set once it was written) */
+  unpend?: () => Promise<void>;
 }
 
 export const useImport = create<ImportState>((set, get) => {
@@ -331,29 +407,44 @@ export const useImport = create<ImportState>((set, get) => {
     set({ job: next });
   };
 
-  const start = (title: string, kind: SongSource['kind'], plan: ImportStage[], separation?: SeparationEngine): Ctx => {
+  /** the running import's handle (to delete its record on Cancel) */
+  let current: Ctx | null = null;
+
+  const start = (title: string, kind: SongSource['kind'], plan: ImportStage[], separation?: SeparationEngine, preset?: PresetId): Ctx => {
     get().controller?.abort();
+    void current?.unpend?.();
     const controller = new AbortController();
     const id = seq++;
     set({
+      failed: null,
       controller,
       job: { id, title, kind, stage: 'validating', progress: null, warnings: [], startedAt: Date.now(), history: ['validating'], plan, separation },
     });
     const update = (patch: Partial<ImportJob>) => {
       if (!controller.signal.aborted) apply(id, patch);
     };
-    return {
+    const ctx: Ctx = {
       id,
-      preset: useSettings.getState().detectionPreset as PresetId,
+      preset: preset ?? (useSettings.getState().detectionPreset as PresetId),
       signal: controller.signal,
       update,
       onProgress: (e) => update({ stage: e.stage, progress: e.progress, detail: e.detail }),
     };
+    current = ctx;
+    return ctx;
   };
 
-  const finish = async ({ update }: Ctx, song: Song) => {
+  /** Keep a copy of the audio and the options until this import ends (see persistPending). */
+  const pend = async (ctx: Ctx, rec: Omit<PendingImport, 'id' | 'startedAt' | 'presetId'> & { id?: string }) => {
+    const unpend = persistPending({ ...rec, id: rec.id ?? newId(), startedAt: Date.now(), presetId: ctx.preset });
+    ctx.unpend = unpend;
+    await (unpend as unknown as { written: Promise<void> }).written;
+  };
+
+  const finish = async ({ update, unpend }: Ctx, song: Song) => {
     update({ stage: 'saving', progress: null, detail: 'Saving to your library' });
     await saveSong(song);
+    void unpend?.();
     void useLibrary.getState().refresh();
     update({ stage: 'done', progress: 1, songId: song.id, finishedAt: Date.now(), detail: undefined });
     return song.id;
@@ -361,15 +452,24 @@ export const useImport = create<ImportState>((set, get) => {
 
   const isAbort = (err: unknown) => (err instanceof DOMException || err instanceof Error) && err.name === 'AbortError';
 
-  const fail = (ctx: Ctx, err: unknown) => {
+  /**
+   * `again` (audio imports): what the error card's "Try again" runs while the page is open. The
+   * interrupted-import record is deleted either way: it is only for a tab that gets killed.
+   */
+  const fail = (ctx: Ctx, err: unknown, again?: Omit<FailedImport, 'jobId'>) => {
+    void ctx.unpend?.();
     if (isAbort(err) || ctx.signal.aborted) {
       if (get().job?.id === ctx.id) set({ job: null, controller: null });
       return null;
     }
     const msg = err instanceof Error ? err.message : String(err);
     ctx.update({ stage: 'error', error: msg, finishedAt: Date.now() });
+    if (again && get().job?.id === ctx.id) set({ failed: { jobId: ctx.id, ...again } });
     return null;
   };
+
+  const isRecording = (kind: SongSource['kind']) => kind === 'capture' || kind === 'youtube';
+  const recordingName = (title: string, mime: string) => `${title.replace(/[\\/:*?"<>|]+/g, '-').trim() || 'Recording'}.${extFor(mime)}`;
 
   const backendUrl = () => configuredBackendUrl(useSettings.getState().backendUrl);
 
@@ -428,7 +528,7 @@ export const useImport = create<ImportState>((set, get) => {
     earlier: string[] = [],
   ) => {
     const { update, onProgress, signal } = ctx;
-    const params = detectionParams();
+    const params = detectionParams(ctx.preset);
     const extraWarnings: string[] = [...earlier];
     let opts: TranscribeOptions = {};
     let progress = onProgress;
@@ -500,6 +600,7 @@ export const useImport = create<ImportState>((set, get) => {
   return {
     job: null,
     controller: null,
+    failed: null,
     prefs: loadPrefs(),
 
     setSeparatePref: (preset, value, engine) => {
@@ -531,29 +632,67 @@ export const useImport = create<ImportState>((set, get) => {
         }
       }
       // start the job right away (the page shows it), then decide where separation runs
-      const ctx = start(title, 'audio', planFor('audio', undefined));
+      const ctx = start(title, 'audio', planFor('audio', undefined), undefined, opts.presetId);
+      let separate = opts.separate;
       try {
-        const separate = opts.separate ?? (await defaultSeparate());
+        separate ??= await defaultSeparate();
+        const source: SongSource = { kind: 'audio', fileName: file.name, mimeType: file.type, fileSize: file.size };
+        await pend(ctx, {
+          id: opts.pendingId,
+          title,
+          kind: 'audio',
+          source,
+          blob: file.size <= PENDING_COPY_MAX_BYTES ? file : undefined,
+          mimeType: file.type,
+          fileName: file.name,
+          separate,
+        });
         const engine = await pickEngine(separate);
         if (ctx.signal.aborted) return null;
         ctx.update({ plan: planFor('audio', engine), separation: engine });
-        const source: SongSource = { kind: 'audio', fileName: file.name, mimeType: file.type, fileSize: file.size };
         return await transcribeAndSave(ctx, file, { title, source, fileName: file.name }, engine);
       } catch (err) {
-        return fail(ctx, err);
+        return fail(ctx, err, { retry: () => get().importFile(file, { ...opts, separate, presetId: ctx.preset, pendingId: undefined }) });
       }
     },
 
     importAudioBlob: async (blob, meta) => {
-      const ctx = start(meta.title, meta.source.kind, planFor(meta.source.kind, undefined));
+      const ctx = start(meta.title, meta.source.kind, planFor(meta.source.kind, undefined), undefined, meta.presetId);
+      const fileName = recordingName(meta.title, blob.type);
       try {
+        await pend(ctx, {
+          id: meta.pendingId,
+          title: meta.title,
+          artist: meta.artist,
+          kind: meta.source.kind,
+          source: meta.source,
+          blob,
+          mimeType: blob.type,
+          fileName,
+          separate: !!meta.separate,
+        });
         const engine = await pickEngine(!!meta.separate);
         if (ctx.signal.aborted) return null;
         ctx.update({ plan: planFor(meta.source.kind, engine), separation: engine });
-        return await transcribeAndSave(ctx, blob, { ...meta, fileName: `${meta.title}.webm` }, engine);
+        return await transcribeAndSave(ctx, blob, { ...meta, fileName }, engine);
       } catch (err) {
-        return fail(ctx, err);
+        return fail(ctx, err, {
+          retry: () => get().importAudioBlob(blob, { ...meta, presetId: ctx.preset, pendingId: undefined }),
+          recording: isRecording(meta.source.kind) ? { blob, fileName } : undefined,
+        });
       }
+    },
+
+    resumePending: async (rec) => {
+      if (!rec.blob) return null;
+      const presetId = (['piano', 'mix', 'sensitive', 'custom'] as PresetId[]).includes(rec.presetId as PresetId) ? (rec.presetId as PresetId) : undefined;
+      // a separation that crashed the tab has already been switched off for this preset (checkCrashedSeparation)
+      const separate = rec.separate && (presetId ? get().prefs.separate[presetId] !== false : true);
+      if (rec.kind === 'audio') {
+        const file = new File([rec.blob], rec.fileName, { type: rec.mimeType || rec.blob.type });
+        return get().importFile(file, { title: rec.title, separate, presetId, pendingId: rec.id });
+      }
+      return get().importAudioBlob(rec.blob, { title: rec.title, artist: rec.artist, source: rec.source, separate, presetId, pendingId: rec.id });
     },
 
     importYouTubeViaServer: async (videoUrl, videoId, separate, meta) => {
@@ -671,11 +810,12 @@ export const useImport = create<ImportState>((set, get) => {
 
     cancel: () => {
       get().controller?.abort();
-      set({ job: null, controller: null });
+      void current?.unpend?.();
+      set({ job: null, controller: null, failed: null });
     },
     clear: () => {
       const j = get().job;
-      if (j && (j.stage === 'done' || j.stage === 'error')) set({ job: null, controller: null });
+      if (j && (j.stage === 'done' || j.stage === 'error')) set({ job: null, controller: null, failed: null });
     },
   };
 });
@@ -701,6 +841,9 @@ if (typeof window !== 'undefined') {
     if (busy) window.addEventListener('beforeunload', onBeforeUnload);
     else window.removeEventListener('beforeunload', onBeforeUnload);
   });
+  // keep the screen on while an import runs (a locked phone suspends the page)
+  const wake = createScreenWakeLock();
+  useImport.subscribe((st) => void wake.hold(importBusy(st.job)));
   setTimeout(() => void checkCrashedSeparation((preset) => useImport.getState().setSeparatePref(preset, false, 'browser')), 0);
 }
 

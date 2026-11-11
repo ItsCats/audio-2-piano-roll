@@ -86,6 +86,15 @@ describe('difficulty levels', () => {
   const medium = generateMedium(d.notes, d.tempo);
   const hard = generateHard(d.notes);
   it('keeps all notes on hard', () => expect(hard).toHaveLength(d.notes.length));
+  it('hard keeps the hands of a score (MIDI file with hand tracks) as written', () => {
+    // two-staff left hand: bass C3 held under E4/G4 struck each half note; right hand C5 held
+    const score = [n(48, 0, 1.95, 0.7, 'L'), n(72, 0, 1.95, 0.7, 'R')];
+    for (let i = 0; i < 4; i++) score.push(n(64, i * 0.5, 0.45, 0.6, 'L'), n(67, i * 0.5, 0.45, 0.6, 'L'));
+    const hands = (notes: typeof score) => notes.map((x) => `${x.midi}@${x.start}:${x.hand}`).sort();
+    expect(hands(generateHard(score, { handsFromScore: true }))).toEqual(hands(score));
+    // a transcription's guessed hands are fixed where one hand cannot reach
+    expect(generateHard(score).filter((x) => x.hand === 'R').length).toBeGreaterThan(1);
+  });
   it('orders levels by density', () => {
     expect(easy.length).toBeLessThan(medium.length);
     expect(medium.length).toBeLessThanOrEqual(hard.length);
@@ -154,5 +163,7 @@ describe('MIDI', () => {
     expect(first.midi).toBe(60);
     expect(first.start).toBeCloseTo(0, 2);
     expect(parsed.notes.filter((x) => x.hand === 'L').length).toBe(d.notes.filter((x) => x.hand === 'L').length);
+    // named hand tracks: the hands come from the file (Hard keeps them)
+    expect(parsed.handsKnown).toBe(true);
   });
 });

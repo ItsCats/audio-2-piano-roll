@@ -105,6 +105,11 @@ export interface TranscriptionInfo {
   method: 'basic-pitch' | 'midi-file' | 'demo';
   /** True whenever the notes were inferred from audio (always an estimate). */
   estimated: boolean;
+  /**
+   * The hands come from the score (a MIDI file's named hand tracks or two-staff layout, the
+   * built-in demo): Hard keeps them as written (no hand-span reassignment).
+   */
+  handsFromScore?: boolean;
   params?: ExtractionParams;
   backend?: string;
   processingMs?: number;

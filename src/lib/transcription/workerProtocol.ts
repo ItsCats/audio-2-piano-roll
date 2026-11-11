@@ -1,4 +1,5 @@
 import type { NoteExtractionOptions, RawNoteEvent } from './noteExtraction';
+import type { DeviceInfo } from './backendChoice';
 
 export type TranscriptionStage =
   | 'validating'
@@ -18,6 +19,8 @@ export type WorkerRequest =
       modelUrl: string;
       options: NoteExtractionOptions;
       preferredBackend?: string;
+      /** the page's device facts for the backend choice (backendChoice.ts) */
+      device?: DeviceInfo;
     }
   | {
       type: 'extract';

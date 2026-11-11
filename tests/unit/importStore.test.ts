@@ -12,6 +12,9 @@ vi.mock('../../src/lib/storage/db', () => ({
   saveSong: vi.fn(async () => undefined),
   saveAudio: vi.fn(async () => undefined),
   savePosteriors: vi.fn(async () => undefined),
+  savePending: vi.fn(async () => undefined),
+  deletePending: vi.fn(async () => undefined),
+  listPending: vi.fn(async () => []),
   listSummaries: vi.fn(async () => []),
   requestPersistence: vi.fn(async () => true),
   newId: () => `id-${Math.random().toString(36).slice(2)}`,
@@ -170,5 +173,116 @@ describe('remembered separation choice', () => {
     // ticked for this browser explicitly: kept
     expect(separationChoice({ separate: { mix: true }, engine: { mix: 'browser' } }, 'mix', browserAvail)).toBe(true);
     expect(separationChoice({ separate: { mix: true }, engine: { mix: 'server' } }, 'mix', separationAvailability(true, notRec))).toBe(true);
+  });
+});
+
+describe('interrupted-import record (crash recovery)', () => {
+  beforeEach(() => {
+    for (const f of [db.savePending, db.deletePending, db.saveAudio]) vi.mocked(f).mockClear();
+    useSettings.setState({ backendUrl: '' });
+  });
+  const recording = () => new Blob([new Uint8Array(4000)], { type: 'audio/mp4' });
+  const meta = { title: 'Recording 1', source: { kind: 'capture' as const, mimeType: 'audio/mp4', fileSize: 4000 } };
+
+  it('is written before the audio is decoded and deleted once the song is saved', async () => {
+    let writtenBeforeDecode = false;
+    vi.mocked(pipeline.transcribeAudio).mockImplementation(async () => {
+      writtenBeforeDecode = vi.mocked(db.savePending).mock.calls.length === 1;
+      expect(db.deletePending).not.toHaveBeenCalled();
+      return result();
+    });
+    const blob = recording();
+    await useImport.getState().importAudioBlob(blob, { ...meta, separate: false });
+    expect(writtenBeforeDecode).toBe(true);
+    const rec = vi.mocked(db.savePending).mock.calls[0][0];
+    expect(rec).toMatchObject({ title: 'Recording 1', kind: 'capture', blob, mimeType: 'audio/mp4', presetId: 'mix', separate: false });
+    expect(rec.fileName).toBe('Recording 1.m4a');
+    expect(useImport.getState().job!.stage).toBe('done');
+    await vi.waitFor(() => expect(db.deletePending).toHaveBeenCalledWith(rec.id));
+  });
+
+  it('a failure deletes the record but keeps "Try again" and the recording for the open page', async () => {
+    vi.mocked(pipeline.transcribeAudio).mockRejectedValueOnce(new Error('The audio is (nearly) silent — nothing to transcribe.'));
+    const blob = recording();
+    await useImport.getState().importAudioBlob(blob, meta);
+    const st = useImport.getState();
+    expect(st.job!.stage).toBe('error');
+    const id = vi.mocked(db.savePending).mock.calls[0][0].id;
+    await vi.waitFor(() => expect(db.deletePending).toHaveBeenCalledWith(id));
+    expect(st.failed?.jobId).toBe(st.job!.id);
+    expect(st.failed?.recording?.blob).toBe(blob);
+    expect(st.failed?.recording?.fileName).toBe('Recording 1.m4a');
+    // Try again runs the same import with the same preset
+    useSettings.setState({ detectionPreset: 'piano' });
+    vi.mocked(pipeline.transcribeAudio).mockResolvedValueOnce(result());
+    await st.failed!.retry();
+    expect(useImport.getState().job!.stage).toBe('done');
+    expect(vi.mocked(db.savePending).mock.calls[1][0]).toMatchObject({ presetId: 'mix', blob });
+    expect(useImport.getState().failed).toBeNull();
+  });
+
+  it('Cancel deletes the record', async () => {
+    let release!: () => void;
+    vi.mocked(pipeline.transcribeAudio).mockImplementation(
+      (_b, _p, _on, signal) =>
+        new Promise((_res, rej) => {
+          release = () => rej(new DOMException('Cancelled', 'AbortError'));
+          signal?.addEventListener('abort', () => release());
+        }),
+    );
+    const run = useImport.getState().importAudioBlob(recording(), meta);
+    await vi.waitFor(() => expect(pipeline.transcribeAudio).toHaveBeenCalled());
+    useImport.getState().cancel();
+    await run;
+    const id = vi.mocked(db.savePending).mock.calls[0][0].id;
+    await vi.waitFor(() => expect(db.deletePending).toHaveBeenCalledWith(id));
+    expect(useImport.getState().job).toBeNull();
+  });
+
+  it('resuming a record re-runs it with its own preset and options, under the same id', async () => {
+    vi.mocked(pipeline.transcribeAudio).mockResolvedValue(result());
+    const blob = recording();
+    await useImport.getState().resumePending({
+      id: 'old-1',
+      title: 'Recording 1',
+      kind: 'capture',
+      source: meta.source,
+      blob,
+      mimeType: 'audio/mp4',
+      fileName: 'Recording 1.m4a',
+      startedAt: 1,
+      presetId: 'piano',
+      separate: false,
+    });
+    expect(useImport.getState().job!.stage).toBe('done');
+    expect(vi.mocked(db.savePending).mock.calls[0][0]).toMatchObject({ id: 'old-1', presetId: 'piano' });
+    await vi.waitFor(() => expect(db.deletePending).toHaveBeenCalledWith('old-1'));
+    // a file is resumed as a file
+    await useImport.getState().resumePending({
+      id: 'old-2',
+      title: 'Song',
+      kind: 'audio',
+      source: { kind: 'audio', fileName: 'song.mp3', mimeType: 'audio/mpeg' },
+      blob: new Blob([new Uint8Array(16)], { type: 'audio/mpeg' }),
+      mimeType: 'audio/mpeg',
+      fileName: 'song.mp3',
+      startedAt: 1,
+      presetId: 'mix',
+      separate: false,
+    });
+    const last = vi.mocked(pipeline.transcribeAudio).mock.calls.at(-1)![0] as File;
+    expect(last).toBeInstanceOf(File);
+    expect(last.name).toBe('song.mp3');
+  });
+
+  it('big files are not copied (the record only says which file it was)', async () => {
+    vi.mocked(pipeline.transcribeAudio).mockResolvedValue(result());
+    const { PENDING_COPY_MAX_BYTES } = await import('../../src/state/importStore');
+    const big = new File([new Uint8Array(16)], 'film.mp4', { type: 'video/mp4' });
+    Object.defineProperty(big, 'size', { value: PENDING_COPY_MAX_BYTES + 1 });
+    await useImport.getState().importFile(big, { separate: false });
+    const rec = vi.mocked(db.savePending).mock.calls[0][0];
+    expect(rec.blob).toBeUndefined();
+    expect(rec.fileName).toBe('film.mp4');
   });
 });

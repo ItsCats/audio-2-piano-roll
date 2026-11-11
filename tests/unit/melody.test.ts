@@ -562,6 +562,50 @@ describe("instruments' tune (no singer)", () => {
     expect(instrumentLine(notes)).toHaveLength(4);
   });
 
+  describe('a held pad under the melody', () => {
+    // each 8 s phrase: a right-hand pad C4/E4/G4 held (padDur s), the melody in 8ths C5–G5
+    // entering 1 s later at the same velocity, a bass below
+    const scale = [72, 74, 76, 77, 79, 77, 76, 74, 72, 74, 76, 77, 79, 77];
+    const song = (padDur: number) => {
+      const notes: Note[] = [];
+      const melody: Note[] = [];
+      for (let p = 0; p < 4; p++) {
+        const t0 = p * 8;
+        for (const m of [60, 64, 67]) notes.push(n(m, t0, padDur - 0.05, 0.6));
+        scale.forEach((m, i) => {
+          const x = n(m, t0 + 1 + i * 0.25, 0.24, 0.6);
+          notes.push(x);
+          melody.push(x);
+        });
+        for (const [b, s] of [[48, 0], [48, 2], [43, 4], [43, 6]]) notes.push(n(b, t0 + s, 1.9, 0.7, 'L'));
+      }
+      return { notes, melody };
+    };
+    const t = tempo(120, 34);
+    const has = (out: Note[], m: Note, octave = false) =>
+      out.some((x) => x.hand === 'R' && Math.abs(x.start - m.start) < 0.06 && (octave ? x.midi % 12 === m.midi % 12 : x.midi === m.midi));
+
+    for (const padDur of [8, 4]) {
+      it(`instrumentLine takes the melody entering above a ${padDur} s pad`, () => {
+        const { notes, melody } = song(padDur);
+        const line = instrumentLine(tuneCandidates(notes));
+        expect(isMonophonic(line)).toBe(true);
+        for (const m of melody) expect(has(line, m)).toBe(true);
+        // the pad note on top before the melody enters is held only until then
+        const pad = line.find((x) => x.start < 0.5)!;
+        expect(pad.start + pad.dur).toBeLessThanOrEqual(1);
+      });
+
+      it(`Easy plays every melody note over a ${padDur} s pad, Medium keeps them all`, () => {
+        const { notes, melody } = song(padDur);
+        const easy = generateEasy(notes, t, 32);
+        for (const m of melody) expect(has(easy, m, true)).toBe(true);
+        const med = generateMedium(notes, t);
+        for (const m of melody) expect(has(med, m)).toBe(true);
+      });
+    }
+  });
+
   it('Easy folds an isolated octave leap of the tune back into the line', () => {
     const notes = [72, 74, 76, 89, 76, 74, 72, 74].map((m, i) => n(m, i * 0.5, 0.45, 0.8));
     const rh = generateEasy(notes, t, 4).filter((x) => x.hand === 'R');

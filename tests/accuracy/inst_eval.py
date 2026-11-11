@@ -18,7 +18,21 @@ Scores (mir_eval on the reference grid): RPA / RCA (octave-tolerant; Easy moves 
 right-hand register) / voicing recall of the RH top line of Easy, Medium and Hard and of the
 base transcription's top note (any hand: the ceiling); for `lead` also on the proxy's confident
 frames only (voicing probability > 0.5, not among the quietest 30 %). For a song with a sung line
-(role 'melody' notes in the base) only frames at least 1 s away from any sung note are scored. Shape of the Easy RH line: median absolute
+(role 'melody' notes in the base) only frames at least 1 s away from any sung note are scored.
+
+RCA only credits frames where the arrangement sounds, so it rises with voicing recall: holding
+the same notes longer (legato) raises it without any better choice of notes. Next to it, per
+level, three DURATION-INDEPENDENT measures of which notes are chosen:
+  onsetPC   RH top note at each RH onset vs the reference pitch class 40 ms after the onset
+            (share of onsets where the reference is voiced; `onsetN` = those onsets);
+  bothCA    chroma accuracy on frames where both the reference and the RH line sound;
+  legatoRCA RCA after stretching every RH note to the next RH onset (at most 2 s): the same
+            note lengths for any version, so a gain here is a gain in note choice.
+Summary groups: `exact` (MAESTRO), `pti` (solo piano recordings), `lead-band` (lead proxy, no
+sung line: whole song) and `lead-vocal-gaps` (lead proxy, sung songs: instrumental gaps only;
+also RH note count in the gaps `gapRH` and back-to-back same-pitch gap repeats `gapRepeats`).
+
+Shape of the Easy RH line: median absolute
 interval, % leaps > an octave, % leaps >= a fifth, notes per second; the same for the reference.
 With WORK/refs/vocal/<id>.bass.f0.npz: Easy / Medium LH bottom-line RCA vs the bass reference.
 With WORK/stems/<id>/drums.wav: drum-suspect low notes per minute (evaluate.py drum_low_notes).
@@ -50,6 +64,52 @@ def skyline_f0(ref: NoteArr, times: np.ndarray) -> np.ndarray:
 def score(times, ref_f0, est_f0) -> dict:
     m = melody_metrics(times, ref_f0, est_f0)
     return {k: m[k] for k in ("rawPitch", "rawChroma", "voicingRecall")}
+
+
+def legato(notes: list[dict], cap: float = 2.0) -> list[dict]:
+    """RH notes, each held to the next RH onset (at most `cap` s, never shortened)."""
+    r = sorted((dict(n) for n in notes if n.get("hand") == "R"), key=lambda n: n["start"])
+    starts = np.array(sorted({round(n["start"], 3) for n in r}))
+    for n in r:
+        i = np.searchsorted(starts, round(n["start"], 3) + 0.02, side="right")
+        nxt = starts[i] if i < len(starts) else n["start"] + cap
+        n["dur"] = min(cap, max(n["dur"], nxt - n["start"] - 0.005))
+    return r
+
+
+def both_chroma(ref: np.ndarray, est: np.ndarray) -> float:
+    b = (ref > 0) & (est > 0)
+    if not b.any():
+        return 0.0
+    d = np.round(12 * np.log2(est[b] / ref[b])) % 12
+    return float((d == 0).mean())
+
+
+def onset_pc(notes: list[dict], times: np.ndarray, ref: np.ndarray) -> tuple[float, int]:
+    top: dict[float, int] = {}
+    for n in notes:
+        if n.get("hand") == "R":
+            k = round(n["start"], 2)
+            top[k] = max(top.get(k, 0), n["midi"])
+    ok = tot = 0
+    for t, m in top.items():
+        i = np.searchsorted(times, t + 0.04)
+        if i >= len(ref) or ref[i] <= 0:
+            continue
+        tot += 1
+        ok += int(round(69 + 12 * np.log2(ref[i] / 440) - m) % 12 == 0)
+    return (ok / tot if tot else 0.0), tot
+
+
+def score_level(times, ref, notes: list[dict]) -> dict:
+    """score() plus the duration-independent measures (see the module comment)."""
+    est = line_f0(NoteArr.from_list(notes), times, "R", mode="top")
+    r = score(times, ref, est)
+    r["bothCA"] = round(both_chroma(ref, est), 4)
+    r["legatoRCA"] = melody_metrics(times, ref, line_f0(NoteArr.from_list(legato(notes)), times, "R", mode="top"))["rawChroma"]
+    r["onsetPC"], r["onsetN"] = onset_pc(notes, times, ref)
+    r["onsetPC"] = round(r["onsetPC"], 4)
+    return r
 
 
 def shape_of(f0: np.ndarray) -> dict:
@@ -136,16 +196,24 @@ def main() -> None:
             if kind == "lead":
                 conf_ref = np.where(sung, 0.0, conf_ref)
             gap_frames = round(float((~sung).mean()), 4)
-        r = {"ref": kind, "refVoiced": round(float((ref > 0).mean()), 4), "refShape": shape_of(ref)}
+        group = kind if kind != "lead" else ("lead-vocal-gaps" if mel else "lead-band")
+        r = {"ref": kind, "group": group, "refVoiced": round(float((ref > 0).mean()), 4), "refShape": shape_of(ref)}
         if gap_frames is not None:
             r["gapsOnly"] = True
             r["gapFrames"] = gap_frames
+            # RH notes starting in the scored (gap) frames, and back-to-back same-pitch repeats there
+            for lv in ("easy", "medium"):
+                rh = sorted((n for n in d.get(lv) or [] if n.get("hand") == "R"), key=lambda n: n["start"])
+                ing = [not sung[min(len(times) - 1, np.searchsorted(times, n["start"]))] for n in rh]
+                r[f"{lv}GapRH"] = int(sum(ing))
+                r[f"{lv}GapRepeats"] = int(sum(1 for i in range(1, len(rh)) if ing[i] and rh[i]["midi"] == rh[i - 1]["midi"]
+                                               and rh[i]["start"] - (rh[i - 1]["start"] + rh[i - 1]["dur"]) < 0.04))
         if kind == "lead":
             r["confidentFrames"] = round(float((conf_ref > 0).mean()), 4)
             for lv in ("easy", "medium", "hard"):
-                r[f"{lv}Confident"] = score(times, conf_ref, line_f0(N[lv], times, "R", mode="top"))
+                r[f"{lv}Confident"] = score_level(times, conf_ref, d.get(lv) or [])
         for lv in ("easy", "medium", "hard"):
-            r[lv] = score(times, ref, line_f0(N[lv], times, "R", mode="top"))
+            r[lv] = score_level(times, ref, d.get(lv) or [])
         if d.get("line"):
             r["line"] = score(times, ref, line_f0(NoteArr.from_list(d["line"]), times, "R", mode="top"))
         r["baseTopAnyHand"] = score(times, ref, line_f0(N["base"], times, None, mode="top"))
@@ -169,8 +237,10 @@ def main() -> None:
         conf = ""
         if kind == "lead":
             conf = f" | confident frames: easy RCA {r['easyConfident']['rawChroma']:.3f} med {r['mediumConfident']['rawChroma']:.3f} hard {r['hardConfident']['rawChroma']:.3f}"
-        print(f"{os.path.basename(run).removesuffix('.json'):34s} {kind:5s} easy RPA {e['rawPitch']:.3f} RCA {e['rawChroma']:.3f} VR {e['voicingRecall']:.3f} | "
-              f"med RCA {m['rawChroma']:.3f} | "
+        print(f"{os.path.basename(run).removesuffix('.json'):34s} {kind:5s} easy RPA {e['rawPitch']:.3f} RCA {e['rawChroma']:.3f} VR {e['voicingRecall']:.3f} "
+              f"onsetPC {e['onsetPC']:.3f}/{e['onsetN']} bothCA {e['bothCA']:.3f} legatoRCA {e['legatoRCA']:.3f} | "
+              f"med RCA {m['rawChroma']:.3f} onsetPC {m['onsetPC']:.3f} legatoRCA {m['legatoRCA']:.3f} | "
+              + (f"gap RH notes E {r['easyGapRH']} M {r['mediumGapRH']} repeats E {r['easyGapRepeats']} | " if gap_frames is not None else "")
               + (f"line RPA {r['line']['rawPitch']:.3f} RCA {r['line']['rawChroma']:.3f} | " if "line" in r else "")
               + f"hard RCA {r['hard']['rawChroma']:.3f} | ceil RCA {r['baseTopAnyHand']['rawChroma']:.3f} | "
               f"leap>8ve {r['easyShape'].get('pctLeapGtOctave')}% medStep {r['easyShape'].get('medianAbsInterval')}"
@@ -179,12 +249,16 @@ def main() -> None:
               flush=True)
     groups = {}
     for sid, r in res.items():
-        groups.setdefault(r["ref"], []).append(r)
+        groups.setdefault(r["group"], []).append(r)
     summary = {}
+    keys = ("rawPitch", "rawChroma", "voicingRecall", "onsetPC", "bothCA", "legatoRCA")
     for kind, rs in groups.items():
-        summary[kind] = {f"{lv}.{k}": round(float(np.mean([x[lv][k] for x in rs])), 4) for lv in ("easy", "medium", "hard") for k in ("rawPitch", "rawChroma", "voicingRecall")}
-        print(f"MEAN {kind:5s} (n={len(rs)}): easy RPA {summary[kind]['easy.rawPitch']:.3f} RCA {summary[kind]['easy.rawChroma']:.3f} VR {summary[kind]['easy.voicingRecall']:.3f}"
-              f" | medium RCA {summary[kind]['medium.rawChroma']:.3f} VR {summary[kind]['medium.voicingRecall']:.3f}")
+        sm = {f"{lv}.{k}": round(float(np.mean([x[lv][k] for x in rs])), 4) for lv in ("easy", "medium", "hard") for k in keys}
+        sm["n"] = len(rs)
+        summary[kind] = sm
+        print(f"MEAN {kind:15s} (n={len(rs)}): easy RPA {sm['easy.rawPitch']:.3f} RCA {sm['easy.rawChroma']:.3f} VR {sm['easy.voicingRecall']:.3f}"
+              f" onsetPC {sm['easy.onsetPC']:.3f} bothCA {sm['easy.bothCA']:.3f} legatoRCA {sm['easy.legatoRCA']:.3f}"
+              f" | medium RCA {sm['medium.rawChroma']:.3f} VR {sm['medium.voicingRecall']:.3f} onsetPC {sm['medium.onsetPC']:.3f} legatoRCA {sm['medium.legatoRCA']:.3f}")
     if a.out:
         json.dump({"songs": res, "summary": summary}, open(a.out, "w"), indent=1)
 

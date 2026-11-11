@@ -17,28 +17,38 @@
  *     right hand's top note / below the left hand's bass) and the hands do not cross by more
  *     than a whole tone;
  *  3. Easy / Medium only: a longer held note is released at the new onset (a pianist lets go of
- *     it, the new note matters more than the tail of the old one);
+ *     it, the new note matters more than the tail of the old one); a held bass too, when the note
+ *     at the other end of the hand is struck at this moment (the next note of a left-hand
+ *     arpeggio over a held low note: the new note stays, the bass's tail goes; the pedal keeps it
+ *     sounding anyway);
  *  4. Easy / Medium only: the least important outer note is dropped (inner voices, octave or
  *     unison doubles, short and quiet notes go first).
  * Melody notes (role 'melody': the sung line) always stay in the right hand and are never
- * released early or dropped; the lowest note the left hand holds (the bass) is never dropped or
- * released early either. A moment that still cannot be fixed (Hard, or only protected notes left)
- * is left as it is and counted.
+ * released early or dropped; the lowest note the left hand holds (the bass) is never dropped,
+ * only released early as in 3. A moment that still cannot be fixed (Hard, or only protected notes
+ * left) is left as it is and counted.
  *
  * Reach per level: Easy 7 semitones (a fifth: a beginner's five-finger position), Medium 12 (an
  * octave: any adult hand), Hard 14 (a major ninth: most adult hands; tenths need large hands and
  * are usually rolled). Those are also the default `maxSpan`s.
  *
- * Measured (offline regeneration of Dress-Up Darling, two vocal songs, two MAESTRO pieces),
- * left-hand / right-hand onsets spanning more than an octave, before → after:
- *   Medium  Dress-Up 11.6/1.6 → 0/0 %, Color Your Night 9.4/2.9 → 0/0, Stay at Your House 5.5/0 → 0/0,
- *           Chopin Ballade 1 12.6/4.6 → 0/0, Mozart K280 5.3/1.7 → 0/0; notes dropped 0.3–1.7 %
- *           (all inner left-hand notes), melody notes never;
- *   Hard    28.6/16.3 → 24.0/14.8, 35.5/23.6 → 27.4/21.3, 7.0/20.6 → 4.0/17.7, 16.9/21.7 → 12.7/10.9,
- *           7.9/10.1 → 3.0/3.7; no note dropped or shortened (what is left is mostly held notes a
- *           pianist would release under the pedal, and band chords too wide for both hands).
- * Easy RH / LH scores unchanged (Easy is one line per hand); Medium RH vs the sung line (raw chroma)
- * unchanged, Medium RH vs the MAESTRO top voice +0.002 / +0.004.
+ * Measured (offline regeneration from saved base transcriptions: Dress-Up Darling, 4 vocal songs,
+ * 4 solo piano recordings, 6 MAESTRO pieces), left-hand / right-hand onsets spanning more than an
+ * octave, before → after:
+ *   Medium  every piece → 0 / 0 % (e.g. Dress-Up 8.5/2.3, Chopin Ballade 1 recording 15.8/6.7,
+ *           MAESTRO Ballade 13.0/4.8); notes dropped 0–1.1 % (0.2 % typical), melody notes
+ *           never. Dropped notes that are the lowest left-hand note struck at their onset (a new
+ *           note over a held bass): before the bass could be released, 34 of 45 drops on the
+ *           MAESTRO Ballade, 38 of 45 on the Ballade recording, 12 of 15 on Clair de lune; now
+ *           6 of 7, 2 of 4, 1 of 1. Medium LH bottom line vs the bass stem (raw chroma) about
+ *           unchanged (vocal songs + Dress-Up + Heroic mean 0.628 → 0.626; releasing every held
+ *           bass at once cost 0.619).
+ *   Hard    Dress-Up 22.9/16.0 → 18.7/14.5, Color Your Night 19.1/16.4 → 14.2/15.2, MAESTRO Ballade
+ *           16.9/21.7 → 12.7/10.9, Mozart K280 7.9/10.1 → 3.0/3.7; no note dropped or shortened
+ *           (what is left is mostly held notes a pianist would release under the pedal, and band
+ *           chords too wide for both hands). Scores whose hands come from the file are not
+ *           touched on Hard (difficulty.ts ArrangementOptions.handsFromScore).
+ * Easy is one line per hand and does not use this pass.
  */
 import type { Note } from './types';
 
@@ -72,7 +82,8 @@ export interface PlayabilityOptions {
   maxSounding: number;
   /**
    * A held lowest left-hand note (the bass) may be released at a new left-hand onset once it has
-   * sounded this long (s); Infinity: never (then the new note goes instead).
+   * sounded this long (s); Infinity: only when the note at the other end of the hand is struck at
+   * that onset (with trimLong).
    */
   bassReleaseAfter: number;
 }
@@ -205,7 +216,7 @@ export function playabilityPass(notes: Note[], options: Partial<PlayabilityOptio
 
   type Option = { cost: number; apply: () => void };
 
-  const optionsFor = (x: Work, side: 'top' | 'bottom', h: Note['hand'], k: number): Option[] => {
+  const optionsFor = (x: Work, side: 'top' | 'bottom', h: Note['hand'], k: number, otherEnd: Work): Option[] => {
     const out: Option[] = [];
     const other: Note['hand'] = h === 'L' ? 'R' : 'L';
     const melody = x.n.role === 'melody';
@@ -230,8 +241,12 @@ export function playabilityPass(notes: Note[], options: Partial<PlayabilityOptio
     }
     // the outer voices (the tune on top of the right hand, the bass) are cut short last
     const top = h === 'R' && side === 'top';
-    if (held && !melody && keptDur >= MIN_DUR && o.trimLong && (!bass || keptDur >= o.bassReleaseAfter)) {
-      out.push({ cost: (top ? 3.5 : bass ? 1.5 : 1) + 0.5 * (overlap / (x.end - x.n.start)), apply: () => trim(x, keptDur) });
+    // a held bass is let go when the note at the other end is struck right now (a new left-hand
+    // note, e.g. the next note of an arpeggio), unless much of it is still to come: then a weak
+    // or doubled new note goes instead (cost: 1.5 + the bass's remaining seconds, at most 2)
+    if (held && !melody && keptDur >= MIN_DUR && o.trimLong && (!bass || keptDur >= o.bassReleaseAfter || otherEnd.k === k)) {
+      const rest = bass ? Math.min(overlap, 2) : 0.5 * (overlap / (x.end - x.n.start));
+      out.push({ cost: (top ? 3.5 : bass ? 1.5 : 1) + rest, apply: () => trim(x, keptDur) });
     }
     if (!melody && !bass && o.drop) {
       out.push({
@@ -266,7 +281,7 @@ export function playabilityPass(notes: Note[], options: Partial<PlayabilityOptio
         if (x.n.midi > top.n.midi || (x.n.midi === top.n.midi && x.n.vel < top.n.vel)) top = x;
         if (x.n.midi < bottom.n.midi || (x.n.midi === bottom.n.midi && x.n.vel < bottom.n.vel)) bottom = x;
       }
-      const opts = [...optionsFor(top, 'top', h, k), ...optionsFor(bottom, 'bottom', h, k)];
+      const opts = [...optionsFor(top, 'top', h, k, bottom), ...optionsFor(bottom, 'bottom', h, k, top)];
       if (!opts.length) {
         report.unresolved++;
         return;
