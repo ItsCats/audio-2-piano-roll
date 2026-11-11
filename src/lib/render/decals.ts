@@ -1317,26 +1317,31 @@ const IMAGE_NOTE_SPAN = 3.5;
 /** Nominal note width at 1080p used to size user photos when the decal is screen-anchored. */
 const NOMINAL_NOTE_W = 34;
 
-/** A ready-to-fill copy of the decal at its exact on-screen size (optionally pre-tinted). */
+/** A ready-to-paint copy of the decal at its exact on-screen size, tiled 2×2. */
 interface Baked {
+  /** 2w × 2h: any w × h crop of the (wrapping) decal is one contiguous region of this */
   canvas: AnyCanvas;
+  /** 'no-repeat' patterns on `canvas`, per destination context (for the rounded caps) */
   patterns: WeakMap<object, CanvasPattern>;
 }
-interface Resampled extends Baked {
+interface Resampled {
   w: number;
   h: number;
-  /** tint key → pre-tinted copy (most recently used last) */
-  tinted: Map<string, Baked>;
+  /** w × h, resampled once from the source (opaque) */
+  canvas: AnyCanvas;
+  /** tint / alpha key → baked copy (most recently used last) */
+  variants: Map<string, Baked>;
 }
 /** image → a few pre-resampled copies at the exact on-screen size (most recent first). */
 const resampleCache = new WeakMap<object, Resampled[]>();
-/** max baked (tint / alpha) variants kept per resampled size (hand colours × highlight steps, or 12 pitch colours × a few) */
-const MAX_TINTS = 48;
+/** Baked variants kept per resampled size. Keys depend only on the tint setting and the
+ *  caller's alpha (normal / muted), never on note colours, so a handful is plenty. */
+const MAX_VARIANTS = 6;
 
 /**
- * Pre-resample the source to the on-screen size once, so per-note pattern fills are
- * pure 1:1 copies (crisp, alias-free and fast). Seamless tiles are resampled with their
- * wrapped neighbours so the filtered edges still join without a seam.
+ * Pre-resample the source to the on-screen size once, so per-note painting is a pure 1:1
+ * copy (crisp, alias-free and fast). Seamless tiles are resampled with their wrapped
+ * neighbours so the filtered edges still join without a seam.
  */
 function resampled(img: CanvasImageSource, iw: number, ih: number, w: number, h: number, seamless: boolean): Resampled | null {
   let list = resampleCache.get(img as object);
@@ -1368,60 +1373,87 @@ function resampled(img: CanvasImageSource, iw: number, ih: number, w: number, h:
   } catch {
     return null;
   }
-  const e: Resampled = { w, h, canvas, patterns: new WeakMap(), tinted: new Map() };
+  const e: Resampled = { w, h, canvas, variants: new Map() };
   list.unshift(e);
-  if (list.length > 4) list.length = 4;
+  if (list.length > 3) list.length = 3;
   return e;
 }
 
 /**
- * Tint = a multiply glaze of the (lifted) note colour: the pale ground takes on the hand /
- * pitch colour while the motifs keep their own hues and shading, so the pattern stays
- * readable even at full tint (a 'color' blend turned it monochrome).
+ * Bake tint and opacity into a 2×2-tiled copy.
  *
- * Tint and opacity are baked into a cached copy instead of being applied per note: in
- * software raster a per-note multiply pass costs more than the fill itself, and a pattern
- * filled with globalAlpha < 1 is ~2× slower than one whose pixels already carry the alpha.
- * Keys are quantised so highlight fades reuse a handful of copies.
+ * Tint: the decal's pale ground turns partly transparent (in proportion to its lightness
+ * and the tint amount), so the note's own hand / pitch colour, already painted underneath,
+ * glows through while darker motifs stay solid and readable. Unlike a colour blend this
+ * keeps every flower's hue, and because it does not depend on the note colour, one copy
+ * serves every note — no per-note blend pass, which in software raster cost more than the
+ * decal itself. Opacity × the caller's globalAlpha is baked in as well: a pattern drawn
+ * with globalAlpha < 1 is ~2× slower than one whose pixels already carry the alpha.
  */
-function baked(rs: Resampled, color: RGB, tint: number, alpha: number): Baked | null {
+function baked(rs: Resampled, tint: number, alpha: number): Baked | null {
   const qt = Math.round(tint * 50) / 50;
   const qa = Math.round(alpha * 64) / 64;
-  if (qt <= 0 && qa >= 1) return rs;
-  const lift = mix(color, WHITE, 0.3);
-  const q = (v: number) => Math.min(255, (v >> 4) * 16 + 8);
-  const qc = { r: q(lift.r), g: q(lift.g), b: q(lift.b) };
-  const key = qt > 0 ? `${qc.r},${qc.g},${qc.b}@${qt}a${qa}` : `a${qa}`;
-  const hit = rs.tinted.get(key);
+  const key = `t${qt}a${qa}`;
+  const hit = rs.variants.get(key);
   if (hit) {
-    rs.tinted.delete(key);
-    rs.tinted.set(key, hit);
+    rs.variants.delete(key);
+    rs.variants.set(key, hit);
     return hit;
   }
-  const canvas = makeCanvas(rs.w, rs.h);
-  const c = canvas.getContext('2d') as Ctx2D | null;
+  const W = rs.w * 2;
+  const H = rs.h * 2;
+  const canvas = makeCanvas(W, H);
+  const c = canvas.getContext('2d', { willReadFrequently: qt > 0 }) as Ctx2D | null;
   if (!c) return null;
-  c.drawImage(rs.canvas, 0, 0);
-  if (qt > 0) {
-    c.globalCompositeOperation = 'multiply';
-    c.globalAlpha = qt;
-    c.fillStyle = rgba(qc, 1);
-    c.fillRect(0, 0, rs.w, rs.h);
-  }
-  if (qa < 1) {
-    c.globalCompositeOperation = 'destination-in';
-    c.globalAlpha = Math.max(0, qa);
-    c.fillStyle = '#000';
-    c.fillRect(0, 0, rs.w, rs.h);
+  for (let dx = 0; dx < 2; dx++) for (let dy = 0; dy < 2; dy++) c.drawImage(rs.canvas, dx * rs.w, dy * rs.h);
+  if (qt > 0 || qa < 1) {
+    const img = c.getImageData(0, 0, W, H);
+    const d = img.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const l = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) / 255;
+      const t = clamp01((l - 0.3) / 0.65);
+      const keep = 1 - qt * t * Math.sqrt(t);
+      d[i + 3] = Math.round((d[i + 3] * keep * qa));
+    }
+    c.putImageData(img, 0, 0);
   }
   const b: Baked = { canvas, patterns: new WeakMap() };
-  rs.tinted.set(key, b);
-  if (rs.tinted.size > MAX_TINTS) rs.tinted.delete(rs.tinted.keys().next().value as string);
+  rs.variants.set(key, b);
+  if (rs.variants.size > MAX_VARIANTS) rs.variants.delete(rs.variants.keys().next().value as string);
   return b;
 }
 
-// reused per call so filling 150 notes allocates nothing per note
+const posMod = (v: number, m: number) => v - m * Math.floor(v / m);
+// reused so filling 150 notes allocates nothing per note
 const xform = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
+
+/**
+ * Copy the decal into the axis-aligned box [x0,x1]×[y0,y1] with plain drawImage calls.
+ * (ox, oy) is the integer screen position of the decal's origin, so source and
+ * destination differ by a whole-pixel translation — no resampling, the fastest path.
+ */
+function blit(ctx: Ctx2D, bk: Baked, w: number, h: number, ox: number, oy: number, x0: number, x1: number, y0: number, y1: number): void {
+  for (let y = y0; y < y1 - 0.01; ) {
+    const sy = posMod(y - oy, h);
+    const hh = Math.min(y1 - y, 2 * h - sy);
+    for (let x = x0; x < x1 - 0.01; ) {
+      const sx = posMod(x - ox, w);
+      const ww = Math.min(x1 - x, 2 * w - sx);
+      ctx.drawImage(bk.canvas, sx, sy, ww, hh, x, y, ww, hh);
+      x += ww;
+    }
+    y += hh;
+  }
+}
+
+/** Fill the current path with the decal (for the rounded caps). The path must fit in w × h. */
+function fillCap(ctx: Ctx2D, pat: CanvasPattern, w: number, h: number, ox: number, oy: number, x0: number, y0: number): void {
+  xform.e = ox + w * Math.floor((x0 - ox) / w);
+  xform.f = oy + h * Math.floor((y0 - oy) / h);
+  pat.setTransform(xform);
+  ctx.fillStyle = pat;
+  ctx.fill();
+}
 
 /** Paint the decal inside the rounded rect. Must leave ctx state as it found it. */
 export function paintNoteDecal(ctx: Ctx2D, rect: { x: number; y: number; w: number; h: number }, radius: number, p: NoteDecalParams): void {
@@ -1438,43 +1470,80 @@ export function paintNoteDecal(ctx: Ctx2D, rect: { x: number; y: number; w: numb
     const noteW = s.anchor === 'note' ? Math.max(rect.w, 12 * p.scale) : NOMINAL_NOTE_W * p.scale;
     dw = noteW * IMAGE_NOTE_SPAN * userScale;
   }
-  dw = Math.max(8, Math.min(2048, Math.round(dw)));
-  const dh = Math.max(8, Math.min(2048, Math.round((dw * p.imageHeight) / p.imageWidth)));
+  dw = Math.max(16, Math.min(2048, Math.round(dw)));
+  const dh = Math.max(16, Math.min(2048, Math.round((dw * p.imageHeight) / p.imageWidth)));
   const rs = resampled(p.image, p.imageWidth, p.imageHeight, dw, dh, seamless);
   if (!rs) return;
   const baseAlpha = ctx.globalAlpha;
-  const bk = baked(rs, p.color, clamp01(s.tint), baseAlpha * opacity);
+  const bk = baked(rs, clamp01(s.tint), baseAlpha * opacity);
   if (!bk) return;
   let pat = bk.patterns.get(ctx);
   if (!pat) {
-    pat = ctx.createPattern(bk.canvas, 'repeat') ?? undefined;
+    pat = ctx.createPattern(bk.canvas, 'no-repeat') ?? undefined;
     if (!pat) return;
     bk.patterns.set(ctx, pat);
   }
 
-  // Offsets snap to whole pixels: sub-pixel offsets force bilinear sampling (≈3× slower
-  // in software raster) and a ≤0.5 px decal shift inside a moving note is invisible.
+  // Integer origin of the decal on screen. Whole pixels keep every copy a 1:1 blit
+  // (sub-pixel offsets force bilinear filtering, ~3× slower in software raster), and a
+  // ≤ 0.5 px shift of the decal inside a moving note is invisible.
+  let ox = 0;
+  let oy = 0;
   if (s.anchor === 'note') {
     // each note shows its own crop, and the crop travels with the note
-    xform.e = Math.round(rect.x - Math.floor(hash(p.noteId, 101) * dw));
-    xform.f = Math.round(p.anchorY - Math.floor(hash(p.noteId, 202) * dh));
-  } else {
-    xform.e = 0;
-    xform.f = 0;
+    ox = Math.round(rect.x) - Math.floor(hash(p.noteId, 101) * dw);
+    oy = Math.round(p.anchorY) - Math.floor(hash(p.noteId, 202) * dh);
   }
-  pat.setTransform(xform);
 
+  const { x, y, w, h } = rect;
+  const rr = Math.max(0, Math.min(radius, w / 2, h / 2));
   ctx.save();
   ctx.shadowColor = 'transparent';
   ctx.shadowBlur = 0;
   ctx.globalCompositeOperation = 'source-over';
-  roundRect(ctx, rect.x, rect.y, rect.w, rect.h, radius);
-  // the decal (opacity × caller alpha already baked in), over the filled note colour
-  ctx.globalAlpha = 1;
-  ctx.fillStyle = pat;
-  ctx.fill();
+  ctx.globalAlpha = 1; // opacity × caller alpha are baked into the copy
+  ctx.imageSmoothingEnabled = false;
+  // Straight body = plain image copies (far cheaper than pattern-filling a path once the
+  // frame is busy); only the small rounded caps are path fills.
+  const yTop = Math.ceil(y + rr);
+  const yBot = Math.floor(y + h - rr);
+  if (rr < 0.5) {
+    blit(ctx, bk, dw, dh, ox, oy, x, x + w, y, y + h);
+  } else if (yBot - yTop < 1 || w > dw || yTop - y > dh) {
+    // tiny or very wide note: one path fill (the caps' pattern does not repeat, so huge
+    // notes fall back to the blit path with square-ish corners hidden by the outline)
+    if (w <= dw && h <= dh) {
+      roundRect(ctx, x, y, w, h, rr);
+      fillCap(ctx, pat, dw, dh, ox, oy, x, y);
+    } else {
+      blit(ctx, bk, dw, dh, ox, oy, x, x + w, y, y + h);
+    }
+  } else {
+    blit(ctx, bk, dw, dh, ox, oy, x, x + w, yTop, yBot);
+    // top cap: [y, yTop] with rounded upper corners
+    ctx.beginPath();
+    ctx.moveTo(x, yTop);
+    ctx.lineTo(x, y + rr);
+    ctx.arcTo(x, y, x + rr, y, rr);
+    ctx.lineTo(x + w - rr, y);
+    ctx.arcTo(x + w, y, x + w, y + rr, rr);
+    ctx.lineTo(x + w, yTop);
+    ctx.closePath();
+    fillCap(ctx, pat, dw, dh, ox, oy, x, y);
+    // bottom cap: [yBot, y + h] with rounded lower corners
+    ctx.beginPath();
+    ctx.moveTo(x, yBot);
+    ctx.lineTo(x + w, yBot);
+    ctx.lineTo(x + w, y + h - rr);
+    ctx.arcTo(x + w, y + h, x + w - rr, y + h, rr);
+    ctx.lineTo(x + rr, y + h);
+    ctx.arcTo(x, y + h, x, y + h - rr, rr);
+    ctx.closePath();
+    fillCap(ctx, pat, dw, dh, ox, oy, x, yBot);
+  }
   // sounding notes light up with a soft wash of their own colour
   if (p.active) {
+    roundRect(ctx, x, y, w, h, rr);
     ctx.globalCompositeOperation = 'screen';
     ctx.globalAlpha = baseAlpha * 0.22;
     ctx.fillStyle = rgba(mix(p.color, WHITE, 0.7), 1);

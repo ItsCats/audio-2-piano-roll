@@ -434,6 +434,76 @@ if (mode === 'micro') {
     ctx.fillStyle = pat;
     ctx.fill();
   });
+  run('solidThenSolid', (n) => {
+    ctx.fillStyle = '#88f';
+    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
+    ctx.fill();
+    ctx.fillStyle = '#f8a';
+    ctx.fill();
+  });
+  run('patThenPat', (n) => {
+    pat.setTransform({ a: 1, b: 0, c: 0, d: 1, e: Math.round(n.x), f: Math.round(n.y) });
+    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
+    ctx.fillStyle = pat;
+    ctx.fill();
+    ctx.fill();
+  });
+  run('patThenPatTiny', (n) => {
+    pat.setTransform({ a: 1, b: 0, c: 0, d: 1, e: Math.round(n.x), f: Math.round(n.y) });
+    roundRect(ctx, n.x, n.y, 6, 6, 2);
+    ctx.fillStyle = pat;
+    ctx.fill();
+    ctx.fill();
+  });
+  run('patIntOtherCtxPat', (n) => {
+    // same op count as patThenPat but the 2nd fill is offset (no overdraw)
+    pat.setTransform({ a: 1, b: 0, c: 0, d: 1, e: Math.round(n.x), f: Math.round(n.y) });
+    roundRect(ctx, n.x, n.y, n.w / 2, n.h, 6);
+    ctx.fillStyle = pat;
+    ctx.fill();
+    roundRect(ctx, n.x + n.w / 2, n.y, n.w / 2, n.h, 6);
+    ctx.fill();
+  });
+  run('gradThenDrawImage', (n) => {
+    ctx.globalAlpha = 0.95;
+    ctx.fillStyle = g1;
+    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.drawImage(small, 0, 0, Math.min(300, n.w), Math.min(300, n.h), Math.round(n.x), Math.round(n.y), Math.min(300, n.w), Math.min(300, n.h));
+  });
+  run('drawImageTwice', (n) => {
+    ctx.drawImage(small, 0, 0, Math.min(300, n.w), Math.min(300, n.h), Math.round(n.x), Math.round(n.y), Math.min(300, n.w), Math.min(300, n.h));
+    ctx.drawImage(small, 0, 0, Math.min(300, n.w), Math.min(300, n.h), Math.round(n.x), Math.round(n.y), Math.min(300, n.w), Math.min(300, n.h));
+  });
+  run('gradRectThenPatRect', (n) => {
+    ctx.fillStyle = g1;
+    ctx.fillRect(n.x, n.y, n.w, n.h);
+    pat.setTransform({ a: 1, b: 0, c: 0, d: 1, e: Math.round(n.x), f: Math.round(n.y) });
+    ctx.fillStyle = pat;
+    ctx.fillRect(Math.round(n.x), Math.round(n.y), Math.round(n.w), Math.round(n.h));
+  });
+  const oc = new OffscreenCanvas(300, 300);
+  oc.getContext('2d')!.drawImage(small, 0, 0);
+  const bmp = oc.transferToImageBitmap();
+  const patB = ctx.createPattern(bmp, 'repeat')!;
+  run('gradThenPatBitmap', (n) => {
+    ctx.globalAlpha = 0.95;
+    ctx.fillStyle = g1;
+    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    patB.setTransform({ a: 1, b: 0, c: 0, d: 1, e: Math.round(n.x), f: Math.round(n.y) });
+    ctx.fillStyle = patB;
+    ctx.fill();
+  });
+  run('patThenPatBitmap', (n) => {
+    patB.setTransform({ a: 1, b: 0, c: 0, d: 1, e: Math.round(n.x), f: Math.round(n.y) });
+    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
+    ctx.fillStyle = patB;
+    ctx.fill();
+    ctx.fill();
+  });
   run('multiplyFill', (n) => {
     ctx.globalCompositeOperation = 'multiply';
     roundRect(ctx, n.x, n.y, n.w, n.h, 6);
