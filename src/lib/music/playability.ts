@@ -5,15 +5,17 @@
  * together plus notes still held from before), not only against the notes struck together: in
  * the transcriptions most over-stretched moments were a held note plus a new note more than an
  * octave away (Dress-Up Darling, Hard: 29 % of left-hand onsets spanned more than an octave,
- * 3 in 4 of them because of a held note).
+ * more than 4 in 5 of those because of a held note).
  *
  * Per moment and hand, while the span is too wide, the cheapest fix at either end of the hand:
  *  1. a note that is still held only through a short legato overlap (≤ SHORT_OVERLAP) is released
  *     just before the new onset (inaudible; not on Hard unless asked: Hard keeps the notes as
  *     transcribed and only reassigns);
- *  2. the outer note is moved to the other hand, if that hand stays within its own reach and
- *     finger count over the moved note's whole length and the hands do not cross by more than a
- *     whole tone;
+ *  2. the note at the end facing the other hand (the left hand's top, the right hand's bottom)
+ *     is moved to the other hand, if that hand stays within its own reach and finger count over
+ *     the moved note's whole length, the note does not become that hand's outer voice (above the
+ *     right hand's top note / below the left hand's bass) and the hands do not cross by more
+ *     than a whole tone;
  *  3. Easy / Medium only: a longer held note is released at the new onset (a pianist lets go of
  *     it, the new note matters more than the tail of the old one);
  *  4. Easy / Medium only: the least important outer note is dropped (inner voices, octave or
@@ -26,6 +28,17 @@
  * Reach per level: Easy 7 semitones (a fifth: a beginner's five-finger position), Medium 12 (an
  * octave: any adult hand), Hard 14 (a major ninth: most adult hands; tenths need large hands and
  * are usually rolled). Those are also the default `maxSpan`s.
+ *
+ * Measured (offline regeneration of Dress-Up Darling, two vocal songs, two MAESTRO pieces),
+ * left-hand / right-hand onsets spanning more than an octave, before → after:
+ *   Medium  Dress-Up 11.6/1.6 → 0/0 %, Color Your Night 9.4/2.9 → 0/0, Stay at Your House 5.5/0 → 0/0,
+ *           Chopin Ballade 1 12.6/4.6 → 0/0, Mozart K280 5.3/1.7 → 0/0; notes dropped 0.3–1.7 %
+ *           (all inner left-hand notes), melody notes never;
+ *   Hard    28.6/16.3 → 24.0/14.8, 35.5/23.6 → 27.4/21.3, 7.0/20.6 → 4.0/17.7, 16.9/21.7 → 12.7/10.9,
+ *           7.9/10.1 → 3.0/3.7; no note dropped or shortened (what is left is mostly held notes a
+ *           pianist would release under the pedal, and band chords too wide for both hands).
+ * Easy RH / LH scores unchanged (Easy is one line per hand); Medium RH vs the sung line (raw chroma)
+ * unchanged, Medium RH vs the MAESTRO top voice +0.002 / +0.004.
  */
 import type { Note } from './types';
 
@@ -116,18 +129,16 @@ export function playabilityPass(notes: Note[], options: Partial<PlayabilityOptio
     });
   if (w.length < 2) return { notes: w.map((x) => x.n), report };
 
-  // moments: onset clusters (anchored at their first note); a moment's time is its last onset
-  const first: number[] = [];
+  // moments: onset clusters, anchored at (and timed by) their first note: a note counts as
+  // sounding at a moment when it lasts past that first onset
   const time: number[] = [];
   const members: Work[][] = [];
   for (const x of w) {
     const k = members.length - 1;
-    if (k >= 0 && x.n.start - first[k] <= TOL) {
+    if (k >= 0 && x.n.start - time[k] <= TOL) {
       members[k].push(x);
-      time[k] = x.n.start;
       x.k = k;
     } else {
-      first.push(x.n.start);
       time.push(x.n.start);
       members.push([x]);
       x.k = k + 1;
@@ -169,6 +180,9 @@ export function playabilityPass(notes: Note[], options: Partial<PlayabilityOptio
         hi = Math.max(hi, y.n.midi);
       }
       if (hi - lo > o.maxSpan) return false;
+      // it may not become the other hand's outer voice (above the right hand's tune / below the
+      // left hand's bass)
+      if (there.length && (h2 === 'R' ? hi === x.n.midi && there.every((y) => y.n.midi < x.n.midi) : lo === x.n.midi && there.every((y) => y.n.midi > x.n.midi))) return false;
       // the hands may not cross by more than CROSS semitones
       for (const y of sounding(h, k, x)) {
         if (h2 === 'R' && y.n.midi - x.n.midi > CROSS) return false;
@@ -197,13 +211,15 @@ export function playabilityPass(notes: Note[], options: Partial<PlayabilityOptio
     const melody = x.n.role === 'melody';
     const bass = h === 'L' && side === 'bottom';
     const held = x.k < k;
-    const releaseAt = first[k] - 0.005;
-    const keptDur = releaseAt - x.n.start;
-    const overlap = x.end - first[k];
+    const keptDur = time[k] - 0.005 - x.n.start;
+    const overlap = x.end - time[k];
     if (held && !melody && keptDur >= MIN_DUR && o.trimShort && overlap <= SHORT_OVERLAP) {
       out.push({ cost: 0.05, apply: () => trim(x, keptDur) });
     }
-    if (canMove(x, other)) {
+    // only the note on the side facing the other hand changes hands (the left hand's top, the
+    // right hand's bottom): the bass and the top voice stay where they are
+    const inner = (h === 'L' && side === 'top') || (h === 'R' && side === 'bottom');
+    if (inner && canMove(x, other)) {
       out.push({
         cost: 0.1 + (held ? 0.05 : 0),
         apply: () => {
@@ -212,13 +228,14 @@ export function playabilityPass(notes: Note[], options: Partial<PlayabilityOptio
         },
       });
     }
+    // the outer voices (the tune on top of the right hand, the bass) are cut short last
+    const top = h === 'R' && side === 'top';
     if (held && !melody && keptDur >= MIN_DUR && o.trimLong && (!bass || keptDur >= o.bassReleaseAfter)) {
-      out.push({ cost: (bass ? 1.5 : 1) + 0.5 * (overlap / (x.end - x.n.start)), apply: () => trim(x, keptDur) });
+      out.push({ cost: (top ? 3.5 : bass ? 1.5 : 1) + 0.5 * (overlap / (x.end - x.n.start)), apply: () => trim(x, keptDur) });
     }
     if (!melody && !bass && o.drop) {
-      const outer = (h === 'R' && side === 'top') || bass;
       out.push({
-        cost: 2 + importance(x, k, outer),
+        cost: 2 + importance(x, k, top),
         apply: () => {
           x.dropped = true;
           report.dropped++;

@@ -4,12 +4,23 @@
  * A time-varying split point is estimated per window as the widest pitch gap between
  * the notes sounding in that window (biased toward middle C and toward the previous
  * split for stability), median-smoothed, and then each onset cluster is checked so that
- * neither hand has to stretch more than ~an octave and a third.
+ * neither hand has to stretch more than a ninth in a chord.
+ *
+ * That check only sees the notes struck together. Notes still HELD from earlier onsets (most of
+ * the 29–40-semitone stretches measured in one hand: a held bass under a new chord an octave and
+ * more above it, a long chord note under a new tune note) are handled per arrangement level by
+ * music/playability.ts enforcePlayability, which looks at everything sounding at each onset.
+ * Running that reassign-only pass here as well (on the base transcription) was measured and not
+ * kept: it moved the inputs of Easy / Medium (tune candidates, left-hand bass) and gave mixed
+ * results (MAESTRO Easy RH +0.009 chroma, but Easy LH vs the bass reference −0.010 on a vocal
+ * song, Dress-Up Darling confident-frame Easy RH −0.015), while Hard and Medium get the same
+ * reach either way.
  */
 import type { Note } from './types';
+import { MAX_SPAN as LEVEL_SPAN } from './playability';
 
 const WINDOW = 1.5; // seconds
-const MAX_SPAN = 14; // semitones a hand can comfortably reach within a chord
+const MAX_SPAN = LEVEL_SPAN.hard; // semitones a hand can comfortably reach within a chord (a ninth)
 
 export function clusterOnsets<T extends { start: number }>(notes: T[], tolerance = 0.035): T[][] {
   const sorted = [...notes].sort((a, b) => a.start - b.start);

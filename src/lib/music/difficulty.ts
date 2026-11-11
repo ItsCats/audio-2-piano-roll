@@ -41,18 +41,16 @@ import { beatPeriodAt, beatToTime, timeToBeat } from './beats';
 import { quantizeNotes } from './quantize';
 import { newNoteId, songDuration, sortNotes } from './cleanup';
 import { fixOctaveOutliers, instrumentLine, rightHandShifts, tuneCandidates, type TuneOptions } from './melody';
+import { enforcePlayability } from './playability';
 
 /**
- * Hand-span pass (music/playability.ts enforcePlayability, written in parallel): on Medium,
- * out-of-reach notes move to the other hand when it is free and in range, else the least
- * important ones go; on Hard notes are only reassigned. Loaded through a glob so this module
- * still builds while that file does not exist yet (then the pass is skipped).
+ * Hand-span pass (music/playability.ts enforcePlayability): no hand holds or strikes notes further
+ * apart than it can reach. On Medium, out-of-reach notes move to the other hand when it is free
+ * and in range, else the least important ones (inner / doubled) go; on Hard notes are only
+ * reassigned to the other hand (every note is kept).
  */
-type EnforcePlayability = (notes: Note[], level: 'easy' | 'medium' | 'hard', opts?: { maxSpan?: number }) => Note[];
-const playabilityModule = Object.values(import.meta.glob<{ enforcePlayability?: EnforcePlayability }>('./playability.ts', { eager: true }))[0];
 function playable(notes: Note[], level: 'medium' | 'hard'): Note[] {
-  const enforce = playabilityModule?.enforcePlayability;
-  return enforce ? sortNotes(enforce(notes, level)) : notes;
+  return sortNotes(enforcePlayability(notes, level));
 }
 
 const CONSONANCE: Record<number, number> = { 3: 0.9, 4: 1, 5: 0.7, 7: 1, 8: 0.8, 9: 0.9, 12: 0.95, 15: 0.8, 16: 0.8 };

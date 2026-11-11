@@ -27,6 +27,8 @@ piano_transcription_inference, remotezip). Node 22 + Playwright Chromium.
 | separated app path (in-browser SCNet + vocal melody) | `node tests/accuracy/transcribe.mjs --separate --out WORK/sep --presets mix FILES...` (~2.5 GB, one run at a time) | `sep/<id>.<preset>.json` |
 | offline melody / arrangement regeneration from saved runs with posteriors | `node tests/accuracy/melody_regen.mjs [--keep-base] OUTDIR RUN.json ...` (env `MELODY_OPTS` = JSON MelodyOptions overrides) | `OUTDIR/<id>.json` (base/easy/medium/hard/vocalNotes/speech) |
 | melody evaluation | `melody_eval.py --work WORK [--out OUT.json] RUN.json ...` | Easy/Medium RH, melody line and ceiling as RPA/RCA/OA/OA-chroma; RPA/RCA on stable-periodicity frames; RH register, LH clearance, speech-section stats, Easy LH bass RCA |
+| offline arrangement regeneration from any saved base (loads only music/difficulty.ts) | `node tests/accuracy/inst_regen.mjs OUTDIR RUN.json ...` | `OUTDIR/<basename>` (base/easy/medium/hard, ms) |
+| instrumental / solo-piano tune-line evaluation | `inst_eval.py --work WORK [--maestro WORK/maestro] [--pti WORK/refs/pti] [--lead ID=LEAD.npz ...] [--no-drums] [--out OUT.json] RUN.json ...` | Easy/Medium/Hard RH top RPA/RCA/VR vs the MAESTRO MIDI top voice, PTI top voice or pYIN 'other'-stem lead proxy (plus confident frames), Easy shape (leaps), LH bass RCA, drum suspects; vocal songs scored on instrumental gaps only |
 | CREPE-tiny ONNX export (parity-checked) | `crepe_export.py OUT.onnx` | ONNX file |
 | CREPE + Basic Pitch vocal path in Chromium (speed, RSS) | `node tests/accuracy/crepe_track.mjs --out WORK/crepe [--hop 10] [--no-bp] [--coi] ID=VOCALS.wav ...` | `crepe/<id>.*.json` |
 | CREPE line variants without re-running models | `node tests/accuracy/crepe_lines.mjs --in DIR --out DIR2 [--variants FILE.mjs]` | `DIR2/*` |
@@ -54,7 +56,13 @@ Build the oracle inputs from the stems (16-bit stereo, 44.1 kHz; the stems are s
   (`music/cleanup.ts DRUM_HIT_RULE`) is off by default because it lowered bass RCA; flip `enabled` to
   re-measure.
 - `sweep_extraction.mjs` passes the frame posteriors to `cleanNotes`, so it scores the bass re-strike
-  rule (`RESTRIKE`) exactly as the app applies it.
+  rule (`RESTRIKE`) exactly as the app applies it. It also prints onset+offset F1 (`F+off`, against a
+  sustain-pedal-extended MAESTRO reference) and a per-piece `splitRate` (share of notes restarting the
+  same pitch within 40 ms of the previous one ending) in the JSON. Chopped-note joining is
+  `transcription/noteExtraction.ts REPEAT_JOIN`; a config with `extraction: { joinRepeats: null }`
+  scores without it (the vocal stem runs without it: `VOCAL_EXTRACTION.joinRepeats = false`).
+- Hand reach per level is `music/playability.ts MAX_SPAN` (Easy 7, Medium 12, Hard 14 semitones);
+  `spanStats` measures onsets where one hand holds more than a given span.
 - The CREPE-tiny tracker (`src/lib/pitch`) is built and measured but not wired into the app: against
   the independent pYIN-on-Demucs reference its gain was small and mixed (+0.02 RPA mean, worse on one
   song of five).

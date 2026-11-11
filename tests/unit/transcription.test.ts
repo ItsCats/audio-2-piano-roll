@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { extractNotes, DEFAULT_EXTRACTION } from '../../src/lib/transcription/noteExtraction';
 import { BP_FPS, BP_KEPT_FRAMES, frameToTime, timeToFrame } from '../../src/lib/transcription/constants';
-import { EXTRACTION_PRESETS, VOCAL_EXTRACTION, cleanNotes, drumOnsetMax, frameRise, melodyFromRaw, separationFailureWarning } from '../../src/lib/transcription/pipeline';
+import { EXTRACTION_PRESETS, VOCAL_EXTRACTION, cleanNotes, drumOnsetMax, frameRise, melodyFromRaw, separationFailureWarning, toWorkerOptions } from '../../src/lib/transcription/pipeline';
 import { DRUM_HIT_RULE } from '../../src/lib/music/cleanup';
 import type { RawNoteEvent } from '../../src/lib/transcription/noteExtraction';
 
@@ -248,5 +248,12 @@ describe('separation failure warnings', () => {
     const f = separationFailureWarning(new Error('Could not download the separation model (HTTP 404).'));
     expect(f.kind).toBe('error');
     expect(f.warning).toMatch(/HTTP 404.*full mix was transcribed/);
+  });
+});
+
+describe('chopped-note join per preset', () => {
+  it('runs on the user presets (default rule) and is off for the vocal stem', () => {
+    for (const p of Object.values(EXTRACTION_PRESETS)) expect(toWorkerOptions(p).joinRepeats).toBeUndefined();
+    expect(toWorkerOptions(VOCAL_EXTRACTION).joinRepeats).toBeNull();
   });
 });

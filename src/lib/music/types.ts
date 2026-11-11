@@ -94,6 +94,11 @@ export interface ExtractionParams {
     highFrame?: number;
     highMinFrames?: number;
   };
+  /**
+   * Re-join held notes chopped into back-to-back same-pitch repeats by other notes' attacks
+   * (transcription/noteExtraction.ts REPEAT_JOIN). false turns it off; omitted = on (default).
+   */
+  joinRepeats?: boolean;
 }
 
 export interface TranscriptionInfo {

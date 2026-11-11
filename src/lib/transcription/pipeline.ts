@@ -98,6 +98,9 @@ export const VOCAL_EXTRACTION: ExtractionParams = {
   suppressHarmonics: true,
   inferOnsets: true,
   continuationOnset: 0.5,
+  // the chopped-note join costs the sung line a little (5 songs: line raw pitch accuracy
+  // 0.561 → 0.559, steel-ball-run 0.462 → 0.454); it runs on the accompaniment only
+  joinRepeats: false,
 };
 
 /** Fewer melody notes than this over a whole song: treat the vocal stem as noise, not a melody. */
@@ -190,6 +193,7 @@ export function toWorkerOptions(p: ExtractionParams): NoteExtractionOptions {
     minMidi: p.minMidi,
     maxMidi: p.maxMidi,
     ...(p.register ? { register: p.register } : {}),
+    ...(p.joinRepeats === false ? { joinRepeats: null } : {}),
   };
 }
 
