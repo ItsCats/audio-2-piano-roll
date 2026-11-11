@@ -24,6 +24,7 @@ import {
 import { extractNotes, type NoteExtractionOptions } from './noteExtraction';
 import type { WorkerRequest, WorkerResponse } from './workerProtocol';
 import { dequantize } from './posteriors';
+import { batchFor, chooseBackendOrder } from './backendOrder';
 
 setWasmPaths({
   'tfjs-backend-wasm.wasm': wasmPlain,
@@ -50,15 +51,24 @@ function webglIsSoftware(): boolean {
   }
 }
 
-async function initBackend(preferred?: string): Promise<string> {
-  const order: string[] = [];
-  if (preferred) order.push(preferred);
+async function initBackend(preferred?: string, device?: { maxTouchPoints: number; deviceMemory?: number }): Promise<string> {
   const hasOffscreen = typeof OffscreenCanvas !== 'undefined';
-  if (hasOffscreen && !webglIsSoftware()) order.push('webgl');
-  order.push('wasm');
-  if (hasOffscreen) order.push('webgl');
-  order.push('cpu');
-  for (const name of [...new Set(order)]) {
+  const nav = ctx.navigator as WorkerNavigator & { deviceMemory?: number; maxTouchPoints?: number };
+  const order = chooseBackendOrder(
+    {
+      ua: nav.userAgent ?? '',
+      maxTouchPoints: device?.maxTouchPoints ?? nav.maxTouchPoints ?? 0,
+      deviceMemory: device?.deviceMemory ?? nav.deviceMemory,
+      softwareRenderer: hasOffscreen ? webglIsSoftware() : true,
+      offscreen: hasOffscreen,
+    },
+    preferred,
+  );
+  // WebGL, when used (desktop GPUs): avoid the ~170 MB-per-window im2col matrix and free textures
+  // as soon as they are released instead of caching them for the whole session.
+  tf.env().set('WEBGL_CONV_IM2COL', false);
+  tf.env().set('WEBGL_DELETE_TEXTURE_THRESHOLD', 0);
+  for (const name of order) {
     try {
       if (name === 'wasm') await import('@tensorflow/tfjs-backend-wasm');
       const ok = await tf.setBackend(name);
@@ -73,9 +83,9 @@ async function initBackend(preferred?: string): Promise<string> {
   throw new Error('No TensorFlow.js backend could be initialised in this browser.');
 }
 
-async function ensureModel(modelUrl: string, preferredBackend?: string): Promise<void> {
+async function ensureModel(modelUrl: string, preferredBackend?: string, device?: { maxTouchPoints: number; deviceMemory?: number }): Promise<void> {
   if (model) return;
-  backendName = await initBackend(preferredBackend);
+  backendName = await initBackend(preferredBackend, device);
   try {
     model = await loadGraphModel(modelUrl);
     // warm-up + sanity check (some backends lack an op the graph needs)
@@ -124,7 +134,7 @@ async function runModel(audio: Float32Array, jobId: number) {
   const nFrames = Math.min(numWindows * BP_KEPT_FRAMES, timeToFrame(audio.length / BP_SAMPLE_RATE) + 1);
   const frames = new Float32Array(nFrames * BP_N_PITCHES);
   const onsets = new Float32Array(nFrames * BP_N_PITCHES);
-  const batch = backendName === 'webgl' ? 4 : backendName === 'wasm' ? 2 : 1;
+  const batch = batchFor(backendName);
 
   for (let w0 = 0; w0 < numWindows; w0 += batch) {
     if (cancelled.has(jobId)) throw new Error('cancelled');
@@ -174,7 +184,7 @@ ctx.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
     if (msg.type === 'transcribe') {
       const t0 = performance.now();
       post({ type: 'progress', jobId, stage: 'loading-model', progress: 0 });
-      await ensureModel(msg.modelUrl, msg.preferredBackend);
+      await ensureModel(msg.modelUrl, msg.preferredBackend, msg.device);
       post({ type: 'progress', jobId, stage: 'loading-model', progress: 1, backend: backendName });
       const { frames, onsets, nFrames } = await runModel(msg.audio, jobId);
       post({ type: 'progress', jobId, stage: 'extracting', progress: 0 });

@@ -15,6 +15,13 @@ import { estimateTempo } from '../music/beats';
 import { detectKey } from '../music/theory';
 import type { StoredPosteriors } from './posteriors';
 
+/** device facts the transcription worker uses to pick a memory-safe backend */
+function deviceInfo(): { maxTouchPoints: number; deviceMemory?: number } {
+  if (typeof navigator === 'undefined') return { maxTouchPoints: 0 };
+  const nav = navigator as Navigator & { deviceMemory?: number };
+  return { maxTouchPoints: nav.maxTouchPoints ?? 0, deviceMemory: typeof nav.deviceMemory === 'number' ? nav.deviceMemory : undefined };
+}
+
 /**
  * Detection presets. "piano" was tuned on rendered piano recordings with known ground truth
  * (tests/e2e): the melodia trick (designed for voice-like continuous pitch) and a low frame
@@ -197,7 +204,7 @@ export async function transcribeAudio(
 
   let backend = '';
   const result = await transcriber.run(
-    { type: 'transcribe', audio, modelUrl: modelUrl(), options: toWorkerOptions(params) },
+    { type: 'transcribe', audio, modelUrl: modelUrl(), options: toWorkerOptions(params), device: deviceInfo() },
     [audio.buffer],
     (e) => {
       if (e.backend) backend = e.backend;

@@ -323,6 +323,7 @@ function RecordTab({ busy }: { busy: boolean }) {
       r.onstop = () => {
         stream.getTracks().forEach((t) => t.stop());
         const blob = new Blob(chunks.current, { type: r.mimeType || 'audio/webm' });
+        chunks.current = []; // don't keep a second copy of the recording alive during analysis
         void importBlob(blob, { title: `Recording ${new Date().toLocaleString()}`, source: { kind: 'capture', mimeType: blob.type, fileSize: blob.size } });
       };
       r.start(500);
