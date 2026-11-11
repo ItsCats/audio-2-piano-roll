@@ -323,7 +323,23 @@ export function LookPanel() {
         <Slider label="Note width" min={0.4} max={1} value={v.noteWidth} onChange={(noteWidth) => setVisual({ noteWidth })} format={pct} />
         <Slider label="Opacity" min={0.2} max={1} value={v.noteOpacity} onChange={(noteOpacity) => setVisual({ noteOpacity })} format={pct} />
         <Slider label="Corner radius" min={0} max={14} step={1} value={v.cornerRadius} onChange={(cornerRadius) => setVisual({ cornerRadius })} format={(x) => `${x}px`} />
-        <Slider label="Glow" min={0} max={1} value={v.glow} onChange={(glow) => setVisual({ glow })} format={pct} />
+        <Slider
+          label="Falling glow"
+          min={0}
+          max={1}
+          value={v.fallingGlow}
+          onChange={(fallingGlow) => setVisual({ fallingGlow })}
+          format={(x) => (x <= 0 ? 'Off' : pct(x))}
+        />
+        <Slider
+          label="Note brightness"
+          min={0}
+          max={1}
+          value={v.noteBrightness}
+          onChange={(noteBrightness) => setVisual({ noteBrightness })}
+          format={(x) => (x <= 0 ? 'Off' : pct(x))}
+        />
+        <Slider label="Glow when played" min={0} max={1} value={v.glow} onChange={(glow) => setVisual({ glow })} format={(x) => (x <= 0 ? 'Off' : pct(x))} />
         <Slider label="Border" min={0} max={3} step={0.5} value={v.borderWidth} onChange={(borderWidth) => setVisual({ borderWidth })} format={(x) => `${x}px`} />
         {v.borderWidth > 0 && <ColorInput label="Border colour" value={v.borderColor} onChange={(borderColor) => setVisual({ borderColor })} />}
         <Toggle label="Gradient fill" checked={v.gradient} onChange={(gradient) => setVisual({ gradient })} />

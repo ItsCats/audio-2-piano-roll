@@ -16,7 +16,9 @@ export function useBackgroundMedia(bg: BackgroundSettings): { source: CanvasImag
     let alive = true;
     let video: HTMLVideoElement | null = null;
     let unsub: (() => void) | null = null;
-    void getMedia(bg.mediaId!).then((item) => {
+    void getMedia(bg.mediaId!)
+      .catch(() => undefined)
+      .then((item) => {
       if (!alive || !item) return;
       url = URL.createObjectURL(item.blob);
       if (item.kind === 'image') {

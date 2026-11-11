@@ -12,7 +12,7 @@ import { getBackgroundPreset } from './backgrounds';
 import { PITCH_COLORS, type VisualSettings } from './settings';
 import { BLACK_RGB, WHITE, hash, hexToRgb, makeCanvas, mix, rgba, roundRect, type AnyCanvas, type Ctx2D, type RGB } from './color';
 import { getPatternTile, paintNoteDecal } from './decals';
-import { DUST_LOOKBACK, drawBursts, drawDust, drawKeyLight, type FxNote } from './effects';
+import { DUST_LOOKBACK, FX_RELEASE, drawBursts, drawDust, drawKeyLight, type FxNote } from './effects';
 import { drawRealisticKeyboard } from './keyboardRealistic';
 
 export interface EditOverlay {
@@ -54,6 +54,9 @@ export class PianoRollRenderer {
   private bgCache: AnyCanvas | null = null;
   private bgCacheKey = '';
   private decalImage: CanvasImageSource | null = null;
+  private glowA: AnyCanvas | null = null;
+  private glowB: AnyCanvas | null = null;
+  private glowTiny: AnyCanvas | null = null;
   private decalImageSize = { w: 1, h: 1 };
   private flats = false;
   private supportsFilter: boolean;
@@ -359,7 +362,8 @@ export class PianoRollRenderer {
     let lo = 0;
     let hi = this.notes.length;
     const fx = s.effects;
-    const lookback = fx.dust ? DUST_LOOKBACK : 0;
+    // ended notes stay relevant for dust, and briefly for the burst / key-light release
+    const lookback = Math.max(fx.dust ? DUST_LOOKBACK : 0, fx.bursts || fx.keyLight ? FX_RELEASE : 0);
     const startFrom = now - this.maxDur - lookback - 0.1;
     while (lo < hi) {
       const mid = (lo + hi) >> 1;
@@ -384,6 +388,8 @@ export class PianoRollRenderer {
         if (!prev || n.start > prev.start) active.set(n.midi, n);
       }
     }
+
+    if (s.fallingGlow > 0) this.drawFallingGlow(ctx, visible, now, opts);
 
     // light trails above active keys
     if (s.trails && s.glow > 0) {
@@ -420,6 +426,7 @@ export class PianoRollRenderer {
       let c = base;
       if (isActive) c = mix(base, WHITE, 0.25);
       else if (s.upcomingHighlight && n.start > now && n.start - now < 0.35) c = mix(base, WHITE, 0.12 * (1 - (n.start - now) / 0.35));
+      if (s.noteBrightness > 0) c = mix(c, WHITE, s.noteBrightness * 0.28);
       const alpha = s.noteOpacity * (muted ? 0.22 : 1);
       ctx.globalAlpha = alpha;
       if (s.shadow && !muted) {
@@ -458,6 +465,13 @@ export class PianoRollRenderer {
           active: isActive,
         });
         roundRect(ctx, r.x, r.y, r.w, r.h, radius);
+        if (s.noteBrightness > 0) {
+          // lift the decal's colours so patterned notes pop as much as plain ones
+          ctx.globalCompositeOperation = 'lighter';
+          ctx.fillStyle = rgba(c, 0.16 * s.noteBrightness);
+          ctx.fill();
+          ctx.globalCompositeOperation = 'source-over';
+        }
       }
       if (fx.outlineGlow > 0 && !muted) {
         ctx.save();
@@ -616,6 +630,100 @@ export class PianoRollRenderer {
       ctx.font = `700 ${120 * sc}px Inter Variable, Inter, system-ui, sans-serif`;
       ctx.textAlign = 'center';
       ctx.fillText(String(opts.countIn), w / 2, hitY / 2);
+    }
+    ctx.restore();
+  }
+
+  /**
+   * Soft halo in each note's colour while it falls, getting stronger as the note nears the
+   * keys. All notes are drawn into a quarter-resolution layer that is blurred once and added
+   * on top of the background, so the cost doesn't grow with the number of notes.
+   */
+  private drawFallingGlow(ctx: Ctx2D, notes: Note[], now: number, opts: FrameOptions): void {
+    const s = this.s;
+    const ds = 4;
+    const gw = Math.ceil(this.w / ds);
+    const gh = Math.ceil(this.hitY / ds);
+    if (gw < 2 || gh < 2) return;
+    const fit = (c: AnyCanvas | null) => {
+      if (!c) return makeCanvas(gw, gh);
+      if (c.width !== gw || c.height !== gh) {
+        c.width = gw;
+        c.height = gh;
+      }
+      return c;
+    };
+    this.glowA = fit(this.glowA);
+    this.glowB = fit(this.glowB);
+    const a = this.glowA.getContext('2d') as Ctx2D;
+    const b = this.glowB.getContext('2d') as Ctx2D;
+    a.clearRect(0, 0, gw, gh);
+    const look = Math.max(0.5, s.lookahead);
+    const sc = this.scale;
+    const blurPx = (2.5 + 3.5 * s.fallingGlow) * sc; // in glow-layer pixels
+    const margin = Math.ceil(blurPx * 2.5) * ds; // halo reach in screen pixels
+    // screen regions that will actually receive glow (composited strip by strip below)
+    const spans: { x0: number; x1: number; y0: number; y1: number }[] = [];
+    for (const n of notes) {
+      if (opts.mutedHands?.[n.hand]) continue;
+      const r = this.noteRect(n, now);
+      if (!r || r.y > this.hitY || r.y + r.h < 0) continue;
+      spans.push({ x0: r.x - margin, x1: r.x + r.w + margin, y0: r.y - margin, y1: r.y + r.h + margin });
+      const proximity = n.start <= now ? 1 : Math.max(0, Math.min(1, 1 - (n.start - now) / look));
+      a.globalAlpha = 0.4 + 0.6 * proximity;
+      a.fillStyle = rgba(mix(this.noteColor(n), WHITE, 0.15), 1);
+      a.fillRect(r.x / ds, r.y / ds, r.w / ds, r.h / ds);
+    }
+    a.globalAlpha = 1;
+    if (!spans.length) return;
+    b.clearRect(0, 0, gw, gh);
+    if (typeof (b as CanvasRenderingContext2D).filter === 'string') {
+      (b as CanvasRenderingContext2D).filter = `blur(${blurPx}px)`;
+      b.drawImage(this.glowA, 0, 0);
+      (b as CanvasRenderingContext2D).filter = 'none';
+    } else {
+      // no canvas filters (older Safari): blur by down- and up-sampling
+      const tw = Math.max(1, Math.ceil(gw / 6));
+      const th = Math.max(1, Math.ceil(gh / 6));
+      if (!this.glowTiny) this.glowTiny = makeCanvas(tw, th);
+      if (this.glowTiny.width !== tw || this.glowTiny.height !== th) {
+        this.glowTiny.width = tw;
+        this.glowTiny.height = th;
+      }
+      const t = this.glowTiny.getContext('2d') as Ctx2D;
+      t.clearRect(0, 0, tw, th);
+      t.imageSmoothingEnabled = true;
+      t.drawImage(this.glowA, 0, 0, tw, th);
+      b.imageSmoothingEnabled = true;
+      b.drawImage(this.glowTiny, 0, 0, gw, gh);
+      b.globalAlpha = 0.6;
+      b.drawImage(this.glowA, 0, 0);
+      b.globalAlpha = 1;
+    }
+    // Blending cost is proportional to the painted area, so only composite the vertical
+    // strips that contain notes (merged by x, each spanning its notes' y-range).
+    spans.sort((p, q) => p.x0 - q.x0);
+    const merged: typeof spans = [];
+    for (const sp of spans) {
+      const last = merged[merged.length - 1];
+      if (last && sp.x0 <= last.x1) {
+        last.x1 = Math.max(last.x1, sp.x1);
+        last.y0 = Math.min(last.y0, sp.y0);
+        last.y1 = Math.max(last.y1, sp.y1);
+      } else merged.push({ ...sp });
+    }
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = Math.min(1, 0.25 + 0.75 * s.fallingGlow);
+    ctx.imageSmoothingEnabled = true;
+    for (const m of merged) {
+      // align to the glow layer's pixel grid so neighbouring strips meet without seams
+      const sx0 = Math.max(0, Math.floor(m.x0 / ds));
+      const sx1 = Math.min(gw, Math.ceil(m.x1 / ds));
+      const sy0 = Math.max(0, Math.floor(m.y0 / ds));
+      const sy1 = Math.min(gh, Math.ceil(m.y1 / ds));
+      if (sx1 <= sx0 || sy1 <= sy0) continue;
+      ctx.drawImage(this.glowB, sx0, sy0, sx1 - sx0, sy1 - sy0, sx0 * ds, sy0 * ds, (sx1 - sx0) * ds, (sy1 - sy0) * ds);
     }
     ctx.restore();
   }

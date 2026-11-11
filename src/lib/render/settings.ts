@@ -108,6 +108,10 @@ export interface VisualSettings {
   effects: EffectSettings;
   /** 'flat' = clean drawn keys, 'realistic' = photo-like shading, gloss and reflections */
   keyboardStyle: 'flat' | 'realistic';
+  /** 0..1 — soft halo in each note's colour while it falls (stronger near the keys) */
+  fallingGlow: number;
+  /** 0..1 — lifts note colours so they stand out (e.g. in compressed YouTube video) */
+  noteBrightness: number;
 }
 
 export const KEYBOARD_THEMES = {
@@ -178,6 +182,8 @@ export const DEFAULT_VISUAL: VisualSettings = {
     outlineGlow: 0,
   },
   keyboardStyle: 'flat',
+  fallingGlow: 0.35,
+  noteBrightness: 0.15,
   background: {
     kind: 'preset',
     presetId: 'midnight',
@@ -197,21 +203,30 @@ export const DEFAULT_VISUAL: VisualSettings = {
 };
 
 /** Visual themes: one-click looks that set several options at once. */
-export type ThemePatch = Omit<Partial<VisualSettings>, 'background' | 'decal' | 'effects'> & {
+export type ThemePatch = Omit<Partial<VisualSettings>, 'background' | 'decal' | 'effects' | 'labels'> & {
+  labels?: Partial<LabelSettings>;
   background?: Partial<BackgroundSettings>;
   decal?: Partial<DecalSettings>;
   effects?: Partial<EffectSettings>;
 };
 
 /** Note-shape defaults the classic themes restore, so switching away from e.g. Blossom doesn't leak its look. */
-const CLASSIC_NOTES: ThemePatch = { gradient: true, noteOpacity: 0.95, cornerRadius: 5, borderWidth: 1, trails: true, particles: true };
+const CLASSIC_NOTES: ThemePatch = {
+  gradient: true,
+  noteOpacity: 0.95,
+  cornerRadius: 5,
+  borderWidth: 1,
+  trails: true,
+  particles: true,
+  labels: { style: 'letter', showOnKeys: true },
+};
 
 export const VISUAL_THEMES: { id: string; name: string; patch: ThemePatch }[] = [
   { id: 'studio', name: 'Studio Blue', patch: { ...CLASSIC_NOTES, rightColor: '#4f9dff', leftColor: '#f5a524', colorMode: 'hand', glow: 0.55, keyboardTheme: 'classic', background: { kind: 'preset', presetId: 'midnight' } } },
   { id: 'aurora', name: 'Aurora', patch: { ...CLASSIC_NOTES, rightColor: '#34d3a6', leftColor: '#a78bfa', colorMode: 'hand', glow: 0.8, keyboardTheme: 'classic', background: { kind: 'preset', presetId: 'aurora' } } },
   { id: 'sunset', name: 'Sunset', patch: { ...CLASSIC_NOTES, rightColor: '#ff7a59', leftColor: '#ffc857', colorMode: 'hand', glow: 0.6, keyboardTheme: 'ivory', background: { kind: 'preset', presetId: 'sunset' } } },
   { id: 'rainbow', name: 'Rainbow Keys', patch: { ...CLASSIC_NOTES, colorMode: 'pitch', glow: 0.7, keyboardTheme: 'dark', background: { kind: 'preset', presetId: 'nebula' } } },
-  { id: 'mono', name: 'Minimal Mono', patch: { ...CLASSIC_NOTES, colorMode: 'single', singleColor: '#e8e8ea', glow: 0, particles: false, trails: false, gradient: false, keyboardTheme: 'classic', background: { kind: 'color', color: '#0d0d10' } } },
+  { id: 'mono', name: 'Minimal Mono', patch: { ...CLASSIC_NOTES, colorMode: 'single', singleColor: '#e8e8ea', glow: 0, fallingGlow: 0, noteBrightness: 0, particles: false, trails: false, gradient: false, keyboardTheme: 'classic', background: { kind: 'color', color: '#0d0d10' } } },
   {
     id: 'blossom',
     name: 'Blossom',
@@ -227,8 +242,10 @@ export const VISUAL_THEMES: { id: string; name: string; patch: ThemePatch }[] = 
       trails: false,
       particles: false,
       guides: 'octaves',
-      // the floral decal is the star: no letters on the notes or keys (ThemePatch takes a whole LabelSettings)
-      labels: { ...DEFAULT_VISUAL.labels, style: 'none', showOnKeys: false },
+      // the floral decal is the star: no letters on the notes or keys
+      labels: { style: 'none', showOnKeys: false },
+      fallingGlow: 0.7,
+      noteBrightness: 0.3,
       keyboardTheme: 'classic',
       keyboardStyle: 'realistic',
       background: { kind: 'color', color: '#08080b' },
@@ -246,10 +263,11 @@ export const PITCH_COLORS = [
 export function applyTheme(v: VisualSettings, themeId: string): VisualSettings {
   const theme = VISUAL_THEMES.find((t) => t.id === themeId);
   if (!theme) return v;
-  const { background, decal, effects, ...rest } = theme.patch;
+  const { background, decal, effects, labels, ...rest } = theme.patch;
   const next: VisualSettings = {
     ...v,
     ...rest,
+    labels: { ...v.labels, ...(labels ?? {}) },
     background: { ...v.background, ...(background ?? {}) },
     // themes without a decal/effects patch switch those features off so looks don't leak
     decal: { ...v.decal, ...(decal ?? { source: 'none' as const }) },
