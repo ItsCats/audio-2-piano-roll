@@ -73,9 +73,12 @@ function db() {
           d.createObjectStore('pending', { keyPath: 'id' });
         }
       },
-      // another tab (an older version of the app) still has the database open: it is asked to close
-      // in its `blocking` handler; nothing to do here but wait
-      blocked() {},
+      // another tab still has the database open at the old version. A tab of this version closes it in
+      // its `blocking` handler, but a tab still running the previous version of the app has no such
+      // handler: every read and write here waits until that tab is closed or reloaded, so say so
+      blocked() {
+        setBlocked(true);
+      },
       // a newer version of the app in another tab wants to upgrade: let it, reopen on next use
       blocking() {
         void dbp?.then((d) => d.close());
@@ -85,9 +88,34 @@ function db() {
         dbp = null;
       },
     });
-    dbp.catch(() => (dbp = null));
+    dbp.then(
+      () => setBlocked(false),
+      () => {
+        setBlocked(false);
+        dbp = null;
+      },
+    );
   }
   return dbp;
+}
+
+let blockedNow = false;
+const blockedListeners = new Set<(blocked: boolean) => void>();
+function setBlocked(b: boolean) {
+  if (b === blockedNow) return;
+  blockedNow = b;
+  for (const l of blockedListeners) l(b);
+}
+
+/**
+ * Be told while the database can't be opened because another tab (an older version of the app)
+ * keeps it open at the old version (the listener is called at once if that is the case now).
+ * Returns the unsubscribe function.
+ */
+export function watchDatabaseBlocked(listener: (blocked: boolean) => void): () => void {
+  blockedListeners.add(listener);
+  if (blockedNow) listener(true);
+  return () => blockedListeners.delete(listener);
 }
 
 /** Close the connection (tests). */
@@ -116,8 +144,23 @@ export function summarize(song: Song): SongSummary {
   };
 }
 
-export async function saveSong(song: Song): Promise<void> {
+/**
+ * `pendingId`: the interrupted-import record of the import that produced this song, deleted in the
+ * same transaction, so a tab killed while saving leaves either the record (song not saved) or the
+ * song (record gone), never both (which would offer to import the song a second time).
+ */
+export async function saveSong(song: Song, opts: { pendingId?: string } = {}): Promise<void> {
   const d = await db();
+  if (opts.pendingId) {
+    const tx = d.transaction(['songs', 'summaries', 'pending'], 'readwrite');
+    await Promise.all([
+      tx.objectStore('songs').put(song),
+      tx.objectStore('summaries').put(summarize(song)),
+      tx.objectStore('pending').delete(opts.pendingId),
+      tx.done,
+    ]);
+    return;
+  }
   const tx = d.transaction(['songs', 'summaries'], 'readwrite');
   await Promise.all([tx.objectStore('songs').put(song), tx.objectStore('summaries').put(summarize(song)), tx.done]);
 }
@@ -183,8 +226,20 @@ export async function getPending(id: string): Promise<PendingImport | undefined>
 export async function listPending(): Promise<PendingImport[]> {
   return (await (await db()).getAll('pending')).sort((a, b) => b.startedAt - a.startedAt);
 }
-export async function deletePending(id: string): Promise<void> {
-  await (await db()).delete('pending', id);
+/**
+ * `startedAt`: delete the record only if it is still the one written then (an import resumed under
+ * the same id has rewritten it, and the cleanup of an earlier run must not delete the newer one).
+ */
+export async function deletePending(id: string, startedAt?: number): Promise<void> {
+  const d = await db();
+  if (startedAt === undefined) {
+    await d.delete('pending', id);
+    return;
+  }
+  const tx = d.transaction('pending', 'readwrite');
+  const cur = await tx.store.get(id);
+  if (cur && cur.startedAt === startedAt) await tx.store.delete(id);
+  await tx.done;
 }
 
 export async function storageEstimate(): Promise<{ usage: number; quota: number } | null> {

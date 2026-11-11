@@ -198,7 +198,10 @@ describe('interrupted-import record (crash recovery)', () => {
     expect(rec).toMatchObject({ title: 'Recording 1', kind: 'capture', blob, mimeType: 'audio/mp4', presetId: 'mix', separate: false });
     expect(rec.fileName).toBe('Recording 1.m4a');
     expect(useImport.getState().job!.stage).toBe('done');
-    await vi.waitFor(() => expect(db.deletePending).toHaveBeenCalledWith(rec.id));
+    // the song and the record's deletion are one transaction (a tab killed while saving can't leave both)
+    expect(db.saveSong).toHaveBeenCalledWith(expect.objectContaining({ title: 'Recording 1' }), { pendingId: rec.id });
+    // the cleanup deletes only the record this run wrote
+    await vi.waitFor(() => expect(db.deletePending).toHaveBeenCalledWith(rec.id, rec.startedAt));
   });
 
   it('a failure deletes the record but keeps "Try again" and the recording for the open page', async () => {
@@ -207,8 +210,8 @@ describe('interrupted-import record (crash recovery)', () => {
     await useImport.getState().importAudioBlob(blob, meta);
     const st = useImport.getState();
     expect(st.job!.stage).toBe('error');
-    const id = vi.mocked(db.savePending).mock.calls[0][0].id;
-    await vi.waitFor(() => expect(db.deletePending).toHaveBeenCalledWith(id));
+    const { id, startedAt } = vi.mocked(db.savePending).mock.calls[0][0];
+    await vi.waitFor(() => expect(db.deletePending).toHaveBeenCalledWith(id, startedAt));
     expect(st.failed?.jobId).toBe(st.job!.id);
     expect(st.failed?.recording?.blob).toBe(blob);
     expect(st.failed?.recording?.fileName).toBe('Recording 1.m4a');
@@ -234,8 +237,8 @@ describe('interrupted-import record (crash recovery)', () => {
     await vi.waitFor(() => expect(pipeline.transcribeAudio).toHaveBeenCalled());
     useImport.getState().cancel();
     await run;
-    const id = vi.mocked(db.savePending).mock.calls[0][0].id;
-    await vi.waitFor(() => expect(db.deletePending).toHaveBeenCalledWith(id));
+    const { id, startedAt } = vi.mocked(db.savePending).mock.calls[0][0];
+    await vi.waitFor(() => expect(db.deletePending).toHaveBeenCalledWith(id, startedAt));
     expect(useImport.getState().job).toBeNull();
   });
 
@@ -256,7 +259,8 @@ describe('interrupted-import record (crash recovery)', () => {
     });
     expect(useImport.getState().job!.stage).toBe('done');
     expect(vi.mocked(db.savePending).mock.calls[0][0]).toMatchObject({ id: 'old-1', presetId: 'piano' });
-    await vi.waitFor(() => expect(db.deletePending).toHaveBeenCalledWith('old-1'));
+    expect(db.saveSong).toHaveBeenLastCalledWith(expect.anything(), { pendingId: 'old-1' });
+    await vi.waitFor(() => expect(db.deletePending).toHaveBeenCalledWith('old-1', expect.any(Number)));
     // a file is resumed as a file
     await useImport.getState().resumePending({
       id: 'old-2',
@@ -273,6 +277,41 @@ describe('interrupted-import record (crash recovery)', () => {
     const last = vi.mocked(pipeline.transcribeAudio).mock.calls.at(-1)![0] as File;
     expect(last).toBeInstanceOf(File);
     expect(last.name).toBe('song.mp3');
+  });
+
+  it('storage full while saving: the crash-recovery copy is dropped and the audio stored after all', async () => {
+    vi.mocked(pipeline.transcribeAudio).mockResolvedValue(result());
+    vi.mocked(db.saveAudio).mockRejectedValueOnce(new DOMException('The quota has been exceeded.', 'QuotaExceededError'));
+    vi.mocked(db.saveSong).mockClear();
+    await useImport.getState().importAudioBlob(recording(), { ...meta, separate: false });
+    const { id, startedAt } = vi.mocked(db.savePending).mock.calls[0][0];
+    expect(db.deletePending).toHaveBeenCalledWith(id, startedAt);
+    expect(db.saveAudio).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(db.saveSong).mock.calls[0][0].hasAudio).toBe(true);
+    expect(useImport.getState().job!.stage).toBe('done');
+  });
+
+  it('other storage errors while saving keep the arrangement without the audio (no retry)', async () => {
+    vi.mocked(pipeline.transcribeAudio).mockResolvedValue(result());
+    vi.mocked(db.saveAudio).mockRejectedValueOnce(new Error('disk I/O error'));
+    vi.mocked(db.saveSong).mockClear();
+    await useImport.getState().importAudioBlob(recording(), { ...meta, separate: false });
+    expect(db.saveAudio).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(db.saveSong).mock.calls[0][0].hasAudio).toBe(false);
+    expect(useImport.getState().job!.stage).toBe('done');
+  });
+
+  it('the YouTube server path keeps no record (and still saves the song plainly)', async () => {
+    vi.mocked(pipeline.transcribeAudio).mockResolvedValue(result());
+    useSettings.setState({ backendUrl: 'http://server.test' });
+    vi.mocked(client.createYouTubeJob).mockResolvedValue({ id: 'j1' } as never);
+    vi.mocked(client.waitForJob).mockResolvedValue({ id: 'j1', status: 'done', title: 'Video' } as never);
+    vi.mocked(client.getJobAudio).mockResolvedValue(new Blob([new Uint8Array(4000)], { type: 'audio/mp4' }));
+    vi.mocked(db.saveSong).mockClear();
+    const songId = await useImport.getState().importYouTubeViaServer('https://youtu.be/x', 'x', false);
+    expect(songId).toBeTruthy();
+    expect(db.savePending).not.toHaveBeenCalled();
+    expect(vi.mocked(db.saveSong).mock.calls[0][1]).toBeUndefined();
   });
 
   it('big files are not copied (the record only says which file it was)', async () => {

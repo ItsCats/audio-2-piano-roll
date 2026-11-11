@@ -4,7 +4,7 @@
  * on the next page load, from before that load and not locked by another open tab, means the tab died
  * mid-import (on phones almost always because the browser ran out of memory and reloaded the page).
  */
-import { deletePending, listPending, type PendingImport } from '../lib/storage/db';
+import { deletePending, getPending, listPending, type PendingImport } from '../lib/storage/db';
 import { PENDING_LOCK_PREFIX } from './importStore';
 
 /** When this document started loading (records written by this page are newer). */
@@ -63,6 +63,20 @@ export async function findInterruptedImport(pageLoadedAt = PAGE_LOADED_AT): Prom
     console.warn('[import] could not check for an interrupted import', err);
     return null;
   }
+}
+
+/**
+ * Whether the record can still be resumed from this tab: not discarded, and not already resumed in
+ * another open tab since the notice was shown (two tabs resuming it would import the song twice).
+ * Never throws (when it can't tell, it says yes).
+ */
+export async function stillInterrupted(id: string): Promise<boolean> {
+  try {
+    if (!(await getPending(id))) return false;
+  } catch {
+    return true;
+  }
+  return !(await heldLockNames()).has(PENDING_LOCK_PREFIX + id);
 }
 
 export async function discardInterrupted(id: string): Promise<void> {

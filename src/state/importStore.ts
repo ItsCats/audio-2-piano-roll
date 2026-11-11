@@ -318,7 +318,8 @@ function persistPending(rec: PendingImport): () => Promise<void> {
   let cleaned: Promise<void> | null = null;
   const cleanup = () =>
     (cleaned ??= written
-      .then(() => deletePending(rec.id))
+      // only this run's record: an import resumed under the same id may have rewritten it since
+      .then(() => deletePending(rec.id, rec.startedAt))
       .catch((err: unknown) => console.warn('[import] could not delete the crash-recovery copy', err))
       .finally(() => release()));
   // the caller waits for the write, but at most a few seconds
@@ -382,6 +383,8 @@ interface Ctx {
   onProgress: (e: ProgressEvent) => void;
   /** deletes this import's interrupted-import record (set once it was written) */
   unpend?: () => Promise<void>;
+  /** that record's id (saveSong deletes it in the transaction that saves the song) */
+  pendingId?: string;
 }
 
 export const useImport = create<ImportState>((set, get) => {
@@ -436,18 +439,26 @@ export const useImport = create<ImportState>((set, get) => {
 
   /** Keep a copy of the audio and the options until this import ends (see persistPending). */
   const pend = async (ctx: Ctx, rec: Omit<PendingImport, 'id' | 'startedAt' | 'presetId'> & { id?: string }) => {
-    const unpend = persistPending({ ...rec, id: rec.id ?? newId(), startedAt: Date.now(), presetId: ctx.preset });
+    const id = rec.id ?? newId();
+    const unpend = persistPending({ ...rec, id, startedAt: Date.now(), presetId: ctx.preset });
     ctx.unpend = unpend;
+    ctx.pendingId = id;
     await (unpend as unknown as { written: Promise<void> }).written;
   };
 
-  const finish = async ({ update, unpend }: Ctx, song: Song) => {
+  const finish = async ({ update, unpend, pendingId }: Ctx, song: Song) => {
     update({ stage: 'saving', progress: null, detail: 'Saving to your library' });
-    await saveSong(song);
+    // the record goes in the same transaction: a tab killed now never leaves both (see saveSong)
+    await saveSong(song, pendingId ? { pendingId } : undefined);
     void unpend?.();
     void useLibrary.getState().refresh();
     update({ stage: 'done', progress: 1, songId: song.id, finishedAt: Date.now(), detail: undefined });
     return song.id;
+  };
+
+  const isQuotaError = (err: unknown) => {
+    const e = err as { name?: string; message?: string } | null;
+    return /quota/i.test(`${e?.name ?? ''} ${e?.message ?? ''}`);
   };
 
   const isAbort = (err: unknown) => (err instanceof DOMException || err instanceof Error) && err.name === 'AbortError';
@@ -585,10 +596,20 @@ export const useImport = create<ImportState>((set, get) => {
       hasPosteriors: true,
     });
     update({ warnings: result.info.warnings, stage: 'saving', progress: null, detail: 'Saving to your library' });
-    try {
+    const storeOriginal = async () => {
       await saveAudio(song.id, original, meta.source.fileName ?? meta.title);
       // (separated songs: includes the drums stem's onset envelope)
       await savePosteriors(song.id, result.posteriors);
+    };
+    try {
+      try {
+        await storeOriginal();
+      } catch (err) {
+        // the crash-recovery copy of the same audio may be what filled the storage: drop it, try once more
+        if (!ctx.unpend || !isQuotaError(err)) throw err;
+        await ctx.unpend();
+        await storeOriginal();
+      }
     } catch (err) {
       song.hasAudio = false;
       song.hasPosteriors = false;
