@@ -9,7 +9,7 @@ export interface SeparateRequest {
   modelSha256: string;
   /** segment hop as a fraction of the 11 s segment */
   step?: number;
-  /** also return the 44.1 kHz mono stems (tests) */
+  /** also return the 44.1 kHz mono stems, drums included (tests) */
   keep44?: boolean;
 }
 
@@ -21,6 +21,8 @@ export interface WorkerStats {
   createMs: number;
   separateMs: number;
   resampleMs: number;
+  /** time spent on the drum onset envelope */
+  drumsMs: number;
   threads: number;
   sampleRate: number;
 }
@@ -33,8 +35,11 @@ export type WorkerResponse =
       vocals: Float32Array;
       accomp: Float32Array;
       mix: Float32Array;
+      /** onset strength of the drums stem, 8-bit at DRUM_ENV_FPS (dsp.drumOnsetEnvelope) */
+      drumOnsets: Uint8Array;
       vocals44?: Float32Array;
       accomp44?: Float32Array;
+      drums44?: Float32Array;
       stats: WorkerStats;
     }
   | { type: 'error'; message: string };

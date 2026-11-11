@@ -10,11 +10,15 @@
  *      each note earns its salience × the time it sounds, weak notes cost more than they add,
  *      and pitch jumps between close-by notes cost — octave/twelfth jumps a lot — so the path
  *      follows the most salient continuous line instead of flipping between octaves;
- *   3. merge vibrato splits and fragments, drop leftovers too short to play;
+ *   3. merge vibrato splits and fragments, drop leftovers too short to play and isolated
+ *      multi-second holds (instrument bleed);
  *   4. fix isolated octave errors against the local register;
- *   5. transpose the whole line by octaves into a comfortable right-hand register
- *      (a male voice around G3 goes up to G4);
- *   6. mark the notes role 'melody', hand 'R'.
+ *   5. drop rap / spoken sections (speechSections): there the arrangements play the instruments'
+ *      tune like in an instrumental stretch;
+ *   6. transpose the whole line by octaves only when it is implausibly low or high for a melody
+ *      (median below A3 / above G5). Easy and Medium move it further into the right-hand register
+ *      phrase by phrase (rightHandShifts); Hard keeps this pitch;
+ *   7. mark the notes role 'melody', hand 'R'.
  *
  * mergeMelody() then combines the line with the accompaniment transcription: accompaniment
  * notes that would double-strike the melody (same key while it sounds, or a unison/octave
@@ -41,7 +45,53 @@ export interface MelodyOptions {
   /** Target register of the line's median after transposition (MIDI, inclusive). */
   registerLow: number;
   registerHigh: number;
+  /** Rap / speech detection (see speechSections); null disables it. */
+  speech: SpeechOptions | null;
 }
+
+/**
+ * Rap / speech-like singing. Measured on SCNet vocal stems of 5 songs against the CREPE
+ * reference (tests/accuracy/melody_eval.py): in rap verses the stem's melody line is a sparse
+ * stream of short, low-confidence notes (line covers < ~half the time, mean velocity < ~0.75 vs
+ * 0.82–0.90 for singing) and the stem is monophonic. Choruses with stacked harmonies also give
+ * low CREPE periodicity and weak notes but are clearly polyphonic (≥ 1.5 simultaneous vocal notes),
+ * so polyphony keeps them; held / confident sung notes keep monotone sung passages.
+ * The thresholds assume Basic Pitch vocal-stem notes (velocity from model confidence + loudness).
+ * For a monophonic pitch-tracker source (CREPE notes, velocity = periodicity, unvoiced rap frames
+ * already give no notes) pass `speech: null` or retune: polyphony is always 1 there.
+ */
+export interface SpeechOptions {
+  /** analysis window half-width (s) */
+  halfWindow: number;
+  /** analysis hop (s) */
+  hop: number;
+  /** a window is speech-like when the line's mean velocity (duration-weighted) is below this, */
+  maxVel: number;
+  /** ...the line sounds for less than this fraction of the window, */
+  maxCoverage: number;
+  /** ...and the vocal stem's notes overlap less than this on average (1 = monophonic) */
+  maxPolyphony: number;
+  /** ...and its notes are short (median duration below this, s: syllables, not held notes) */
+  maxNoteDur: number;
+  /** windows with fewer line notes are not judged */
+  minNotes: number;
+  /** shortest speech section (s): about two bars, like an instrumental gap; shorter ones stay sung */
+  minSection: number;
+  /** speech-like stretches less than this apart (s) form one section */
+  bridge: number;
+}
+
+export const DEFAULT_SPEECH: SpeechOptions = {
+  halfWindow: 2,
+  hop: 0.25,
+  maxVel: 0.75,
+  maxCoverage: 0.55,
+  maxPolyphony: 1.5,
+  maxNoteDur: 0.25,
+  minNotes: 3,
+  minSection: 4,
+  bridge: 2,
+};
 
 export const DEFAULT_MELODY: MelodyOptions = {
   minMidi: 40, // E2
@@ -53,6 +103,7 @@ export const DEFAULT_MELODY: MelodyOptions = {
   minDur: 0.07,
   registerLow: 57, // A3: a line centred on B♭3–C4 stays where it is (no octave flip at the boundary)
   registerHigh: 79, // G5
+  speech: DEFAULT_SPEECH,
 };
 
 /** Octave doubles of the melody below this pitch are bass (left hand) and stay. */
@@ -229,15 +280,206 @@ export function registerShift(line: Note[], low = DEFAULT_MELODY.registerLow, hi
   return shift;
 }
 
-/** Full vocal-stem → melody line pipeline (see module comment). */
-export function extractMelodyLine(vocalNotes: Note[], opts: Partial<MelodyOptions> = {}): Note[] {
+/**
+ * Rap / speech-like sections of a vocal melody line (see SpeechOptions): time ranges [start, end)
+ * where, in a window around each point, the line is sparse and low-confidence and the vocal stem
+ * monophonic. `vocal` are the stem's notes before line reduction (for polyphony); without them
+ * the stem counts as monophonic.
+ */
+export function speechSections(line: Note[], vocal: Note[] = line, opts: Partial<SpeechOptions> = {}): [number, number][] {
+  const o = { ...DEFAULT_SPEECH, ...opts };
+  if (line.length < o.minNotes) return [];
+  const FPS = 50;
+  let end = 0;
+  for (const n of line) end = Math.max(end, n.start + n.dur);
+  const nF = Math.ceil(end * FPS) + 1;
+  // per frame: line coverage + velocity, vocal-stem polyphony; prefix sums for window means
+  const cov = new Float64Array(nF + 1);
+  const vel = new Float64Array(nF + 1);
+  const poly = new Float64Array(nF);
+  const frame = (t: number) => Math.max(0, Math.min(nF, Math.round(t * FPS)));
+  for (const n of line) for (let f = frame(n.start); f < frame(n.start + n.dur); f++) {
+    cov[f + 1] = 1;
+    vel[f + 1] = n.vel;
+  }
+  for (const n of vocal) for (let f = frame(n.start); f < Math.min(nF, frame(n.start + n.dur)); f++) poly[f]++;
+  const polySum = new Float64Array(nF + 1);
+  const polyCnt = new Float64Array(nF + 1);
+  for (let f = 0; f < nF; f++) {
+    cov[f + 1] += cov[f];
+    vel[f + 1] += vel[f];
+    polySum[f + 1] = polySum[f] + poly[f];
+    polyCnt[f + 1] = polyCnt[f] + (poly[f] > 0 ? 1 : 0);
+  }
+  const mids = line.map((n) => ({ t: n.start + n.dur / 2, dur: n.dur })).sort((a, b) => a.t - b.t);
+  const dursIn = (a: number, b: number) => mids.filter((x) => x.t >= a && x.t < b).map((x) => x.dur);
+  const runs: [number, number][] = [];
+  let runStart = -1;
+  const close = (t: number) => {
+    if (runStart >= 0) {
+      const last = runs[runs.length - 1];
+      // a short break (a sung phrase end, a breath) inside a rap verse does not split it
+      if (last && runStart - last[1] < o.bridge) last[1] = t;
+      else runs.push([runStart, t]);
+    }
+    runStart = -1;
+  };
+  for (let c = line[0].start; c <= end; c += o.hop) {
+    const f0 = frame(c - o.halfWindow);
+    const f1 = frame(c + o.halfWindow);
+    const len = Math.max(1, f1 - f0);
+    const covered = cov[f1] - cov[f0];
+    let speech = false;
+    const durs = covered > 0 ? dursIn(c - o.halfWindow, c + o.halfWindow) : [];
+    if (durs.length >= o.minNotes) {
+      const meanVel = (vel[f1] - vel[f0]) / covered;
+      const pc = Math.max(1, polyCnt[Math.min(nF, f1)] - polyCnt[f0]);
+      const meanPoly = (polySum[Math.min(nF, f1)] - polySum[f0]) / pc;
+      durs.sort((a, b) => a - b);
+      const medDur = durs[Math.floor(durs.length / 2)];
+      speech = meanVel < o.maxVel && covered / len < o.maxCoverage && meanPoly < o.maxPolyphony && medDur < o.maxNoteDur;
+    }
+    if (speech && runStart < 0) runStart = Math.max(0, c - o.hop / 2);
+    if (!speech) close(c - o.hop / 2);
+  }
+  close(end);
+  return runs.filter(([a, b]) => b - a >= o.minSection);
+}
+
+/**
+ * Drops isolated very long notes: a note held longer than `maxHold` s with no other line note
+ * within `isolation` s before or after it. On the vocal stems these are sustained instrument
+ * bleed or reverb tails (a 6.8 s C6 in Steel Ball Run while nobody sings), not sung notes — every
+ * such note in the 5 test songs (4 of them, 3–7 s) sat on unvoiced reference frames.
+ */
+export function dropIsolatedHolds(line: Note[], maxHold = 3, isolation = 1): Note[] {
+  const s = [...line].sort((a, b) => a.start - b.start);
+  return s.filter((n, i) => {
+    if (n.dur <= maxHold) return true;
+    const prev = s[i - 1];
+    const next = s[i + 1];
+    const near = (prev && n.start - (prev.start + prev.dur) < isolation) || (next && next.start - (n.start + n.dur) < isolation);
+    return !!near;
+  });
+}
+
+/** The line without the notes whose middle lies in one of the sections. */
+export function dropSections(line: Note[], sections: [number, number][]): Note[] {
+  if (!sections.length) return line;
+  return line.filter((n) => {
+    const mid = n.start + n.dur / 2;
+    return !sections.some(([a, b]) => mid >= a && mid < b);
+  });
+}
+
+export interface MelodyExtraction {
+  /** the melody line (role 'melody', hand 'R') */
+  line: Note[];
+  /** rap / speech-like sections that were taken out of it */
+  speech: [number, number][];
+}
+
+/** Full vocal-stem → melody line pipeline (see module comment), with the speech sections found. */
+export function extractMelody(vocalNotes: Note[], opts: Partial<MelodyOptions> = {}): MelodyExtraction {
   const o = { ...DEFAULT_MELODY, ...opts };
   let line = reduceToLine(vocalNotes, o);
   line = smoothLine(line, o);
   line = fixOctaveOutliers(line);
   line = smoothLine(line, o); // octave fixes can create new same-pitch neighbours
+  line = dropIsolatedHolds(line);
+  const speech = o.speech ? speechSections(line, vocalNotes, o.speech) : [];
+  line = dropSections(line, speech);
   const shift = registerShift(line, o.registerLow, o.registerHigh);
-  return line.map((n) => ({ ...n, id: newNoteId(), midi: Math.min(108, Math.max(21, n.midi + shift)), hand: 'R' as const, role: 'melody' as const }));
+  return {
+    line: line.map((n) => ({ ...n, id: newNoteId(), midi: Math.min(108, Math.max(21, n.midi + shift)), hand: 'R' as const, role: 'melody' as const })),
+    speech,
+  };
+}
+
+/** Full vocal-stem → melody line pipeline (see module comment). */
+export function extractMelodyLine(vocalNotes: Note[], opts: Partial<MelodyOptions> = {}): Note[] {
+  return extractMelody(vocalNotes, opts).line;
+}
+
+export interface RightHandRegister {
+  /** target range of the line's (duration-weighted) median, MIDI inclusive: E4–E5 */
+  low: number;
+  high: number;
+  /** a phrase's low notes stay at least this many semitones above the left hand around it */
+  clearance: number;
+  /** a silence this long (s) separates phrases */
+  phraseGap: number;
+  /** a phrase is never moved so that its median goes above this */
+  maxMedian: number;
+}
+
+export const DEFAULT_RH_REGISTER: RightHandRegister = { low: 64, high: 76, clearance: 5, phraseGap: 1, maxMedian: 84 };
+
+function weightedQuantile(items: { midi: number; w: number }[], q: number): number {
+  const s = [...items].sort((a, b) => a.midi - b.midi);
+  const total = s.reduce((acc, x) => acc + x.w, 0);
+  let acc = 0;
+  for (const x of s) {
+    acc += x.w;
+    if (acc >= total * q - 1e-9) return x.midi;
+  }
+  return s[s.length - 1]?.midi ?? 0;
+}
+
+/** Phrases of a (time-sorted) line: runs of notes separated by silences of at least `gap` s. */
+export function phrases(line: Note[], gap: number): Note[][] {
+  const out: Note[][] = [];
+  let end = -Infinity;
+  for (const n of [...line].sort((a, b) => a.start - b.start)) {
+    if (!out.length || n.start - end >= gap) out.push([]);
+    out[out.length - 1].push(n);
+    end = Math.max(end, n.start + n.dur);
+  }
+  return out;
+}
+
+/**
+ * Octave shift for every note of a melody line that puts it where a right hand plays a tune
+ * (Easy / Medium): the whole line moves by octaves so its median lands in [low, high], then
+ * each phrase moves up further while its low notes would sit less than `clearance` semitones
+ * above the left-hand notes sounding during it. Whole phrases move together, so the line keeps
+ * its shape. Returns a Map note → shift (multiples of 12).
+ */
+export function rightHandShifts(line: Note[], left: Note[], opts: Partial<RightHandRegister> = {}): Map<Note, number> {
+  const o = { ...DEFAULT_RH_REGISTER, ...opts };
+  const out = new Map<Note, number>();
+  if (!line.length) return out;
+  const med = weightedMedian(line);
+  let global = 0;
+  let best = Infinity;
+  for (let k = -3; k <= 3; k++) {
+    const m = med + 12 * k;
+    if (m < o.low || m > o.high) continue;
+    const cost = Math.abs(k) * 100 + Math.abs(m - (o.low + o.high) / 2);
+    if (cost < best) [best, global] = [cost, 12 * k];
+  }
+  if (best === Infinity) global = med < o.low ? 12 * Math.ceil((o.low - med) / 12) : -12 * Math.ceil((med - o.high) / 12);
+  const lh = [...left].sort((a, b) => a.start - b.start);
+  for (const ph of phrases(line, o.phraseGap)) {
+    const t0 = ph[0].start;
+    const t1 = Math.max(...ph.map((n) => n.start + n.dur));
+    const over: { midi: number; w: number }[] = [];
+    for (const l of lh) {
+      if (l.start >= t1) break;
+      const w = Math.min(t1, l.start + l.dur) - Math.max(t0, l.start);
+      if (w > 0) over.push({ midi: l.midi, w });
+    }
+    const pm = ph.map((n) => ({ midi: n.midi, w: Math.max(0.01, n.dur) }));
+    const low = weightedQuantile(pm, 0.1);
+    const phMed = weightedQuantile(pm, 0.5);
+    let s = global;
+    if (over.length) {
+      const lhTop = weightedQuantile(over, 0.9);
+      while (low + s - lhTop < o.clearance && phMed + s + 12 <= o.maxMedian) s += 12;
+    }
+    for (const n of ph) out.set(n, s);
+  }
+  return out;
 }
 
 /**

@@ -5,10 +5,14 @@
  * module worker and returns, at 22.05 kHz mono on the same timebase as decodeToRate(blob, 22050):
  *   vocals  — stem 3
  *   accomp  — stems 1 + 2 (bass + other: no drums, no vocals)
- * plus a vocal-presence estimate so instrumentals can skip the vocal-melody path.
+ * plus a vocal-presence estimate so instrumentals can skip the vocal-melody path, and the onset
+ * envelope of the drums stem (stem 0; the drum audio itself is not kept), which the pipeline uses
+ * to drop the false low notes that drum hits leaking into the accompaniment produce.
  */
 import { decodeToRate, mixToMono } from '../transcription/decode';
-import { DEFAULT_STEP, SCNET_RATE, planSegments, vocalPresence } from './dsp';
+import { DEFAULT_STEP, DRUM_ENV_FPS, SCNET_RATE, planSegments, vocalPresence } from './dsp';
+
+export { DRUM_ENV_FPS };
 import type { WorkerResponse, WorkerStats } from './protocol';
 
 export interface VocalPresence {
@@ -25,6 +29,11 @@ export interface SeparationResult {
   /** bass + other (no drums, no vocals), mono 22.05 kHz */
   accomp: Float32Array;
   vocalPresence: VocalPresence;
+  /**
+   * Onset strength of the drums stem, 8-bit at DRUM_ENV_FPS (separation/dsp.ts drumOnsetEnvelope).
+   * Absent for server stems (the server returns vocals + accompaniment only).
+   */
+  drumOnsets?: Uint8Array;
   engine: 'scnet-browser' | 'scnet-server';
   ms: number;
 }
@@ -108,8 +117,10 @@ export interface RawSeparation {
   vocals: Float32Array;
   accomp: Float32Array;
   mix: Float32Array;
+  drumOnsets: Uint8Array;
   vocals44?: Float32Array;
   accomp44?: Float32Array;
+  drums44?: Float32Array;
   stats: WorkerStats;
 }
 
@@ -160,7 +171,16 @@ export function separateStereo44k(
       } else {
         finish();
         onProgress(0.99, 'Separation finished');
-        resolve({ vocals: m.vocals, accomp: m.accomp, mix: m.mix, vocals44: m.vocals44, accomp44: m.accomp44, stats: m.stats });
+        resolve({
+          vocals: m.vocals,
+          accomp: m.accomp,
+          mix: m.mix,
+          drumOnsets: m.drumOnsets,
+          vocals44: m.vocals44,
+          accomp44: m.accomp44,
+          drums44: m.drums44,
+          stats: m.stats,
+        });
       }
     };
     worker.onerror = (e) => {
@@ -201,6 +221,7 @@ export async function separateStems(
     vocals: raw.vocals,
     accomp: raw.accomp,
     vocalPresence,
+    drumOnsets: raw.drumOnsets,
     engine: 'scnet-browser',
     ms: performance.now() - t0,
   };

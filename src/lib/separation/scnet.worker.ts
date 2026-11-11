@@ -6,7 +6,7 @@
  */
 import * as ort from 'onnxruntime-web/wasm';
 import ortWasmUrl from 'onnxruntime-web/ort-wasm-simd-threaded.wasm?url';
-import { BINS, FRAMES, SCNET_RATE, decimate2, separateSegments } from './dsp';
+import { BINS, FRAMES, SCNET_RATE, decimate2, drumOnsetEnvelope, separateSegments } from './dsp';
 import type { WorkerRequest, WorkerResponse } from './protocol';
 
 declare const self: DedicatedWorkerGlobalScope;
@@ -86,6 +86,8 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
       [
         { name: 'vocals', stems: [3] },
         { name: 'accomp', stems: [1, 2] },
+        // only reduced to an onset envelope below (drum-hit false notes), never returned as audio
+        { name: 'drums', stems: [0] },
       ],
       async (spec) => {
         const input = new ort.Tensor('float32', spec, [1, 4, BINS, FRAMES]);
@@ -107,25 +109,31 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
     const mix22 = decimate2(mono, outLen);
     const vocals22 = decimate2(stems.vocals, outLen);
     const accomp22 = decimate2(stems.accomp, outLen);
+    const t4 = performance.now();
+    const drumOnsets = drumOnsetEnvelope(stems.drums, mono, SCNET_RATE);
+    const t5 = performance.now();
     const result: WorkerResponse = {
       type: 'result',
       vocals: vocals22,
       accomp: accomp22,
       mix: mix22,
+      drumOnsets,
       vocals44: req.keep44 ? stems.vocals : undefined,
       accomp44: req.keep44 ? stems.accomp : undefined,
+      drums44: req.keep44 ? stems.drums : undefined,
       stats: {
         fromCache,
         loadMs: t1 - t0,
         createMs: t2 - t1,
         separateMs: t3 - t2,
-        resampleMs: performance.now() - t3,
+        resampleMs: t4 - t3,
+        drumsMs: t5 - t4,
         threads: ort.env.wasm.numThreads ?? 1,
         sampleRate: SCNET_RATE,
       },
     };
-    const transfer: Transferable[] = [vocals22.buffer, accomp22.buffer, mix22.buffer];
-    if (req.keep44) transfer.push(stems.vocals.buffer, stems.accomp.buffer);
+    const transfer: Transferable[] = [vocals22.buffer, accomp22.buffer, mix22.buffer, drumOnsets.buffer];
+    if (req.keep44) transfer.push(stems.vocals.buffer, stems.accomp.buffer, stems.drums.buffer);
     post(result, transfer);
   } catch (err) {
     await session?.release().catch(() => undefined);

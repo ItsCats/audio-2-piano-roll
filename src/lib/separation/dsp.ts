@@ -515,3 +515,94 @@ export function vocalPresence(vocals: Float32Array, mix: Float32Array, sampleRat
   const relDb = em > 0 ? 10 * Math.log10((ev + 1e-20) / em) : -Infinity;
   return { activeFraction, relDb, present: activeFraction >= p.minActiveFraction };
 }
+
+// ---------------------------------------------------------------------------------------------
+// drum onset envelope (from SCNet's drums stem; the audio itself is not kept)
+
+/** frames per second of the drum onset envelope (the same rate as the pipeline's RMS envelope) */
+export const DRUM_ENV_FPS = 100;
+
+export const DRUM_ENV = {
+  /** STFT size at 44.1 kHz (46 ms Hann window) */
+  nFft: 2048,
+  /** spectral-flux band */
+  minHz: 30,
+  maxHz: 4000,
+  /** log compression: L = log(1 + gamma * |X| / mixLevel) */
+  gamma: 100,
+  /** flux value that maps to the top of the 8-bit range (255) */
+  fullScale: 2,
+};
+
+/** RMS of each `hop`-sample frame. */
+function frameRmsOf(x: Float32Array, hop: number, frames: number): Float64Array {
+  const out = new Float64Array(frames);
+  for (let t = 0; t < frames; t++) {
+    const s = t * hop;
+    const e = Math.min(x.length, s + hop);
+    let acc = 0;
+    for (let i = s; i < e; i++) acc += x[i] * x[i];
+    out[t] = e > s ? Math.sqrt(acc / (e - s)) : 0;
+  }
+  return out;
+}
+
+/**
+ * Onset strength of the drums stem at DRUM_ENV_FPS, 8-bit (value/255 * DRUM_ENV.fullScale = flux):
+ * half-wave-rectified spectral flux of the log-compressed magnitude, averaged over minHz..maxHz.
+ * Magnitudes are measured relative to the MIXTURE's loudness (95th percentile of its 10 ms RMS),
+ * so the envelope of a song without drums (stem = leakage only) stays near zero instead of being
+ * normalised up. Frame t is centred on sample t * rate / DRUM_ENV_FPS (the frame's flux is the
+ * change from frame t - 1 to t).
+ */
+export function drumOnsetEnvelope(drums: Float32Array, mix: Float32Array, rate: number, p = DRUM_ENV): Uint8Array {
+  const hop = Math.round(rate / DRUM_ENV_FPS);
+  const n = drums.length;
+  const frames = Math.floor(n / hop) + 1;
+  const out = new Uint8Array(frames);
+  if (!n) return out;
+  const rms = frameRmsOf(mix, hop, frames);
+  const sorted = Array.from(rms)
+    .filter((v) => v > 1e-5)
+    .sort((a, b) => a - b);
+  const level = sorted.length ? sorted[Math.floor(sorted.length * 0.95)] : 0;
+  if (level <= 0) return out;
+  const N = p.nFft;
+  const fft = new RealFFT(N);
+  const win = new Float64Array(N);
+  let wsum = 0;
+  for (let i = 0; i < N; i++) {
+    win[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / N);
+    wsum += win[i];
+  }
+  const k0 = Math.max(1, Math.round((p.minHz * N) / rate));
+  const k1 = Math.min(N / 2, Math.round((p.maxHz * N) / rate));
+  const nb = k1 - k0 + 1;
+  // |X| of a full-scale sinusoid is wsum / 2: amplitude → relative to the mixture level
+  const g = p.gamma / ((wsum / 2) * level);
+  const frame = new Float64Array(N);
+  const re = new Float64Array(N / 2 + 1);
+  const im = new Float64Array(N / 2 + 1);
+  let prev = new Float64Array(nb);
+  let cur = new Float64Array(nb);
+  const q = 255 / p.fullScale;
+  for (let t = 0; t < frames; t++) {
+    const c = t * hop - N / 2;
+    for (let i = 0; i < N; i++) {
+      const j = c + i;
+      frame[i] = j >= 0 && j < n ? drums[j] * win[i] : 0;
+    }
+    fft.forward(frame, re, im);
+    let flux = 0;
+    for (let k = k0; k <= k1; k++) {
+      const v = Math.log1p(g * Math.hypot(re[k], im[k]));
+      cur[k - k0] = v;
+      if (t > 0 && v > prev[k - k0]) flux += v - prev[k - k0];
+    }
+    out[t] = Math.min(255, Math.round((flux / nb) * q));
+    const sw = prev;
+    prev = cur;
+    cur = sw;
+  }
+  return out;
+}

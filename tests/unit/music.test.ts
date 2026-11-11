@@ -108,6 +108,14 @@ describe('difficulty levels', () => {
   it('medium has at most three right-hand notes per onset', () => {
     for (const c of clusterOnsets(medium.filter((x) => x.hand === 'R'), 0.03)) expect(c.length).toBeLessThanOrEqual(3);
   });
+  it('without a sung line a slow, unsure tempo keeps the 8th-note grid (no half-time refinement)', () => {
+    const tempo = { bpm: 60, beats: regularBeats(60, 0, 20), beatsPerBar: 4, downbeatIndex: 0, confidence: 0.2, source: 'estimated' as const };
+    const notes = [];
+    for (let i = 0; i < 16; i++) notes.push(n(72 + (i % 5), i * 0.25, 0.24, 0.8), n(48, i * 0.25, 0.24, 0.7, 'L'));
+    const rh = generateEasy(notes, tempo, 4).filter((x) => x.hand === 'R').sort((a, b) => a.start - b.start);
+    expect(rh.length).toBeLessThanOrEqual(9); // one per 8th (0.5 s at 60 BPM), not one per 16th
+    for (let i = 1; i < rh.length; i++) expect(rh[i].start - rh[i - 1].start).toBeGreaterThan(0.3);
+  });
 });
 
 describe('cleanup', () => {

@@ -12,7 +12,7 @@
  * hand (role 'melody').
  */
 import type { ExtractionParams, KeyInfo, Note, TempoInfo, TranscriptionInfo } from '../music/types';
-import { BP_FPS, BP_SAMPLE_RATE, frameToTime } from './constants';
+import { BP_FPS, BP_MIDI_OFFSET, BP_N_PITCHES, BP_SAMPLE_RATE, frameToTime } from './constants';
 import type { NoteExtractionOptions, RawNoteEvent } from './noteExtraction';
 import type { TranscriptionStage, WorkerRequest, WorkerResponse } from './workerProtocol';
 import { analyzeLevel, decodeToRate, mixToMono } from './decode';
@@ -132,6 +132,8 @@ export interface TranscribeOptions {
   separate?: boolean;
   /** Stems that were already separated (processing server); used instead of `separate`. */
   stems?: { vocals: Blob; accomp: Blob };
+  /** An in-page separation result of this same audio (tests, accuracy harness); used instead of both. */
+  separation?: SeparationResult;
 }
 
 export function toWorkerOptions(p: ExtractionParams): NoteExtractionOptions {
@@ -208,18 +210,45 @@ function modelUrl(): string {
   return new URL(`${import.meta.env.BASE_URL}models/basic-pitch/model.json`, location.href).href;
 }
 
+/**
+ * Model evidence beyond the note events that cleanNotes() can use. All optional: without it the
+ * corresponding tests are skipped (older stored songs, unit tests).
+ */
+export interface CleanContext {
+  /** frame posteriors the events were extracted from (nFrames x 88; 8-bit stored or float) */
+  frames?: Uint8Array | Float32Array;
+  nFrames?: number;
+}
+
+/**
+ * Rise of the frame activation of `midi` at `startFrame`: peak over the next 4 frames minus the
+ * minimum over the 3 frames before (≈ 35-45 ms each side). Large for a re-struck note, ~0 for a
+ * model re-detection inside a ringing note (see music/cleanup.ts RestrikeRule).
+ */
+export function frameRise(frames: Uint8Array | Float32Array, nFrames: number, startFrame: number, midi: number): number {
+  const f = midi - BP_MIDI_OFFSET;
+  if (f < 0 || f >= BP_N_PITCHES) return 0;
+  const scale = frames instanceof Uint8Array ? 1 / 255 : 1;
+  let dip = Infinity;
+  for (let t = startFrame - 3; t <= startFrame; t++) dip = Math.min(dip, t >= 0 && t < nFrames ? frames[t * BP_N_PITCHES + f] : 0);
+  let peak = 0;
+  for (let t = startFrame; t <= Math.min(nFrames - 1, startFrame + 4); t++) peak = Math.max(peak, frames[t * BP_N_PITCHES + f]);
+  return Math.max(0, peak - dip) * scale;
+}
+
 /** Turn raw model note events into cleaned, hand-assigned notes. */
-export function postProcess(raw: RawNoteEvent[], rms: Float32Array, params: ExtractionParams, duration: number): Note[] {
-  return assignHands(cleanNotes(raw, rms, params, duration), duration);
+export function postProcess(raw: RawNoteEvent[], rms: Float32Array, params: ExtractionParams, duration: number, ctx: CleanContext = {}): Note[] {
+  return assignHands(cleanNotes(raw, rms, params, duration, ctx), duration);
 }
 
 /** Raw model note events → cleaned notes (velocity, fragment/continuation merge, harmonics), no hands. */
-export function cleanNotes(raw: RawNoteEvent[], rms: Float32Array, params: ExtractionParams, duration: number): Note[] {
+export function cleanNotes(raw: RawNoteEvent[], rms: Float32Array, params: ExtractionParams, duration: number, ctx: CleanContext = {}): Note[] {
   // loudness reference: 95th percentile of the RMS envelope
   const sortedRms = Array.from(rms).filter((v) => v > 1e-5).sort((a, b) => a - b);
   const ref = sortedRms[Math.floor(sortedRms.length * 0.95)] || 1;
   const amplitude = new Map<number, number>();
   const onsetStrength = new Map<number, number>();
+  const rise = ctx.frames && ctx.nFrames ? new Map<number, number>() : undefined;
   let notes: Note[] = raw.map((r) => {
     const start = Math.max(0, frameToTime(r.startFrame) - ONSET_LATENCY);
     const end = Math.max(start + 0.03, frameToTime(r.endFrame) - ONSET_LATENCY);
@@ -232,10 +261,11 @@ export function cleanNotes(raw: RawNoteEvent[], rms: Float32Array, params: Extra
     const id = newNoteId();
     amplitude.set(id, r.amplitude);
     onsetStrength.set(id, r.onset);
+    if (rise) rise.set(id, frameRise(ctx.frames!, ctx.nFrames!, r.startFrame, r.midi));
     return { id, midi: r.midi, start, dur: Math.max(0.03, end - start), vel, hand: 'R' as const };
   });
-  notes = mergeFragments(notes, 0.03, onsetStrength);
-  if (params.continuationOnset) notes = mergeContinuations(notes, onsetStrength, params.continuationOnset);
+  notes = mergeFragments(notes, 0.03, onsetStrength, { rise });
+  if (params.continuationOnset) notes = mergeContinuations(notes, onsetStrength, params.continuationOnset, 0.3, { rise });
   if (params.suppressHarmonics) notes = suppressHarmonics(notes, amplitude);
   notes = removeShortQuiet(notes, Math.min(0.045, params.minNoteMs / 1000), 0.1);
   notes = notes.filter((n) => n.start < duration);
@@ -305,8 +335,8 @@ export async function transcribeAudio(
   if (level.rms < 0.01) warnings.push('The recording is very quiet; quiet notes may be missed.');
 
   // ---- optional source separation
-  let sep: SeparationResult | null = null;
-  if (opts.stems || opts.separate) {
+  let sep: SeparationResult | null = opts.separation ?? null;
+  if (!sep && (opts.stems || opts.separate)) {
     try {
       if (opts.stems) {
         onProgress({ stage: 'separating', progress: null, detail: 'Reading the separated stems' });

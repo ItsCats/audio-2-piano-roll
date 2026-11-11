@@ -11,16 +11,22 @@
  *
  * When the transcription carries a sung melody line (notes with role 'melody', from the
  * separated vocal stem), the arrangements are built around it instead:
- *  EASY   right hand = the melody line itself (one note at a time, quantised, register-folded);
- *  MEDIUM right hand = the melody plus up to two consonant chord tones BELOW it taken from the
- *         accompaniment; left hand as usual from the accompaniment;
- *  HARD   everything.
+ *  EASY   right hand = the melody line itself, simplified to 8th notes (one note per 8th: the most
+ *         salient / longest; long notes held across 8ths, not re-struck);
+ *  MEDIUM right hand = the melody (16th-note grid) plus up to two consonant chord tones BELOW it
+ *         taken from the accompaniment; left hand as usual from the accompaniment;
+ *  HARD   everything, at the sung pitch.
+ * Easy and Medium move the sung line by whole phrases into the right-hand register (median E4–E5,
+ * clear of the left hand: music/melody.ts rightHandShifts). Where nobody sings for two bars or more
+ * (rap / spoken sections are not in the line, see melody.ts speechSections) the right hand plays
+ * the accompaniment's top line instead.
  */
 import type { Arrangement, Difficulty, Note, PedalRange, TempoInfo } from './types';
 import { clusterOnsets } from './hands';
 import { beatPeriodAt, beatToTime, timeToBeat } from './beats';
 import { quantizeNotes } from './quantize';
 import { newNoteId, songDuration, sortNotes } from './cleanup';
+import { rightHandShifts } from './melody';
 
 const CONSONANCE: Record<number, number> = { 3: 0.9, 4: 1, 5: 0.7, 7: 1, 8: 0.8, 9: 0.9, 12: 0.95, 15: 0.8, 16: 0.8 };
 
@@ -45,6 +51,18 @@ function fixSamePitchOverlaps(notes: Note[]): Note[] {
 function quantStrength(tempo: TempoInfo): number {
   // weak tempo estimates should not drag notes onto a wrong grid
   return tempo.confidence > 0.25 ? 1 : tempo.confidence > 0.1 ? 0.6 : 0.3;
+}
+
+/**
+ * Grid refinement for a slow, unreliable tempo estimate: below 84 BPM with confidence < 0.5 the
+ * tracker has almost always locked onto every other beat of a faster song (Steel Ball Run:
+ * 65 BPM at 0.12 for a ~130 BPM song, Kroi "Spin" 73 vs ~145), so Easy's "8ths" would really be
+ * quarter notes. Then the grids are taken twice as fine (Easy 16ths of the estimate = 8ths of the
+ * song). Confident slow tempos are left alone. Only used for songs with a sung line (piano and
+ * instrumental arrangements keep their grids).
+ */
+export function gridFactor(tempo: TempoInfo): 1 | 2 {
+  return tempo.bpm < 84 && tempo.confidence < 0.5 ? 2 : 1;
 }
 
 /** Two bars of 4/4 without singing count as an instrumental stretch. */
@@ -81,6 +99,7 @@ export function generateHard(base: Note[]): Note[] {
 
 export function generateMedium(base: Note[], tempo: TempoInfo): Note[] {
   const melody = base.filter((n) => n.role === 'melody');
+  const fine = melody.length ? gridFactor(tempo) : 1;
   const accomp = melody.length ? base.filter((n) => n.role !== 'melody') : base;
   const clusters = clusterOnsets(accomp, 0.04);
   // with a sung line the right hand follows it; the accompaniment's right hand only fills long
@@ -114,7 +133,7 @@ export function generateMedium(base: Note[], tempo: TempoInfo): Note[] {
       lh.push([bass, ...extra]);
     }
   }
-  const sungGroups = new Set<Note[]>(melody.length ? melodyWithChordTones(melody, accomp, 2) : []);
+  const sungGroups = new Set<Note[]>(melody.length ? placeSungGroups(melodyWithChordTones(melody, accomp, 2), accomp.filter((n) => n.hand === 'L')) : []);
   rh.push(...sungGroups);
   rh.sort((a, b) => a[0].start - b[0].start);
   const thin = (groups: Note[][], divisions: number): Note[] => {
@@ -132,11 +151,11 @@ export function generateMedium(base: Note[], tempo: TempoInfo): Note[] {
     return kept.flat();
   };
   const sungNotes = new Set<Note>([...sungGroups].flat());
-  const rhKept = thin(rh, 4);
+  const rhKept = thin(rh, 4 * fine);
   const keepEnd = rhKept.map((n) => sungNotes.has(n));
-  const notes = [...rhKept, ...thin(lh, 2)].map((n) => ({ ...n, id: newNoteId() }));
+  const notes = [...rhKept, ...thin(lh, 2 * fine)].map((n) => ({ ...n, id: newNoteId() }));
   const q = quantizeNotes(notes, tempo, {
-    subdivision: 4,
+    subdivision: 4 * fine,
     strength: quantStrength(tempo),
     quantizeDurations: false,
     window: 0.45,
@@ -144,6 +163,31 @@ export function generateMedium(base: Note[], tempo: TempoInfo): Note[] {
   // a sung line (and the chord tones struck with it) keeps its note ends
   for (let i = 0; i < keepEnd.length; i++) if (keepEnd[i]) q[i] = { ...q[i], dur: Math.max(0.06, notes[i].start + notes[i].dur - q[i].start) };
   return fixSamePitchOverlaps(q);
+}
+
+/**
+ * Medium: moves each melody group (melody note first, then its chord tones) by its phrase's
+ * right-hand shift (rightHandShifts against the accompaniment's left hand); chord tones that would
+ * then reach down to within 2 semitones of the left hand's top note at that moment are dropped.
+ */
+export function placeSungGroups(groups: Note[][], left: Note[]): Note[][] {
+  const shifts = rightHandShifts(groups.map((g) => g[0]), left);
+  const lh = sortNotes(left);
+  const lhTopAt = (t: number) => {
+    let top = -Infinity;
+    for (const l of lh) {
+      if (l.start > t + 0.03) break;
+      if (l.start + l.dur > t) top = Math.max(top, l.midi);
+    }
+    return top;
+  };
+  return groups.map((g) => {
+    const s = shifts.get(g[0]) ?? 0;
+    const m = { ...g[0], midi: Math.min(108, g[0].midi + s) };
+    if (!s) return [m, ...g.slice(1)];
+    const floor = lhTopAt(m.start) + 2;
+    return [m, ...g.slice(1).map((c) => ({ ...c, midi: c.midi + s })).filter((c) => c.midi > floor && c.midi <= 108)];
+  });
 }
 
 /**
@@ -201,13 +245,54 @@ function median(values: number[]): number {
   return s[Math.floor(s.length / 2)];
 }
 
+/**
+ * Easy right hand from a sung line: one note per 8th-note slot (the most salient / longest; it
+ * covers the notes it replaced, legato), starts and ends on the 8th grid, so long notes are held
+ * across 8ths instead of re-struck. `div` = grid divisions per beat (2, or 4 for a half-time tempo
+ * estimate, see gridFactor). Very short quiet notes (ornaments, scoops) are dropped first.
+ */
+export function easySungLine(sung: Note[], tempo: TempoInfo, div = 2): Note[] {
+  if (!sung.length) return [];
+  const medVel = median(sung.map((n) => n.vel));
+  const cands = sortNotes(sung).filter((n) => {
+    const slotLen = beatPeriodAt(tempo.beats, n.start, tempo.bpm) / div;
+    return !(n.dur < slotLen * 0.4 && n.vel < medVel * 0.85);
+  });
+  const bySlot = new Map<number, Note>();
+  const slotEnd = new Map<number, number>();
+  const score = (x: Note) => x.vel + Math.min(x.dur, 1) * 0.4;
+  for (const n of cands) {
+    const slot = Math.round(timeToBeat(tempo.beats, n.start, tempo.bpm) * div);
+    const prev = bySlot.get(slot);
+    if (!prev || score(n) > score(prev)) bySlot.set(slot, n);
+    slotEnd.set(slot, Math.max(slotEnd.get(slot) ?? 0, n.start + n.dur));
+  }
+  const kept = [...bySlot.entries()]
+    .sort((x, y) => x[1].start - y[1].start)
+    .map(([slot, n]) => ({ ...n, dur: Math.max(n.dur, slotEnd.get(slot)! - n.start), hand: 'R' as const }));
+  const q = quantizeNotes(kept, tempo, { subdivision: div, strength: quantStrength(tempo), quantizeDurations: true, window: 0.5 });
+  // monophonic: a note ends where the next one starts
+  const out: Note[] = [];
+  for (const n of q.sort((x, y) => x.start - y.start)) {
+    const prev = out[out.length - 1];
+    if (prev && n.start - prev.start < 0.02) continue;
+    if (prev) prev.dur = Math.max(0.06, Math.min(prev.dur, n.start - prev.start - 0.01));
+    out.push({ ...n });
+  }
+  return out;
+}
+
 export function generateEasy(base: Note[], tempo: TempoInfo, duration: number): Note[] {
   if (!base.length) return [];
   const sung = base.filter((n) => n.role === 'melody');
+  const div = 2 * (sung.length ? gridFactor(tempo) : 1);
   const accomp = sung.length ? base.filter((n) => n.role !== 'melody') : base;
-  const medVel = median((sung.length ? sung : base).map((n) => n.vel));
-  // 1) melody candidates: the sung line when there is one (plus the accompaniment's top line in
-  //    long instrumental stretches: intro, interludes, solos), else the right-hand skyline
+  const medVel = median(accomp.map((n) => n.vel));
+  // left hand first: the sung line is placed clear above it
+  const lhNotes = easyBassLine(accomp.filter((n) => n.hand === 'L'), tempo, duration);
+
+  // 1) instruments' tune: the right-hand skyline of the accompaniment, in long instrumental
+  //    stretches of a song with singing (intro, interludes, solos, rap), else everywhere
   const gaps = sung.length ? melodyGaps(sung, tempo, duration) : [[-Infinity, Infinity] as [number, number]];
   const skyline: Note[] = [];
   const rhShare = accomp.filter((n) => n.hand === 'R').length / (accomp.length || 1);
@@ -219,31 +304,24 @@ export function generateEasy(base: Note[], tempo: TempoInfo, duration: number): 
     if (!pool.length) continue;
     skyline.push(pool.reduce((a, b) => (b.midi > a.midi ? b : a)));
   }
-  let cands: Note[] = sortNotes([...sung, ...skyline]);
-  // drop ornaments: very short and quieter than typical
-  cands = cands.filter((n) => {
+  let tune = skyline.filter((n) => {
     const eighth = beatPeriodAt(tempo.beats, n.start, tempo.bpm) / 2;
-    return !(n.dur < eighth * 0.4 && n.vel < medVel * 0.85);
+    return !(n.dur < eighth * 0.4 && n.vel < medVel * 0.85); // ornaments: very short and quiet
   });
-  // 2) at most one melody note per 8th-note slot
+  // at most one note per 8th-note slot
   const bySlot = new Map<number, Note>();
-  const slotEnd = new Map<number, number>();
-  for (const n of cands) {
-    const slot = Math.round(timeToBeat(tempo.beats, n.start, tempo.bpm) * 2);
+  for (const n of tune) {
+    const slot = Math.round(timeToBeat(tempo.beats, n.start, tempo.bpm) * div);
     const prev = bySlot.get(slot);
-    const score = (x: Note) => x.vel + Math.min(x.dur, 1) * 0.4 + (x.role === 'melody' ? 0 : x.midi / 300);
+    const score = (x: Note) => x.vel + Math.min(x.dur, 1) * 0.4 + x.midi / 300;
     if (!prev || score(n) > score(prev)) bySlot.set(slot, n);
-    slotEnd.set(slot, Math.max(slotEnd.get(slot) ?? 0, n.start + n.dur));
   }
-  let melody = [...bySlot.entries()]
-    .sort((a, b) => a[1].start - b[1].start)
-    // a sung line is legato: the kept note of a slot covers the notes it replaced
-    .map(([slot, n]) => ({ ...n, dur: n.role === 'melody' ? Math.max(n.dur, slotEnd.get(slot)! - n.start) : n.dur, hand: 'R' as const }));
-  // 3) comfortable register & octave-jump smoothing
-  const med = median(melody.map((n) => n.midi));
+  tune = [...bySlot.values()].sort((a, b) => a.start - b.start).map((n) => ({ ...n, hand: 'R' as const }));
+  // comfortable register & octave-jump smoothing
+  const med = median(tune.map((n) => n.midi));
   const globalShift = med > 84 ? -12 * Math.ceil((med - 79) / 12) : med < 60 ? 12 * Math.ceil((60 - med) / 12) : 0;
   const recent: number[] = [];
-  melody = melody.map((n) => {
+  tune = tune.map((n) => {
     let p = n.midi + globalShift;
     if (recent.length) {
       const ref = median(recent.slice(-6));
@@ -253,37 +331,43 @@ export function generateEasy(base: Note[], tempo: TempoInfo, duration: number): 
     recent.push(p);
     return { ...n, midi: p };
   });
-  // monophonic: each melody note ends when the next begins
-  for (let i = 0; i < melody.length - 1; i++) {
-    const gap = melody[i + 1].start - melody[i].start;
-    melody[i].dur = Math.max(0.08, Math.min(melody[i].dur, gap - 0.01));
+  // monophonic: each note ends when the next begins
+  for (let i = 0; i < tune.length - 1; i++) {
+    const gap = tune[i + 1].start - tune[i].start;
+    tune[i].dur = Math.max(0.08, Math.min(tune[i].dur, gap - 0.01));
   }
+  const qOpts = { subdivision: div, strength: quantStrength(tempo), quantizeDurations: false, window: 0.5 };
+  const tuneQ = quantizeNotes(
+    tune.map((n) => ({ ...n, id: newNoteId(), vel: Math.min(1, 0.45 + n.vel * 0.45) })),
+    tempo,
+    qOpts,
+  );
 
-  // 4) left hand: a sustained bass line following the lowest sounding note
-  const lhNotes = easyBassLine(accomp.filter((n) => n.hand === 'L'), tempo, duration);
-  // keep the left hand below the melody
-  for (const l of lhNotes) {
-    const over = melody.find((m) => m.start <= l.start + 0.05 && m.start + m.dur > l.start && m.midi - l.midi < 4);
-    if (over && l.midi - 12 >= 36) l.midi -= 12;
-  }
-  const rh = melody.map((n) => ({ ...n, id: newNoteId(), vel: Math.min(1, 0.45 + n.vel * 0.45) }));
-  const qOpts = { subdivision: 2, strength: quantStrength(tempo), quantizeDurations: false, window: 0.5 };
-  // A sung line keeps its syncopation: starts snap to 16ths and note ends stay where they were
-  // (the 8th-slot thinning above already keeps it to one note per 8th).
-  const q16 = quantizeNotes(rh, tempo, { ...qOpts, subdivision: 4 });
-  const q8 = quantizeNotes(rh, tempo, qOpts);
-  const qr = rh.map((n, i) => (n.role === 'melody' ? { ...q16[i], dur: Math.max(0.06, n.start + n.dur - q16[i].start) } : q8[i]));
-  const q = [...qr, ...quantizeNotes(lhNotes, tempo, qOpts)];
-  // quantising can pull melody notes together again: re-enforce a single line
-  const qrh = q.filter((n) => n.hand === 'R').sort((a, b) => a.start - b.start || b.midi - a.midi);
+  // 2) the sung line on the 8th grid, moved by whole phrases into the right-hand register
+  const sungLine = easySungLine(sung, tempo, div);
+  const shifts = rightHandShifts(sungLine, lhNotes);
+  const sungRh = sungLine.map((n) => ({
+    ...n,
+    id: newNoteId(),
+    midi: Math.min(108, n.midi + (shifts.get(n) ?? 0)),
+    vel: Math.min(1, 0.45 + n.vel * 0.45),
+  }));
+
+  // 3) one right-hand line (quantising can pull notes together: keep the first per slot)
   const line: Note[] = [];
-  for (const n of qrh) {
+  for (const n of [...sungRh, ...tuneQ].sort((a, b) => a.start - b.start || b.midi - a.midi)) {
     const prev = line[line.length - 1];
-    if (prev && n.start - prev.start < 0.02) continue; // same slot after snapping: keep the first (highest)
+    if (prev && n.start - prev.start < 0.02) continue;
     if (prev) prev.dur = Math.max(0.06, Math.min(prev.dur, n.start - prev.start - 0.01));
     line.push(n);
   }
-  return fixSamePitchOverlaps([...line, ...q.filter((n) => n.hand === 'L')]);
+  // keep the left hand below the melody
+  const melodyAt = [...tune, ...sungRh];
+  for (const l of lhNotes) {
+    const over = melodyAt.find((m) => m.start <= l.start + 0.05 && m.start + m.dur > l.start && m.midi - l.midi < 4);
+    if (over && l.midi - 12 >= 36) l.midi -= 12;
+  }
+  return fixSamePitchOverlaps([...line, ...quantizeNotes(lhNotes, tempo, qOpts)]);
 }
 
 /** Easy left-hand register (pitch classes are kept, octaves folded into it). */

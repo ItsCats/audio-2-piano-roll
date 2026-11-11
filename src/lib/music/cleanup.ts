@@ -8,8 +8,59 @@ export function bumpNoteIds(notes: Note[]): void {
   for (const n of notes) if (n.id >= nextId) nextId = n.id + 1;
 }
 
-/** Merge same-pitch fragments separated by tiny gaps (model activation dips). */
-export function mergeFragments(notes: Note[], maxGap = 0.03, onsetStrength?: Map<number, number>): Note[] {
+/**
+ * Re-strike detection for the same-pitch merges below. The merges fold a note into the previous
+ * note of the same pitch when its model onset is weak, which is right for a ringing string that the
+ * model re-detects, but Basic Pitch's onset posterior for a genuinely re-struck note is often just
+ * as weak, above all in the bass (a re-struck bass string is still ringing, and its attack is
+ * spread over a long low-frequency waveform): the merges folded away 10-20 % of the real repeated
+ * notes in C2-B2. What does separate the two is the FRAME posterior: a re-strike makes the
+ * pitch's frame activation rise again (dip just before the new start, peak just after), a
+ * re-detection of a ringing string does not (MAESTRO, C2-B2: rise median 0.17-0.19 for real
+ * repeated notes vs 0.02-0.06 for the events correctly folded away).
+ *
+ * `rise` maps a note id to that frame-activation rise at its start (see frameRise() in
+ * transcription/pipeline.ts); a note whose rise reaches `minRise(midi)` is never merged. The
+ * threshold ramps from `lowRise` at and below `bottomMidi` to `highRise` at and above `lowMidi`.
+ */
+export interface RestrikeRule {
+  lowMidi: number;
+  bottomMidi: number;
+  lowRise: number;
+  highRise: number;
+  /** the note before must have lasted this long (s): a short fragment followed by a rise is the model's early, unstable start of one note */
+  minPrevDur: number;
+}
+
+export const RESTRIKE: RestrikeRule = { lowMidi: 48, bottomMidi: 36, lowRise: Infinity, highRise: Infinity, minPrevDur: 0 };
+
+/** Frame-posterior rise at which a note of this pitch counts as re-struck. */
+export function minRise(midi: number, rule: RestrikeRule = RESTRIKE): number {
+  if (midi >= rule.lowMidi) return rule.highRise;
+  if (midi <= rule.bottomMidi) return rule.lowRise;
+  if (!Number.isFinite(rule.lowRise) || !Number.isFinite(rule.highRise)) return rule.lowRise;
+  const f = (rule.lowMidi - midi) / Math.max(1, rule.lowMidi - rule.bottomMidi);
+  return rule.highRise + (rule.lowRise - rule.highRise) * f;
+}
+
+export interface MergeOptions {
+  /** frame-posterior rise at each note's start (by note id); without it no rise test is made */
+  rise?: Map<number, number>;
+  rule?: RestrikeRule;
+}
+
+function restruck(n: Note, prev: Note | undefined, opts: MergeOptions | undefined): boolean {
+  const r = opts?.rise?.get(n.id);
+  if (r === undefined) return false;
+  const rule = opts?.rule ?? RESTRIKE;
+  return r >= minRise(n.midi, rule) && (!prev || n.start - prev.start >= rule.minPrevDur);
+}
+
+/**
+ * Merge same-pitch fragments separated by tiny gaps (model activation dips). A fragment with a
+ * strong model onset (> 0.6) or a re-strike rise (MergeOptions) is a new note and is kept apart.
+ */
+export function mergeFragments(notes: Note[], maxGap = 0.03, onsetStrength?: Map<number, number>, opts?: MergeOptions): Note[] {
   const byPitch = new Map<number, Note[]>();
   for (const n of notes) {
     const arr = byPitch.get(n.midi);
@@ -23,7 +74,7 @@ export function mergeFragments(notes: Note[], maxGap = 0.03, onsetStrength?: Map
     for (let i = 1; i < arr.length; i++) {
       const n = arr[i];
       const gap = n.start - (cur.start + cur.dur);
-      const strongOnset = onsetStrength ? (onsetStrength.get(n.id) ?? 1) > 0.6 : false;
+      const strongOnset = (onsetStrength ? (onsetStrength.get(n.id) ?? 1) > 0.6 : false) || restruck(n, cur, opts);
       if (gap < maxGap && !strongOnset) {
         cur.dur = Math.max(cur.dur, n.start + n.dur - cur.start);
         cur.vel = Math.max(cur.vel, n.vel * 0.9);
@@ -45,15 +96,16 @@ export function mergeFragments(notes: Note[], maxGap = 0.03, onsetStrength?: Map
 /**
  * A same-pitch note with a weak model onset that begins while (or just after) an earlier
  * note of that pitch is still ringing is not a new hammer strike — it is the same string
- * resonating (sustain pedal, reverb, beating). Fold it into the earlier note.
+ * resonating (sustain pedal, reverb, beating). Fold it into the earlier note — unless its frame
+ * activation rises again like a re-strike (MergeOptions).
  */
-export function mergeContinuations(notes: Note[], onsetStrength: Map<number, number>, maxOnset: number, maxGap = 0.3): Note[] {
+export function mergeContinuations(notes: Note[], onsetStrength: Map<number, number>, maxOnset: number, maxGap = 0.3, opts?: MergeOptions): Note[] {
   const sorted = [...notes].sort((a, b) => a.start - b.start);
   const lastByPitch = new Map<number, Note>();
   const out: Note[] = [];
   for (const n of sorted) {
     const prev = lastByPitch.get(n.midi);
-    const weak = (onsetStrength.get(n.id) ?? 1) < maxOnset;
+    const weak = (onsetStrength.get(n.id) ?? 1) < maxOnset && !restruck(n, prev, opts);
     if (prev && weak && n.start - (prev.start + prev.dur) < maxGap) {
       prev.dur = Math.max(prev.dur, n.start + n.dur - prev.start);
       continue;
