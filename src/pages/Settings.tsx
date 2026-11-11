@@ -211,13 +211,18 @@ export default function SettingsPage() {
               </Link>
             </p>
           </Section>
-          <Section title="Open-source components">
+          <Section title="Credits & licences">
             <ul className="flex flex-col gap-1 text-[12.5px] text-ink-300">
-              <li>Basic Pitch model — Spotify (Apache-2.0)</li>
-              <li>Salamander Grand Piano V3 — Alexander Holm (CC-BY 3.0)</li>
-              <li>Upright Piano KW — freepats.zenvoid.org (CC0)</li>
-              <li>TensorFlow.js (Apache-2.0) · mediabunny (MPL-2.0) · @tonejs/midi (MIT) · React (MIT)</li>
+              <li>Basic Pitch note-detection model — Spotify (Apache-2.0)</li>
+              <li>SCNet vocals &amp; drums separation model — Tong et al. (MIT)</li>
+              <li>Salamander Grand Piano V3 — Alexander Holm (CC BY 3.0) · Upright Piano KW — FreePats (CC0)</li>
+              <li>TensorFlow.js · ONNX Runtime Web · Mediabunny · @tonejs/midi · React, and more</li>
             </ul>
+            <p className="mt-2 text-[12.5px] leading-relaxed text-ink-300">
+              <Link to="/credits" className="text-accent-400 hover:text-accent-300">
+                All credits, licences and the test data we used →
+              </Link>
+            </p>
           </Section>
         </div>
       </div>

@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { Home, Upload, Piano, Library, Settings as SettingsIcon, Gauge } from 'lucide-react';
+import { Home, Upload, Piano, Library, Settings as SettingsIcon, Gauge, Heart } from 'lucide-react';
 import { cn } from '../ui';
 import { Toaster } from './Toaster';
 import { useStudio } from '../../state/studioStore';
@@ -73,6 +73,14 @@ export function AppShell() {
               }
             >
               <Gauge size={14} /> How accurate is it?
+            </NavLink>
+            <NavLink
+              to="/credits"
+              className={({ isActive }) =>
+                cn('focus-ring mt-0.5 flex items-center gap-2 rounded-lg px-2 py-1.5 text-[12px]', isActive ? 'bg-ink-800 text-ink-50' : 'text-ink-300 hover:text-ink-100')
+              }
+            >
+              <Heart size={14} /> Credits &amp; licences
             </NavLink>
             <p className="mt-2 text-[11px] leading-relaxed text-ink-400">
               Everything stays in your browser. Songs are stored locally on this device.

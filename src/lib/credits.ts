@@ -137,6 +137,7 @@ export const CREDITS: CreditGroup[] = [
       { name: 'yt-dlp', use: 'Fetching audio from YouTube links you have the rights to.', author: 'yt-dlp contributors', license: 'Unlicense', licenseUrl: LIC.unlicense, url: 'https://github.com/yt-dlp/yt-dlp' },
       { name: 'FFmpeg', use: 'Decoding and converting audio.', author: 'FFmpeg developers', license: 'LGPL-2.1+ (GPL for some builds)', licenseUrl: LIC.lgpl, url: 'https://ffmpeg.org' },
       { name: 'FastAPI & Uvicorn', use: 'The web server.', author: 'Sebastián Ramírez; Encode', license: 'MIT; BSD-3-Clause', licenseUrl: LIC.mit, url: 'https://fastapi.tiangolo.com' },
+      { name: 'python-multipart', use: 'Receiving uploaded audio files.', author: 'Andrew Dunham, Marcelo Trylesinski and contributors', license: 'Apache-2.0', licenseUrl: LIC.apache, url: 'https://github.com/Kludex/python-multipart' },
       { name: 'ONNX Runtime & NumPy', use: 'Running SCNet on the server.', author: 'Microsoft; NumPy developers', license: 'MIT; BSD-3-Clause', licenseUrl: LIC.bsd3, url: 'https://onnxruntime.ai' },
     ],
   },
@@ -171,8 +172,8 @@ export const CREDITS: CreditGroup[] = [
         license: 'MIT (code); weights for research use only',
         url: 'https://github.com/facebookresearch/demucs',
       },
-      { name: 'CREPE / torchcrepe (full model)', use: 'Pitch tracking of the singer, to check the melody.', author: 'Jong Wook Kim et al.; Max Morrison', license: 'MIT', licenseUrl: LIC.mit, url: 'https://github.com/maxrmorrison/torchcrepe' },
-      { name: 'mir_eval & librosa', use: 'Standard accuracy metrics and audio analysis.', author: 'Colin Raffel et al.; librosa developers', license: 'MIT; ISC', licenseUrl: LIC.mit, url: 'https://github.com/mir-evaluation/mir_eval' },
+      { name: 'CREPE / torchcrepe', use: 'Pitch tracking of the singer and the bass on the reference tracks, to check the melody and the bass line.', author: 'Jong Wook Kim et al.; Max Morrison', license: 'MIT', licenseUrl: LIC.mit, url: 'https://github.com/maxrmorrison/torchcrepe' },
+      { name: 'mir_eval & librosa', use: 'Standard accuracy metrics and audio analysis (including the pYIN pitch tracker used as an independent second check).', author: 'Colin Raffel et al.; librosa developers', license: 'MIT; ISC', licenseUrl: LIC.mit, url: 'https://github.com/mir-evaluation/mir_eval' },
     ],
   },
 ];
