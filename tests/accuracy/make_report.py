@@ -60,7 +60,7 @@ def main() -> None:
             o50, o100, oo = n.get("onset50", {}), n.get("onset100", {}), n.get("onsetOffset50", {})
             ceil = s.get("referenceChecks", {}).get("ptiVsRef", {}).get("onset50", {}).get("f1")
             rows.append([
-                s["song"], pr + (" *" if pr == s["suggestedPreset"] else ""), s.get("noteRef", {}).get("kind", "–"),
+                s["song"], pr + (" *" if pr == s["suggestedPreset"] else ""), (lambda k: k + " (circular: verified notes carry PTI timing, unverified ones are mostly misaligned; read vs PTI)" if k.startswith("score-") else k)(s.get("noteRef", {}).get("kind", "–")),
                 o50.get("f1"), f"{f(o50.get('p'))}/{f(o50.get('r'))}" if o50 else "–", o100.get("f1"), oo.get("f1"),
                 r.get("vsPTI", {}).get("onset50", {}).get("f1"), ceil,
                 (n.get("handAgreement") or {}).get("agreement"), r["counts"]["base"], n.get("onset50", {}).get("nRef"),
@@ -100,9 +100,11 @@ def main() -> None:
             vp = r["vocalPresentInBase"]
             iv = r["melodyIntervalsEasy"]
             top = ", ".join(f"{k} {v:.0%}" for k, v in iv.items() if not k.startswith("_"))
+            ceil = s.get("referenceChecks", {}).get("melodyCeiling_refNotes", {})
             rows.append([
                 s["song"], pr + (" *" if pr == s["suggestedPreset"] else ""),
                 f"{f(m['easy']['rawPitch'])} / {f(m['easy']['rawChroma'])} / {f(m['easy']['overall'])}",
+                f"{f(ceil.get('rawPitch'))} / {f(ceil.get('overall'))}",
                 f"{f(m['medium']['rawPitch'])} / {f(m['medium']['rawChroma'])}",
                 f"{f(m['hard']['rawPitch'])} / {f(m['hard']['rawChroma'])}",
                 f"{f(m['base_topAnyHand']['rawChroma'])}",
@@ -111,7 +113,8 @@ def main() -> None:
             ])
     if rows:
         md.append("## Vocal melody (songs with a singer)\n\nReference = Demucs `htdemucs_6s` vocal stem → torchcrepe f0 (proxy, see caveats). Transcription line = highest sounding RIGHT-HAND note per 10 ms frame. RPA = raw pitch accuracy, RCA = raw chroma accuracy (octave ignored), OA = overall accuracy (includes voicing). `vocal in base` = upper bound for any line-picking rule: share of sung frames where ANY transcribed note has the sung pitch (exact / pitch class).\n")
-        md.append(table(["song", "preset", "Easy RPA/RCA/OA", "Medium RPA/RCA", "Hard RPA/RCA", "base top-any-hand RCA", "vocal in base exact/chroma", "Easy voicing recall", "Easy RH busy when vocal silent", "Easy RH vs vocal (frames voiced in both)"], rows) + "\n")
+        md.append("`ceiling RPA/OA` = the vocal reference's own note segmentation scored as if it were the Easy right hand: the best any note-based melody can reach against a continuous f0 (vibrato, portamento and short unstable frames cannot be matched). Read Easy RPA against this, not against 1.0.\n")
+        md.append(table(["song", "preset", "Easy RPA/RCA/OA", "ceiling RPA/OA", "Medium RPA/RCA", "Hard RPA/RCA", "base top-any-hand RCA", "vocal in base exact/chroma", "Easy voicing recall", "Easy RH busy when vocal silent", "Easy RH vs vocal (frames voiced in both)"], rows) + "\n")
     rows = []
     for s in songs:
         for pr, r in s["presets"].items():
@@ -120,10 +123,11 @@ def main() -> None:
             b = r["bass"]
             rows.append([s["song"], pr + (" *" if pr == s["suggestedPreset"] else ""), f"{f(b['easy']['rawPitch'])} / {f(b['easy']['rawChroma'])}",
                          f"{f(b['medium']['rawPitch'])} / {f(b['medium']['rawChroma'])}", f"{f(b['hard']['rawPitch'])} / {f(b['hard']['rawChroma'])}",
-                         f"{f(b['base_bottomAnyHand']['rawChroma'])}"])
+                         f"{f(b['base_bottomAnyHand']['rawChroma'])}",
+                         f(s.get("referenceChecks", {}).get("bassCeiling_refNotes", {}).get("rawChroma"))])
     if rows:
-        md.append("## Bass line (left hand) vs Demucs bass stem\n\nLowest sounding LEFT-HAND note per frame vs torchcrepe f0 of the bass stem (RPA / RCA on bass-voiced frames).\n")
-        md.append(table(["song", "preset", "Easy LH", "Medium LH", "Hard LH", "base bottom-any-hand RCA"], rows) + "\n")
+        md.append("## Bass line (left hand) vs Demucs bass stem\n\nLowest sounding LEFT-HAND note per frame vs torchcrepe f0 of the bass stem (RPA / RCA on bass-voiced frames). `ceiling RCA` = the bass reference's own note segmentation scored the same way.\n")
+        md.append(table(["song", "preset", "Easy LH", "Medium LH", "Hard LH", "base bottom-any-hand RCA", "ceiling RCA"], rows) + "\n")
     rows = []
     for s in songs:
         for pr, r in s["presets"].items():

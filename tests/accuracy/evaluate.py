@@ -130,6 +130,14 @@ def eval_song(sid: str, audio: str, cfg: dict, work: str, trans_dir: str, log) -
         proxies["onsetF_pti"] = onset_f(aud_on, note_onset_times(pti))["f"]
         if ref is not None:
             proxies["ptiVsRef"] = note_suite(ref, pti)
+    # Ceilings for the frame-wise line metrics: the reference's OWN note segmentation (vocal_ref.py
+    # .notes.json) rendered as a line and scored like a transcription. A note-based melody can never
+    # follow vibrato / portamento / short unstable frames, so this (not 1.0) is the best reachable value.
+    for key, refpair, stem, mode in (("melodyCeiling_refNotes", vocal, "vocals", "top"), ("bassCeiling_refNotes", bass, "bass", "bottom")):
+        np_ = os.path.join(work, "refs", "vocal", f"{sid}.{stem}.notes.json")
+        if refpair is not None and os.path.exists(np_):
+            rn = load_notes(np_)[0]
+            proxies[key] = melody_metrics(refpair[0], refpair[1], line_f0(rn, refpair[0], None, mode=mode))
     res["referenceChecks"] = proxies
     # ---- each preset
     for preset in cfg["presets"]:
