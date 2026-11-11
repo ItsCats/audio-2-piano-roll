@@ -10,9 +10,10 @@ import { formatLabel, isBlack, pitchClass, prefersFlats } from '../music/theory'
 import { computeLayout, rangeFor, type KeyboardLayout } from './layout';
 import { getBackgroundPreset } from './backgrounds';
 import { PITCH_COLORS, type VisualSettings } from './settings';
-
-type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
-type AnyCanvas = HTMLCanvasElement | OffscreenCanvas;
+import { BLACK_RGB, WHITE, hash, hexToRgb, makeCanvas, mix, rgba, roundRect, type AnyCanvas, type Ctx2D, type RGB } from './color';
+import { getPatternTile, paintNoteDecal } from './decals';
+import { DUST_LOOKBACK, drawBursts, drawDust, drawKeyLight, type FxNote } from './effects';
+import { drawRealisticKeyboard } from './keyboardRealistic';
 
 export interface EditOverlay {
   selected: Set<number>;
@@ -37,49 +38,6 @@ export interface FrameOptions {
   pedalOverride?: boolean;
 }
 
-interface RGB {
-  r: number;
-  g: number;
-  b: number;
-}
-
-function hexToRgb(hex: string): RGB {
-  let h = hex.replace('#', '');
-  if (h.length === 3) h = h.split('').map((c) => c + c).join('');
-  const n = parseInt(h.slice(0, 6), 16);
-  if (Number.isNaN(n)) return { r: 128, g: 128, b: 128 };
-  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
-}
-const rgba = (c: RGB, a: number) => `rgba(${c.r},${c.g},${c.b},${a})`;
-const mix = (a: RGB, b: RGB, t: number): RGB => ({
-  r: Math.round(a.r + (b.r - a.r) * t),
-  g: Math.round(a.g + (b.g - a.g) * t),
-  b: Math.round(a.b + (b.b - a.b) * t),
-});
-const WHITE: RGB = { r: 255, g: 255, b: 255 };
-const BLACK_RGB: RGB = { r: 0, g: 0, b: 0 };
-
-function hash(a: number, b: number): number {
-  let h = (a * 374761393 + b * 668265263) | 0;
-  h = Math.imul(h ^ (h >>> 13), 1274126177);
-  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
-}
-
-function roundRect(ctx: Ctx2D, x: number, y: number, w: number, h: number, r: number) {
-  const rr = Math.max(0, Math.min(r, w / 2, h / 2));
-  ctx.beginPath();
-  if ('roundRect' in ctx && typeof ctx.roundRect === 'function') {
-    ctx.roundRect(x, y, w, h, rr);
-  } else {
-    (ctx as CanvasRenderingContext2D).moveTo(x + rr, y);
-    ctx.arcTo(x + w, y, x + w, y + h, rr);
-    ctx.arcTo(x + w, y + h, x, y + h, rr);
-    ctx.arcTo(x, y + h, x, y, rr);
-    ctx.arcTo(x, y, x + w, y, rr);
-    ctx.closePath();
-  }
-}
-
 export class PianoRollRenderer {
   readonly canvas: AnyCanvas;
   private ctx: Ctx2D;
@@ -95,6 +53,8 @@ export class PianoRollRenderer {
   private bgMediaKind: 'image' | 'video' | null = null;
   private bgCache: AnyCanvas | null = null;
   private bgCacheKey = '';
+  private decalImage: CanvasImageSource | null = null;
+  private decalImageSize = { w: 1, h: 1 };
   private flats = false;
   private supportsFilter: boolean;
 
@@ -146,6 +106,22 @@ export class PianoRollRenderer {
     this.bgMedia = src;
     this.bgMediaKind = kind;
     this.bgCacheKey = '';
+  }
+
+  /** User-uploaded decal image (for decal.source === 'image'). */
+  setDecalImage(img: CanvasImageSource | null, width = 1, height = 1): void {
+    this.decalImage = img;
+    this.decalImageSize = { w: Math.max(1, width), h: Math.max(1, height) };
+  }
+
+  private resolveDecal(): { img: CanvasImageSource; w: number; h: number } | null {
+    const d = this.s.decal;
+    if (d.source === 'pattern') {
+      const tile = getPatternTile(d.patternId);
+      return tile ? { img: tile, w: tile.width, h: tile.height } : null;
+    }
+    if (d.source === 'image' && this.decalImage) return { img: this.decalImage, ...this.decalImageSize };
+    return null;
   }
 
   private relayout() {
@@ -218,7 +194,7 @@ export class PianoRollRenderer {
     const isVideo = b.kind === 'video' && this.bgMediaKind === 'video' && this.bgMedia;
     if (!isVideo) {
       if (key !== this.bgCacheKey || !this.bgCache) {
-        this.bgCache = this.makeCanvas(this.w, this.h);
+        this.bgCache = makeCanvas(this.w, this.h);
         const c = this.bgCache.getContext('2d') as Ctx2D;
         this.paintBackground(c);
         this.bgCacheKey = key;
@@ -229,13 +205,6 @@ export class PianoRollRenderer {
     this.paintBackground(ctx);
   }
 
-  private makeCanvas(w: number, h: number): AnyCanvas {
-    if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(w, h);
-    const c = document.createElement('canvas');
-    c.width = w;
-    c.height = h;
-    return c;
-  }
 
   private paintBackground(c: Ctx2D) {
     const b = this.s.background;
@@ -389,16 +358,25 @@ export class PianoRollRenderer {
     const visible: Note[] = [];
     let lo = 0;
     let hi = this.notes.length;
-    const startFrom = now - this.maxDur - 0.1;
+    const fx = s.effects;
+    const lookback = fx.dust ? DUST_LOOKBACK : 0;
+    const startFrom = now - this.maxDur - lookback - 0.1;
     while (lo < hi) {
       const mid = (lo + hi) >> 1;
       if (this.notes[mid].start < startFrom) lo = mid + 1;
       else hi = mid;
     }
     const active = new Map<number, Note>();
+    const fxNotes: FxNote[] = [];
     for (let i = lo; i < this.notes.length; i++) {
       const n = this.notes[i];
       if (n.start > t1) break;
+      if (n.start <= now && n.start + n.dur > now - lookback && !opts.mutedHands?.[n.hand]) {
+        const k = L.keys[n.midi];
+        if (k) {
+          fxNotes.push({ id: n.id, midi: n.midi, x: k.x + k.w / 2, w: k.w, black: k.black, color: this.noteColor(n), start: n.start, end: n.start + n.dur, vel: n.vel });
+        }
+      }
       if (n.start + n.dur < t0) continue;
       visible.push(n);
       if (n.start <= now && n.start + n.dur > now) {
@@ -432,6 +410,7 @@ export class PianoRollRenderer {
     const showLabels = s.labels.style !== 'none';
     const flats = s.labels.accidentals === 'flats' || (s.labels.accidentals === 'auto' && this.flats);
     ctx.textAlign = 'center';
+    const decal = this.resolveDecal();
     for (const n of order) {
       const r = this.noteRect(n, now);
       if (!r) continue;
@@ -466,6 +445,29 @@ export class PianoRollRenderer {
       ctx.shadowColor = 'transparent';
       ctx.shadowBlur = 0;
       ctx.shadowOffsetY = 0;
+      if (decal) {
+        paintNoteDecal(ctx, r, radius, {
+          image: decal.img,
+          imageWidth: decal.w,
+          imageHeight: decal.h,
+          settings: s.decal,
+          color: c,
+          noteId: n.id,
+          anchorY: r.y + r.h,
+          scale: sc,
+          active: isActive,
+        });
+        roundRect(ctx, r.x, r.y, r.w, r.h, radius);
+      }
+      if (fx.outlineGlow > 0 && !muted) {
+        ctx.save();
+        ctx.shadowColor = `rgba(255,255,255,${0.55 + 0.4 * fx.outlineGlow})`;
+        ctx.shadowBlur = (6 + 14 * fx.outlineGlow) * sc * (isActive ? 1.6 : 1);
+        ctx.lineWidth = Math.max(1, (1 + 1.5 * fx.outlineGlow) * sc);
+        ctx.strokeStyle = `rgba(255,255,255,${0.5 + 0.45 * fx.outlineGlow})`;
+        ctx.stroke();
+        ctx.restore();
+      }
       if (s.borderWidth > 0) {
         ctx.lineWidth = s.borderWidth * sc;
         ctx.strokeStyle = rgba(hexToRgb(s.borderColor), isActive ? 0.55 : 0.22);
@@ -565,7 +567,30 @@ export class PianoRollRenderer {
     }
 
     // keyboard
-    if (kbH > 0) this.drawKeyboard(ctx, active, opts);
+    if (kbH > 0) {
+      if (s.keyboardStyle === 'realistic') {
+        drawRealisticKeyboard(ctx, L, this.keyColorFn(active, opts), {
+          top: hitY,
+          height: kbH,
+          width: w,
+          scale: sc,
+          white: hexToRgb(s.whiteKeyColor),
+          black: hexToRgb(s.blackKeyColor),
+          border: s.keyBorderColor,
+          showOctaveLabels: s.labels.showOnKeys,
+          glow: s.glow,
+          hitLine: s.hitLine,
+        });
+      } else {
+        this.drawKeyboard(ctx, active, opts);
+      }
+    }
+
+    // hit & ambience effects (pure functions of time)
+    const geom = { width: w, height: this.h, hitY, kbH, scale: sc };
+    if (fx.keyLight && kbH > 0) drawKeyLight(ctx, fxNotes, now, geom, fx);
+    if (fx.bursts) drawBursts(ctx, fxNotes, now, geom, fx);
+    if (fx.dust) drawDust(ctx, fxNotes, now, geom, fx);
 
     // pedal indicator
     const pedalDown = opts.pedalOverride ?? this.pedal.some((p) => p.start <= now && p.end > now);
@@ -595,6 +620,21 @@ export class PianoRollRenderer {
     ctx.restore();
   }
 
+  /** Highlight colour of each key (practice marks > live input > sounding note), or null. */
+  private keyColorFn(active: Map<number, Note>, opts: FrameOptions): (m: number) => RGB | null {
+    const s = this.s;
+    return (m: number) => {
+      const mark = opts.keyMarks?.get(m);
+      if (mark === 'correct') return { r: 52, g: 211, b: 153 };
+      if (mark === 'wrong') return { r: 248, g: 82, b: 82 };
+      const live = opts.liveKeys?.get(m);
+      if (live) return hexToRgb(live);
+      const n = active.get(m);
+      if (!n || opts.mutedHands?.[n.hand]) return null;
+      return s.keyHighlight === 'custom' ? hexToRgb(s.keyHighlightColor) : this.noteColor(n);
+    };
+  }
+
   private drawKeyboard(ctx: Ctx2D, active: Map<number, Note>, opts: FrameOptions) {
     const s = this.s;
     const L = this.layout;
@@ -605,16 +645,7 @@ export class PianoRollRenderer {
     const black = hexToRgb(s.blackKeyColor);
     const border = s.keyBorderColor;
     const blackH = kbH * 0.63;
-    const keyColor = (m: number): RGB | null => {
-      const mark = opts.keyMarks?.get(m);
-      if (mark === 'correct') return { r: 52, g: 211, b: 153 };
-      if (mark === 'wrong') return { r: 248, g: 82, b: 82 };
-      const live = opts.liveKeys?.get(m);
-      if (live) return hexToRgb(live);
-      const n = active.get(m);
-      if (!n || opts.mutedHands?.[n.hand]) return null;
-      return s.keyHighlight === 'custom' ? hexToRgb(s.keyHighlightColor) : this.noteColor(n);
-    };
+    const keyColor = this.keyColorFn(active, opts);
 
     // felt strip + hit line
     const felt = Math.max(2, 5 * sc);

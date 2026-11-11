@@ -36,6 +36,8 @@ interface SettingsState {
   replaceVisual: (v: VisualSettings) => void;
   setLabels: (patch: Partial<VisualSettings['labels']>) => void;
   setBackground: (patch: Partial<VisualSettings['background']>) => void;
+  setDecal: (patch: Partial<VisualSettings['decal']>) => void;
+  setEffects: (patch: Partial<VisualSettings['effects']>) => void;
   setAudio: (patch: Partial<AudioSettings>) => void;
   setPractice: (patch: Partial<PracticeSettings>) => void;
   set: (patch: Partial<Omit<SettingsState, 'set'>>) => void;
@@ -61,6 +63,8 @@ export const useSettings = create<SettingsState>()(
       replaceVisual: (v) => set({ visual: v }),
       setLabels: (patch) => set((s) => ({ visual: { ...s.visual, labels: { ...s.visual.labels, ...patch } } })),
       setBackground: (patch) => set((s) => ({ visual: { ...s.visual, background: { ...s.visual.background, ...patch } } })),
+      setDecal: (patch) => set((s) => ({ visual: { ...s.visual, decal: { ...s.visual.decal, ...patch } } })),
+      setEffects: (patch) => set((s) => ({ visual: { ...s.visual, effects: { ...s.visual.effects, ...patch } } })),
       setAudio: (patch) => set((s) => ({ audio: { ...s.audio, ...patch } })),
       setPractice: (patch) => set((s) => ({ practice: { ...s.practice, ...patch } })),
       set: (patch) => set(patch),
@@ -81,6 +85,8 @@ export const useSettings = create<SettingsState>()(
             ...(p.visual ?? {}),
             labels: { ...current.visual.labels, ...(p.visual?.labels ?? {}) },
             background: { ...current.visual.background, ...(p.visual?.background ?? {}) },
+            decal: { ...current.visual.decal, ...(p.visual?.decal ?? {}) },
+            effects: { ...current.visual.effects, ...(p.visual?.effects ?? {}) },
           },
           audio: { ...current.audio, ...(p.audio ?? {}) },
           practice: { ...current.practice, ...(p.practice ?? {}) },

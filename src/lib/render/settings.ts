@@ -36,6 +36,41 @@ export interface BackgroundSettings {
   posY: number; // 0..1
 }
 
+export type DecalSource = 'none' | 'pattern' | 'image';
+
+/** An image or pattern painted inside every note (like a texture/decal). */
+export interface DecalSettings {
+  source: DecalSource;
+  /** id from DECAL_PATTERNS (src/lib/render/decals.ts) when source = 'pattern' */
+  patternId: string;
+  /** IndexedDB media id of a user-uploaded image when source = 'image' */
+  mediaId: string | null;
+  /** size of the decal relative to its natural tile size (0.25..3) */
+  scale: number;
+  /** 0..1 — how strongly the decal shows over the note colour */
+  opacity: number;
+  /** 0..1 — how much the note's colour (hand / pitch / single) tints the decal */
+  tint: number;
+  /** 'note': each note carries its own crop of the decal and it moves with the note.
+   *  'screen': the decal is fixed to the screen and notes act as windows onto it. */
+  anchor: 'note' | 'screen';
+}
+
+/** Hit and ambience effects. Every effect has an on/off switch and an intensity. */
+export interface EffectSettings {
+  /** bright starburst flare where a note meets the keyboard */
+  bursts: boolean;
+  burstIntensity: number; // 0..1
+  /** glittering particles that float up and drift sideways after notes play */
+  dust: boolean;
+  dustAmount: number; // 0..1
+  /** coloured light spilling onto the keys being played */
+  keyLight: boolean;
+  keyLightIntensity: number; // 0..1
+  /** soft white halo around every note's outline */
+  outlineGlow: number; // 0..1 (0 = off)
+}
+
 export interface VisualSettings {
   rightColor: string;
   leftColor: string;
@@ -69,6 +104,10 @@ export interface VisualSettings {
   hitLine: boolean;
   labels: LabelSettings;
   background: BackgroundSettings;
+  decal: DecalSettings;
+  effects: EffectSettings;
+  /** 'flat' = clean drawn keys, 'realistic' = photo-like shading, gloss and reflections */
+  keyboardStyle: 'flat' | 'realistic';
 }
 
 export const KEYBOARD_THEMES = {
@@ -120,6 +159,25 @@ export const DEFAULT_VISUAL: VisualSettings = {
     bold: true,
     custom: ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'],
   },
+  decal: {
+    source: 'none',
+    patternId: 'meadow',
+    mediaId: null,
+    scale: 1,
+    opacity: 1,
+    tint: 0.15,
+    anchor: 'note',
+  },
+  effects: {
+    bursts: false,
+    burstIntensity: 0.7,
+    dust: false,
+    dustAmount: 0.6,
+    keyLight: false,
+    keyLightIntensity: 0.7,
+    outlineGlow: 0,
+  },
+  keyboardStyle: 'flat',
   background: {
     kind: 'preset',
     presetId: 'midnight',
@@ -139,7 +197,11 @@ export const DEFAULT_VISUAL: VisualSettings = {
 };
 
 /** Visual themes: one-click looks that set several options at once. */
-export type ThemePatch = Omit<Partial<VisualSettings>, 'background'> & { background?: Partial<BackgroundSettings> };
+export type ThemePatch = Omit<Partial<VisualSettings>, 'background' | 'decal' | 'effects'> & {
+  background?: Partial<BackgroundSettings>;
+  decal?: Partial<DecalSettings>;
+  effects?: Partial<EffectSettings>;
+};
 
 export const VISUAL_THEMES: { id: string; name: string; patch: ThemePatch }[] = [
   { id: 'studio', name: 'Studio Blue', patch: { rightColor: '#4f9dff', leftColor: '#f5a524', colorMode: 'hand', glow: 0.55, keyboardTheme: 'classic', background: { kind: 'preset', presetId: 'midnight' } } },
@@ -157,8 +219,16 @@ export const PITCH_COLORS = [
 export function applyTheme(v: VisualSettings, themeId: string): VisualSettings {
   const theme = VISUAL_THEMES.find((t) => t.id === themeId);
   if (!theme) return v;
-  const { background, ...rest } = theme.patch;
-  const next: VisualSettings = { ...v, ...rest, background: { ...v.background, ...(background ?? {}) } };
+  const { background, decal, effects, ...rest } = theme.patch;
+  const next: VisualSettings = {
+    ...v,
+    ...rest,
+    background: { ...v.background, ...(background ?? {}) },
+    // themes without a decal/effects patch switch those features off so looks don't leak
+    decal: { ...v.decal, ...(decal ?? { source: 'none' as const }) },
+    effects: effects ? { ...v.effects, ...effects } : { ...DEFAULT_VISUAL.effects },
+    keyboardStyle: rest.keyboardStyle ?? 'flat',
+  };
   if (rest.keyboardTheme && rest.keyboardTheme !== 'custom') {
     const k = KEYBOARD_THEMES[rest.keyboardTheme];
     next.whiteKeyColor = k.white;
