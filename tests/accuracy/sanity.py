@@ -3,6 +3,8 @@ Sanity checks for every metric, on cases with a known answer.
 
     server/.venv/bin/python tests/accuracy/sanity.py REF_NOTES.(json|mid|midi) AUDIO [VOCAL_F0.npz]
 
+    ... [--no-proxies]   (skip chroma/onset checks; for single-line references)
+
 Prints one line per check (expected vs got) and exits non-zero if any check fails.
 """
 from __future__ import annotations
@@ -28,8 +30,12 @@ def check(name, got, lo, hi):
 
 
 def main() -> None:
-    ref_path, audio = sys.argv[1], sys.argv[2]
-    vocal = sys.argv[3] if len(sys.argv) > 3 else None
+    argv = [x for x in sys.argv[1:] if x != "--no-proxies"]
+    # --no-proxies: skip the recording-vs-reference content checks (chroma / onset). Use it when the
+    # reference is a single line (e.g. a vocal melody), which is not expected to explain a full mix.
+    proxies = "--no-proxies" not in sys.argv
+    ref_path, audio = argv[0], argv[1]
+    vocal = argv[2] if len(argv) > 2 else None
     ref = midi_notes(ref_path, True) if ref_path.endswith((".mid", ".midi")) else load_notes(ref_path)[0]
     ref = ref.sorted()
     # --- note level
@@ -69,6 +75,8 @@ def main() -> None:
         check("vocal ref vs itself RPA", melody_metrics(vt, vf, vf)["rawPitch"], 1, 1)
         check("vocal ref vs itself shifted 0.5 s RPA", melody_metrics(vt, vf, np.roll(vf, 50))["rawPitch"], 0, 0.5)
     # --- content proxies on the real recording
+    if not proxies:
+        return finish()
     y = load_audio(audio)
     dur = len(y) / 22050
     ac, loud = audio_chroma(y)
@@ -86,6 +94,10 @@ def main() -> None:
     check("onset F random onsets (floor) < 0.5 * ref-notes onset F", onset_f(on, rand_on)["f"], 0, 0.5 * onset_f(on, note_onset_times(ref))["f"])
     of = onset_f(on, note_onset_times(ref))["f"]
     check("onset F ref notes vs audio onsets (plausible)", of, 0.3, 1)
+    finish()
+
+
+def finish() -> None:
     print(json.dumps({"passed": sum(r["ok"] for r in results), "total": len(results)}))
     out = os.environ.get("SANITY_OUT")
     if out:
