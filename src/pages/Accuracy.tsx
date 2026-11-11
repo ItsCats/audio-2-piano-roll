@@ -215,7 +215,7 @@ export default function AccuracyPage() {
         <section>
           <SectionTitle
             title="Other piano recordings (no answer key)"
-            sub="For recordings without a key-by-key record we compare with a second, piano-specialist AI model that is too heavy to run in a browser. On the answer-key pieces above it scores 94–99 %, so high agreement is a good sign — but it is a second opinion, not the truth (it is weaker on pianos, rooms and styles unlike its training data, such as the jazz cover)."
+            sub="For recordings without a key-by-key record we compare with a second, piano-specialist AI model that is too heavy to run in a browser. On the three answer-key pieces above it was checked on (Liszt, Mozart and Chopin’s Nocturne Op. 15) it scores 94–99 %, so high agreement is a good sign — but it is a second opinion, not the truth (it is weaker on pianos, rooms and styles unlike its training data, such as the jazz cover)."
           />
           <div className="flex flex-col gap-2 sm:hidden">
             {OTHER_PIANO_ROWS.map((r) => (
@@ -356,7 +356,7 @@ export default function AccuracyPage() {
         <section>
           <SectionTitle
             title="Timing and speed"
-            sub="Measured in headless Chromium on a shared 4-core virtual machine without a GPU (WebAssembly), so a typical laptop is similar or faster. Everything runs on your device."
+            sub="Measured in headless Chromium on a shared 4-core virtual machine without a GPU (WebAssembly), so a typical laptop is similar or faster. Everything runs on your device; phones detect notes on the processor (WebAssembly) and leave separation off by default."
           />
           <BeforeAfterTable rows={SPEED_ROWS} cols={['', 'Without separation', 'With separation']} />
         </section>

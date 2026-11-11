@@ -26,7 +26,7 @@ With **Separate vocals & drums** (on by default for the "Full song" preset where
 * The **accompaniment** (bass + other: no vocals, no drums) is transcribed with the chosen preset instead of the full mix.
 * The **drums** stem is reduced to an onset envelope stored with the posteriors (a drum-hit false-note filter, `music/cleanup.ts DRUM_HIT_RULE`, exists but is off: it lowered bass accuracy).
 * If the **vocal** stem really contains singing, it gets its own Basic Pitch pass (`VOCAL_EXTRACTION`) and is reduced to one melody line (section 5).
-* Speed: the app routes are cross-origin isolated (COOP `same-origin` + COEP `credentialless`, `netlify.toml` / `vite.config.ts`; the YouTube import route is not, so the embedded player keeps working), which gives the separation worker WASM threads. Measured on a shared 4-core VM: separation ≈ 47 s per minute of audio with 3 threads, ≈ 2 min per minute single-threaded; whole import ≈ 1 min per minute. Peak tab memory 1.9–2.2 GB, so separation is off by default on phones and skipped for recordings longer than 10 minutes (20 minutes on devices reporting 8 GB).
+* Speed: the app routes are cross-origin isolated (COOP `same-origin` + COEP `credentialless`, `netlify.toml` / `vite.config.ts`; the YouTube import route is not, so the embedded player keeps working), which gives the separation worker WASM threads. Measured on a shared 4-core VM: separation ≈ 48 s per minute of audio with 3 threads, ≈ 2 min per minute single-threaded (pages that are not cross-origin isolated, e.g. in Safari, which ignores COEP `credentialless`); whole import ≈ 1 min per minute. Peak tab memory 1.9–2.2 GB, so separation is off by default on phones and skipped for recordings longer than 10 minutes (20 minutes on devices reporting 8 GB).
 
 ## 3. Neural pitch estimation (Basic Pitch)
 
@@ -35,6 +35,8 @@ We run Spotify's Basic Pitch model (`public/models/basic-pitch`, Apache-2.0) wit
 1. **drifts in time** — its frame→time conversion subtracts 12.6 ms per 172 frames, but consecutive 2-second windows actually overlap by 188 samples (8.5 ms) per 142 kept frames. Over a 3-minute song the error grows to ~0.2 s. Our `frameToTime` is exact (`(k·36164 + i·256) / 22050` for kept frame *i* of window *k*); on MAESTRO the median onset error of correctly found notes is 4.7 ms with no drift;
 2. **leaks tensors** every window (memory grows with song length); we dispose everything per batch;
 3. runs one window at a time; we batch windows on WebGL.
+
+Phones and tablets run the model on WASM (the processor) instead of WebGL, whose texture pool outgrows a phone tab's memory (`transcription/backendChoice.ts`).
 
 Progress reported to the UI is the real fraction of windows processed. Without separation a song takes about 7 s per minute of audio (WASM, no GPU).
 
@@ -91,5 +93,7 @@ Measured 2026-11-11 with the real browser pipeline on full recordings (`tests/ac
 | Same songs: Easy left hand on the bass note | 71 % (was 52 %) |
 | Instrumental band track: Easy right hand vs an estimated lead line | 40 % (was 34 %) |
 | Durations (onset + offset F1, MAESTRO) | ≈ 0.29 — the pedal is not detected |
+
+Caveats: the piano presets were tuned on five of the six MAESTRO pieces (Liszt is the held-out one: 0.57 → 0.62); the vocal references are AI-made (Demucs stems + CREPE) and the vocal settings were tuned on the same five songs (an independent pYIN reference agrees: 30 % → 70 %); the instrumental track has no answer key (its lead line is pYIN on a Demucs stem, a proxy) and its tune-line, drum and hand-reach rules were tuned on it.
 
 The synthetic e2e benchmark (`tests/e2e/harness.ts`, pieces rendered through the app's own piano engine) stays the regression gate: Bach BWV 846 F1 ≈ 0.94, chord/melody study ≈ 0.88, mean onset error ≈ 8–12 ms (on the real MAESTRO recordings the median error is 4.7 ms). Synthetic benchmarks flatter any transcriber; real recordings score lower, which is why every audio transcription is labelled *AI transcription*, the original can be blended in for comparison, detection can be re-tuned instantly, and all notes are editable.

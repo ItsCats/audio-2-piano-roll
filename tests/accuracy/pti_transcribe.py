@@ -1,6 +1,6 @@
 """
 Reference-grade piano transcription with the ByteDance high-resolution piano transcription model
-(Kong et al. 2021, `piano_transcription_inference`, Apache-2.0; checkpoint
+(Kong et al. 2021, `piano_transcription_inference`, MIT; checkpoint
 CRNN_note_F1=0.9677_pedal_F1=0.9186.pth from zenodo.org/record/4034264, ~165 MB).
 
 Used ONLY as an evaluation aid for solo-piano recordings (to snap score-aligned notes to the

@@ -71,7 +71,9 @@ Accuracy on **real recordings** is measured with the harness in [`tests/accuracy
 | 6 MAESTRO concert performances with exact MIDI, note F1 ("Piano solo" / "Sensitive") | 0.80 / 0.82 (was 0.78 / 0.77) |
 | 5 songs with a singer: Easy right hand plays the singer's note (any octave), with separation | 50 % of sung moments (was 19 %; best possible ≈ 62 %) |
 | Same songs: Easy left hand on the bass note | 71 % (was 52 %) |
-| Time per minute of audio (4-core CPU, no GPU), without / with separation | ≈ 7 s / ≈ 1 min (peak memory 0.4–0.9 / 1.9–2.2 GB) |
+| Time per minute of audio (4-core CPU, no GPU), without / with separation | ≈ 7 s / ≈ 1 min with 3 threads, ≈ 2¼ min single-threaded (e.g. Safari); peak memory 0.4–0.9 / 1.9–2.2 GB |
+
+The piano presets were tuned on five of the six MAESTRO pieces (Liszt held out) and the vocal settings on the same five songs, whose reference pitch is AI-made (Demucs + CREPE); on phones separation is off by default and notes are detected on the processor (WASM). Details and caveats on the Accuracy page.
 
 ## Deploying to Netlify
 
