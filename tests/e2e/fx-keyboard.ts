@@ -67,7 +67,11 @@ function frame(press: Map<number, RGB>) {
 if (mode === 'perf') {
   bg();
   frame(pressed); // warm cache
-  const ten = new Map([...pressed].slice(0, +(q.get('n') ?? 10)));
+  const spread = q.get('set') === 'spread';
+  // worst case: isolated keys (no merged spans), half black
+  const ten = spread
+    ? new Map([30, 37, 44, 51, 58, 63, 70, 78, 85, 94].map((m, i) => [m, i % 2 ? blue : amber] as [number, RGB]))
+    : new Map([...pressed].slice(0, +(q.get('n') ?? 10)));
   const N = 300;
   const t0 = performance.now();
   for (let i = 0; i < N; i++) frame(ten);
@@ -82,8 +86,38 @@ if (mode === 'perf') {
   const cold = performance.now() - t1;
   log.textContent = JSON.stringify({ msPerFrame: ms, coldMs: cold, pressed: ten.size });
   (window as unknown as { __result: unknown }).__result = { msPerFrame: ms, coldMs: cold };
-} else {
+} else if (mode === 'scene') {
   bg();
   frame(pressed);
   (window as unknown as { __result: unknown }).__result = { ok: true };
+}
+
+// seam check: with glow off, pixels away from pressed keys must match the resting keyboard exactly
+if (mode === 'seam') {
+  const read = () => ctx.getImageData(0, top, W, kbH).data;
+  bg();
+  frame(new Map());
+  const rest = read();
+  bg();
+  frame(pressed);
+  const live = read();
+  const ks = Math.min(scale, layout.whiteW / 34);
+  const near = new Uint8Array(W);
+  for (const m of pressed.keys()) {
+    const k = layout.keys[m]!;
+    const l = Math.floor(k.x - (k.black ? 7 * ks + 3 : 2));
+    const r = Math.ceil(k.x + k.w + (k.black ? 12 * ks + 3 : 2));
+    for (let x = Math.max(0, l); x < Math.min(W, r); x++) near[x] = 1;
+  }
+  let diff = 0;
+  let maxD = 0;
+  for (let y = 0; y < kbH; y++)
+    for (let x = 0; x < W; x++) {
+      if (near[x]) continue;
+      const i = (y * W + x) * 4;
+      const d = Math.abs(rest[i] - live[i]) + Math.abs(rest[i + 1] - live[i + 1]) + Math.abs(rest[i + 2] - live[i + 2]);
+      if (d > 3) diff++;
+      maxD = Math.max(maxD, d);
+    }
+  (window as unknown as { __result: unknown }).__result = { diff, maxD };
 }

@@ -172,8 +172,8 @@ function drawWhiteKey(ctx: Ctx2D, g: Geo, midi: number, x: number, w: number, hc
   ctx.fillStyle = pressed ? 'rgba(255,255,255,0.10)' : g.darkTheme ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.55)';
   ctx.fillRect(xl + r * 0.5, ySurf, Math.max(0, kw - r), Math.max(1, 0.8 * g.sc));
 
-  if (g.labels && midi % 12 === 0 && kw > 8 * g.sc) {
-    const size = Math.min(11 * g.sc, kw * 0.42);
+  const size = Math.min(11 * g.sc, kw * 0.42);
+  if (g.labels && midi % 12 === 0 && size >= 6) {
     const lc = lum(c);
     ctx.fillStyle = pressed
       ? lc > 0.6
@@ -199,15 +199,27 @@ function drawBlackKey(ctx: Ctx2D, g: Geo, x: number, w: number, hc: RGB | null):
   const b = pressed ? mix(g.black, hc!, 0.42) : g.black;
 
   // drop shadow onto the ivories (+ a soft contact shadow hugging the key)
-  ctx.save();
-  ctx.shadowColor = g.darkTheme ? 'rgba(0,0,0,0.75)' : 'rgba(0,0,0,0.42)';
-  ctx.shadowBlur = (pressed ? 4 : 9) * sc;
-  ctx.shadowOffsetX = (pressed ? 0.8 : 2.5) * sc;
-  ctx.shadowOffsetY = (pressed ? 1.5 : 5) * sc;
-  ctx.fillStyle = css(shade(g.border, -0.2));
-  roundRect(ctx, x, y0, w, y1 - y0, r);
-  ctx.fill();
-  ctx.restore();
+  if (pressed) {
+    // pressed keys sit lower, so their shadow is short; stacked translucent shapes are much
+    // cheaper than shadowBlur and this is drawn every frame
+    const sa = g.darkTheme ? 0.3 : 0.16;
+    for (let i = 3; i >= 1; i--) {
+      const e = i * 1.3 * sc;
+      ctx.fillStyle = `rgba(0,0,0,${sa})`;
+      roundRect(ctx, x + 0.8 * sc - e * 0.6, y0, w + e * 1.2, y1 - y0 + 1.5 * sc + e * 0.7, r + e);
+      ctx.fill();
+    }
+  } else {
+    ctx.save();
+    ctx.shadowColor = g.darkTheme ? 'rgba(0,0,0,0.75)' : 'rgba(0,0,0,0.42)';
+    ctx.shadowBlur = 9 * sc;
+    ctx.shadowOffsetX = 2.5 * sc;
+    ctx.shadowOffsetY = 5 * sc;
+    ctx.fillStyle = css(shade(g.border, -0.2));
+    roundRect(ctx, x, y0, w, y1 - y0, r);
+    ctx.fill();
+    ctx.restore();
+  }
   ctx.fillStyle = 'rgba(0,0,0,0.35)';
   roundRect(ctx, x - 0.6 * sc, y0, w + 1.2 * sc, y1 - y0 + 0.8 * sc, r);
   ctx.fill();

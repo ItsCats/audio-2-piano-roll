@@ -215,6 +215,24 @@ async function backgroundProvider(visual: VisualSettings, timestamps: () => Iter
   };
 }
 
+/** Loads the user's uploaded decal image (decal.source === 'image') as an ImageBitmap. */
+async function loadDecalBitmap(visual: VisualSettings): Promise<ImageBitmap | null> {
+  const d = visual.decal;
+  if (d.source !== 'image' || !d.mediaId) return null;
+  try {
+    const item = await getMedia(d.mediaId);
+    if (!item || item.kind !== 'image') return null;
+    return await createImageBitmap(item.blob);
+  } catch {
+    return null; // a broken/missing decal shouldn't fail the whole export
+  }
+}
+
+function applyDecal(renderer: PianoRollRenderer, bmp: ImageBitmap | null): void {
+  if (bmp) renderer.setDecalImage(bmp, bmp.width, bmp.height);
+  else renderer.setDecalImage(null);
+}
+
 export async function exportVideo(job: ExportJob): Promise<ExportResult> {
   if (!webCodecsAvailable()) return exportWithMediaRecorder(job);
   const { song, settings: s, signal } = job;
@@ -262,7 +280,10 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
   await output.start();
 
   let bg: BackgroundProvider | null = null;
+  let decal: ImageBitmap | null = null;
   try {
+    decal = await loadDecalBitmap(visual);
+    applyDecal(renderer, decal);
     // ---------- audio ----------
     const sr = 48000;
     const audioWeight = 0.18;
@@ -347,6 +368,8 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
     throw err;
   } finally {
     bg?.dispose();
+    renderer.setDecalImage(null);
+    decal?.close();
   }
 }
 
@@ -373,62 +396,72 @@ async function exportWithMediaRecorder(job: ExportJob): Promise<ExportResult> {
     for (;;) yield 0;
   });
   if (bg.kind === 'image') renderer.setBackgroundMedia(await bg.frameAt(0), 'image');
-
-  const ctx = new AudioContext({ sampleRate: 48000 });
-  const dest = ctx.createMediaStreamDestination();
-  const gain = ctx.createGain();
-  gain.gain.value = s.volume;
-  gain.connect(dest);
-  const engine = new PianoEngine(ctx, gain);
-  await engine.applySettings(job.audio);
-  const stream = new MediaStream([...canvas.captureStream(s.fps).getVideoTracks(), ...dest.stream.getAudioTracks()]);
-  const mime = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'].find((m) => MediaRecorder.isTypeSupported(m)) ?? '';
-  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: bitrateFor(width, height, s.fps, s.quality) });
-  const chunks: Blob[] = [];
-  rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
-
-  const startCtx = ctx.currentTime + 0.3;
-  for (const e of buildEvents(arr.notes, arr.pedal, { L: true, R: true })) {
-    if (e.t < range.start || e.t > range.end + 10) continue;
-    const when = startCtx + lead + (e.t - range.start) / rate;
-    if (e.kind === 'on') engine.noteOn(e.midi, e.vel, when, e.tag);
-    else if (e.kind === 'off') engine.noteOff(e.midi, when, e.tag);
-    else engine.setPedal(e.down, when);
-  }
-  rec.start(1000);
-  await new Promise<void>((resolve, reject) => {
-    const frame = () => {
-      if (signal?.aborted) {
-        rec.stop();
-        reject(new DOMException('Export cancelled', 'AbortError'));
-        return;
-      }
-      const o = ctx.currentTime - startCtx;
-      renderer.render({ time: range.start + (o - lead) * rate });
-      job.onProgress?.({ phase: 'video', fraction: Math.max(0, Math.min(1, o / duration)) });
-      if (o >= duration) resolve();
-      else requestAnimationFrame(frame);
-    };
-    requestAnimationFrame(frame);
-  });
-  const blob = await new Promise<Blob>((resolve) => {
-    rec.onstop = () => resolve(new Blob(chunks, { type: rec.mimeType || 'video/webm' }));
-    rec.stop();
-  });
-  stream.getTracks().forEach((t) => t.stop());
-  engine.dispose();
-  void ctx.close();
-  bg.dispose();
-  const isMp4 = blob.type.includes('mp4');
-  return {
-    blob,
-    mime: blob.type,
-    extension: isMp4 ? 'mp4' : 'webm',
-    videoCodec: mime,
-    audioCodec: 'opus',
-    width,
-    height,
-    duration,
-    method: 'mediarecorder',
+  const decal = await loadDecalBitmap(visual);
+  applyDecal(renderer, decal);
+  const disposeVisuals = () => {
+    bg.dispose();
+    renderer.setDecalImage(null);
+    decal?.close();
   };
+
+  try {
+    const ctx = new AudioContext({ sampleRate: 48000 });
+    const dest = ctx.createMediaStreamDestination();
+    const gain = ctx.createGain();
+    gain.gain.value = s.volume;
+    gain.connect(dest);
+    const engine = new PianoEngine(ctx, gain);
+    await engine.applySettings(job.audio);
+    const stream = new MediaStream([...canvas.captureStream(s.fps).getVideoTracks(), ...dest.stream.getAudioTracks()]);
+    const mime = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'].find((m) => MediaRecorder.isTypeSupported(m)) ?? '';
+    const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: bitrateFor(width, height, s.fps, s.quality) });
+    const chunks: Blob[] = [];
+    rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+
+    const startCtx = ctx.currentTime + 0.3;
+    for (const e of buildEvents(arr.notes, arr.pedal, { L: true, R: true })) {
+      if (e.t < range.start || e.t > range.end + 10) continue;
+      const when = startCtx + lead + (e.t - range.start) / rate;
+      if (e.kind === 'on') engine.noteOn(e.midi, e.vel, when, e.tag);
+      else if (e.kind === 'off') engine.noteOff(e.midi, when, e.tag);
+      else engine.setPedal(e.down, when);
+    }
+    rec.start(1000);
+    await new Promise<void>((resolve, reject) => {
+      const frame = () => {
+        if (signal?.aborted) {
+          rec.stop();
+          reject(new DOMException('Export cancelled', 'AbortError'));
+          return;
+        }
+        const o = ctx.currentTime - startCtx;
+        renderer.render({ time: range.start + (o - lead) * rate });
+        job.onProgress?.({ phase: 'video', fraction: Math.max(0, Math.min(1, o / duration)) });
+        if (o >= duration) resolve();
+        else requestAnimationFrame(frame);
+      };
+      requestAnimationFrame(frame);
+    });
+    const blob = await new Promise<Blob>((resolve) => {
+      rec.onstop = () => resolve(new Blob(chunks, { type: rec.mimeType || 'video/webm' }));
+      rec.stop();
+    });
+    stream.getTracks().forEach((t) => t.stop());
+    engine.dispose();
+    void ctx.close();
+    const isMp4 = blob.type.includes('mp4');
+    return {
+      blob,
+      mime: blob.type,
+      extension: isMp4 ? 'mp4' : 'webm',
+      videoCodec: mime,
+      audioCodec: 'opus',
+      width,
+      height,
+      duration,
+      method: 'mediarecorder',
+    };
+  } finally {
+    disposeVisuals();
+  }
 }

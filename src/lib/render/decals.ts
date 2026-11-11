@@ -1448,7 +1448,6 @@ function blit(ctx: Ctx2D, bk: Baked, w: number, h: number, ox: number, oy: numbe
 
 /** Fill the current path with the decal (for the rounded caps). The path must fit in w × h. */
 function fillCap(ctx: Ctx2D, pat: CanvasPattern, w: number, h: number, ox: number, oy: number, x0: number, y0: number): void {
-  if ((globalThis as unknown as { __nocap?: boolean }).__nocap) return;
   xform.e = ox + w * Math.floor((x0 - ox) / w);
   xform.f = oy + h * Math.floor((y0 - oy) / h);
   pat.setTransform(xform);
@@ -1508,7 +1507,11 @@ export function paintNoteDecal(ctx: Ctx2D, rect: { x: number; y: number; w: numb
   // frame is busy); only the small rounded caps are path fills.
   const yTop = Math.ceil(y + rr);
   const yBot = Math.floor(y + h - rr);
-  if (rr < 0.5) {
+  if ((globalThis as unknown as { __cm?: string }).__cm === 'clip1') {
+    roundRect(ctx, x, y, w, h, rr);
+    ctx.clip();
+    blit(ctx, bk, dw, dh, ox, oy, x, x + w, y, y + h);
+  } else if (rr < 0.5) {
     blit(ctx, bk, dw, dh, ox, oy, x, x + w, y, y + h);
   } else if (yBot - yTop < 1 || w > dw || yTop - y > dh) {
     // tiny or very wide note: one path fill (the caps' pattern does not repeat, so huge
@@ -1521,7 +1524,29 @@ export function paintNoteDecal(ctx: Ctx2D, rect: { x: number; y: number; w: numb
     }
   } else {
     blit(ctx, bk, dw, dh, ox, oy, x, x + w, yTop, yBot);
-    // top cap: [y, yTop] with rounded upper corners
+    const CM = (globalThis as unknown as { __cm?: string }).__cm ?? 'pattern';
+    if (CM === 'clip') {
+      ctx.save();
+      roundRect(ctx, x, y, w, h, rr);
+      ctx.clip();
+      blit(ctx, bk, dw, dh, ox, oy, x, x + w, y, yTop);
+      blit(ctx, bk, dw, dh, ox, oy, x, x + w, yBot, y + h);
+      ctx.restore();
+    } else if (CM === 'rows') {
+      for (let i = 0; i < yTop - y; i++) {
+        const yy = yTop - 1 - i; // row index from bottom of cap
+        const dyc = rr - (yTop - yy) + 0.5;
+        const inset = dyc > 0 ? rr - Math.sqrt(Math.max(0, rr * rr - dyc * dyc)) : 0;
+        blit(ctx, bk, dw, dh, ox, oy, x + inset, x + w - inset, Math.max(y, yy), yy + 1);
+      }
+      for (let yy = yBot; yy < y + h; yy++) {
+        const dyc = yy + 0.5 - (y + h - rr);
+        const inset = dyc > 0 ? rr - Math.sqrt(Math.max(0, rr * rr - dyc * dyc)) : 0;
+        blit(ctx, bk, dw, dh, ox, oy, x + inset, x + w - inset, yy, Math.min(yy + 1, y + h));
+      }
+    } else if (CM === 'none') {
+      // nothing
+    } else {
     ctx.beginPath();
     ctx.moveTo(x, yTop);
     ctx.lineTo(x, y + rr);
@@ -1530,9 +1555,11 @@ export function paintNoteDecal(ctx: Ctx2D, rect: { x: number; y: number; w: numb
     ctx.arcTo(x + w, y, x + w, y + rr, rr);
     ctx.lineTo(x + w, yTop);
     ctx.closePath();
-    fillCap(ctx, pat, dw, dh, ox, oy, x, y);
-    // bottom cap: [yBot, y + h] with rounded lower corners
-    ctx.beginPath();
+    const together = h <= dh;
+    if (!together) {
+      fillCap(ctx, pat, dw, dh, ox, oy, x, y);
+      ctx.beginPath();
+    }
     ctx.moveTo(x, yBot);
     ctx.lineTo(x + w, yBot);
     ctx.lineTo(x + w, y + h - rr);
@@ -1540,7 +1567,8 @@ export function paintNoteDecal(ctx: Ctx2D, rect: { x: number; y: number; w: numb
     ctx.lineTo(x + rr, y + h);
     ctx.arcTo(x, y + h, x, y + h - rr, rr);
     ctx.closePath();
-    fillCap(ctx, pat, dw, dh, ox, oy, x, yBot);
+    fillCap(ctx, pat, dw, dh, ox, oy, x, together ? y : yBot);
+    }
   }
   // sounding notes light up with a soft wash of their own colour
   if (p.active) {

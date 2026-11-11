@@ -12,6 +12,7 @@ import { downloadBlob, safeFileName } from '../../lib/export/downloads';
 import { formatTime } from '../../lib/music/theory';
 import { getMedia } from '../../lib/storage/db';
 import { newId } from '../../lib/storage/db';
+import { useDecalImage } from './useDecalImage';
 
 const presetIcons: Record<string, typeof SquarePlay> = { youtube: SquarePlay, shorts: Smartphone, square: Square, quick: Zap };
 
@@ -49,6 +50,7 @@ function CompositionPreview({ settings, previewTime }: { settings: ExportSetting
       if (url) URL.revokeObjectURL(url);
     };
   }, [visual.background]);
+  const decalImg = useDecalImage(visual.decal);
   useEffect(() => {
     const c = ref.current;
     if (!c) return;
@@ -58,8 +60,9 @@ function CompositionPreview({ settings, previewTime }: { settings: ExportSetting
     const arr = song.arrangements[difficulty];
     r.setNotes(arr.notes, arr.pedal, song.tempo, song.key);
     if (bgSource) r.setBackgroundMedia(bgSource, visual.background.kind === 'video' ? 'video' : 'image');
+    if (decalImg) r.setDecalImage(decalImg.source, decalImg.width, decalImg.height);
     r.render({ time: previewTime });
-  }, [settings, visual, song, difficulty, previewTime, width, height, bgSource]);
+  }, [settings, visual, song, difficulty, previewTime, width, height, bgSource, decalImg]);
   return (
     <div className="flex h-full min-h-[220px] items-center justify-center rounded-xl bg-[repeating-conic-gradient(#15151b_0_25%,#101014_0_50%)] bg-[length:20px_20px] p-3">
       <canvas

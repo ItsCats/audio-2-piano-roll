@@ -203,13 +203,38 @@ export type ThemePatch = Omit<Partial<VisualSettings>, 'background' | 'decal' | 
   effects?: Partial<EffectSettings>;
 };
 
+/** Note-shape defaults the classic themes restore, so switching away from e.g. Blossom doesn't leak its look. */
+const CLASSIC_NOTES: ThemePatch = { gradient: true, noteOpacity: 0.95, cornerRadius: 5, borderWidth: 1, trails: true, particles: true };
+
 export const VISUAL_THEMES: { id: string; name: string; patch: ThemePatch }[] = [
-  { id: 'studio', name: 'Studio Blue', patch: { rightColor: '#4f9dff', leftColor: '#f5a524', colorMode: 'hand', glow: 0.55, keyboardTheme: 'classic', background: { kind: 'preset', presetId: 'midnight' } } },
-  { id: 'aurora', name: 'Aurora', patch: { rightColor: '#34d3a6', leftColor: '#a78bfa', colorMode: 'hand', glow: 0.8, keyboardTheme: 'classic', background: { kind: 'preset', presetId: 'aurora' } } },
-  { id: 'sunset', name: 'Sunset', patch: { rightColor: '#ff7a59', leftColor: '#ffc857', colorMode: 'hand', glow: 0.6, keyboardTheme: 'ivory', background: { kind: 'preset', presetId: 'sunset' } } },
-  { id: 'rainbow', name: 'Rainbow Keys', patch: { colorMode: 'pitch', glow: 0.7, keyboardTheme: 'dark', background: { kind: 'preset', presetId: 'nebula' } } },
-  { id: 'mono', name: 'Minimal Mono', patch: { colorMode: 'single', singleColor: '#e8e8ea', glow: 0, particles: false, trails: false, gradient: false, keyboardTheme: 'classic', background: { kind: 'color', color: '#0d0d10' } } },
-  { id: 'neon', name: 'Night Drive', patch: { rightColor: '#ff4fd8', leftColor: '#3ee6ff', colorMode: 'hand', glow: 0.9, keyboardTheme: 'dark', background: { kind: 'preset', presetId: 'grid' } } },
+  { id: 'studio', name: 'Studio Blue', patch: { ...CLASSIC_NOTES, rightColor: '#4f9dff', leftColor: '#f5a524', colorMode: 'hand', glow: 0.55, keyboardTheme: 'classic', background: { kind: 'preset', presetId: 'midnight' } } },
+  { id: 'aurora', name: 'Aurora', patch: { ...CLASSIC_NOTES, rightColor: '#34d3a6', leftColor: '#a78bfa', colorMode: 'hand', glow: 0.8, keyboardTheme: 'classic', background: { kind: 'preset', presetId: 'aurora' } } },
+  { id: 'sunset', name: 'Sunset', patch: { ...CLASSIC_NOTES, rightColor: '#ff7a59', leftColor: '#ffc857', colorMode: 'hand', glow: 0.6, keyboardTheme: 'ivory', background: { kind: 'preset', presetId: 'sunset' } } },
+  { id: 'rainbow', name: 'Rainbow Keys', patch: { ...CLASSIC_NOTES, colorMode: 'pitch', glow: 0.7, keyboardTheme: 'dark', background: { kind: 'preset', presetId: 'nebula' } } },
+  { id: 'mono', name: 'Minimal Mono', patch: { ...CLASSIC_NOTES, colorMode: 'single', singleColor: '#e8e8ea', glow: 0, particles: false, trails: false, gradient: false, keyboardTheme: 'classic', background: { kind: 'color', color: '#0d0d10' } } },
+  {
+    id: 'blossom',
+    name: 'Blossom',
+    patch: {
+      rightColor: '#f4a6c6',
+      leftColor: '#b7a4ff',
+      colorMode: 'hand',
+      gradient: false,
+      glow: 0.35,
+      noteOpacity: 1,
+      cornerRadius: 8,
+      borderWidth: 0,
+      trails: false,
+      particles: false,
+      guides: 'octaves',
+      keyboardTheme: 'classic',
+      keyboardStyle: 'realistic',
+      background: { kind: 'color', color: '#08080b' },
+      decal: { source: 'pattern', patternId: 'meadow', scale: 1, opacity: 1, tint: 0.12, anchor: 'note' },
+      effects: { bursts: true, burstIntensity: 0.8, dust: true, dustAmount: 0.65, keyLight: true, keyLightIntensity: 0.75, outlineGlow: 0.7 },
+    },
+  },
+  { id: 'neon', name: 'Night Drive', patch: { ...CLASSIC_NOTES, rightColor: '#ff4fd8', leftColor: '#3ee6ff', colorMode: 'hand', glow: 0.9, keyboardTheme: 'dark', background: { kind: 'preset', presetId: 'grid' } } },
 ];
 
 export const PITCH_COLORS = [

@@ -9,6 +9,7 @@ import { currentMarks, liveKeys } from '../../state/liveInput';
 import { beatToTime, snapTime, timeToBeat } from '../../lib/music/beats';
 import type { Note } from '../../lib/music/types';
 import { useBackgroundMedia } from './useBackgroundMedia';
+import { useDecalImage } from './useDecalImage';
 import { midiInput } from '../../lib/midiInput/webmidi';
 
 type Drag =
@@ -41,6 +42,7 @@ export function PianoRollView() {
   const selection = useStudio((s) => s.selection);
   const transport = useTransport();
   const bg = useBackgroundMedia(visual.background);
+  const decalImg = useDecalImage(visual.decal);
 
   // create renderer once
   useEffect(() => {
@@ -66,6 +68,12 @@ export function PianoRollView() {
     rendererRef.current?.setBackgroundMedia(bg.source, bg.kind);
     dirty.current = true;
   }, [bg.source, bg.kind]);
+
+  useEffect(() => {
+    if (decalImg) rendererRef.current?.setDecalImage(decalImg.source, decalImg.width, decalImg.height);
+    else rendererRef.current?.setDecalImage(null);
+    dirty.current = true;
+  }, [decalImg]);
 
   useEffect(() => {
     dirty.current = true;

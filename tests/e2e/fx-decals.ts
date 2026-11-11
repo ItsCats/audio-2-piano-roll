@@ -58,6 +58,7 @@ interface MockNote {
   settings: DecalSettings;
 }
 
+const NOTE_ALPHA = Number(q.get('alpha') ?? 0.95);
 const base: DecalSettings = { source: 'pattern', patternId: 'meadow', mediaId: null, scale: 1, opacity: 1, tint: 0.15, anchor: 'note' };
 
 function buildScene(W: number, H: number, sc: number, count: number, groups: Partial<DecalSettings>[]): MockNote[] {
@@ -95,7 +96,7 @@ function drawNotes(ctx: Ctx2D, notes: MockNote[], sc: number, timing?: { t: numb
     const r = { x: n.x, y: n.y, w: n.w, h: n.h };
     const radius = 6 * sc;
     const c = n.active ? mix(n.color, WHITE, 0.25) : n.color;
-    ctx.globalAlpha = 0.95;
+    ctx.globalAlpha = NOTE_ALPHA;
     const g = ctx.createLinearGradient(0, r.y, 0, r.y + r.h);
     g.addColorStop(0, rgba(mix(c, WHITE, 0.22), 1));
     g.addColorStop(1, rgba(mix(c, BLACK_RGB, 0.12), 1));
@@ -115,7 +116,7 @@ function drawNotes(ctx: Ctx2D, notes: MockNote[], sc: number, timing?: { t: numb
       active: n.active,
     });
     if (timing) timing.t += performance.now() - t0;
-    if (ctx.globalAlpha !== 0.95) throw new Error('globalAlpha not restored');
+    if (ctx.globalAlpha !== NOTE_ALPHA) throw new Error('globalAlpha not restored');
     if (q.get('nostroke')) continue;
     roundRect(ctx, r.x, r.y, r.w, r.h, radius);
     ctx.save();
@@ -144,6 +145,7 @@ function background(ctx: Ctx2D, W: number, H: number, sc: number) {
 }
 
 function scene() {
+  if (q.get('cm')) (globalThis as unknown as { __cm?: string }).__cm = q.get('cm')!;
   const H = Number(q.get('h') ?? 1080);
   const W = Math.round((H * 16) / 9);
   const sc = H / 1080;
@@ -167,48 +169,50 @@ function scene() {
 }
 
 function perf() {
-  if (q.get('nocap')) (globalThis as unknown as { __nocap?: boolean }).__nocap = true;
+  if (q.get('cm')) (globalThis as unknown as { __cm?: string }).__cm = q.get('cm')!;
+  // 150 decal notes at 1920×1080 drawn the way the renderer draws a note (gradient fill →
+  // decal → glowing outline). Decal cost = frame time with decals − frame time without,
+  // measured in alternating blocks; medians reported to tame software-raster noise.
   const W = 1920;
   const H = 1080;
   const ctx = canvas(W, H);
   const tintQ = q.get('tint');
-  const groups: Partial<DecalSettings>[] = (q.get('one') ? [{ patternId: 'meadow' }] : [{ patternId: 'meadow' }, { patternId: 'sakura', tint: 0.4 }, { patternId: 'galaxy', anchor: 'screen' }]).map((g) =>
+  const groups: Partial<DecalSettings>[] = (q.get('one') ? [{ patternId: 'meadow' }] : [{ patternId: 'meadow' }, { patternId: 'sakura', tint: 0.4 }, { patternId: 'galaxy', anchor: 'screen' as const }]).map((g) =>
     tintQ !== null ? { ...g, tint: Number(tintQ) } : g,
   );
   const notes = buildScene(W, H, 1, 150, groups);
-  if (q.get('noactive')) for (const n of notes) n.active = false;
-  // warm up: generate tiles + resampled copies
-  background(ctx, W, H, 1);
-  drawNotes(ctx, notes, 1);
+  const on = notes.map((n) => n.settings);
+  const off = on.map((st) => ({ ...st, opacity: 0 }));
+  let frame = 0;
+  const block = (withDecals: boolean, frames: number, timing?: { t: number }) => {
+    notes.forEach((n, i) => (n.settings = withDecals ? on[i] : off[i]));
+    ctx.getImageData(0, 0, 1, 1);
+    const t0 = performance.now();
+    for (let f = 0; f < frames; f++) {
+      background(ctx, W, H, 1);
+      for (const n of notes) n.y = n.y - 2 < -400 ? 1000 : n.y - 2;
+      drawNotes(ctx, notes, 1, timing);
+      frame++;
+    }
+    ctx.getImageData(0, 0, 1, 1);
+    return (performance.now() - t0) / frames;
+  };
+  block(true, 20);
+  block(false, 20);
+  const a: number[] = [];
+  const b: number[] = [];
   const timing = { t: 0 };
-  for (let f = 0; f < 10; f++) {
-    background(ctx, W, H, 1);
-    drawNotes(ctx, notes, 1);
+  for (let r = 0; r < 8; r++) {
+    a.push(block(true, 30, timing));
+    b.push(block(false, 30));
   }
-  ctx.getImageData(0, 0, 1, 1);
-  const t0 = performance.now();
-  for (let f = 0; f < 60; f++) {
-    background(ctx, W, H, 1);
-    if (!q.get('still')) for (const n of notes) n.y -= 2;
-    drawNotes(ctx, notes, 1, timing);
-  }
-  // force GPU/raster flush
-  ctx.getImageData(0, 0, 1, 1);
-  const total = performance.now() - t0;
-  // baseline without decals
-  const t1 = performance.now();
-  for (let f = 0; f < 60; f++) {
-    background(ctx, W, H, 1);
-    for (const n of notes) n.settings = { ...n.settings, opacity: 0 };
-    drawNotes(ctx, notes, 1);
-  }
-  ctx.getImageData(0, 0, 1, 1);
-  const baseline = performance.now() - t1;
+  const med = (v: number[]) => [...v].sort((x, y) => x - y)[v.length >> 1];
   log.textContent = JSON.stringify({
-    decalCallMsPerFrame: +(timing.t / 60).toFixed(3),
-    totalMsPerFrameWithDecals: +(total / 60).toFixed(3),
-    totalMsPerFrameNoDecals: +(baseline / 60).toFixed(3),
-    deltaMsPerFrame: +((total - baseline) / 60).toFixed(3),
+    frames: frame,
+    withDecalsMs: +med(a).toFixed(2),
+    withoutDecalsMs: +med(b).toFixed(2),
+    decalCostMsPerFrame: +(med(a) - med(b)).toFixed(2),
+    insideDecalCallsMs: +(timing.t / 240).toFixed(2),
   });
 }
 
@@ -560,6 +564,28 @@ if (mode === 'micro') {
     for (const top of [true, false]) for (let i = 0; i < 6; i++) ctx.drawImage(padded, 10 + i, 10 + i, n.w - 2 * i, 1, n.x + i, (top ? n.y : n.y + n.h - 6) + i, n.w - 2 * i, 1);
   });
   run('noCaps', (n) => capGrad(n));
+  const tinyC = document.createElement('canvas');
+  tinyC.width = 96;
+  tinyC.height = 16;
+  tinyC.getContext('2d')!.drawImage(padded, 0, 0);
+  const patTiny = ctx.createPattern(tinyC, 'no-repeat')!;
+  run('capsTinySrc', (n) => {
+    capGrad(n);
+    for (const top of [true, false]) {
+      capPath(n, top);
+      patTiny.setTransform({ a: 1, b: 0, c: 0, d: 1, e: Math.round(n.x), f: Math.round(top ? n.y : n.y + n.h - 6) });
+      ctx.fillStyle = patTiny;
+      ctx.fill();
+    }
+  });
+  run('capsSolid', (n) => {
+    capGrad(n);
+    for (const top of [true, false]) {
+      capPath(n, top);
+      ctx.fillStyle = '#8af';
+      ctx.fill();
+    }
+  });
   const poc = new OffscreenCanvas(600, 600);
   poc.getContext('2d')!.drawImage(padded, 0, 0);
   const pbmp = poc.transferToImageBitmap();
