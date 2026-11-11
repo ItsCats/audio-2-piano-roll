@@ -65,6 +65,15 @@ function CompareBar({ before, after, best, label }: { before?: number; after: nu
   );
 }
 
+function MobileStat({ label, value, strong, dim }: { label: string; value: string; strong?: boolean; dim?: boolean }) {
+  return (
+    <div className="flex flex-col">
+      <span>{label}</span>
+      <span className={cn('font-mono text-[13px]', strong ? 'font-semibold text-ink-50' : dim ? 'text-ink-400' : 'text-ink-100')}>{value}</span>
+    </div>
+  );
+}
+
 function SectionTitle({ title, sub }: { title: string; sub?: string }) {
   return (
     <>
@@ -86,10 +95,10 @@ function Note({ children }: { children: React.ReactNode }) {
 function BeforeAfterTable({ rows, cols = ['What we measured', 'Before', 'Now'] }: { rows: { what: string; before: string; after: string; note?: string }[]; cols?: [string, string, string] | string[] }) {
   return (
     <div className="panel overflow-x-auto">
-      <table className="w-full min-w-[560px] text-left text-[13px]">
+      <table className="w-full text-left text-[13px]">
         <thead>
           <tr className="border-b border-ink-700 text-[11.5px] text-ink-400">
-            <th className="px-4 py-2.5 font-medium">{cols[0]}</th>
+            <th className="px-3 py-2.5 font-medium sm:px-4">{cols[0]}</th>
             <th className="px-3 py-2.5 text-right font-medium">{cols[1]}</th>
             <th className="px-4 py-2.5 text-right font-medium">{cols[2]}</th>
           </tr>
@@ -97,12 +106,12 @@ function BeforeAfterTable({ rows, cols = ['What we measured', 'Before', 'Now'] }
         <tbody>
           {rows.map((r) => (
             <tr key={r.what} className="border-b border-ink-800 last:border-0">
-              <td className="px-4 py-2.5">
+              <td className="px-3 py-2.5 sm:px-4">
                 <p className="text-ink-100">{r.what}</p>
                 {r.note && <p className="text-[12px] text-ink-400">{r.note}</p>}
               </td>
-              <td className="px-3 py-2.5 text-right font-mono whitespace-nowrap text-ink-400">{r.before}</td>
-              <td className="px-4 py-2.5 text-right font-mono font-semibold whitespace-nowrap text-ink-50">{r.after}</td>
+              <td className="px-2 py-2.5 text-right font-mono text-ink-400 sm:px-3 sm:whitespace-nowrap">{r.before}</td>
+              <td className="px-3 py-2.5 text-right font-mono font-semibold text-ink-50 sm:px-4 sm:whitespace-nowrap">{r.after}</td>
             </tr>
           ))}
         </tbody>
@@ -146,7 +155,23 @@ export default function AccuracyPage() {
             title="Solo piano: real recordings with an exact answer key"
             sub="Six concert performances recorded on a Yamaha Disklavier, a real grand piano that also records exactly which keys were pressed and when (the MAESTRO dataset). That record is the answer key. A note counts as right when the pitch is exact and it starts within 50 ms (1/20 s) of the real one."
           />
-          <div className="panel overflow-x-auto">
+          <div className="flex flex-col gap-2 sm:hidden">
+            {MAESTRO_ROWS.map((r) => (
+              <div key={r.piece} className="panel p-3.5">
+                <p className="text-[13.5px] font-medium text-ink-50">{r.piece}</p>
+                <p className="text-[12px] text-ink-300">{r.detail}</p>
+                <div className="mt-2 grid grid-cols-3 gap-2 text-[11px] text-ink-400">
+                  <MobileStat label="“Piano solo”" value={pct(r.f1)} strong />
+                  <MobileStat label="“Sensitive”" value={pct(r.f1Sensitive)} />
+                  <MobileStat label="Before" value={pct(r.before)} dim />
+                  <MobileStat label="Found" value={pct(r.recall)} />
+                  <MobileStat label="Right when found" value={pct(r.precision)} />
+                  <MobileStat label="Notes" value={r.notes.toLocaleString('en-US')} />
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="panel hidden overflow-x-auto sm:block">
             <table className="w-full min-w-[720px] text-left text-[13px]">
               <thead>
                 <tr className="border-b border-ink-700 text-[11.5px] text-ink-400">
@@ -192,7 +217,19 @@ export default function AccuracyPage() {
             title="Other piano recordings (no answer key)"
             sub="For recordings without a key-by-key record we compare with a second, piano-specialist AI model that is too heavy to run in a browser. On the answer-key pieces above it scores 94–99 %, so high agreement is a good sign — but it is a second opinion, not the truth (it is weaker on pianos, rooms and styles unlike its training data, such as the jazz cover)."
           />
-          <div className="panel overflow-x-auto">
+          <div className="flex flex-col gap-2 sm:hidden">
+            {OTHER_PIANO_ROWS.map((r) => (
+              <div key={r.piece} className="panel p-3.5">
+                <p className="text-[13.5px] font-medium text-ink-50">{r.piece}</p>
+                <p className="text-[12px] text-ink-300">
+                  {r.detail} · {r.length}
+                </p>
+                <p className="mt-2 mb-1 text-[11px] text-ink-400">Agreement, “Piano solo” (“Sensitive”: {pct(r.agreementSensitive)})</p>
+                <CompareBar before={r.before} after={r.agreement} label={`agreement ${pct(r.agreement)}`} />
+              </div>
+            ))}
+          </div>
+          <div className="panel hidden overflow-x-auto sm:block">
             <table className="w-full min-w-[620px] text-left text-[13px]">
               <thead>
                 <tr className="border-b border-ink-700 text-[11.5px] text-ink-400">
@@ -223,7 +260,29 @@ export default function AccuracyPage() {
 
         <section>
           <SectionTitle title="Full songs with a singer" sub={SONG_SUMMARY.intro} />
-          <div className="panel overflow-x-auto">
+          <div className="flex flex-col gap-2 sm:hidden">
+            {SONG_ROWS.map((r) => (
+              <div key={r.song} className="panel flex flex-col gap-2 p-3.5">
+                <div>
+                  <p className="text-[13.5px] font-medium text-ink-50">{r.song}</p>
+                  <p className="text-[12px] text-ink-300">{r.detail}</p>
+                </div>
+                <div>
+                  <p className="mb-1 text-[11px] text-ink-400">Easy right hand follows the singer</p>
+                  <CompareBar before={r.easyBefore} after={r.easy} best={r.best} label="Easy right hand follows the singer" />
+                </div>
+                <div>
+                  <p className="mb-1 text-[11px] text-ink-400">Medium right hand</p>
+                  <CompareBar before={r.mediumBefore} after={r.medium} best={r.best} label="Medium right hand follows the singer" />
+                </div>
+                <div>
+                  <p className="mb-1 text-[11px] text-ink-400">Easy left hand on the bass note</p>
+                  <CompareBar before={r.bassBefore} after={r.bass} label="Easy left hand on the bass note" />
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="panel hidden overflow-x-auto sm:block">
             <table className="w-full min-w-[720px] text-left text-[13px]">
               <thead>
                 <tr className="border-b border-ink-700 text-[11.5px] text-ink-400">
@@ -369,7 +428,7 @@ export default function AccuracyPage() {
             ))}
           </ul>
           <div className="panel mt-3 overflow-x-auto">
-            <table className="w-full min-w-[560px] text-left text-[12.5px]">
+            <table className="w-full text-left text-[12.5px]">
               <thead>
                 <tr className="border-b border-ink-700 text-[11.5px] text-ink-400">
                   <th className="px-4 py-2.5 font-medium">Data or tool</th>
@@ -381,12 +440,16 @@ export default function AccuracyPage() {
                 {DATASETS.map((d) => (
                   <tr key={d.name} className="border-b border-ink-800 align-top last:border-0">
                     <td className="px-4 py-2.5">
-                      <a href={d.url} target="_blank" rel="noopener noreferrer" className="focus-ring inline-flex items-center gap-1 rounded font-medium text-ink-50 hover:text-accent-300">
-                        {d.name} <ExternalLink size={12} className="text-ink-400" />
-                      </a>
+                      {d.url ? (
+                        <a href={d.url} target="_blank" rel="noopener noreferrer" className="focus-ring inline-flex items-center gap-1 rounded font-medium text-ink-50 hover:text-accent-300">
+                          {d.name} <ExternalLink size={12} className="text-ink-400" />
+                        </a>
+                      ) : (
+                        <span className="font-medium text-ink-50">{d.name}</span>
+                      )}
                     </td>
                     <td className="px-3 py-2.5 text-ink-300">{d.use}</td>
-                    <td className="px-4 py-2.5 whitespace-nowrap text-ink-300">{d.license}</td>
+                    <td className="px-4 py-2.5 text-ink-300 sm:whitespace-nowrap">{d.license}</td>
                   </tr>
                 ))}
               </tbody>

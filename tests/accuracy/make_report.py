@@ -2,7 +2,10 @@
 Render evaluate.py output as a Markdown report.
 
     python3 tests/accuracy/make_report.py BASELINE.json OUT.md [--refs REFS_INFO.json] [--sanity SANITY.json ...]
-        [--prepend NOTES.md] [--append NOTES.md]
+        [--prepend NOTES.md] [--append NOTES.md] [--title TITLE]
+
+A preset named 'sep' is the "Full song" preset with "Separate vocals & drums" (transcribe.mjs
+--separate); list it in the manifest like any other preset.
 """
 from __future__ import annotations
 
@@ -32,10 +35,11 @@ def main() -> None:
     ap.add_argument("--sanity", nargs="*", default=[])
     ap.add_argument("--prepend")
     ap.add_argument("--append")
+    ap.add_argument("--title", default="Piano2Vision baseline accuracy on real recordings")
     a = ap.parse_args()
     B = json.load(open(a.baseline))
     songs = B["songs"]
-    md = [f"# Piano2Vision baseline accuracy on real recordings\n\nGenerated {B.get('generated')} by `tests/accuracy/evaluate.py` + `make_report.py`.\n"]
+    md = [f"# {a.title}\n\nGenerated {B.get('generated')} by `tests/accuracy/evaluate.py` + `make_report.py`.\n"]
     if a.prepend:
         md.append(open(a.prepend).read())
     if a.sanity:

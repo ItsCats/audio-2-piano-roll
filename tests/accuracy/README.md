@@ -23,8 +23,8 @@ piano_transcription_inference, remotezip). Node 22 + Playwright Chromium.
 | detection sweep (no model) | `node tests/accuracy/sweep_extraction.mjs --post WORK/posteriors --ref WORK/maestro --configs tests/accuracy/sweep_extraction.configs.mjs [--json OUT]` | stdout / JSON |
 | evaluation | `evaluate.py --work WORK --out WORK/eval/x FILES...` (config: `songs.json`) | `eval/x.json` |
 | Easy RH source analysis | `rh_source.py WORK OUT.json ids...` (needs the app run on stems) | JSON |
-| report | `make_report.py EVAL.json OUT.md --refs ... --sanity ... --prepend ... --append ...` | Markdown |
-| separated app path (in-browser SCNet + vocal melody) | `node tests/accuracy/transcribe.mjs --separate --out WORK/sep --presets mix FILES...` (~2.5 GB, one run at a time) | `sep/<id>.<preset>.json` |
+| report | `make_report.py EVAL.json OUT.md [--title T] --refs ... --sanity ... --prepend ... --append ...` | Markdown |
+| separated app path (in-browser SCNet + vocal melody) | `node tests/accuracy/transcribe.mjs --separate --coi --out WORK/sep --presets mix FILES...` (~2.2 GB, one run at a time; `--coi` = cross-origin isolated page like the shipped app, 3 WASM threads, ≈1 min per audio minute; without it single-threaded, ≈2.3 min) | `sep/<id>.<preset>.json` (with `memory`: peak tab RSS / tree PSS) |
 | offline melody / arrangement regeneration from saved runs with posteriors | `node tests/accuracy/melody_regen.mjs [--keep-base] OUTDIR RUN.json ...` (env `MELODY_OPTS` = JSON MelodyOptions overrides) | `OUTDIR/<id>.json` (base/easy/medium/hard/vocalNotes/speech) |
 | melody evaluation | `melody_eval.py --work WORK [--out OUT.json] RUN.json ...` | Easy/Medium RH, melody line and ceiling as RPA/RCA/OA/OA-chroma; RPA/RCA on stable-periodicity frames; RH register, LH clearance, speech-section stats, Easy LH bass RCA |
 | offline arrangement regeneration from any saved base (loads only music/difficulty.ts) | `node tests/accuracy/inst_regen.mjs OUTDIR RUN.json ...` | `OUTDIR/<basename>` (base/easy/medium/hard, ms) |
@@ -46,6 +46,19 @@ Build the oracle inputs from the stems (16-bit stereo, 44.1 kHz; the stems are s
     ffmpeg -i $S/vocals.wav -c:a pcm_s16le WORK/oracle/<id>.vocals.wav
     ffmpeg -i $S/bass.wav -i $S/guitar.wav -i $S/piano.wav -i $S/other.wav \
       -filter_complex amix=inputs=4:normalize=0 -c:a pcm_s16le WORK/oracle/<id>.accomp-nodrums.wav
+
+## Round-2 final measurement (how the published numbers were made)
+
+1. Snapshot the commit under test outside the repo (`git archive HEAD | tar -x -C WORK/round2/app`, symlink
+   `node_modules`) so parallel edits cannot change the code mid-run; run transcribe.mjs from there with
+   `ACC_VITE_CACHE=WORK/round2/vitecache` (a private Vite cache).
+2. Band songs: `--separate --coi --presets mix` (Full song + separation) and `--coi --presets mix,piano`;
+   solo piano and MAESTRO: `--coi --presets piano,sensitive`. Strictly sequential.
+3. Link `<id>.sep.json` → the separated run into one transcription dir and evaluate with a copy of
+   songs.json whose band songs list `"presets": ["sep", "mix", "piano"]` (`make_report.py` treats `sep` like
+   any preset); then melody_eval.py (sep and mix runs vs the baseline runs), inst_eval.py (MAESTRO / PTI /
+   lead proxies) and the independent pYIN-on-Demucs vocal check.
+4. The Accuracy page (`src/lib/accuracyStats.ts`) quotes those numbers, rounded.
 
 ## Notes on the separated path
 

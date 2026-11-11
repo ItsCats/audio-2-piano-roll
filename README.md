@@ -11,8 +11,8 @@ Everything runs in the browser. Audio is transcribed on the user's device by a n
 | Area | What you get |
 | --- | --- |
 | **Import** | MP3, WAV, M4A/AAC, MP4/MOV/WebM/MKV (audio track), FLAC, OGG/Opus, MIDI; microphone recording; YouTube (via your processing server, or by recording the official embedded player's tab audio) |
-| **Transcription** | Spotify's Basic Pitch model (polyphonic) running in a Web Worker on WebGL/WASM, with a piano-tuned note-extraction pipeline, beat tracking, key detection and hand assignment. Re-tune detection afterwards without re-running the model. |
-| **Arrangements** | Easy (single melody + sustained bass), Medium (melody + chord tones, simplified left hand), Hard (full transcription) — switch instantly, edit each independently |
+| **Transcription** | Spotify's Basic Pitch model (polyphonic) running in a Web Worker on WebGL/WASM, with a piano-tuned note-extraction pipeline (register curve for the top/bottom octaves, chopped-note join), beat tracking, key detection and hand assignment. **Separate vocals & drums** (SCNet, in the browser, on by default for "Full song") puts the singer's melody on the right hand and transcribes the accompaniment without drums. Re-tune detection afterwards without re-running the model. Measured accuracy: in-app **Accuracy** page. |
+| **Arrangements** | Easy (the sung melody — or one smooth instrument tune — on 8th notes + sustained bass), Medium (tune + chord tones, simplified left hand, never more than an octave per hand), Hard (full transcription, hands rebalanced for reach) — switch instantly, edit each independently |
 | **Piano roll** | Smooth canvas renderer locked to the audio clock, 49–88 keys or fit-to-song, note speed/zoom, hand colours, glow, trails, sparks, guides, pedal lane, loop markers |
 | **Labels** | Letters, letters+octave, solfège, MIDI numbers or custom; sharps/flats/auto-by-key; font, size, colour, position, opacity, size threshold |
 | **Look** | Themes (incl. Blossom), gradients, opacity, corners, borders, shadows, falling-note glow, note brightness, keyboard themes/colours/height, flat or realistic keyboard, scene/colour/image/video backgrounds with blur, brightness, contrast, overlay, fit, zoom, position |
@@ -55,14 +55,23 @@ npm run preview    # serve the production build locally
 ## Testing
 
 ```bash
-npm test             # 35 unit tests: note extraction, timing, beats, hands, difficulty, MIDI, practice scoring …
+npm test             # unit tests (vitest): note extraction, timing, beats, hands, melody, difficulty, playability, MIDI, practice scoring …
 ```
 
 ```bash
 npm run test:e2e     # browser benchmark: renders known pieces with the real piano engine, transcribes them, fails on F1 regression
 ```
 
-The E2E benchmark needs Chromium for Playwright (`npx playwright install chromium`). Current results: Bach BWV 846 F1 0.94, chord/melody study F1 0.88, mean onset error < 5 ms with no drift (see [docs/TRANSCRIPTION.md](docs/TRANSCRIPTION.md)).
+The E2E benchmark needs Chromium for Playwright (`npx playwright install chromium`). It is the regression gate on synthetic pieces (Bach BWV 846 F1 ≈ 0.94, chord/melody study ≈ 0.88, mean onset error ≈ 8–12 ms).
+
+Accuracy on **real recordings** is measured with the harness in [`tests/accuracy/`](tests/accuracy/README.md) (real browser pipeline, full recordings; audio and references stay outside the repo). Latest results (2026-11-11), also on the in-app Accuracy page and in [docs/TRANSCRIPTION.md](docs/TRANSCRIPTION.md):
+
+| What | Result |
+| --- | --- |
+| 6 MAESTRO concert performances with exact MIDI, note F1 ("Piano solo" / "Sensitive") | 0.80 / 0.82 (was 0.78 / 0.77) |
+| 5 songs with a singer: Easy right hand plays the singer's note (any octave), with separation | 50 % of sung moments (was 19 %; best possible ≈ 62 %) |
+| Same songs: Easy left hand on the bass note | 71 % (was 52 %) |
+| Time per minute of audio (4-core CPU, no GPU), without / with separation | ≈ 7 s / ≈ 1 min (peak memory 0.4–0.9 / 1.9–2.2 GB) |
 
 ## Deploying to Netlify
 
@@ -111,7 +120,9 @@ Then enter `http://localhost:8000` in **Settings → Processing server**. See [s
 src/
   lib/
     transcription/   Basic Pitch worker, note extraction, decoding, pipeline
-    music/           types, theory, beats, hands, cleanup, difficulty, MIDI, demo
+    separation/      SCNet vocals/drums separation worker (ONNX Runtime Web), stems, drum envelope
+    pitch/           CREPE-tiny pitch tracker (built and measured, not wired into the import)
+    music/           types, theory, beats, hands, cleanup, melody, difficulty, playability, MIDI, demo
     audio/           sample library, piano engine, effects, live player, offline render, WAV
     render/          piano-roll renderer, keyboard layout, themes, backgrounds
     export/          video export (WebCodecs/mediabunny), downloads, presets
@@ -121,10 +132,10 @@ src/
     backend/         processing-server client
   state/             zustand stores (settings, studio, transport, import, playback)
   components/        UI kit, layout, studio panels, dialogs
-  pages/             Home, Import, Studio, Library, Settings
+  pages/             Home, Import, Studio, Library, Settings, Accuracy, Credits
 public/
   samples/           piano samples (built by scripts/build-samples.py)
-  models/            Basic Pitch TF.js model
+  models/            Basic Pitch TF.js model, SCNet separation (ONNX), CREPE-tiny (ONNX, not yet used)
 netlify/functions/   backend-token
 server/              optional FastAPI processing server
 tests/               unit tests and the browser accuracy harness
@@ -132,12 +143,14 @@ tests/               unit tests and the browser accuracy harness
 
 ## Credits & licences
 
+The full list (models, sounds, fonts, libraries, server components and the data used to measure accuracy) is on the in-app **Credits** page (`/credits`, source `src/lib/credits.ts`; linked from the sidebar, Settings and the Accuracy page). In short:
+
 - [Basic Pitch](https://github.com/spotify/basic-pitch) model by Spotify — Apache-2.0
 - [Salamander Grand Piano V3](https://freepats.zenvoid.org/Piano/acoustic-grand-piano.html) by Alexander Holm — CC-BY 3.0
 - Upright Piano KW (freepats.zenvoid.org) — CC0
 - [SCNet](https://github.com/starrytong/SCNet) source-separation model by starrytong (Tong et al., ICASSP 2024) — MIT; int8 ONNX export by [audiojs](https://huggingface.co/audiojs/scnet); redistribution confirmed in [starrytong/SCNet#35](https://github.com/starrytong/SCNet/issues/35). Used in the browser and on the optional server; see [public/models/scnet/README.md](public/models/scnet/README.md)
 - [CREPE](https://github.com/marl/crepe) "tiny" pitch model by Jong Wook Kim et al. — MIT; PyTorch weights from [torchcrepe](https://github.com/maxrmorrison/torchcrepe) by Max Morrison (MIT), converted to ONNX for this project. Shipped in `public/models/crepe/` (not yet run by the import); see [public/models/crepe/README.md](public/models/crepe/README.md)
 - [ONNX Runtime](https://github.com/microsoft/onnxruntime) (onnxruntime-web in the browser, onnxruntime on the server) — MIT
-- TensorFlow.js (Apache-2.0), mediabunny (MPL-2.0), @tonejs/midi (MIT), React (MIT), yt-dlp (Unlicense, server only)
+- TensorFlow.js (Apache-2.0), mediabunny (MPL-2.0), @tonejs/midi (MIT), React (MIT); server only: yt-dlp (Unlicense), FastAPI (MIT), Uvicorn (BSD-3), python-multipart (Apache-2.0), NumPy (BSD-3), FFmpeg (LGPL)
 
 Users are responsible for having the rights to the music they import, and for complying with YouTube's Terms of Service.

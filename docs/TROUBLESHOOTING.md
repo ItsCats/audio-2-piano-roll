@@ -9,11 +9,11 @@
 The browser lacks a decoder for that codec (e.g. ALAC, WMA, some AVI). Convert to MP3/WAV/M4A, or use a processing server (it decodes anything ffmpeg can).
 
 ### Transcription is slow
-The worker uses WebGL when a hardware GPU is available, otherwise WASM (SIMD), otherwise plain CPU (much slower; a warning is shown). Close other heavy tabs; keep the tab visible. Typical: 5–10× faster than real time on WASM.
+The worker uses WebGL when a hardware GPU is available, otherwise WASM (SIMD), otherwise plain CPU (much slower; a warning is shown). Close other heavy tabs; keep the tab visible. Typical on WASM: about 7 s per minute of audio; with *Separate vocals & drums* about 1 minute per minute (≈ 2 min per minute in browsers without cross-origin isolation, e.g. Safari).
 
 ### Too many / too few notes
 * Studio → **Notes** tab → *Re-detect notes*: raise *Note onset sensitivity* for missed notes, lower it for false ones; increase *Merge ringing re-detections* if sustained notes are broken into repeats; enable *Follow sustained melodies* for vocals.
-* For full band recordings use the *Full song* preset and, ideally, *Isolate the piano part* on a processing server.
+* For songs with a singer use the *Full song* preset with *Separate vocals & drums* on (the right hand then follows the singer); a processing server makes the separation faster.
 * Blend in the original recording (Sound tab → *Original recording*) to hear what's wrong, then fix notes in Edit mode.
 
 ### Tempo / beat grid is wrong

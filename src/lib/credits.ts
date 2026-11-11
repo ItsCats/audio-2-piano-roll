@@ -154,9 +154,9 @@ export const CREDITS: CreditGroup[] = [
         licenseUrl: LIC.ccbyncsa4,
         url: 'https://magenta.tensorflow.org/datasets/maestro',
       },
-      { name: 'ASAP dataset', use: 'Aligned score of Chopin’s Ballade No. 1.', author: 'Francesco Foscarin et al.', license: 'CC BY-NC-SA 4.0', licenseUrl: LIC.ccbyncsa4, url: 'https://github.com/fosfrancesco/asap-dataset' },
+      { name: 'ASAP dataset', use: 'Aligned score of Chopin’s Ballade No. 1 (used to check an earlier measurement).', author: 'Francesco Foscarin et al.', license: 'CC BY-NC-SA 4.0', licenseUrl: LIC.ccbyncsa4, url: 'https://github.com/fosfrancesco/asap-dataset' },
       { name: 'Musopen', use: 'Recording of Chopin’s Nocturne Op. 55 No. 1.', author: 'Musopen', license: 'Public domain (CC0)', licenseUrl: LIC.cc0, url: 'https://musopen.org' },
-      { name: 'Mutopia Project', use: 'Score of Debussy’s Clair de lune.', author: 'Mutopia contributors', license: 'Public domain', url: 'https://www.mutopiaproject.org' },
+      { name: 'Mutopia Project', use: 'Score of Debussy’s Clair de lune (used to check an earlier measurement).', author: 'Mutopia contributors', license: 'Public domain', url: 'https://www.mutopiaproject.org' },
       {
         name: 'High-resolution Piano Transcription',
         use: 'A piano-specialist model used as a second opinion on recordings without an exact answer key.',
