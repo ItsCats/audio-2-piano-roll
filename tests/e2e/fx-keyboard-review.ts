@@ -230,3 +230,25 @@ if (mode === 'fullperf') {
   }
   Object.assign(out, res);
 }
+
+if (mode === 'bloomthrash') {
+  const c = document.createElement('canvas'); c.width = 1920; c.height = 1080; document.body.appendChild(c);
+  const ctx = c.getContext('2d', { alpha: false })!;
+  const PC = ['#ff5a5f', '#ff8a4c', '#ffb547', '#ffd84d', '#c6e95b', '#6fdc7c', '#3fd2b5', '#3cb8f0', '#5b8cff', '#8c6cff', '#c35cf2', '#f25cb6'].map(hexToRgb);
+  // 12 isolated keys covering all pitch classes (white + black), pitch-colour mode
+  const keys = [24, 37, 50, 63, 76, 89, 102, 31, 44, 57, 70, 83];
+  const press = new Map(keys.map((m) => [m, PC[m % 12]] as [number, RGB]));
+  for (let i = 0; i < 5; i++) { direct(ctx, 1920, 1080, 21, 108, press); direct(ctx, 1280, 720, 21, 108, press); }
+  let t0 = performance.now();
+  for (let i = 0; i < 100; i++) direct(ctx, 1920, 1080, 21, 108, press);
+  ctx.getImageData(0, 0, 1, 1);
+  out.single = (performance.now() - t0) / 100;
+  t0 = performance.now();
+  for (let i = 0; i < 100; i++) { direct(ctx, 1920, 1080, 21, 108, press); direct(ctx, 1280, 720, 21, 108, press); }
+  ctx.getImageData(0, 0, 1, 1);
+  out.alternatingPerCall = (performance.now() - t0) / 200;
+  t0 = performance.now();
+  for (let i = 0; i < 100; i++) { direct(ctx, 1920, 1080, 21, 108, press, 'classic', 0); direct(ctx, 1280, 720, 21, 108, press, 'classic', 0); }
+  ctx.getImageData(0, 0, 1, 1);
+  out.alternatingNoGlow = (performance.now() - t0) / 200;
+}
