@@ -88,7 +88,7 @@ Never commit secrets — `.env*` files are git-ignored; `.env.example` documents
 The browser does all transcription. The server in [`server/`](server/README.md) adds:
 
 - **YouTube audio fetching** with yt-dlp (only for content you have rights to),
-- **Demucs source separation** — returns the piano stem when the song has a piano, otherwise the mix without drums, which greatly improves transcription of full band recordings.
+- **Faster source separation** — the same SCNet model the browser runs for "Separate vocals & drums", on several CPU cores: it returns the vocal stem (the right-hand melody) and the accompaniment without drums or vocals. (Before 2.0 the server used Demucs, whose pretrained weights are research-only.)
 
 ```bash
 cd server && docker build -t piano2vision-server . && docker run -p 8000:8000 -e ALLOW_ANONYMOUS=1 -e ALLOWED_ORIGINS=http://localhost:5173 piano2vision-server
@@ -135,6 +135,8 @@ tests/               unit tests and the browser accuracy harness
 - [Basic Pitch](https://github.com/spotify/basic-pitch) model by Spotify — Apache-2.0
 - [Salamander Grand Piano V3](https://freepats.zenvoid.org/Piano/acoustic-grand-piano.html) by Alexander Holm — CC-BY 3.0
 - Upright Piano KW (freepats.zenvoid.org) — CC0
-- TensorFlow.js (Apache-2.0), mediabunny (MPL-2.0), @tonejs/midi (MIT), React (MIT), Demucs (MIT, server only), yt-dlp (Unlicense, server only)
+- [SCNet](https://github.com/starrytong/SCNet) source-separation model by starrytong (Tong et al., ICASSP 2024) — MIT; int8 ONNX export by [audiojs](https://huggingface.co/audiojs/scnet); redistribution confirmed in [starrytong/SCNet#35](https://github.com/starrytong/SCNet/issues/35). Used in the browser and on the optional server; see [public/models/scnet/README.md](public/models/scnet/README.md)
+- [ONNX Runtime](https://github.com/microsoft/onnxruntime) (onnxruntime-web in the browser, onnxruntime on the server) — MIT
+- TensorFlow.js (Apache-2.0), mediabunny (MPL-2.0), @tonejs/midi (MIT), React (MIT), yt-dlp (Unlicense, server only)
 
 Users are responsible for having the rights to the music they import, and for complying with YouTube's Terms of Service.

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { extractNotes, DEFAULT_EXTRACTION } from '../../src/lib/transcription/noteExtraction';
 import { BP_FPS, BP_KEPT_FRAMES, frameToTime, timeToFrame } from '../../src/lib/transcription/constants';
+import { EXTRACTION_PRESETS, VOCAL_EXTRACTION, melodyFromRaw } from '../../src/lib/transcription/pipeline';
 
 const P = 88;
 function posteriors(n: number) {
@@ -62,5 +63,29 @@ describe('note extraction', () => {
     for (let t = 50; t < 150; t++) p.frames[t * P + 40] = 0.7; // no onset at all
     expect(extractNotes(p.frames, p.onsets, 300, { ...DEFAULT_EXTRACTION, melodiaTrick: false })).toHaveLength(0);
     expect(extractNotes(p.frames, p.onsets, 300, { ...DEFAULT_EXTRACTION, melodiaTrick: true })).toHaveLength(1);
+  });
+});
+
+describe('vocal melody path', () => {
+  const raw = (midi: number, startFrame: number, len: number, amplitude = 0.7) => ({ startFrame, endFrame: startFrame + len, midi, amplitude, onset: 0.8 });
+  const rms = new Float32Array(3000).fill(0.2);
+
+  it('turns vocal-stem note events into a single right-hand melody line', () => {
+    const ev = [52, 54, 55, 57, 59, 57, 55, 54, 52, 50].flatMap((m, i) => [raw(m, 20 + i * 40, 36), raw(m + 12, 21 + i * 40, 20, 0.3)]);
+    const line = melodyFromRaw(ev, rms, 20);
+    expect(line.length).toBe(10);
+    expect(line.every((n) => n.role === 'melody' && n.hand === 'R')).toBe(true);
+    // a low (male) line is moved up into the right-hand register
+    expect(line[0].midi).toBe(64);
+    for (let i = 1; i < line.length; i++) expect(line[i].start).toBeGreaterThanOrEqual(line[i - 1].start + line[i - 1].dur - 1e-9);
+  });
+
+  it('a stem with only a few stray notes yields no melody', () => {
+    expect(melodyFromRaw([raw(60, 10, 30), raw(62, 100, 30)], rms, 20)).toEqual([]);
+  });
+
+  it('the vocal parameters are not offered as a user preset', () => {
+    expect(Object.keys(EXTRACTION_PRESETS)).not.toContain('vocal');
+    expect(VOCAL_EXTRACTION.melodiaTrick).toBe(true);
   });
 });

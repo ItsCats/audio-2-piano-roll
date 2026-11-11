@@ -27,9 +27,15 @@
   [headers.values]
     Cache-Control = "public, max-age=2592000, stale-while-revalidate=86400"
 [[headers]]
-  for = "/models/*"
+  for = "/models/basic-pitch/*"
   [headers.values]
     Cache-Control = "public, max-age=2592000, stale-while-revalidate=86400"
+# SCNet separation model (12.9 MB). The app requests it as scnet.int8.onnx?v=<sha256 prefix> and checks the
+# sha256, so a long cache is safe; a new model ships with a new ?v= and the old Cache API entry is dropped.
+[[headers]]
+  for = "/models/scnet/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
 
 [[headers]]
   for = "/*"

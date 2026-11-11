@@ -14,7 +14,10 @@ What the CDN serves: the app (~0.8 MB gzipped for the first page; the transcript
 
 ## Optional processing server
 
-Needed only for YouTube fetching and Demucs source separation. Transcription never needs it.
+Needed only for YouTube fetching and for faster source separation. Transcription never needs it, and the
+"Separate vocals & drums" import option also runs in the browser (SCNet, about 2–3× real time single-threaded);
+a server runs the same SCNet model on several cores (about 0.4–0.6× real time) and returns the same two stems:
+the vocals and the accompaniment without drums.
 
 ### Security model
 
@@ -27,13 +30,19 @@ Needed only for YouTube fetching and Demucs source separation. Transcription nev
 | Option | Good for | Approximate cost* |
 | --- | --- | --- |
 | **Your own computer** (`docker run …` or `uvicorn`) | Personal use. **The only option that reliably works for YouTube**, because YouTube blocks most cloud/datacenter IPs (verified: HTTP 403 from a cloud VM). | Free |
-| **Google Cloud Run** (CPU, scale to zero, 4 vCPU/8 GB, concurrency 1) | Occasional separation jobs | Pay per use; a 4-minute song ≈ 2–4 CPU-minutes ≈ a few US cents. Free tier covers light use. |
-| **Fly.io / Railway / Render** (2–4 shared vCPU, 4–8 GB RAM) | Always-on small server | ~US$15–40 per month always-on; less with auto-stop |
-| **GPU (Modal, RunPod, Replicate-style)** | Many users, fast separation | ~US$0.5–1.5 per GPU-hour; Demucs takes ~10–20 s per song on a GPU |
+| **Google Cloud Run** (CPU, scale to zero, 2–4 vCPU/4 GB, concurrency 1) | Occasional separation jobs | Pay per use; a 4-minute song ≈ 3–5 vCPU-minutes ≈ a few US cents. Free tier covers light use. |
+| **Fly.io / Railway / Render** (2–4 shared vCPU, 3–4 GB RAM) | Always-on small server | ~US$10–30 per month always-on; less with auto-stop |
 
 \* Indicative 2025–26 list prices; check the provider's current pricing.
 
-Measured on a 4-core cloud VM (CPU only): Demucs `htdemucs_6s` separated a 60 s recording in 25 s including first-time model download. Expect roughly 0.3–0.6× real time on 4 modern cores.
+Measured on a shared 4-core cloud VM (CPU only), SCNet int8 via onnxruntime, 20 s excerpt end to end (upload, decode,
+separation, FLAC encoding): 12.1 s with 2 threads, 8.4 s with 4 threads; peak RAM ≈ 1.7 GB per job for a short song, plus roughly 50–100 MB per minute of audio (give the server 3 GB for typical songs, 4 GB for the 20-minute limit). Separation scales
+linearly with song length (one 11 s segment every 9.9 s), so a 4-minute song (≈ 26 segments of 2.5–3.7 s each here) takes roughly 1–1.6 minutes on 2–4 cores.
+The image no longer contains PyTorch (≈ 70 MB for onnxruntime plus the 12.9 MB model instead of ≈ 0.8 GB for torch and Demucs).
+
+The server used Demucs before version 2.0; Demucs' pretrained weights are research-only
+([facebookresearch/demucs#327](https://github.com/facebookresearch/demucs/issues/327)), SCNet's are MIT
+([starrytong/SCNet#35](https://github.com/starrytong/SCNet/issues/35)).
 
 ### Deploying with Docker
 
@@ -49,14 +58,15 @@ docker build -t piano2vision-server .
 docker run -p 8000:8000 -e SHARED_SECRET=$(openssl rand -hex 32) -e ALLOWED_ORIGINS=https://your-site.netlify.app piano2vision-server
 ```
 
-Build with `--build-arg WITH_SEPARATION=0` for a ~150 MB image without PyTorch/Demucs (YouTube only).
+The build downloads the SCNet model from a pinned Hugging Face revision and verifies its SHA-256. Build with
+`--build-arg WITH_SEPARATION=0` for a YouTube-only image without onnxruntime and the model.
 
 Then in Netlify set `PROCESSING_SHARED_SECRET` (same value) and optionally `VITE_PROCESSING_URL=https://your-server.example`, and redeploy. Users can also enter a server URL under **Settings → Processing server**.
 
 ### Local development with the server
 
 ```bash
-cd server && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+cd server && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt -r requirements-separation.txt
 ```
 
 ```bash

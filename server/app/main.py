@@ -1,8 +1,9 @@
 """
 Piano2Vision processing server.
 
-Optional companion to the web app: fetches YouTube audio (yt-dlp) and isolates the
-piano / harmonic content of full mixes (Demucs). Note transcription itself runs in the
+Optional companion to the web app: fetches YouTube audio (yt-dlp) and separates full mixes
+into a vocal stem and a drum-less accompaniment (SCNet, int8 ONNX on onnxruntime CPU) — the same
+model the browser runs, just faster on a multi-core server. Note transcription itself runs in the
 browser, so this server never needs a GPU to be useful.
 """
 from __future__ import annotations
@@ -11,18 +12,19 @@ import os
 import time
 from collections import defaultdict, deque
 
-from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from . import separation, youtube
-from .audio import AudioError, decode, encode_m4a, has_audio_stream, probe_duration, transcode_m4a
+from .audio import AudioError, decode, encode_flac, has_audio_stream, probe_duration, transcode_m4a
 from .auth import require_auth
 from .config import settings
 from .jobs import Job, manager
 
-VERSION = "1.0.0"
+VERSION = "2.0.0"
+STEMS = ("vocals", "accomp", "mix")
 
 app = FastAPI(title="Piano2Vision processing server", version=VERSION)
 app.add_middleware(
@@ -51,15 +53,31 @@ def separation_enabled() -> bool:
     return settings.enable_separation and separation.available()
 
 
-def _separate_into(job: Job, source_path: str, out_path: str) -> None:
+def _separate_into(job: Job, source_path: str, out_dir: str) -> None:
+    """SCNet -> vocals.flac + accomp.flac (mono 22.05 kHz, sample-aligned with the source)."""
+    job.stage = "decoding"
+    job.progress = None
+    audio = decode(source_path, sr=separation.SR, channels=2)
     job.stage = "separating"
-    job.progress = None  # demucs does not expose granular progress
-    sr = 44100
-    audio = decode(source_path, sr=sr, channels=2)
-    out, desc = separation.separate(audio, sr, settings.demucs_model)
-    job.detail = desc
+    job.progress = 0.0
+
+    def on_progress(done: int, total: int) -> None:
+        job.progress = done / total
+        job.detail = f"segment {done}/{total}"
+
+    stems = separation.separate(audio, on_progress)
+    del audio
     job.stage = "encoding"
-    encode_m4a(out, sr, out_path)
+    job.progress = None
+    # one common gain for both stems (keeps their ratio, so vocal-presence measurements stay valid)
+    peak = max(float(abs(v).max()) if v.size else 0.0 for v in stems.values())
+    gain = 0.98 / peak if peak > 0.98 else 1.0
+    for name, data in stems.items():
+        path = os.path.join(out_dir, f"{name}.flac")
+        encode_flac(data * gain if gain != 1.0 else data, separation.SR, path)
+        job.stems[name] = path
+    job.detail = "vocals + accompaniment (SCNet)"
+    job.result_path = job.stems["accomp"]
 
 
 @app.get("/api/health")
@@ -67,7 +85,9 @@ def health() -> dict:
     return {
         "ok": True,
         "version": VERSION,
-        "features": {"youtube": youtube.available(), "separation": separation_enabled()},
+        # stems: separation returns ?stem=vocals|accomp (SCNet); older servers returned one "piano part" file
+        "features": {"youtube": youtube.available(), "separation": separation_enabled(), "stems": True},
+        "separationModel": "scnet-int8" if separation_enabled() else None,
         "maxDurationSec": settings.max_duration_sec,
     }
 
@@ -96,14 +116,14 @@ def create_youtube_job(req: YouTubeRequest) -> dict:
 
         info = youtube.download_audio(url, d, on_progress)
         job.title, job.artist, job.duration = info["title"], info["artist"], info["duration"]
-        out = os.path.join(d, "result.m4a")
+        mix = os.path.join(d, "mix.m4a")
+        job.stage = "encoding"
+        job.progress = None
+        transcode_m4a(info["path"], mix)
+        job.stems["mix"] = mix
+        job.result_path = mix
         if separate:
-            _separate_into(job, info["path"], out)
-        else:
-            job.stage = "encoding"
-            job.progress = None
-            transcode_m4a(info["path"], out)
-        job.result_path = out
+            _separate_into(job, info["path"], d)  # default download becomes the accompaniment
 
     return manager.create("youtube", work).public()
 
@@ -140,9 +160,8 @@ async def create_separation_job(file: UploadFile = File(...)) -> dict:
         src = os.path.join(d, "source")
         os.replace(tmp_path, src)
         job.duration = duration
-        out = os.path.join(d, "result.m4a")
-        _separate_into(job, src, out)
-        job.result_path = out
+        _separate_into(job, src, d)
+        os.remove(src)
 
     return manager.create("separate", work).public()
 
@@ -156,8 +175,17 @@ def get_job(job_id: str) -> dict:
 
 
 @app.get("/api/jobs/{job_id}/audio", dependencies=[Depends(require_auth)])
-def get_job_audio(job_id: str) -> FileResponse:
+def get_job_audio(job_id: str, stem: str | None = Query(default=None, max_length=16)) -> FileResponse:
+    """Processed audio. ?stem=vocals|accomp (separation) or mix (YouTube); without it: the accompaniment for
+    separation jobs (what pre-2.0 clients expect) or the mix for plain YouTube jobs."""
+    if stem is not None and stem not in STEMS:
+        raise HTTPException(status_code=400, detail=f"Unknown stem; use one of {', '.join(STEMS)}.")
     job = manager.get(job_id)
-    if not job or job.status != "done" or not job.result_path or not os.path.exists(job.result_path):
+    if not job or job.status != "done":
         raise HTTPException(status_code=404, detail="No processed audio for this job.")
-    return FileResponse(job.result_path, media_type="audio/mp4", filename="audio.m4a")
+    path = job.stems.get(stem) if stem else job.result_path
+    if not path or not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="No processed audio for this job." if not stem else f"This job has no {stem} stem.")
+    flac = path.endswith(".flac")
+    name = f"{stem or ('accomp' if flac else 'audio')}.{'flac' if flac else 'm4a'}"
+    return FileResponse(path, media_type="audio/flac" if flac else "audio/mp4", filename=name)

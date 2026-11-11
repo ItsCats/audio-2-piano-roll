@@ -21,6 +21,24 @@ export interface RawNoteEvent {
   onset: number;
 }
 
+/**
+ * Register-dependent detection: the onset/frame thresholds and the minimum note length are
+ * multiplied by factors that ramp linearly from 1 (at `lowMidi` / `highMidi`) to the given
+ * value at the keyboard ends (MIDI 21 / 108). Basic Pitch's activations are much weaker for the
+ * top and bottom octaves of a piano (short, quickly decaying or harmonically weak notes), so
+ * thresholds that suit the middle of the keyboard miss most notes there. Omitted factors are 1.
+ */
+export interface RegisterCurve {
+  lowMidi: number;
+  highMidi: number;
+  lowOnset?: number;
+  lowFrame?: number;
+  lowMinFrames?: number;
+  highOnset?: number;
+  highFrame?: number;
+  highMinFrames?: number;
+}
+
 export interface NoteExtractionOptions {
   onsetThreshold: number;
   frameThreshold: number;
@@ -30,6 +48,45 @@ export interface NoteExtractionOptions {
   energyTolerance: number;
   minMidi: number;
   maxMidi: number;
+  /** Optional register-dependent scaling (none: the same thresholds for every pitch). */
+  register?: RegisterCurve;
+  /** Optional explicit per-pitch thresholds (88 values, MIDI 21..108); override threshold x register. */
+  onsetThresholdByPitch?: ArrayLike<number>;
+  frameThresholdByPitch?: ArrayLike<number>;
+}
+
+export interface PitchThresholds {
+  // Float64 so that a threshold compares exactly like the scalar option did
+  onset: Float64Array;
+  frame: Float64Array;
+  minFrames: Int32Array;
+}
+
+/** Scale factor of a register curve for one pitch (1 inside lowMidi..highMidi). */
+function registerScale(midi: number, lowMidi: number, highMidi: number, low = 1, high = 1): number {
+  const bottom = BP_MIDI_OFFSET;
+  const top = BP_MIDI_OFFSET + P - 1;
+  if (midi < lowMidi && low !== 1) return 1 + (low - 1) * Math.min(1, (lowMidi - midi) / Math.max(1, lowMidi - bottom));
+  if (midi > highMidi && high !== 1) return 1 + (high - 1) * Math.min(1, (midi - highMidi) / Math.max(1, top - highMidi));
+  return 1;
+}
+
+/** The effective onset/frame threshold and minimum note length (frames) of each of the 88 pitches. */
+export function pitchThresholds(opts: NoteExtractionOptions): PitchThresholds {
+  const onset = new Float64Array(P);
+  const frame = new Float64Array(P);
+  const minFrames = new Int32Array(P);
+  const r = opts.register;
+  for (let f = 0; f < P; f++) {
+    const m = f + BP_MIDI_OFFSET;
+    const so = r ? registerScale(m, r.lowMidi, r.highMidi, r.lowOnset, r.highOnset) : 1;
+    const sf = r ? registerScale(m, r.lowMidi, r.highMidi, r.lowFrame, r.highFrame) : 1;
+    const sm = r ? registerScale(m, r.lowMidi, r.highMidi, r.lowMinFrames, r.highMinFrames) : 1;
+    onset[f] = opts.onsetThresholdByPitch?.[f] ?? opts.onsetThreshold * so;
+    frame[f] = opts.frameThresholdByPitch?.[f] ?? opts.frameThreshold * sf;
+    minFrames[f] = sm === 1 ? opts.minNoteFrames : Math.max(1, Math.round(opts.minNoteFrames * sm));
+  }
+  return { onset, frame, minFrames };
 }
 
 export const DEFAULT_EXTRACTION: NoteExtractionOptions = {
@@ -95,18 +152,23 @@ export function extractNotes(
     }
   }
   const onsets = opts.inferOnsets ? inferredOnsets(frames, onsetsCopy, n) : onsetsCopy;
-  const thr = opts.frameThreshold;
+  const { onset: onsetThr, frame: frameThr, minFrames } = pitchThresholds(opts);
   const tol = opts.energyTolerance;
 
-  // local maxima in time (order 1) above onset threshold, collected row-major (t, f)
+  // local maxima in time (order 1) above onset threshold, collected row-major (t, f).
+  // A flat peak (equal neighbouring values — common on the 8-bit stored posteriors used for
+  // re-detection) counts once, at its first frame; the reference's strict test would drop it.
   const starts: number[] = [];
   for (let t = 0; t < n; t++) {
     for (let f = 0; f < P; f++) {
       const v = onsets[t * P + f];
-      if (v <= opts.onsetThreshold) continue;
+      if (v <= onsetThr[f]) continue;
       const prev = t > 0 ? onsets[(t - 1) * P + f] : -Infinity;
-      const next = t < n - 1 ? onsets[(t + 1) * P + f] : -Infinity;
-      if (v > prev && v > next) starts.push(t * P + f);
+      if (!(v > prev)) continue;
+      let j = t + 1;
+      while (j < n && onsets[j * P + f] === v) j++;
+      const next = j < n ? onsets[j * P + f] : -Infinity;
+      if (v > next) starts.push(t * P + f);
     }
   }
 
@@ -133,6 +195,7 @@ export function extractNotes(
     const t0 = Math.floor(starts[idx] / P);
     const f = starts[idx] - t0 * P;
     if (t0 >= n - 1) continue;
+    const thr = frameThr[f];
     let i = t0 + 1;
     let k = 0;
     while (i < n - 1 && k < tol) {
@@ -141,7 +204,7 @@ export function extractNotes(
       i++;
     }
     i -= k;
-    if (i - t0 <= opts.minNoteFrames) continue;
+    if (i - t0 <= minFrames[f]) continue;
     for (let j = t0; j < i; j++) zeroAround(j, f);
     notes.push({ startFrame: t0, endFrame: i, midi: f + BP_MIDI_OFFSET, amplitude: meanAmp(t0, i, f), onset: onsetAt(t0, f) });
   }
@@ -150,13 +213,14 @@ export function extractNotes(
     // candidates sorted by descending energy; cells are only ever zeroed, so iterating the
     // sorted list and skipping already-zeroed cells equals repeatedly taking the global max.
     const cand: number[] = [];
-    for (let i = 0; i < remaining.length; i++) if (remaining[i] > thr) cand.push(i);
+    for (let i = 0; i < remaining.length; i++) if (remaining[i] > frameThr[i % P]) cand.push(i);
     const vals = remaining;
     cand.sort((a, b) => vals[b] - vals[a]);
     for (const c of cand) {
-      if (remaining[c] <= thr) continue;
       const tMid = Math.floor(c / P);
       const f = c - tMid * P;
+      const thr = frameThr[f];
+      if (remaining[c] <= thr) continue;
       remaining[c] = 0;
       let i = tMid + 1;
       let k = 0;
@@ -176,7 +240,7 @@ export function extractNotes(
         i--;
       }
       const iStart = i + 1 + k;
-      if (iEnd - iStart <= opts.minNoteFrames) continue;
+      if (iEnd - iStart <= minFrames[f]) continue;
       notes.push({
         startFrame: iStart,
         endFrame: iEnd,

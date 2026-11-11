@@ -4,6 +4,11 @@ export interface StoredPosteriors {
   frames: Uint8Array;
   onsets: Uint8Array;
   rms: Float32Array;
+  /**
+   * Posteriors of the separated vocal stem, stored alongside the accompaniment's so the melody
+   * line survives re-detection (pass to reextractNotes as melodyPosteriors).
+   */
+  melody?: StoredPosteriors;
 }
 
 export function dequantize(a: Uint8Array): Float32Array {

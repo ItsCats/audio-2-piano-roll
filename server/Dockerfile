@@ -5,13 +5,12 @@ WORKDIR /srv
 COPY requirements.txt requirements-separation.txt ./
 ARG WITH_SEPARATION=1
 RUN pip install --no-cache-dir -r requirements.txt \
- && if [ "$WITH_SEPARATION" = "1" ]; then \
-      pip install --no-cache-dir torch torchaudio --index-url https://download.pytorch.org/whl/cpu \
-      && pip install --no-cache-dir -r requirements-separation.txt \
-      && python -c "from demucs.pretrained import get_model; get_model('htdemucs_6s')"; \
-    fi
+ && if [ "$WITH_SEPARATION" = "1" ]; then pip install --no-cache-dir -r requirements-separation.txt; fi
+# SCNet int8 ONNX (MIT, starrytong/SCNet; ONNX export by audiojs): pinned revision, SHA-256-verified by model.py
+COPY app/model.py /tmp/fetch_model.py
+RUN if [ "$WITH_SEPARATION" = "1" ]; then python /tmp/fetch_model.py /srv/models/scnet.int8.onnx; fi && rm /tmp/fetch_model.py
 COPY app ./app
-ENV DATA_DIR=/tmp/pianovision PORT=8000
+ENV DATA_DIR=/tmp/pianovision PORT=8000 SCNET_MODEL=/srv/models/scnet.int8.onnx
 RUN useradd -m app && mkdir -p /tmp/pianovision && chown app /tmp/pianovision
 USER app
 EXPOSE 8000

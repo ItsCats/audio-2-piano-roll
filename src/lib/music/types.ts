@@ -10,6 +10,11 @@ export interface Note {
   dur: number;
   vel: number;
   hand: Hand;
+  /**
+   * Musical role, when known. 'melody' marks notes of the sung melody line extracted from the
+   * separated vocal stem: they always sit in the right hand and Easy/Medium are built around them.
+   */
+  role?: 'melody';
 }
 
 /** Sustain pedal held from `start` to `end` (seconds). */
@@ -84,6 +89,8 @@ export interface TranscriptionInfo {
   backend?: string;
   processingMs?: number;
   separated?: boolean;
+  /** Source separation that ran before transcription (SCNet, in the browser or on the server). */
+  separation?: { engine: 'scnet-browser' | 'scnet-server'; vocals: boolean; ms: number };
   warnings: string[];
   /** Rough 0..1 indicator of how clean the model output was (mean peak note confidence). */
   confidence?: number;

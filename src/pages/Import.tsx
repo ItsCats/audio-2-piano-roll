@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { FileAudio, SquarePlay, Music2, Mic, Loader2, CheckCircle2, XCircle, Circle, ArrowRight, Square, Info, Server } from 'lucide-react';
 import { Dropzone } from '../components/import/Dropzone';
-import { Badge, Button, ProgressBar, Segmented, Toggle, cn } from '../components/ui';
-import { STAGE_LABELS, useImport, type ImportStage } from '../state/importStore';
+import { SeparationOption, useSeparationChoice } from '../components/import/SeparationOption';
+import { Badge, Button, ProgressBar, Segmented, cn } from '../components/ui';
+import { STAGE_LABELS, useImport, type ImportJob, type ImportStage } from '../state/importStore';
 import { useSettings } from '../state/settingsStore';
 import { configuredBackendUrl, health, type BackendHealth } from '../lib/backend/client';
 import { createPlayer, fetchVideoMeta, parseYouTubeId, startTabCapture, tabCaptureSupported, type TabCapture, type VideoMeta, type YTPlayer } from '../lib/youtube/youtube';
@@ -56,6 +57,33 @@ function DetectionOptions() {
   );
 }
 
+/** Timeline: the planned stages, with any unplanned stage that actually happened slotted in where it happened. */
+function timeline(job: ImportJob): ImportStage[] {
+  const order = [...job.plan];
+  job.history.forEach((st, i) => {
+    if (st === 'done' || st === 'error' || order.includes(st)) return;
+    // right after the stage that preceded it
+    const prev = i > 0 ? order.indexOf(job.history[i - 1]) : -1;
+    order.splice(prev + 1, 0, st);
+  });
+  return order;
+}
+
+function formatEta(sec: number): string {
+  if (sec < 15) return 'a few seconds left';
+  if (sec < 60) return `about ${Math.round(sec / 5) * 5} s left`;
+  const m = Math.round(sec / 60);
+  return m <= 1 ? 'about 1 min left' : `about ${m} min left`;
+}
+
+/** time remaining extrapolated from the measured speed of the current phase (null until measured) */
+function etaText(job: ImportJob): string | null {
+  const r = job.rate;
+  if (!r || r.etaSec === undefined || r.at === undefined) return null;
+  const left = r.etaSec - (Date.now() - r.at) / 1000;
+  return left > 0 ? formatEta(left) : 'finishing…';
+}
+
 function JobProgress() {
   const job = useImport((s) => s.job);
   const cancel = useImport((s) => s.cancel);
@@ -67,11 +95,11 @@ function JobProgress() {
     return () => clearInterval(t);
   }, []);
   if (!job) return null;
-  const order: ImportStage[] = job.kind === 'midi' || job.kind === 'demo'
-    ? ['validating', 'arranging', 'saving']
-    : ['validating', ...(job.history.includes('uploading') ? (['uploading'] as ImportStage[]) : []), ...(job.history.includes('downloading') ? (['downloading'] as ImportStage[]) : []), ...(job.history.includes('separating') ? (['separating'] as ImportStage[]) : []), 'decoding', 'loading-model', 'analyzing', 'arranging', 'saving'];
+  const order = timeline(job);
   const failedStage = job.stage === 'error' ? job.history[job.history.length - 2] : null;
-  const activeIdx = failedStage ? order.indexOf(failedStage) : order.indexOf(job.stage);
+  const current = failedStage ?? job.stage;
+  const activeIdx = order.indexOf(current);
+  const eta = etaText(job);
   const elapsed = ((job.finishedAt ?? Date.now()) - job.startedAt) / 1000;
   const done = job.stage === 'done';
   const err = job.stage === 'error';
@@ -92,15 +120,19 @@ function JobProgress() {
       </div>
       {!done && !err && (
         <div className="mt-4">
-          <ProgressBar value={job.stage === 'analyzing' || job.stage === 'separating' ? job.progress : null} />
-          {job.stage === 'analyzing' && job.progress !== null && (
-            <p className="mt-1.5 text-right font-mono text-[11px] text-ink-300">{Math.round(job.progress * 100)}%</p>
+          <ProgressBar value={job.progress} />
+          {job.progress !== null && (
+            <p className="mt-1.5 flex justify-between gap-3 font-mono text-[11px] text-ink-300">
+              <span>{eta ?? ((job.stage === 'separating' || job.stage === 'analyzing') && job.progress < 0.99 ? 'measuring speed…' : '')}</span>
+              <span>{Math.round(job.progress * 100)}%</span>
+            </p>
           )}
         </div>
       )}
       <ol className="mt-4 grid gap-1.5 sm:grid-cols-2">
         {order.map((st, i) => {
-          const state = done || i < activeIdx ? 'done' : i === activeIdx ? (err ? 'failed' : 'active') : 'todo';
+          const state =
+            done ? 'done' : st === current ? (err ? 'failed' : 'active') : i < activeIdx || job.history.includes(st) ? 'done' : 'todo';
           return (
             <li key={st} className="flex items-center gap-2 text-[12.5px]">
               {state === 'done' ? <CheckCircle2 size={14} className="text-ok" /> : state === 'active' ? <Loader2 size={14} className="animate-spin text-accent-400" /> : state === 'failed' ? <XCircle size={14} className="text-bad" /> : <Circle size={14} className="text-ink-500" />}
@@ -135,11 +167,10 @@ function JobProgress() {
   );
 }
 
-function YouTubeTab({ busy }: { busy: boolean }) {
+function YouTubeTab({ busy, separate }: { busy: boolean; separate: boolean }) {
   const [url, setUrl] = useState('');
   const [meta, setMeta] = useState<VideoMeta | null>(null);
   const [rights, setRights] = useState(false);
-  const [separate, setSeparate] = useState(true);
   const [capturing, setCapturing] = useState<{ t: number; d: number } | null>(null);
   const [playerError, setPlayerError] = useState<string | null>(null);
   const playerEl = useRef<HTMLDivElement>(null);
@@ -213,7 +244,7 @@ function YouTubeTab({ busy }: { busy: boolean }) {
       title: meta?.title ?? 'YouTube capture',
       artist: meta?.author,
       source: { kind: 'youtube', youtubeId: id ?? undefined, url, mimeType: blob.type, fileSize: blob.size },
-      separate: separate && !!backend.health?.features.separation,
+      separate,
     });
   };
 
@@ -270,7 +301,6 @@ function YouTubeTab({ busy }: { busy: boolean }) {
             <input type="checkbox" checked={rights} onChange={(e) => setRights(e.target.checked)} className="mt-0.5 accent-[var(--color-accent-500)]" />
             I own this content or have permission to use it, and I’ll respect YouTube’s Terms of Service and the creator’s copyright.
           </label>
-          {backend.health?.features.separation && <Toggle label="Isolate the piano part on my server (Demucs)" checked={separate} onChange={setSeparate} />}
           <div className="grid gap-3 md:grid-cols-2">
             <div className="rounded-xl border border-ink-700 bg-ink-900/60 p-4">
               <div className="flex items-center gap-2 text-[13.5px] font-medium text-ink-50">
@@ -379,8 +409,7 @@ export default function ImportPage() {
   const job = useImport((s) => s.job);
   const importFile = useImport((s) => s.importFile);
   const navigate = useNavigate();
-  const backend = useBackend();
-  const [separate, setSeparate] = useState(false);
+  const sep = useSeparationChoice();
   const busy = !!job && job.stage !== 'done' && job.stage !== 'error';
 
   // jump to the studio as soon as an import started on this page finishes
@@ -397,7 +426,7 @@ export default function ImportPage() {
 
   const onFile = (f: File) => {
     if (busy) return;
-    void importFile(f, { separate }).then(() => {});
+    void importFile(f, { separate: sep.checked }).then(() => {});
     startedHere.current = (useImport.getState().job?.id ?? 0);
   };
 
@@ -447,20 +476,15 @@ export default function ImportPage() {
               <div className="flex flex-col gap-5">
                 <Dropzone onFile={onFile} />
                 <DetectionOptions />
-                <Toggle
-                  label="Isolate the piano part first"
-                  hint={backend.health?.features.separation ? 'Uses Demucs on your processing server — slower, much cleaner for full songs.' : 'Requires a processing server with Demucs (Settings → Processing server).'}
-                  checked={separate && !!backend.health?.features.separation}
-                  onChange={setSeparate}
-                  disabled={!backend.health?.features.separation}
-                />
+                <SeparationOption />
                 <p className="text-[12px] text-ink-400">Up to 20 minutes / 300 MB. Longer files: trim first. Video files use their audio track.</p>
               </div>
             )}
             {tab === 'youtube' && (
               <div className="flex flex-col gap-5">
-                <YouTubeTab busy={busy} />
+                <YouTubeTab busy={busy} separate={sep.checked} />
                 <DetectionOptions />
+                <SeparationOption />
               </div>
             )}
             {tab === 'midi' && (

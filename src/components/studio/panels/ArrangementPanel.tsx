@@ -70,7 +70,8 @@ export function ArrangementPanel() {
     try {
       const post = await getPosteriors(song.id);
       if (!post) throw new Error('The analysis data for this song is no longer stored. Re-import the audio to re-detect.');
-      const notes = await reextractNotes(post, params, song.duration);
+      // keep the sung melody line (role 'melody') of separated songs: only the accompaniment is re-detected
+      const notes = await reextractNotes(post, params, song.duration, { melody: song.base.filter((n) => n.role === 'melody') });
       const tempo = song.tempo.source === 'manual' ? song.tempo : estimateTempo(notes, song.duration);
       replaceSong({
         ...song,
@@ -150,13 +151,37 @@ export function ArrangementPanel() {
               <dd className="text-right text-ink-100">{(t.processingMs / 1000).toFixed(1)} s</dd>
             </>
           )}
-          {t.separated && (
+          {t.separation ? (
             <>
               <dt className="text-ink-300">Source separation</dt>
-              <dd className="text-right text-ink-100">Demucs</dd>
+              <dd className="text-right text-ink-100">
+                SCNet · {t.separation.engine === 'scnet-server' ? 'server' : 'browser'}
+                {t.separation.ms > 0 && <span className="text-ink-300"> · {(t.separation.ms / 1000).toFixed(0)} s</span>}
+              </dd>
             </>
+          ) : (
+            t.separated && (
+              <>
+                <dt className="text-ink-300">Source separation</dt>
+                <dd className="text-right text-ink-100">Demucs</dd>
+              </>
+            )
           )}
         </dl>
+        {t.separation && (
+          <div className="flex flex-wrap gap-1.5" aria-label="Source separation">
+            {t.separation.vocals ? (
+              <Badge tone="accent" title="The sung melody was transcribed from the separated vocals and put on the right hand">
+                Vocals separated
+              </Badge>
+            ) : (
+              <Badge title="No sung melody was found in the separated vocals">No singing found</Badge>
+            )}
+            <Badge tone="accent" title="Drums and vocals were removed before the accompaniment was transcribed">
+              Drums removed
+            </Badge>
+          </div>
+        )}
         {t.warnings.length > 0 && (
           <ul className="flex flex-col gap-1">
             {t.warnings.map((w) => (

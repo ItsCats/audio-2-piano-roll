@@ -16,6 +16,10 @@ export default defineConfig({
       'mediabunny',
       '@tonejs/midi',
     ],
+    // onnxruntime-web (SCNet separation worker) ships ready ESM; pre-bundling it breaks its WASM loader.
+    // Its .wasm is imported with ?url (src/lib/separation/scnet.worker.ts), so it is served from our
+    // own origin as a fingerprinted /assets file.
+    exclude: ['onnxruntime-web'],
   },
   build: {
     target: 'es2022',

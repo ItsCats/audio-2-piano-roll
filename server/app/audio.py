@@ -55,6 +55,19 @@ def encode_m4a(audio: np.ndarray, sr: int, out_path: str) -> None:
         raise AudioError("Could not encode the processed audio")
 
 
+def encode_flac(mono: np.ndarray, sr: int, out_path: str, out_sr: int = 22050) -> None:
+    """Encode a mono float32 stem as 16-bit FLAC at `out_sr` (lossless, no encoder delay, so stems stay
+    sample-aligned with the mixture; every current browser decodes FLAC). Callers keep |x| <= 1."""
+    data = np.ascontiguousarray(np.clip(mono, -1, 1)).astype(np.float32).tobytes()
+    proc = subprocess.run(
+        ["ffmpeg", "-v", "error", "-y", "-f", "f32le", "-ac", "1", "-ar", str(sr), "-i", "-",
+         "-ar", str(out_sr), "-sample_fmt", "s16", "-c:a", "flac", "-compression_level", "5", out_path],
+        input=data, capture_output=True, timeout=600,
+    )
+    if proc.returncode != 0:
+        raise AudioError("Could not encode the separated stems")
+
+
 def transcode_m4a(in_path: str, out_path: str) -> None:
     proc = subprocess.run(
         ["ffmpeg", "-v", "error", "-y", "-i", in_path, "-vn", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out_path],

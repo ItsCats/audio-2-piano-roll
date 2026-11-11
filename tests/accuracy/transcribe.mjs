@@ -4,8 +4,16 @@
  * arrangement generator on local audio files, in Playwright Chromium.
  *
  *   node tests/accuracy/transcribe.mjs --out DIR [--port 5302] [--presets piano,mix] [--posteriors] song1.mp3 [song2.mp3 ...]
+ *   node tests/accuracy/transcribe.mjs --dump-posteriors DIR [--port 5302] song1.wav [...]
  *
- * Writes DIR/<basename>.<preset>.json. Files are served to the page through a Playwright route
+ * Writes DIR/<basename>.<preset>.json.
+ *
+ * --dump-posteriors DIR runs the model once per file (the posteriors do not depend on the detection
+ * preset) and saves exactly what the app stores for re-detection: DIR/<basename>.frames.u8 and
+ * .onsets.u8 (nFrames x 88, 8-bit quantised, row-major), .rms.f32 (100 fps loudness envelope) and
+ * .post.json (nFrames, duration, plus the 'piano' and 'sensitive' base notes of the same run, so a
+ * node-side re-extraction can be checked against the browser). Keep DIR outside the repo
+ * (tests/accuracy/sweep_extraction.ts reads it). Files are served to the page through a Playwright route
  * (they are never copied into the repo). Existing outputs are skipped unless --force.
  */
 import { createServer } from 'vite';
@@ -29,7 +37,8 @@ const flag = (name) => {
   args.splice(i, 1);
   return true;
 };
-const outDir = opt('out', null);
+const dumpDir = opt('dump-posteriors', null);
+const outDir = opt('out', dumpDir);
 const port = +opt('port', '5302');
 const presets = opt('presets', 'piano,mix').split(',');
 const withPosteriors = flag('posteriors');
@@ -37,6 +46,7 @@ const force = flag('force');
 const songs = args;
 if (!outDir || !songs.length) {
   console.error('usage: node tests/accuracy/transcribe.mjs --out DIR [--port N] [--presets piano,mix] [--posteriors] [--force] files...');
+  console.error('       node tests/accuracy/transcribe.mjs --dump-posteriors DIR [--port N] [--force] files...');
   process.exit(2);
 }
 fs.mkdirSync(outDir, { recursive: true });
@@ -74,6 +84,51 @@ try {
     await page.waitForFunction(() => document.getElementById('log')?.textContent === 'ready', null, { timeout: 180000 });
   };
   await openPage();
+  if (dumpDir) {
+    for (let i = 0; i < songs.length; i++) {
+      const name = path.basename(songs[i]).replace(/\.[^.]+$/, '');
+      const meta = path.join(dumpDir, `${name}.post.json`);
+      if (!force && fs.existsSync(meta)) {
+        console.log(`skip ${name}`);
+        continue;
+      }
+      const t0 = Date.now();
+      const r = await page.evaluate(async (u) => {
+        // the app's own modules, served by the Vite dev server
+        const { transcribeAudio, reextractNotes, EXTRACTION_PRESETS } = await import('/src/lib/transcription/pipeline.ts');
+        const b64 = (u8) => {
+          let s = '';
+          for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode(...u8.subarray(i, i + 0x8000));
+          return btoa(s);
+        };
+        const slim = (ns) => ns.map((n) => ({ midi: n.midi, start: n.start, dur: n.dur, vel: n.vel }));
+        const blob = await (await fetch(u)).blob();
+        const res = await transcribeAudio(blob, EXTRACTION_PRESETS.piano, () => {});
+        const p = res.posteriors;
+        // re-detection on the stored (quantised) posteriors, exactly what the app does on a preset change
+        const piano = await reextractNotes(p, EXTRACTION_PRESETS.piano, res.duration);
+        const sensitive = await reextractNotes(p, EXTRACTION_PRESETS.sensitive, res.duration);
+        return {
+          nFrames: p.nFrames,
+          duration: res.duration,
+          backend: res.info.backend,
+          frames: b64(p.frames),
+          onsets: b64(p.onsets),
+          rms: b64(new Uint8Array(p.rms.buffer, p.rms.byteOffset, p.rms.byteLength)),
+          notes: { pianoFirstPass: slim(res.notes), piano: slim(piano), sensitive: slim(sensitive) },
+        };
+      }, `http://localhost:${port}/__accaudio/${i}`);
+      fs.writeFileSync(path.join(dumpDir, `${name}.frames.u8`), Buffer.from(r.frames, 'base64'));
+      fs.writeFileSync(path.join(dumpDir, `${name}.onsets.u8`), Buffer.from(r.onsets, 'base64'));
+      fs.writeFileSync(path.join(dumpDir, `${name}.rms.f32`), Buffer.from(r.rms, 'base64'));
+      fs.writeFileSync(
+        meta,
+        JSON.stringify({ song: name, file: path.resolve(songs[i]), nFrames: r.nFrames, duration: r.duration, backend: r.backend, wallMs: Date.now() - t0, notes: r.notes }),
+      );
+      console.log(`${name.padEnd(24)} ${r.nFrames} frames, ${r.duration.toFixed(0)} s, ${r.backend}, ${((Date.now() - t0) / 1000).toFixed(1)} s`);
+    }
+    songs.length = 0;
+  }
   for (let i = 0; i < songs.length; i++) {
     const name = path.basename(songs[i]).replace(/\.[^.]+$/, '');
     for (const preset of presets) {
