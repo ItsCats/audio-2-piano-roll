@@ -116,6 +116,7 @@ function drawNotes(ctx: Ctx2D, notes: MockNote[], sc: number, timing?: { t: numb
     });
     if (timing) timing.t += performance.now() - t0;
     if (ctx.globalAlpha !== 0.95) throw new Error('globalAlpha not restored');
+    if (q.get('nostroke')) continue;
     roundRect(ctx, r.x, r.y, r.w, r.h, radius);
     ctx.save();
     ctx.shadowColor = 'rgba(255,255,255,0.8)';
@@ -179,6 +180,11 @@ function perf() {
   background(ctx, W, H, 1);
   drawNotes(ctx, notes, 1);
   const timing = { t: 0 };
+  for (let f = 0; f < 10; f++) {
+    background(ctx, W, H, 1);
+    drawNotes(ctx, notes, 1);
+  }
+  ctx.getImageData(0, 0, 1, 1);
   const t0 = performance.now();
   for (let f = 0; f < 60; f++) {
     background(ctx, W, H, 1);
@@ -309,6 +315,61 @@ if (mode === 'micro') {
   });
   run('drawImageNoClip', (n) => {
     ctx.drawImage(small, 0, 0, Math.min(300, n.w), Math.min(300, n.h), Math.round(n.x), Math.round(n.y), Math.min(300, n.w), Math.min(300, n.h));
+  });
+  run('patIntAlpha', (n) => {
+    pat.setTransform({ a: 1, b: 0, c: 0, d: 1, e: Math.round(n.x), f: Math.round(n.y) });
+    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
+    ctx.globalAlpha = 0.95;
+    ctx.fillStyle = pat;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  });
+  run('patIntSave', (n) => {
+    ctx.save();
+    pat.setTransform({ a: 1, b: 0, c: 0, d: 1, e: Math.round(n.x), f: Math.round(n.y) });
+    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
+    ctx.fillStyle = pat;
+    ctx.fill();
+    ctx.restore();
+  });
+  const pats = ['meadow', 'sakura', 'galaxy'].map((id) => {
+    const cc = document.createElement('canvas');
+    cc.width = 300;
+    cc.height = 300;
+    cc.getContext('2d')!.drawImage(getPatternTile(id)!, 0, 0, 300, 300);
+    return ctx.createPattern(cc, 'repeat')!;
+  });
+  run('pat3', (n) => {
+    const pt = pats[n.id % 3];
+    pt.setTransform({ a: 1, b: 0, c: 0, d: 1, e: Math.round(n.x), f: Math.round(n.y) });
+    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
+    ctx.fillStyle = pt;
+    ctx.fill();
+  });
+  const trans = document.createElement('canvas');
+  trans.width = 300;
+  trans.height = 300;
+  const tc = trans.getContext('2d')!;
+  tc.globalAlpha = 0.95;
+  tc.drawImage(small, 0, 0);
+  const patT = ctx.createPattern(trans, 'repeat')!;
+  run('patTranslucent', (n) => {
+    patT.setTransform({ a: 1, b: 0, c: 0, d: 1, e: Math.round(n.x), f: Math.round(n.y) });
+    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
+    ctx.fillStyle = patT;
+    ctx.fill();
+  });
+  run('patIntAlphaRect', (n) => {
+    pat.setTransform({ a: 1, b: 0, c: 0, d: 1, e: Math.round(n.x), f: Math.round(n.y) });
+    ctx.globalAlpha = 0.95;
+    ctx.fillStyle = pat;
+    ctx.fillRect(n.x, n.y, n.w, n.h);
+    ctx.globalAlpha = 1;
+  });
+  run('realDecal', (n) => {
+    ctx.globalAlpha = 0.95;
+    paintNoteDecal(ctx, n, 6, { image: tile, imageWidth: 512, imageHeight: 512, settings: n.settings, color: n.color, noteId: n.id, anchorY: n.y + n.h, scale: 1, active: false });
+    ctx.globalAlpha = 1;
   });
   run('multiplyFill', (n) => {
     ctx.globalCompositeOperation = 'multiply';

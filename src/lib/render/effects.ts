@@ -146,21 +146,24 @@ function raySprite(variant: number): Sprite {
  * The complete sustained flare for one colour, pre-composited at its final pixel size:
  * coloured halo, soft vertical flare, white starburst rays and a hot core. Centre = sprite centre.
  */
+const burstUp = (R: number) => Math.ceil(2.5 * R); // sprite rows above the centre
 function burstSprite(c: RGB, variant: number, R: number): Sprite {
-  const S = 2 * Math.ceil(2.7 * R);
-  return sprite(`burst:${ckey(c)}:${variant}:${R}`, S, S, (g) => {
-    const m = S / 2;
+  const W = 2 * Math.ceil(2.3 * R);
+  const H = burstUp(R) + Math.ceil(1.8 * R);
+  return sprite(`burst:${ckey(c)}:${variant}:${R}`, W, H, (g) => {
+    const m = W / 2;
+    const cy = burstUp(R);
     g.globalCompositeOperation = 'lighter';
     const put = (img: Sprite, a: number, cx: number, cy: number, w: number, h: number) => {
       g.globalAlpha = a;
       g.drawImage(img as CanvasImageSource, cx - w / 2, cy - h / 2, w, h);
     };
     const core = coreSprite();
-    put(glowSprite(c, 0.25), 0.6, m, m - R * 0.15, 4.2 * R, 3.6 * R);
-    put(core, 0.6, m, m - R * 0.55, 0.7 * R, 4.6 * R);
-    put(raySprite(variant), 1, m, m - R * 0.1, 5.4 * R, 5.4 * R);
-    put(core, 1, m, m - R * 0.2, 2.9 * R, 2.6 * R);
-    put(core, 0.8, m, m - R * 0.1, 1.6 * R, 1.4 * R);
+    put(glowSprite(c, 0.25), 0.62, m, cy - R * 0.15, 4.4 * R, 3.6 * R);
+    put(core, 0.6, m, cy - R * 0.5, 0.7 * R, 4 * R);
+    put(raySprite(variant), 1, m, cy - R * 0.1, 4.8 * R, 4.8 * R);
+    put(core, 1, m, cy - R * 0.2, 2.9 * R, 2.6 * R);
+    put(core, 0.8, m, cy - R * 0.1, 1.6 * R, 1.4 * R);
   });
 }
 
@@ -176,6 +179,35 @@ function streakSprite(c: RGB, R: number): Sprite {
     const lh = 0.14 * R + 1.5;
     g.drawImage(coreSprite() as CanvasImageSource, 0, H / 2 - lh / 2, W, lh);
   });
+}
+
+/** Glitter grain glow: hard bright centre and a small coloured glow. */
+function grainSprite(c: RGB): Sprite {
+  return sprite(`grain:${ckey(c)}`, 24, 24, (g, w) => {
+    const r = w / 2;
+    const gr = g.createRadialGradient(r, r, 0, r, r, r);
+    gr.addColorStop(0, 'rgba(255,255,255,1)');
+    gr.addColorStop(0.14, rgba(mix(c, WHITE, 0.6), 0.95));
+    gr.addColorStop(0.26, rgba(c, 0.45));
+    gr.addColorStop(0.55, rgba(c, 0.1));
+    gr.addColorStop(1, rgba(c, 0));
+    g.fillStyle = gr;
+    g.fillRect(0, 0, w, w);
+  });
+}
+
+/** fillStyle strings for a grain core at each brightness level (index 1..DUST_LEVELS). */
+const coreStyleCache = new Map<string, string[]>();
+function coreStyles(c: RGB): string[] {
+  const k = ckey(c);
+  let st = coreStyleCache.get(k);
+  if (!st) {
+    const hot = mix(c, WHITE, 0.55);
+    st = [];
+    for (let i = 0; i <= DUST_LEVELS; i++) st.push(rgba(hot, +(i / DUST_LEVELS).toFixed(3)));
+    coreStyleCache.set(k, st);
+  }
+  return st;
 }
 
 /** Small soft smoke puff (sized close to how it is drawn, so no costly heavy downscaling). */
@@ -249,16 +281,22 @@ function spillSprite(c: RGB, mode: 0 | 1, W: number, H: number): Sprite {
  * Additive part of the key light at its final pixel size: the light cone on the keys plus a
  * bloom where the light enters the keyboard. The keyboard top is at y = `pad`.
  */
-function keyGlowSprite(c: RGB, W: number, H: number, coneW: number, pad: number, sc: number): Sprite {
-  return sprite(`keyglow:${ckey(c)}:${W}x${H}:${coneW}:${pad}`, W, H, (g) => {
-    const kb = H - pad;
+function keyGlowSprite(c: RGB, W: number, kb: number): Sprite {
+  const H = Math.round(kb * 0.8);
+  return sprite(`keyglow:${ckey(c)}:${W}x${kb}`, W, H, (g) => {
     g.globalCompositeOperation = 'lighter';
     g.globalAlpha = 0.3;
-    g.drawImage(spillSprite(c, 1, coneW, kb) as CanvasImageSource, (W - coneW) / 2, pad);
+    g.drawImage(spillSprite(c, 1, W, kb) as CanvasImageSource, 0, 0);
     g.globalAlpha = 0.18;
-    g.drawImage(glowSprite(c, 0) as CanvasImageSource, W * 0.22, pad + kb * 0.15 - kb * 0.22, W * 0.56, kb * 0.44);
+    g.drawImage(glowSprite(c, 0) as CanvasImageSource, W * 0.2, kb * 0.15 - kb * 0.22, W * 0.6, kb * 0.44);
+  });
+}
+
+/** Bloom where the light enters the keyboard (a flat glow along the keyboard's top edge). */
+function keyBloomSprite(c: RGB, W: number, H: number): Sprite {
+  return sprite(`keybloom:${ckey(c)}:${W}x${H}`, W, H, (g) => {
     g.globalAlpha = 0.55;
-    g.drawImage(glowSprite(c, 0.35) as CanvasImageSource, 0, pad + 2 * sc - 17 * sc, W, 34 * sc);
+    g.drawImage(glowSprite(c, 0.35) as CanvasImageSource, 0, 0, W, H);
   });
 }
 
@@ -293,7 +331,6 @@ export function drawKeyLight(ctx: Ctx2D, notes: FxNote[], now: number, g: FxGeom
   ctx.save();
   const top = Math.round(g.hitY);
   const h = Math.round(g.kbH);
-  const pad = Math.ceil(18 * sc);
   // 1) tint the keys (multiply: white keys take on the colour, black keys stay dark)
   ctx.globalCompositeOperation = 'multiply';
   for (const { n, c, e } of active) {
@@ -305,10 +342,11 @@ export function drawKeyLight(ctx: Ctx2D, notes: FxNote[], now: number, g: FxGeom
   ctx.globalCompositeOperation = 'lighter';
   for (const { n, c, e } of active) {
     const coneW = Math.round(Math.max(n.w * 4.2, 52 * sc));
-    const w = Math.round(Math.max(n.w * 5.5, 70 * sc));
-    const sp = keyGlowSprite(c, w, h + pad, coneW, pad, sc);
     ctx.globalAlpha = clamp01(e);
-    ctx.drawImage(sp as CanvasImageSource, Math.round(n.x - w / 2), top - pad);
+    ctx.drawImage(keyGlowSprite(c, coneW, h) as CanvasImageSource, Math.round(n.x - coneW / 2), top);
+    const bw = Math.round(Math.max(n.w * 5.5, 70 * sc));
+    const bh = 2 * Math.round(17 * sc);
+    ctx.drawImage(keyBloomSprite(c, bw, bh) as CanvasImageSource, Math.round(n.x - bw / 2), top + Math.round(2 * sc) - bh / 2);
   }
   ctx.restore();
 }
@@ -321,7 +359,7 @@ export function drawKeyLight(ctx: Ctx2D, notes: FxNote[], now: number, g: FxGeom
 export function drawBursts(ctx: Ctx2D, notes: FxNote[], now: number, g: FxGeometry, s: EffectSettings): void {
   const inten = s.burstIntensity;
   if (inten <= 0) return;
-  const R = Math.max(6, Math.round(52 * g.scale)); // flare radius unit (integer → stable sprite keys)
+  const R = Math.max(6, Math.round(50 * g.scale)); // flare radius unit (integer → stable sprite keys)
   const y = g.hitY;
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';
@@ -339,6 +377,8 @@ export function drawBursts(ctx: Ctx2D, notes: FxNote[], now: number, g: FxGeomet
     const main = burstSprite(c, seed % 3, R);
     const streak = streakSprite(c, R);
     const mw = main.width;
+    const mh = main.height;
+    const up = burstUp(R);
     const sw = streak.width;
     const sh = streak.height;
     const ix = Math.round(n.x);
@@ -346,15 +386,15 @@ export function drawBursts(ctx: Ctx2D, notes: FxNote[], now: number, g: FxGeomet
 
     // sustained flare: unscaled, integer-aligned blits (cheapest path for the rasteriser)
     ctx.globalAlpha = clamp01(ramp * k * 0.95 * shimmer);
-    ctx.drawImage(main as CanvasImageSource, ix - (mw >> 1), iy - (mw >> 1));
+    ctx.drawImage(main as CanvasImageSource, ix - (mw >> 1), iy - up);
     ctx.drawImage(streak as CanvasImageSource, ix - (sw >> 1), iy - (sh >> 1));
 
     // attack flash: the same flare blown up and brighter, decaying in ~0.1 s
     if (flash > 0.03) {
       const f = ramp * flash * k;
       ctx.globalAlpha = clamp01(f * 0.9);
-      const d = mw * (1 + 0.45 * flash);
-      ctx.drawImage(main as CanvasImageSource, n.x - d / 2, y - d / 2, d, d);
+      const z = 1 + 0.45 * flash;
+      ctx.drawImage(main as CanvasImageSource, n.x - (mw * z) / 2, y - up * z, mw * z, mh * z);
       const w2 = sw * (1 + 0.9 * flash);
       ctx.drawImage(streak as CanvasImageSource, n.x - w2 / 2, y - sh / 2, w2, sh);
       ctx.globalAlpha = clamp01(f * 0.7);
@@ -409,28 +449,26 @@ export function drawDust(ctx: Ctx2D, notes: FxNote[], now: number, g: FxGeometry
   if (est <= 0) return;
   const keepAll = amount * Math.min(1, DUST_CAP / est);
 
-  // Grains are batched: one path per (colour, brightness level) instead of one draw call per
-  // grain — per-call overhead, not fill, dominates the cost of hundreds of tiny particles.
-  // Additive ('lighter') blending is order-independent, so batching doesn't change the look.
-  const palette: RGB[] = [quant(WARM_WHITE), quant(GOLD)];
-  const paletteIdx = new Map<string, number>();
-  const groups = new Map<number, number[]>(); // (colour * 64 + level) → [x, y, r, ...]
+  // Every grain gets a crisp core drawn with fillRect (several times cheaper than drawImage);
+  // only a share of them (the bigger / currently twinkling ones) also get a soft glow sprite.
+  const warm = grainSprite(quant(WARM_WHITE));
+  const gold = grainSprite(quant(GOLD));
+  const warmCore = coreStyles(quant(WARM_WHITE));
+  const goldCore = coreStyles(quant(GOLD));
   const glWarm = glintSprite(quant(WARM_WHITE));
   const glGold = glintSprite(quant(GOLD));
 
   ctx.save();
-  ctx.globalCompositeOperation = 'lighter';
+  // Plain source-over: on the dark backdrop it looks the same as additive blending for such
+  // small, sparse particles, and it is several times cheaper to rasterise in software.
+  ctx.globalCompositeOperation = 'source-over';
   let drawn = 0;
   notesLoop: for (const n of notes) {
     if (n.start > now) continue;
     const seed = noteSeed(n);
     const tint = quant(mix(n.color, WHITE, 0.35));
-    let tintIdx = paletteIdx.get(ckey(tint));
-    if (tintIdx === undefined) {
-      tintIdx = palette.length;
-      palette.push(tint);
-      paletteIdx.set(ckey(tint), tintIdx);
-    }
+    const tinted = grainSprite(tint);
+    const tintCore = coreStyles(tint);
     const glTint = glintSprite(tint);
     const wisp = wispSprite(quant(n.color));
     const velK = 0.6 + 0.4 * n.vel;
@@ -500,12 +538,25 @@ export function drawDust(ctx: Ctx2D, notes: FxNote[], now: number, g: FxGeometry
         if (alpha < 0.02) continue;
         const size = (1.8 + 2.6 * r3) * sc * (1 - 0.5 * p);
         const pal = r1 * 0.37 + r2 * 0.63; // decorrelated palette pick
-        const ci = pal < 0.45 ? 0 : pal < 0.78 ? 1 : tintIdx;
+        const ci = pal < 0.45 ? 0 : pal < 0.78 ? 1 : 2;
         const level = Math.max(1, Math.min(DUST_LEVELS, Math.round(alpha * DUST_LEVELS)));
-        const gk = ci * 64 + level;
-        let arr = groups.get(gk);
-        if (!arr) groups.set(gk, (arr = []));
-        arr.push(x, y, size);
+        // faint coloured smoke around some grains gives the streams a wispy body
+        if (r0 < keepAll * 0.14) {
+          const wd = (16 + 18 * r2) * sc * (0.6 + p);
+          ctx.globalAlpha = clamp01(fade * 0.16);
+          ctx.drawImage(wisp as CanvasImageSource, x - wd / 2, y - wd / 2, wd, wd);
+        }
+        // soft glow for the bigger / currently twinkling grains
+        if (r5 < 0.3 || twinkle > 0.7) {
+          ctx.globalAlpha = clamp01(alpha * 0.85);
+          const d = size * 4.2;
+          ctx.drawImage((ci === 0 ? warm : ci === 1 ? gold : tinted) as CanvasImageSource, x - d / 2, y - d / 2, d, d);
+        }
+        // crisp core
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = (ci === 0 ? warmCore : ci === 1 ? goldCore : tintCore)[level];
+        const cs = Math.max(1, size * 0.62);
+        ctx.fillRect(x - cs / 2, y - cs / 2, cs, cs);
         // occasional bright glint
         if (twinkle > 0.82 && r4 < 0.35) {
           const gl = pal < 0.45 ? glWarm : pal < 0.78 ? glGold : glTint;
@@ -513,37 +564,10 @@ export function drawDust(ctx: Ctx2D, notes: FxNote[], now: number, g: FxGeometry
           ctx.globalAlpha = clamp01(fade * (twinkle - 0.7) * 2.6);
           ctx.drawImage(gl as CanvasImageSource, x - gd / 2, y - gd / 2, gd, gd);
         }
-        // faint coloured smoke around some grains gives the streams a wispy body
-        if ((pid & 7) === 0) {
-          const wd = (16 + 18 * r2) * sc * (0.6 + p);
-          ctx.globalAlpha = clamp01(fade * 0.16);
-          ctx.drawImage(wisp as CanvasImageSource, x - wd / 2, y - wd / 2, wd, wd);
-        }
         if (++drawn >= DUST_CAP) break notesLoop;
       }
     }
   }
 
-  // grains: soft halo, body and a hot core, each pass one path fill per group
-  ctx.globalAlpha = 1;
-  const keys = [...groups.keys()].sort((a, b) => a - b);
-  const TAU = Math.PI * 2;
-  for (const pass of [0, 1, 2]) {
-    const rMul = pass === 0 ? 1.7 : pass === 1 ? 0.85 : 0.42;
-    const aMul = pass === 0 ? 0.13 : pass === 1 ? 0.32 : 1;
-    for (const gk of keys) {
-      const arr = groups.get(gk)!;
-      const col = palette[gk >> 6];
-      const lv = (gk & 63) / DUST_LEVELS;
-      ctx.fillStyle = rgba(pass === 2 ? mix(col, WHITE, 0.65) : col, Math.min(1, lv * aMul));
-      ctx.beginPath();
-      for (let i = 0; i < arr.length; i += 3) {
-        const r = Math.max(pass === 2 ? 0.6 : 0.8, arr[i + 2] * rMul);
-        ctx.moveTo(arr[i] + r, arr[i + 1]);
-        ctx.arc(arr[i], arr[i + 1], r, 0, TAU);
-      }
-      ctx.fill();
-    }
-  }
   ctx.restore();
 }

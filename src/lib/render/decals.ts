@@ -1317,14 +1317,21 @@ const IMAGE_NOTE_SPAN = 3.5;
 /** Nominal note width at 1080p used to size user photos when the decal is screen-anchored. */
 const NOMINAL_NOTE_W = 34;
 
-interface Resampled {
-  w: number;
-  h: number;
+/** A ready-to-fill copy of the decal at its exact on-screen size (optionally pre-tinted). */
+interface Baked {
   canvas: AnyCanvas;
   patterns: WeakMap<object, CanvasPattern>;
 }
+interface Resampled extends Baked {
+  w: number;
+  h: number;
+  /** tint key → pre-tinted copy (most recently used last) */
+  tinted: Map<string, Baked>;
+}
 /** image → a few pre-resampled copies at the exact on-screen size (most recent first). */
 const resampleCache = new WeakMap<object, Resampled[]>();
+/** max baked (tint / alpha) variants kept per resampled size (hand colours × highlight steps, or 12 pitch colours × a few) */
+const MAX_TINTS = 48;
 
 /**
  * Pre-resample the source to the on-screen size once, so per-note pattern fills are
@@ -1361,10 +1368,56 @@ function resampled(img: CanvasImageSource, iw: number, ih: number, w: number, h:
   } catch {
     return null;
   }
-  const e: Resampled = { w, h, canvas, patterns: new WeakMap() };
+  const e: Resampled = { w, h, canvas, patterns: new WeakMap(), tinted: new Map() };
   list.unshift(e);
   if (list.length > 4) list.length = 4;
   return e;
+}
+
+/**
+ * Tint = a multiply glaze of the (lifted) note colour: the pale ground takes on the hand /
+ * pitch colour while the motifs keep their own hues and shading, so the pattern stays
+ * readable even at full tint (a 'color' blend turned it monochrome).
+ *
+ * Tint and opacity are baked into a cached copy instead of being applied per note: in
+ * software raster a per-note multiply pass costs more than the fill itself, and a pattern
+ * filled with globalAlpha < 1 is ~2× slower than one whose pixels already carry the alpha.
+ * Keys are quantised so highlight fades reuse a handful of copies.
+ */
+function baked(rs: Resampled, color: RGB, tint: number, alpha: number): Baked | null {
+  const qt = Math.round(tint * 50) / 50;
+  const qa = Math.round(alpha * 64) / 64;
+  if (qt <= 0 && qa >= 1) return rs;
+  const lift = mix(color, WHITE, 0.3);
+  const q = (v: number) => Math.min(255, (v >> 4) * 16 + 8);
+  const qc = { r: q(lift.r), g: q(lift.g), b: q(lift.b) };
+  const key = qt > 0 ? `${qc.r},${qc.g},${qc.b}@${qt}a${qa}` : `a${qa}`;
+  const hit = rs.tinted.get(key);
+  if (hit) {
+    rs.tinted.delete(key);
+    rs.tinted.set(key, hit);
+    return hit;
+  }
+  const canvas = makeCanvas(rs.w, rs.h);
+  const c = canvas.getContext('2d') as Ctx2D | null;
+  if (!c) return null;
+  c.drawImage(rs.canvas, 0, 0);
+  if (qt > 0) {
+    c.globalCompositeOperation = 'multiply';
+    c.globalAlpha = qt;
+    c.fillStyle = rgba(qc, 1);
+    c.fillRect(0, 0, rs.w, rs.h);
+  }
+  if (qa < 1) {
+    c.globalCompositeOperation = 'destination-in';
+    c.globalAlpha = Math.max(0, qa);
+    c.fillStyle = '#000';
+    c.fillRect(0, 0, rs.w, rs.h);
+  }
+  const b: Baked = { canvas, patterns: new WeakMap() };
+  rs.tinted.set(key, b);
+  if (rs.tinted.size > MAX_TINTS) rs.tinted.delete(rs.tinted.keys().next().value as string);
+  return b;
 }
 
 // reused per call so filling 150 notes allocates nothing per note
@@ -1389,47 +1442,41 @@ export function paintNoteDecal(ctx: Ctx2D, rect: { x: number; y: number; w: numb
   const dh = Math.max(8, Math.min(2048, Math.round((dw * p.imageHeight) / p.imageWidth)));
   const rs = resampled(p.image, p.imageWidth, p.imageHeight, dw, dh, seamless);
   if (!rs) return;
-  let pat = rs.patterns.get(ctx);
+  const baseAlpha = ctx.globalAlpha;
+  const bk = baked(rs, p.color, clamp01(s.tint), baseAlpha * opacity);
+  if (!bk) return;
+  let pat = bk.patterns.get(ctx);
   if (!pat) {
-    pat = ctx.createPattern(rs.canvas, 'repeat') ?? undefined;
+    pat = ctx.createPattern(bk.canvas, 'repeat') ?? undefined;
     if (!pat) return;
-    rs.patterns.set(ctx, pat);
+    bk.patterns.set(ctx, pat);
   }
 
+  // Offsets snap to whole pixels: sub-pixel offsets force bilinear sampling (≈3× slower
+  // in software raster) and a ≤0.5 px decal shift inside a moving note is invisible.
   if (s.anchor === 'note') {
     // each note shows its own crop, and the crop travels with the note
-    xform.e = rect.x - Math.floor(hash(p.noteId, 101) * dw);
-    xform.f = p.anchorY - Math.floor(hash(p.noteId, 202) * dh);
+    xform.e = Math.round(rect.x - Math.floor(hash(p.noteId, 101) * dw));
+    xform.f = Math.round(p.anchorY - Math.floor(hash(p.noteId, 202) * dh));
   } else {
     xform.e = 0;
     xform.f = 0;
   }
   pat.setTransform(xform);
 
-  const baseAlpha = ctx.globalAlpha;
   ctx.save();
   ctx.shadowColor = 'transparent';
   ctx.shadowBlur = 0;
   ctx.globalCompositeOperation = 'source-over';
   roundRect(ctx, rect.x, rect.y, rect.w, rect.h, radius);
-  // 1. the decal itself, over the already-filled note colour
-  ctx.globalAlpha = baseAlpha * opacity;
+  // the decal (opacity × caller alpha already baked in), over the filled note colour
+  ctx.globalAlpha = 1;
   ctx.fillStyle = pat;
   ctx.fill();
-  // 2. tint: a multiply glaze of the (lifted) note colour. The pale ground takes on the
-  //    hand / pitch colour while the motifs keep their own hues and shading, so the
-  //    pattern stays readable even at full tint (a 'color' blend turned it monochrome).
-  const tint = clamp01(s.tint);
-  if (tint > 0) {
-    ctx.globalCompositeOperation = 'multiply';
-    ctx.globalAlpha = baseAlpha * opacity * tint;
-    ctx.fillStyle = rgba(mix(p.color, WHITE, 0.3), 1);
-    ctx.fill();
-  }
-  // 3. sounding notes light up
+  // sounding notes light up with a soft wash of their own colour
   if (p.active) {
     ctx.globalCompositeOperation = 'screen';
-    ctx.globalAlpha = baseAlpha * 0.2;
+    ctx.globalAlpha = baseAlpha * 0.22;
     ctx.fillStyle = rgba(mix(p.color, WHITE, 0.7), 1);
     ctx.fill();
   }
