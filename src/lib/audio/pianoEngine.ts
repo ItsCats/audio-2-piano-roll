@@ -30,6 +30,12 @@ const UNDAMPED_FROM = 90; // F#6 and above have no dampers
 const dbToGain = (db: number) => Math.pow(10, db / 20);
 
 export class PianoEngine {
+  /**
+   * Processing latency of the output chain: each DynamicsCompressorNode delays its signal by
+   * a fixed 6 ms look-ahead (Blink/WebKit/Gecko share the implementation), and we use two.
+   * Live visuals, the metronome and offline renders compensate for this.
+   */
+  static readonly LATENCY = 0.012;
   readonly ctx: BaseAudioContext;
   readonly output: GainNode;
   private library: SampleLibrary | null = null;

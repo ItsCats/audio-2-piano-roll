@@ -58,7 +58,7 @@ export const EXTRACTION_PRESETS: Record<'piano' | 'mix' | 'sensitive', Extractio
 };
 
 /** Systematic delay between a piano hammer strike and the model's onset frame (measured). */
-const ONSET_LATENCY = 0.019;
+const ONSET_LATENCY = 0.007;
 
 export interface ProgressEvent {
   stage: TranscriptionStage;
@@ -89,6 +89,8 @@ export function toWorkerOptions(p: ExtractionParams): NoteExtractionOptions {
   };
 }
 
+type WithoutJob<T> = T extends unknown ? Omit<T, 'jobId'> : never;
+
 class TranscriberClient {
   private worker: Worker | null = null;
   private jobSeq = 1;
@@ -107,7 +109,7 @@ class TranscriberClient {
   }
 
   run<T extends WorkerResponse['type']>(
-    req: Omit<Extract<WorkerRequest, { type: 'transcribe' | 'extract' }>, 'jobId'>,
+    req: WithoutJob<Extract<WorkerRequest, { type: 'transcribe' | 'extract' }>>,
     transfer: Transferable[],
     onProgress: (e: ProgressEvent & { backend?: string }) => void,
     signal?: AbortSignal,

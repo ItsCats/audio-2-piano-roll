@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
@@ -21,4 +22,5 @@ export default defineConfig({
     chunkSizeWarningLimit: 2500,
   },
   server: { port: 5173 },
+  test: { include: ['tests/unit/**/*.test.ts'], environment: 'node' },
 });
