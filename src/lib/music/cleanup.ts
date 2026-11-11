@@ -20,8 +20,14 @@ export function bumpNoteIds(notes: Note[]): void {
  * repeated notes vs 0.02-0.06 for the events correctly folded away).
  *
  * `rise` maps a note id to that frame-activation rise at its start (see frameRise() in
- * transcription/pipeline.ts); a note whose rise reaches `minRise(midi)` is never merged. The
- * threshold ramps from `lowRise` at and below `bottomMidi` to `highRise` at and above `lowMidi`.
+ * transcription/pipeline.ts); a note whose rise reaches `minRise(midi)`, and whose predecessor
+ * began at least `minPrevDur` earlier, is never merged. The threshold ramps from `lowRise` at
+ * and below `bottomMidi` to `highRise` at and above `lowMidi`.
+ *
+ * Tuned on MAESTRO exact MIDI (tests/accuracy/sweep_extraction.mjs, onset F1 @50 ms, 5 pieces +
+ * Liszt held out): piano mean F1 +0.004 (C2-B2 recall .668 -> .705 at precision .926 -> .928),
+ * sensitive +0.0003 (C2-B2 recall .755 -> .774), no piece worse than -0.007; a lower threshold
+ * above C3 gains more on MAESTRO but costs the synthetic e2e Bach gate.
  */
 export interface RestrikeRule {
   lowMidi: number;
@@ -32,7 +38,7 @@ export interface RestrikeRule {
   minPrevDur: number;
 }
 
-export const RESTRIKE: RestrikeRule = { lowMidi: 48, bottomMidi: 36, lowRise: Infinity, highRise: Infinity, minPrevDur: 0 };
+export const RESTRIKE: RestrikeRule = { lowMidi: 48, bottomMidi: 36, lowRise: 0.15, highRise: 0.2, minPrevDur: 0.2 };
 
 /** Frame-posterior rise at which a note of this pitch counts as re-struck. */
 export function minRise(midi: number, rule: RestrikeRule = RESTRIKE): number {
@@ -115,6 +121,71 @@ export function mergeContinuations(notes: Note[], onsetStrength: Map<number, num
     out.push(copy);
   }
   return out;
+}
+
+/**
+ * False low notes from drum hits. SCNet's drum-less accompaniment still carries some of each kick
+ * and tom (separation leakage), and Basic Pitch hears a short low "note" in it. A low note is
+ * dropped when ALL of these hold:
+ *  - it lies below `maxMidi` and starts on a drum hit: the drums stem's onset strength within
+ *    ±`window` s of its start reaches `minHit` (8-bit scale of separation/dsp.ts drumOnsetEnvelope);
+ *  - it is short (< `maxDur` s) and its model onset is not strong (< `maxOnset`): a plucked or
+ *    struck bass note on the beat has a confident onset and usually rings on;
+ *  - its pitch class is not the bass line's: no sustained (>= `sustainDur` s) low note of the
+ *    same pitch class sounds within ±`context` s, while some other low pitch class does.
+ * Measured with tests/accuracy (suspectDrumLowNotesPerMin, bass raw chroma accuracy) on 7 band
+ * songs separated in the browser.
+ */
+export interface DrumHitRule {
+  maxMidi: number;
+  window: number;
+  minHit: number;
+  maxDur: number;
+  maxOnset: number;
+  sustainDur: number;
+  context: number;
+  /** register ceiling of the "bass line" notes consulted for the pitch-class test */
+  contextMaxMidi: number;
+}
+
+export const DRUM_HIT_RULE: DrumHitRule = {
+  maxMidi: 48,
+  window: 0.03,
+  minHit: 35,
+  maxDur: 0.3,
+  maxOnset: 0.7,
+  sustainDur: 0.25,
+  context: 1.5,
+  contextMaxMidi: 55,
+};
+
+/**
+ * Drop probable drum-hit notes (see DrumHitRule). `drumAt(t0, t1)` returns the strongest drum
+ * onset in [t0, t1] (8-bit scale); `onsetStrength` maps note ids to their model onset.
+ */
+export function suppressDrumHits(
+  notes: Note[],
+  drumAt: (t0: number, t1: number) => number,
+  onsetStrength: Map<number, number>,
+  rule: DrumHitRule = DRUM_HIT_RULE,
+): Note[] {
+  const context = notes.filter((n) => n.midi < rule.contextMaxMidi && n.dur >= rule.sustainDur).sort((a, b) => a.start - b.start);
+  const removed = new Set<number>();
+  for (const n of notes) {
+    if (n.midi >= rule.maxMidi || n.dur >= rule.maxDur) continue;
+    if ((onsetStrength.get(n.id) ?? 1) >= rule.maxOnset) continue;
+    if (drumAt(n.start - rule.window, n.start + rule.window) < rule.minHit) continue;
+    let same = false;
+    let other = false;
+    for (const m of context) {
+      if (m.start > n.start + rule.context) break;
+      if (m === n || m.start + m.dur < n.start - rule.context) continue;
+      if ((((m.midi - n.midi) % 12) + 12) % 12 === 0) same = true;
+      else other = true;
+    }
+    if (!same && other) removed.add(n.id);
+  }
+  return removed.size ? notes.filter((n) => !removed.has(n.id)) : notes;
 }
 
 /**

@@ -6,8 +6,10 @@
  *   → tempo/beat tracking → key detection.
  *
  * With separation the accompaniment stem (bass + other: no drums, no vocals) is transcribed with
- * the user's detection parameters — this alone removes the false low notes drum hits produce —
- * and, when the vocal stem actually contains singing, the vocal stem is transcribed with
+ * the user's detection parameters. Drum hits still leak into that stem and produce short false
+ * low notes, so the drums stem's onset envelope (separation/dsp.ts) is used to drop low notes that
+ * start on a drum hit and do not belong to the bass line (music/cleanup.ts suppressDrumHits).
+ * When the vocal stem actually contains singing, the vocal stem is transcribed with
  * VOCAL_EXTRACTION and reduced to a single melody line (music/melody.ts) that goes on the right
  * hand (role 'melody').
  */
@@ -16,13 +18,13 @@ import { BP_FPS, BP_MIDI_OFFSET, BP_N_PITCHES, BP_SAMPLE_RATE, frameToTime } fro
 import type { NoteExtractionOptions, RawNoteEvent } from './noteExtraction';
 import type { TranscriptionStage, WorkerRequest, WorkerResponse } from './workerProtocol';
 import { analyzeLevel, decodeToRate, mixToMono } from './decode';
-import { mergeContinuations, mergeFragments, newNoteId, removeShortQuiet, sortNotes, suppressHarmonics } from '../music/cleanup';
+import { mergeContinuations, mergeFragments, newNoteId, removeShortQuiet, sortNotes, suppressDrumHits, suppressHarmonics } from '../music/cleanup';
 import { assignHands } from '../music/hands';
 import { estimateTempo } from '../music/beats';
 import { detectKey } from '../music/theory';
 import { extractMelodyLine, mergeMelody } from '../music/melody';
 import type { StoredPosteriors } from './posteriors';
-import { separateStems, stemsFromBlobs, type SeparationResult } from '../separation';
+import { DRUM_ENV_FPS, separateStems, stemsFromBlobs, type SeparationResult } from '../separation';
 
 /**
  * Piano register curve: the top and bottom octaves get lower thresholds (Basic Pitch's posteriors
@@ -120,10 +122,16 @@ export interface TranscriptionResult {
   duration: number;
   tempo: TempoInfo;
   key?: KeyInfo;
-  /** Posteriors of the audio the main notes came from (the accompaniment stem when separated). */
+  /**
+   * Posteriors of the audio the main notes came from (the accompaniment stem when separated),
+   * plus the drum onset envelope when separated in the browser.
+   */
   posteriors: StoredPosteriors;
-  /** Posteriors of the vocal stem (only when a melody line was extracted from it). */
-  melodyPosteriors?: StoredPosteriors;
+  /**
+   * @deprecated Never set. The vocal stem's posteriors (~7 MB per song) used to be returned for
+   * storage, but nothing read them: re-detection keeps the song's melody notes.
+   */
+  melodyPosteriors?: undefined;
   info: TranscriptionInfo;
 }
 
@@ -218,6 +226,17 @@ export interface CleanContext {
   /** frame posteriors the events were extracted from (nFrames x 88; 8-bit stored or float) */
   frames?: Uint8Array | Float32Array;
   nFrames?: number;
+  /** onset strength of the separated drums stem (8-bit, DRUM_ENV_FPS): drops drum-hit false low notes */
+  drums?: Uint8Array;
+}
+
+/** Strongest drum onset (8-bit) of an envelope at DRUM_ENV_FPS in [t0, t1] seconds. */
+export function drumOnsetMax(drums: Uint8Array, t0: number, t1: number): number {
+  const a = Math.max(0, Math.round(t0 * DRUM_ENV_FPS));
+  const b = Math.min(drums.length - 1, Math.round(t1 * DRUM_ENV_FPS));
+  let m = 0;
+  for (let i = a; i <= b; i++) if (drums[i] > m) m = drums[i];
+  return m;
 }
 
 /**
@@ -267,6 +286,8 @@ export function cleanNotes(raw: RawNoteEvent[], rms: Float32Array, params: Extra
   notes = mergeFragments(notes, 0.03, onsetStrength, { rise });
   if (params.continuationOnset) notes = mergeContinuations(notes, onsetStrength, params.continuationOnset, 0.3, { rise });
   if (params.suppressHarmonics) notes = suppressHarmonics(notes, amplitude);
+  const drums = ctx.drums;
+  if (drums?.length) notes = suppressDrumHits(notes, (t0, t1) => drumOnsetMax(drums, t0, t1), onsetStrength);
   notes = removeShortQuiet(notes, Math.min(0.045, params.minNoteMs / 1000), 0.1);
   notes = notes.filter((n) => n.start < duration);
   return sortNotes(notes);
@@ -314,7 +335,13 @@ async function runModel(
   );
 }
 
-const toStored = (r: ModelRun): StoredPosteriors => ({ nFrames: r.nFrames, frames: r.frames, onsets: r.onsets, rms: r.rms });
+const toStored = (r: ModelRun, drums?: Uint8Array): StoredPosteriors => ({
+  nFrames: r.nFrames,
+  frames: r.frames,
+  onsets: r.onsets,
+  rms: r.rms,
+  ...(drums ? { drums } : {}),
+});
 
 export async function transcribeAudio(
   blob: Blob,
@@ -376,7 +403,8 @@ export async function transcribeAudio(
   }
 
   onProgress({ stage: 'arranging', progress: null, detail: vocal ? 'Extracting the vocal melody, assigning hands, tracking beats' : 'Cleaning notes, assigning hands, tracking beats' });
-  const accompNotes = cleanNotes(result.notes, result.rms, params, duration);
+  const drums = sep?.drumOnsets;
+  const accompNotes = cleanNotes(result.notes, result.rms, params, duration, { frames: result.frames, nFrames: result.nFrames, drums });
   const melody = vocal ? melodyFromRaw(vocal.notes, vocal.rms, duration) : [];
   const notes = mergeMelody(accompNotes, melody, duration);
   if (result.backend === 'cpu') {
@@ -393,8 +421,7 @@ export async function transcribeAudio(
     duration,
     tempo,
     key: detectKey(notes),
-    posteriors: toStored(result),
-    melodyPosteriors: vocal && melody.length ? toStored(vocal) : undefined,
+    posteriors: toStored(result, drums),
     info: {
       method: 'basic-pitch',
       estimated: true,
@@ -422,16 +449,14 @@ async function extractRaw(post: StoredPosteriors, params: ExtractionParams): Pro
 }
 
 export interface ReextractOptions {
-  /** Vocal-stem posteriors: the melody line is re-extracted from them (VOCAL_EXTRACTION). */
-  melodyPosteriors?: StoredPosteriors;
-  /** The song's current melody notes (role 'melody'), kept as they are when no melodyPosteriors are given. */
+  /** The song's current melody notes (role 'melody'), kept as they are and merged back on the right hand. */
   melody?: Note[];
 }
 
 /**
  * Re-run note extraction on stored posteriors with new parameters (no model inference).
- * For a separated song `post` holds the accompaniment; the melody line is kept (re-extracted
- * from `melodyPosteriors`, or taken from `melody`) and merged back on the right hand.
+ * For a separated song `post` holds the accompaniment (and the drum onset envelope); the melody
+ * line is kept from `melody` and merged back on the right hand.
  */
 export async function reextractNotes(
   post: StoredPosteriors,
@@ -440,12 +465,7 @@ export async function reextractNotes(
   opts: ReextractOptions = {},
 ): Promise<Note[]> {
   const raw = await extractRaw(post, params);
-  const accomp = cleanNotes(raw, post.rms, params, duration);
-  let melody: Note[] = [];
-  if (opts.melodyPosteriors) {
-    melody = melodyFromRaw(await extractRaw(opts.melodyPosteriors, VOCAL_EXTRACTION), opts.melodyPosteriors.rms, duration);
-  } else if (opts.melody?.length) {
-    melody = opts.melody.filter((n) => n.role === 'melody').map((n) => ({ ...n, hand: 'R' as const }));
-  }
+  const accomp = cleanNotes(raw, post.rms, params, duration, { frames: post.frames, nFrames: post.nFrames, drums: post.drums });
+  const melody = (opts.melody ?? []).filter((n) => n.role === 'melody').map((n) => ({ ...n, hand: 'R' as const }));
   return mergeMelody(accomp, melody, duration);
 }

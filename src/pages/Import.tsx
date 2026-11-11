@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { FileAudio, SquarePlay, Music2, Mic, Loader2, CheckCircle2, XCircle, Circle, ArrowRight, Square, Info, Server } from 'lucide-react';
 import { Dropzone } from '../components/import/Dropzone';
 import { SeparationOption, useSeparationChoice } from '../components/import/SeparationOption';
@@ -10,6 +10,7 @@ import { configuredBackendUrl, health, type BackendHealth } from '../lib/backend
 import { createPlayer, fetchVideoMeta, parseYouTubeId, startTabCapture, tabCaptureSupported, type TabCapture, type VideoMeta, type YTPlayer } from '../lib/youtube/youtube';
 import { formatTime } from '../lib/music/theory';
 import { toast } from '../state/toastStore';
+import { YOUTUBE_IMPORT_PATH, documentIsolated, isYouTubeImportPath, switchDocument } from '../lib/isolation';
 
 type Tab = 'audio' | 'youtube' | 'midi' | 'record';
 
@@ -168,7 +169,11 @@ function JobProgress() {
 }
 
 function YouTubeTab({ busy, separate }: { busy: boolean; separate: boolean }) {
-  const [url, setUrl] = useState('');
+  const [params] = useSearchParams();
+  const [url, setUrl] = useState(() => params.get('url') ?? '');
+  // Only reachable while an import was running when the tab was opened (App.tsx IsolationGate):
+  // this page is cross-origin isolated, which the YouTube player can't be embedded in.
+  const [isolated] = useState(documentIsolated);
   const [meta, setMeta] = useState<VideoMeta | null>(null);
   const [rights, setRights] = useState(false);
   const [capturing, setCapturing] = useState<{ t: number; d: number } | null>(null);
@@ -189,7 +194,9 @@ function YouTubeTab({ busy, separate }: { busy: boolean; separate: boolean }) {
       : null;
   const recordBlock = !tabCaptureSupported()
     ? 'Recording tab audio needs Chrome or Edge on a computer.'
-    : playerError
+    : isolated
+      ? 'Load the video player above first.'
+      : playerError
       ? 'This video can’t be played here, so it can’t be recorded.'
       : commonBlock;
   const serverBlock = !serverReady ? 'Set up a processing server in Settings to use this.' : commonBlock;
@@ -201,7 +208,7 @@ function YouTubeTab({ busy, separate }: { busy: boolean; separate: boolean }) {
     let alive = true;
     void fetchVideoMeta(id).then((m) => alive && setMeta(m));
     const host = playerEl.current;
-    if (host) {
+    if (host && !isolated) {
       host.innerHTML = '<div></div>';
       createPlayer(host.firstElementChild as HTMLElement, id, (state) => {
         if (state === 0 && capture.current) void finishCapture();
@@ -282,7 +289,23 @@ function YouTubeTab({ busy, separate }: { busy: boolean; separate: boolean }) {
         {url && !id && <p className="text-[12px] text-bad">That doesn’t look like a YouTube video link.</p>}
       </div>
       <div className={cn('overflow-hidden rounded-xl border border-ink-700 bg-black', !id && 'hidden')}>
-        <div className="aspect-video w-full" ref={playerEl} />
+        <div className={cn('aspect-video w-full', isolated && 'hidden')} ref={playerEl} />
+        {isolated && (
+          <div className="flex aspect-video w-full flex-col items-center justify-center gap-3 px-6 text-center">
+            <p className="max-w-sm text-[12.5px] leading-relaxed text-ink-200">
+              {busy
+                ? 'The video player needs a page reload, which would stop the import that is running. It can load as soon as that import finishes.'
+                : 'The video player needs a quick page reload.'}
+            </p>
+            <Button
+              size="sm"
+              disabled={busy}
+              onClick={() => switchDocument(`${YOUTUBE_IMPORT_PATH}${url ? `?url=${encodeURIComponent(url)}` : ''}`)}
+            >
+              Load the video player
+            </Button>
+          </div>
+        )}
       </div>
       {playerError && <p className="text-[12.5px] text-bad">{playerError}</p>}
       {id && (
@@ -404,8 +427,10 @@ function RecordTab({ busy }: { busy: boolean }) {
 }
 
 export default function ImportPage() {
-  const [params, setParams] = useSearchParams();
-  const tab = (params.get('tab') as Tab) || 'audio';
+  const [params] = useSearchParams();
+  const { pathname } = useLocation();
+  // the YouTube tab is its own route (no cross-origin isolation there: src/lib/isolation.ts)
+  const tab: Tab = isYouTubeImportPath(pathname) ? 'youtube' : ((params.get('tab') as Tab) || 'audio');
   const job = useImport((s) => s.job);
   const importFile = useImport((s) => s.importFile);
   const navigate = useNavigate();
@@ -461,7 +486,7 @@ export default function ImportPage() {
                 key={t.id}
                 role="tab"
                 aria-selected={tab === t.id}
-                onClick={() => setParams({ tab: t.id })}
+                onClick={() => navigate(t.id === 'youtube' ? YOUTUBE_IMPORT_PATH : `/import?tab=${t.id}`)}
                 className={cn(
                   'focus-ring flex h-12 items-center gap-2 border-b-2 px-4 text-[13.5px] font-medium whitespace-nowrap transition-colors',
                   tab === t.id ? 'border-accent-500 text-ink-50' : 'border-transparent text-ink-300 hover:text-ink-100',

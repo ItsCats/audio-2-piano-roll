@@ -67,14 +67,15 @@
    "stems": true
   },
   "heroic": {
-   "kind": "instrumental",
-   "suggested": "mix",
+   "kind": "piano-classical",
+   "suggested": "piano",
    "presets": [
-    "mix",
-    "piano"
+    "piano",
+    "sensitive",
+    "mix"
    ],
-   "bassRef": true,
-   "stems": true
+   "ptiRef": true,
+   "note": "Chopin, Polonaise in A-flat major Op. 53 ('Heroic') — solo piano (earlier mislabelled as an instrumental band track)"
   },
   "bigger-than-us-jazz": {
    "kind": "piano-jazz",
