@@ -10,7 +10,7 @@ import { configuredBackendUrl, health, type BackendHealth } from '../lib/backend
 import { createPlayer, fetchVideoMeta, parseYouTubeId, startTabCapture, tabCaptureSupported, type TabCapture, type VideoMeta, type YTPlayer } from '../lib/youtube/youtube';
 import { formatTime } from '../lib/music/theory';
 import { toast } from '../state/toastStore';
-import { isTouchDevice } from '../lib/wakeLock';
+import { createScreenWakeLock, isTouchDevice } from '../lib/wakeLock';
 import { saveBlobAs } from '../lib/saveBlob';
 import { YOUTUBE_IMPORT_PATH, documentIsolated, isYouTubeImportPath, switchDocument } from '../lib/isolation';
 
@@ -429,27 +429,58 @@ function RecordTab({ busy }: { busy: boolean }) {
   const chunks = useRef<Blob[]>([]);
   const [, tick] = useState(0);
   const importBlob = useImport((s) => s.importAudioBlob);
+  const [touch] = useState(isTouchDevice);
+  // a phone that auto-locks mid-recording suspends the page (and the microphone): keep the screen on
+  // while recording; the import holds its own lock from "Stop & transcribe" on (importStore.ts)
+  const [wake] = useState(() => createScreenWakeLock());
   useEffect(() => {
     if (!rec) return;
     const t = setInterval(() => tick((x) => x + 1), 250);
     return () => clearInterval(t);
   }, [rec]);
+  // leaving the tab mid-recording: stop the microphone (nothing is imported) and let the screen lock
+  const live = useRef<{ r: MediaRecorder; stream: MediaStream } | null>(null);
+  useEffect(
+    () => () => {
+      const l = live.current;
+      live.current = null;
+      if (l) {
+        l.r.onstop = null;
+        try {
+          if (l.r.state !== 'inactive') l.r.stop();
+        } catch {
+          /* already stopped */
+        }
+        l.stream.getTracks().forEach((t) => t.stop());
+      }
+      chunks.current = [];
+      void wake.hold(false);
+    },
+    [wake],
+  );
   const start = async () => {
+    // asked for inside the tap (some browsers only grant it with a user gesture); never throws
+    void wake.hold(true);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
       const r = new MediaRecorder(stream);
       chunks.current = [];
       r.ondataavailable = (e) => e.data.size && chunks.current.push(e.data);
       r.onstop = () => {
+        live.current = null;
         stream.getTracks().forEach((t) => t.stop());
         const blob = new Blob(chunks.current, { type: r.mimeType || 'audio/webm' });
         // the Blob holds the data now: don't keep a second reference to every chunk
         chunks.current = [];
         void importBlob(blob, { title: `Recording ${new Date().toLocaleString()}`, source: { kind: 'capture', mimeType: blob.type, fileSize: blob.size } });
+        // the import has asked for its own lock by now (importStore.ts)
+        void wake.hold(false);
       };
       r.start(500);
+      live.current = { r, stream };
       setRec({ r, start: Date.now(), stream });
     } catch (e) {
+      void wake.hold(false);
       toast.error('Microphone unavailable', (e as Error).message);
     }
   };
@@ -461,7 +492,12 @@ function RecordTab({ busy }: { busy: boolean }) {
           <div className="flex items-center gap-2 text-[14px] text-ink-50">
             <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-bad" /> Recording {formatTime((Date.now() - rec.start) / 1000)}
           </div>
-          <Button variant="danger" onClick={() => { rec.r.stop(); setRec(null); }} icon={<Square size={14} />}>
+          {touch && (
+            <p className="flex items-center gap-1.5 text-[12px] text-ink-300">
+              <Smartphone size={13} className="shrink-0 text-accent-400" /> Keep this page open while recording.
+            </p>
+          )}
+          <Button variant="danger" onClick={() => { live.current = null; rec.r.stop(); setRec(null); }} icon={<Square size={14} />}>
             Stop & transcribe
           </Button>
         </>

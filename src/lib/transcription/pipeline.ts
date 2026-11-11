@@ -24,7 +24,7 @@ import { estimateTempo } from '../music/beats';
 import { detectKey } from '../music/theory';
 import { extractMelodyLine, mergeMelody } from '../music/melody';
 import type { StoredPosteriors } from './posteriors';
-import { pageDeviceInfo } from './backendChoice';
+import { isMemoryConstrained, pageDeviceInfo } from './backendChoice';
 import { DRUM_ENV_FPS, longReason, separateStems, separationSupport, stemsFromBlobs, type SeparationResult } from '../separation';
 
 /**
@@ -218,6 +218,18 @@ class TranscriberClient {
       };
     }
     return this.worker;
+  }
+
+  /**
+   * Stop the worker when no job is running. Its WebAssembly memory (~110 MB once Basic Pitch has run)
+   * can only grow, never shrink: on phones it would otherwise sit under the Studio's piano samples.
+   * The next job starts a fresh worker (re-extraction needs no model; an import reloads it).
+   */
+  releaseIfIdle(): boolean {
+    if (!this.worker || this.handlers.size) return false;
+    this.worker.terminate();
+    this.worker = null;
+    return true;
   }
 
   run<T extends WorkerResponse['type']>(
@@ -422,6 +434,22 @@ export async function transcribeAudio(
   onProgress: (e: ProgressEvent) => void,
   signal?: AbortSignal,
   opts: TranscribeOptions = {},
+): Promise<TranscriptionResult> {
+  try {
+    return await transcribeAudioOnce(blob, params, onProgress, signal, opts);
+  } finally {
+    // phones and small-memory devices: give the model's memory back once the import is done
+    const device = pageDeviceInfo();
+    if (device && isMemoryConstrained(device)) transcriber.releaseIfIdle();
+  }
+}
+
+async function transcribeAudioOnce(
+  blob: Blob,
+  params: ExtractionParams,
+  onProgress: (e: ProgressEvent) => void,
+  signal: AbortSignal | undefined,
+  opts: TranscribeOptions,
 ): Promise<TranscriptionResult> {
   const t0 = performance.now();
   onProgress({ stage: 'decoding', progress: null, detail: 'Decoding and resampling audio' });

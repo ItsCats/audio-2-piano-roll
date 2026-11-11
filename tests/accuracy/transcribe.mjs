@@ -12,6 +12,15 @@
  * SCNet, accompaniment + vocal melody). It needs ~2.5 GB per run and ~2 min per minute of audio
  * single-threaded (the harness page is not cross-origin isolated); run one at a time.
  *
+ * --coi opens the harness page cross-origin isolated (?coi=1, like the shipped app routes), so the
+ * separation worker can use WASM threads (the app's real desktop speed). Without it the page is
+ * single-threaded.
+ *
+ * Every run records the browser's peak memory while it ran (`memory`: sampled every 0.5 s from
+ * /proc over the Chromium process tree: peak resident size of the largest process = the tab's
+ * renderer with its workers, and the peak summed PSS of the whole tree). With --separate each run
+ * gets a fresh tab so the peaks are per song.
+ *
  * --override '{"piano":{...}}' merges partial ExtractionParams into the app's EXTRACTION_PRESETS
  * in the page before transcribing (candidate presets through the full browser path).
  *
@@ -52,9 +61,10 @@ const withPosteriors = flag('posteriors');
 const separate = flag('separate');
 const override = JSON.parse(opt('override', 'null'));
 const force = flag('force');
+const coi = flag('coi');
 const songs = args;
 if (!outDir || !songs.length) {
-  console.error('usage: node tests/accuracy/transcribe.mjs --out DIR [--port N] [--presets piano,mix] [--posteriors] [--separate] [--force] files...');
+  console.error('usage: node tests/accuracy/transcribe.mjs --out DIR [--port N] [--presets piano,mix] [--posteriors] [--separate] [--coi] [--force] files...');
   console.error('       node tests/accuracy/transcribe.mjs --dump-posteriors DIR [--port N] [--force] files...');
   process.exit(2);
 }
@@ -82,6 +92,7 @@ const serveAudio = {
 const server = await createServer({ root, configFile: path.join(root, 'vite.config.ts'), plugins: [serveAudio], server: { port, strictPort: true }, logLevel: 'error' });
 await server.listen();
 const browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
+let sampler;
 try {
   let page;
   const openPage = async () => {
@@ -89,7 +100,7 @@ try {
     page.on('pageerror', (e) => console.error('[pageerror]', e.message));
     page.on('console', (m) => m.type() === 'error' && console.error('[console]', m.text()));
     page.on('crash', () => console.error('[crash] page crashed'));
-    await page.goto(`http://localhost:${port}/tests/e2e/accuracy.html`);
+    await page.goto(`http://localhost:${port}/tests/e2e/accuracy.html${coi ? '?coi=1' : ''}`);
     await page.waitForFunction(() => document.getElementById('log')?.textContent === 'ready', null, { timeout: 180000 });
     if (override) {
       await page.evaluate(async (o) => {
@@ -98,6 +109,53 @@ try {
       }, override);
     }
   };
+  // ---- browser memory sampler (Linux /proc): the Chromium processes this script launched
+  const treePids = () => {
+    const kids = new Map();
+    for (const d of fs.readdirSync('/proc')) {
+      if (!/^\d+$/.test(d)) continue;
+      try {
+        const st = fs.readFileSync(`/proc/${d}/stat`, 'utf8');
+        const ppid = +st.slice(st.lastIndexOf(')') + 2).split(' ')[1];
+        if (!kids.has(ppid)) kids.set(ppid, []);
+        kids.get(ppid).push(+d);
+      } catch {}
+    }
+    const out = [];
+    const stack = [...(kids.get(process.pid) ?? [])];
+    while (stack.length) {
+      const p = stack.pop();
+      stack.push(...(kids.get(p) ?? []));
+      try {
+        if (/chrom|headless_shell/i.test(fs.readFileSync(`/proc/${p}/cmdline`, 'utf8'))) out.push(p);
+      } catch {}
+    }
+    return out;
+  };
+  const kb = (txt, key) => {
+    const m = txt.match(new RegExp(`^${key}:\\s+(\\d+) kB`, 'm'));
+    return m ? +m[1] : 0;
+  };
+  let mem = null;
+  const sample = () => {
+    if (!mem) return;
+    let pss = 0;
+    let rss = 0;
+    let maxProc = 0;
+    for (const p of treePids()) {
+      try {
+        const r = kb(fs.readFileSync(`/proc/${p}/status`, 'utf8'), 'VmRSS');
+        rss += r;
+        maxProc = Math.max(maxProc, r);
+        pss += kb(fs.readFileSync(`/proc/${p}/smaps_rollup`, 'utf8'), 'Pss');
+      } catch {}
+    }
+    mem.peakProcRssMB = Math.max(mem.peakProcRssMB, Math.round(maxProc / 1024));
+    mem.peakTreeRssMB = Math.max(mem.peakTreeRssMB, Math.round(rss / 1024));
+    mem.peakTreePssMB = Math.max(mem.peakTreePssMB, Math.round(pss / 1024));
+    mem.samples++;
+  };
+  sampler = setInterval(sample, 500);
   await openPage();
   if (dumpDir) {
     for (let i = 0; i < songs.length; i++) {
@@ -152,20 +210,46 @@ try {
         console.log(`skip ${name} ${preset}`);
         continue;
       }
-      const t0 = Date.now();
-      const loadBefore = os.loadavg()[0];
-      let r;
-      try {
-        r = await page.evaluate(
-          ([u, p, w, s]) => window.transcribeUrl(u, p, w, s),
-          [`http://localhost:${port}/__accaudio/${i}`, preset, withPosteriors, separate],
-        );
-      } catch (err) {
-        console.error(`FAILED ${name} ${preset}: ${err.message}`);
+      if (separate) {
+        // a fresh tab per separated run: per-song memory peaks, no heap carried over
         await page.close().catch(() => {});
         await openPage();
+      }
+      const t0 = Date.now();
+      const loadBefore = os.loadavg()[0];
+      mem = { peakProcRssMB: 0, peakTreeRssMB: 0, peakTreePssMB: 0, samples: 0 };
+      sample();
+      let r;
+      let failed = false;
+      for (let attempt = 0; ; attempt++) {
+        try {
+          r = await page.evaluate(
+            ([u, p, w, s]) => window.transcribeUrl(u, p, w, s),
+            [`http://localhost:${port}/__accaudio/${i}`, preset, withPosteriors, separate],
+          );
+          break;
+        } catch (err) {
+          // a dev-server dependency re-optimisation reloads the page once: retry that, nothing else
+          const reload = /context was destroyed|navigation/i.test(err.message);
+          console.error(`${reload && attempt === 0 ? 'RETRY (page reloaded)' : 'FAILED'} ${name} ${preset}: ${err.message}`);
+          await page.close().catch(() => {});
+          await openPage();
+          if (reload && attempt === 0) {
+            mem = { peakProcRssMB: 0, peakTreeRssMB: 0, peakTreePssMB: 0, samples: 0 };
+            continue;
+          }
+          failed = true;
+          break;
+        }
+      }
+      if (failed) {
+        mem = null;
         continue;
       }
+      sample();
+      r.memory = mem;
+      mem = null;
+      r.coi = coi;
       r.song = name;
       r.file = path.resolve(songs[i]);
       r.wallMs = Date.now() - t0;
@@ -173,11 +257,13 @@ try {
       fs.writeFileSync(out, JSON.stringify(r));
       console.log(
         `${name.padEnd(24)} ${preset.padEnd(9)} ${r.base.length} notes (E ${r.easy.length} / M ${r.medium.length}) ` +
-          `${(r.timing.transcribeMs / 1000).toFixed(1)}s for ${r.duration.toFixed(0)}s audio, ${r.info.backend}, ${r.tempo.bpm.toFixed(1)} BPM, ${r.key?.name}`,
+          `${(r.timing.transcribeMs / 1000).toFixed(1)}s for ${r.duration.toFixed(0)}s audio, ${r.info.backend}, ${r.tempo.bpm.toFixed(1)} BPM, ${r.key?.name}, ` +
+          `peak ${r.memory.peakProcRssMB} MB (tab), ${r.memory.peakTreePssMB} MB PSS (all)`,
       );
     }
   }
 } finally {
+  clearInterval(sampler);
   await browser.close();
   await server.close();
 }

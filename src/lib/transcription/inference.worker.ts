@@ -24,7 +24,7 @@ import {
 import { extractNotes, type NoteExtractionOptions } from './noteExtraction';
 import type { WorkerRequest, WorkerResponse } from './workerProtocol';
 import { dequantize } from './posteriors';
-import { WEBGL_MEMORY_FLAGS, batchFor, chooseBackendOrder, type DeviceInfo } from './backendChoice';
+import { WEBGL_MEMORY_FLAGS, batchFor, chooseBackendOrder, isMemoryConstrained, type DeviceInfo } from './backendChoice';
 
 // Stays single-threaded: on a cross-origin-isolated page the threaded build starts blob: scripts
 // that the CSP does not allow.
@@ -67,18 +67,16 @@ function webglIsSoftware(): boolean {
 async function initBackend(preferred?: string, device?: DeviceInfo): Promise<string> {
   const nav = (self as unknown as { navigator?: Navigator & { deviceMemory?: number; userAgentData?: { mobile?: boolean } } }).navigator;
   const offscreen = typeof OffscreenCanvas !== 'undefined';
-  const order = chooseBackendOrder(
-    {
-      ua: device?.ua ?? nav?.userAgent ?? '',
-      maxTouchPoints: device?.maxTouchPoints,
-      deviceMemory: device?.deviceMemory ?? nav?.deviceMemory,
-      mobile: device?.mobile ?? nav?.userAgentData?.mobile,
-      // a 1×1 WebGL2 context, released right after reading the renderer's name
-      softwareRenderer: offscreen ? webglIsSoftware() : true,
-      offscreen,
-    },
-    preferred,
-  );
+  const facts = {
+    ua: device?.ua ?? nav?.userAgent ?? '',
+    maxTouchPoints: device?.maxTouchPoints,
+    deviceMemory: device?.deviceMemory ?? nav?.deviceMemory,
+    mobile: device?.mobile ?? nav?.userAgentData?.mobile,
+  };
+  // the renderer only matters where WebGL could lead (not on phones: no GPU context is made there);
+  // a 1×1 WebGL2 context, released right after reading the renderer's name
+  const softwareRenderer = !offscreen || isMemoryConstrained(facts) ? true : webglIsSoftware();
+  const order = chooseBackendOrder({ ...facts, softwareRenderer, offscreen }, preferred);
   for (const name of order) {
     try {
       if (name === 'wasm') await import('@tensorflow/tfjs-backend-wasm');
