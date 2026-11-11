@@ -8,6 +8,9 @@
  *
  * Writes DIR/<basename>.<preset>.json.
  *
+ * --override '{"piano":{...}}' merges partial ExtractionParams into the app's EXTRACTION_PRESETS
+ * in the page before transcribing (candidate presets through the full browser path).
+ *
  * --dump-posteriors DIR runs the model once per file (the posteriors do not depend on the detection
  * preset) and saves exactly what the app stores for re-detection: DIR/<basename>.frames.u8 and
  * .onsets.u8 (nFrames x 88, 8-bit quantised, row-major), .rms.f32 (100 fps loudness envelope) and
@@ -42,6 +45,7 @@ const outDir = opt('out', dumpDir);
 const port = +opt('port', '5302');
 const presets = opt('presets', 'piano,mix').split(',');
 const withPosteriors = flag('posteriors');
+const override = JSON.parse(opt('override', 'null'));
 const force = flag('force');
 const songs = args;
 if (!outDir || !songs.length) {
@@ -82,6 +86,12 @@ try {
     page.on('crash', () => console.error('[crash] page crashed'));
     await page.goto(`http://localhost:${port}/tests/e2e/accuracy.html`);
     await page.waitForFunction(() => document.getElementById('log')?.textContent === 'ready', null, { timeout: 180000 });
+    if (override) {
+      await page.evaluate(async (o) => {
+        const { EXTRACTION_PRESETS } = await import('/src/lib/transcription/pipeline.ts');
+        for (const [k, v] of Object.entries(o)) Object.assign(EXTRACTION_PRESETS[k], v);
+      }, override);
+    }
   };
   await openPage();
   if (dumpDir) {
