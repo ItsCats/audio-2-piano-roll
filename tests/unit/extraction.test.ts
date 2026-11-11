@@ -136,3 +136,59 @@ describe('extractNotes register curve', () => {
     expect(reg.map((x) => x.midi)).toEqual([26]);
   });
 });
+
+describe('chopped held notes (REPEAT_JOIN)', () => {
+  const n = 200;
+  /** a held pitch whose frame activation stays flat, with a second onset peak at frame `at` */
+  function held(midi: number, start: number, len: number, at: number, secondOnset: number, amp = 0.7) {
+    const p = posteriors(n);
+    addNote(p, midi, start, len, amp, 0.9);
+    p.onsets[at * P + midi - 21] = secondOnset;
+    return p;
+  }
+
+  it('joins a held note split by another note’s attack (no rise, the other onset much stronger)', () => {
+    const p = held(64, 20, 100, 60, 0.7);
+    addNote(p, 52, 60, 40, 0.8, 0.95); // a bass note struck while E4 is held
+    const off = extractNotes(p.frames, p.onsets, n, { ...PIANO_LIKE, joinRepeats: null });
+    expect(off.filter((x) => x.midi === 64).map((x) => x.startFrame)).toEqual([20, 60]);
+    const on = extractNotes(p.frames, p.onsets, n, PIANO_LIKE);
+    const e4 = on.filter((x) => x.midi === 64);
+    expect(e4).toHaveLength(1);
+    expect(e4[0].startFrame).toBe(20);
+    expect(e4[0].endFrame).toBe(off.filter((x) => x.midi === 64)[1].endFrame);
+    expect(on.filter((x) => x.midi === 52)).toHaveLength(1);
+  });
+
+  it('with inferred onsets, joins a weak second onset with flat activation even when nothing else starts', () => {
+    const p = held(40, 20, 100, 60, 0.65);
+    const inferred = { ...PIANO_LIKE, inferOnsets: true };
+    expect(extractNotes(p.frames, p.onsets, n, { ...inferred, joinRepeats: null })).toHaveLength(2);
+    expect(extractNotes(p.frames, p.onsets, n, inferred)).toHaveLength(1);
+    // model onset peaks only ("piano"): a lone onset above the threshold stays a note
+    expect(extractNotes(p.frames, p.onsets, n, PIANO_LIKE)).toHaveLength(2);
+  });
+
+  it('keeps a re-strike whose frame activation rises again', () => {
+    const p = held(64, 20, 100, 60, 0.7, 0.45);
+    for (let t = 60; t < 120; t++) p.frames[t * P + 64 - 21] = 0.85; // re-struck: the activation jumps
+    addNote(p, 52, 60, 40, 0.8, 0.95);
+    expect(extractNotes(p.frames, p.onsets, n, PIANO_LIKE).filter((x) => x.midi === 64)).toHaveLength(2);
+  });
+
+  it('keeps a confident lone repeat, and one whose co-starting note is not clearly stronger', () => {
+    const lone = held(64, 20, 100, 60, 0.85);
+    expect(extractNotes(lone.frames, lone.onsets, n, PIANO_LIKE).filter((x) => x.midi === 64)).toHaveLength(2);
+    const both = held(64, 20, 100, 60, 0.85);
+    addNote(both, 52, 60, 40, 0.8, 0.9);
+    expect(extractNotes(both.frames, both.onsets, n, PIANO_LIKE).filter((x) => x.midi === 64)).toHaveLength(2);
+  });
+
+  it('keeps repeats separated by a real gap', () => {
+    const p = posteriors(n);
+    addNote(p, 64, 20, 30, 0.7, 0.7);
+    addNote(p, 64, 70, 30, 0.7, 0.7);
+    addNote(p, 52, 70, 30, 0.8, 0.95);
+    expect(extractNotes(p.frames, p.onsets, n, PIANO_LIKE).filter((x) => x.midi === 64)).toHaveLength(2);
+  });
+});

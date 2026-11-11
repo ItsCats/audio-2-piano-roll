@@ -23,6 +23,9 @@
  * mergeMelody() then combines the line with the accompaniment transcription: accompaniment
  * notes that would double-strike the melody (same key while it sounds, or a unison/octave
  * double of a melody onset) are removed, and the remaining notes get hands as usual.
+ *
+ * instrumentLine() runs the same reduction over the accompaniment's right hand for songs (or
+ * stretches) without singing: the instruments' tune that Easy / Medium follow there.
  */
 import type { Note } from './types';
 import { newNoteId, sortNotes } from './cleanup';
@@ -40,6 +43,8 @@ export interface MelodyOptions {
   jumpCost: number;
   /** Extra cost of an octave / twelfth / two-octave jump (typical harmonic errors). */
   octaveJumpCost: number;
+  /** Extra cost per semitone of a leap beyond an octave (0 for sung lines; see TuneOptions). */
+  leapCost?: number;
   /** Shortest melody note kept (seconds). */
   minDur: number;
   /** Target register of the line's median after transposition (MIDI, inclusive). */
@@ -124,6 +129,7 @@ function jumpPenalty(a: Note, b: Note, o: MelodyOptions): number {
   let c = o.jumpCost * d;
   if (d > 7) c += o.jumpCost * (d - 7); // big leaps are rare in sung lines
   if (d === 12 || d === 19 || d === 24) c += o.octaveJumpCost;
+  if (d > 12 && o.leapCost) c += o.leapCost * (d - 12);
   return c * near;
 }
 
@@ -256,16 +262,20 @@ function weightedMedian(notes: Note[]): number {
   return s[s.length - 1].midi;
 }
 
-/** Move isolated notes that sit an octave away from the surrounding line back into it. */
-export function fixOctaveOutliers(line: Note[], radius = 3): Note[] {
+/**
+ * Move isolated notes that sit an octave away from the surrounding line back into it: a note at
+ * least `minDist` semitones from the (duration-weighted) median of the notes within `radius` s
+ * moves by an octave when that brings it closer.
+ */
+export function fixOctaveOutliers(line: Note[], radius = 3, minDist = 9): Note[] {
   const out = line.map((n) => ({ ...n }));
   for (let i = 0; i < out.length; i++) {
     const n = out[i];
     const ctx = line.filter((m, j) => j !== i && Math.abs(m.start - n.start) < radius);
     if (ctx.length < 3) continue;
     const ref = weightedMedian(ctx);
-    if (n.midi - ref >= 9 && Math.abs(n.midi - 12 - ref) < n.midi - ref) n.midi -= 12;
-    else if (ref - n.midi >= 9 && Math.abs(n.midi + 12 - ref) < ref - n.midi) n.midi += 12;
+    if (n.midi - ref >= minDist && Math.abs(n.midi - 12 - ref) < n.midi - ref) n.midi -= 12;
+    else if (ref - n.midi >= minDist && Math.abs(n.midi + 12 - ref) < ref - n.midi) n.midi += 12;
   }
   return out;
 }
@@ -533,4 +543,93 @@ export function mergeMelody(accomp: Note[], melody: Note[], duration: number): N
   if (!melody.length) return assignHands(sortNotes(acc), duration);
   const all = assignHands(sortNotes([...removeMelodyCollisions(acc, melody), ...melody]), duration);
   return all.map((n) => (n.role === 'melody' ? { ...n, hand: 'R' as const } : n));
+}
+
+/**
+ * Instruments' tune: ONE smooth lead line through the accompaniment, for songs without a singer
+ * and for the instrumental stretches / rap sections of songs with one (Easy and Medium right
+ * hand follow it there, like they follow the sung line elsewhere).
+ *
+ * The same best-path reduction as the sung line (reduceToLine: credit = salience × sounding time,
+ * per-note cost, pitch-jump costs with extra cost for octave / twelfth jumps), over the right
+ * hand's notes plus left-hand notes high enough to belong to the tune. An instrument's salience
+ * is its velocity plus a bonus for being the top voice at its onset (in piano writing the tune is
+ * usually on top), minus a penalty per voice sounding above it (inner / accompanying voices).
+ * Because jumps cost, the line no longer hops between a band's piano chord tops and the lead
+ * instrument below them (the per-cluster skyline did: C5↔D6 on every chord in Dress-Up Darling).
+ * Same-pitch repeats are kept (instruments re-strike notes; sung lines are merged instead).
+ */
+export interface TuneOptions {
+  /** salience bonus of a note with no tune candidate sounding above it at its onset */
+  topBonus: number;
+  /** salience penalty per candidate voice sounding above it (at most 3 counted) */
+  belowPenalty: number;
+  /** left-hand notes at or above this pitch are tune candidates too */
+  leftMin: number;
+  /** reduceToLine costs (see MelodyOptions) */
+  minSalience: number;
+  noteCost: number;
+  jumpCost: number;
+  octaveJumpCost: number;
+  /** extra cost per semitone of a leap beyond an octave: a lead line rarely leaps that far, a
+   * band's chord tops sit there (piano voicings an octave or more above the lead) */
+  leapCost: number;
+  /** move isolated octave errors back into the line (fixOctaveOutliers) */
+  fixOctaves: boolean;
+}
+
+export const DEFAULT_TUNE: TuneOptions = {
+  topBonus: 0.3,
+  belowPenalty: 0.15,
+  leftMin: 67, // G4
+  minSalience: 0.2,
+  noteCost: 0.01,
+  jumpCost: 0.0015,
+  octaveJumpCost: 0.1,
+  leapCost: 0.01,
+  fixOctaves: false,
+};
+
+/** Tune candidates (see instrumentLine): right-hand notes and left-hand notes >= leftMin. */
+export function tuneCandidates(accomp: Note[], leftMin = DEFAULT_TUNE.leftMin): Note[] {
+  const rh = accomp.filter((n) => n.hand === 'R' || n.midi >= leftMin);
+  // only if the song has (almost) no right-hand part: the upper register of everything
+  return rh.length > accomp.length * 0.1 ? rh : accomp.filter((n) => n.midi >= 57);
+}
+
+/** The instruments' tune through `candidates` (see TuneOptions); notes keep their velocity, hand 'R'. */
+export function instrumentLine(candidates: Note[], opts: Partial<TuneOptions> = {}): Note[] {
+  const o = { ...DEFAULT_TUNE, ...opts };
+  const c = sortNotes(candidates);
+  if (!c.length) return [];
+  let maxDur = 0;
+  for (const n of c) maxDur = Math.max(maxDur, n.dur);
+  const byId = new Map<number, Note>();
+  const weighted: Note[] = [];
+  let j = 0;
+  for (let i = 0; i < c.length; i++) {
+    const n = c[i];
+    const t = n.start + 0.02;
+    while (j < c.length && c[j].start < t - maxDur) j++;
+    const above = new Set<number>();
+    for (let k = j; k < c.length && c[k].start < n.start + 0.04; k++) {
+      const m = c[k];
+      if (m !== n && m.midi > n.midi && m.start + m.dur > t + 0.03) above.add(m.midi);
+    }
+    const sal = n.vel + (above.size ? -o.belowPenalty * Math.min(3, above.size) : o.topBonus);
+    byId.set(n.id, n);
+    weighted.push({ ...n, vel: sal });
+  }
+  let line = reduceToLine(weighted, {
+    minMidi: 21,
+    maxMidi: 108,
+    minSalience: o.minSalience,
+    noteCost: o.noteCost,
+    jumpCost: o.jumpCost,
+    octaveJumpCost: o.octaveJumpCost,
+    leapCost: o.leapCost,
+  });
+  line = line.map((n) => ({ ...n, vel: byId.get(n.id)?.vel ?? n.vel, hand: 'R' as const }));
+  if (o.fixOctaves) line = fixOctaveOutliers(line);
+  return line;
 }

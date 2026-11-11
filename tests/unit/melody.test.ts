@@ -4,6 +4,7 @@ import {
   dropIsolatedHolds,
   extractMelody,
   extractMelodyLine,
+  instrumentLine,
   fixOctaveOutliers,
   mergeMelody,
   phrases,
@@ -13,6 +14,7 @@ import {
   rightHandShifts,
   smoothLine,
   speechSections,
+  tuneCandidates,
 } from '../../src/lib/music/melody';
 import { easyBassLine, easySungLine, generateEasy, generateHard, generateMedium, gridFactor, melodyGaps, placeSungGroups } from '../../src/lib/music/difficulty';
 import { regularBeats } from '../../src/lib/music/beats';
@@ -191,7 +193,7 @@ describe('arrangements with a sung melody', () => {
     expect(generateHard(base)).toHaveLength(base.length);
   });
 
-  it('without role notes Easy is unchanged (skyline of the right hand)', () => {
+  it('without role notes Easy plays the top voice of the right hand', () => {
     const plain = base.map((x) => ({ ...x, role: undefined }));
     const rh = generateEasy(plain, t, 4).filter((x) => x.hand === 'R');
     expect(rh.filter((x) => x.midi === 79).length).toBeGreaterThanOrEqual(7);
@@ -501,5 +503,68 @@ describe('isolated long holds', () => {
     const line = [n(64, 0, 0.4), n(65, 0.5, 0.4), n(67, 1, 3.5), n(65, 4.6, 0.4), n(84, 8, 6.8), n(64, 17, 0.4)];
     const kept = dropIsolatedHolds(line);
     expect(kept.map((x) => x.midi)).toEqual([64, 65, 67, 65, 64]);
+  });
+});
+
+describe("instruments' tune (no singer)", () => {
+  // a band: a lead line on the beats (C5–A5, held), piano stabs on the off-beats whose tops sit
+  // 14–16 semitones above the lead (D6–F6), a bass on the beats
+  const t = tempo(120, 20);
+  const leadPitches = [72, 74, 76, 77, 79, 77, 76, 74, 72, 74, 76, 77, 79, 81, 79, 77];
+  const band = (): Note[] => {
+    const out: Note[] = [];
+    leadPitches.forEach((m, i) => {
+      out.push(n(m, i * 0.5, 0.48, 0.8)); // lead
+      out.push(n(m + 14 + (i % 2) * 2, i * 0.5 + 0.25, 0.12, 0.6), n(m + 7, i * 0.5 + 0.25, 0.12, 0.6)); // stab
+      out.push(n(48, i * 0.5, 0.45, 0.7, 'L'));
+    });
+    return out;
+  };
+
+  it('instrumentLine follows the lead instead of hopping to the chord tops', () => {
+    const line = instrumentLine(tuneCandidates(band()));
+    expect(isMonophonic(line)).toBe(true);
+    expect(line.map((x) => x.midi)).toEqual(leadPitches);
+  });
+
+  it('Easy right hand plays the lead line on 8ths, with no leap over an octave', () => {
+    const rh = generateEasy(band(), t, 8).filter((x) => x.hand === 'R').sort((a, b) => a.start - b.start);
+    expect(isMonophonic(rh)).toBe(true);
+    expect(rh.map((x) => x.midi)).toEqual(leadPitches);
+    for (let i = 1; i < rh.length; i++) expect(Math.abs(rh[i].midi - rh[i - 1].midi)).toBeLessThanOrEqual(12);
+  });
+
+  it('Medium keeps the lead on top: chord tops far above a held tune note are dropped, tones below kept', () => {
+    const base = band();
+    // chord tones under the lead, struck with it
+    leadPitches.forEach((m, i) => base.push(n(m - 5, i * 0.5, 0.45, 0.6)));
+    const rh = generateMedium(base, t).filter((x) => x.hand === 'R');
+    for (const [i, m] of leadPitches.entries()) expect(rh.some((x) => x.midi === m && Math.abs(x.start - i * 0.5) < 0.03)).toBe(true);
+    // the stab tops (lead + 14 / 16 on the off-beats) are gone, the stab tone a fifth above stays
+    const stabAt = (x: Note) => leadPitches.findIndex((_, i) => Math.abs(x.start - (i * 0.5 + 0.25)) < 0.03);
+    expect(rh.some((x) => stabAt(x) >= 0 && x.midi - leadPitches[stabAt(x)] > 9)).toBe(false);
+    expect(rh.some((x) => stabAt(x) >= 0 && x.midi - leadPitches[stabAt(x)] === 7)).toBe(true);
+    expect(rh.some((x) => leadPitches.some((m, i) => x.midi === m - 5 && Math.abs(x.start - i * 0.5) < 0.03))).toBe(true);
+  });
+
+  it('in piano writing the top voice is the tune (inner and lower voices are not)', () => {
+    const notes: Note[] = [];
+    const top = [76, 79, 77, 76, 74, 72, 74, 76];
+    top.forEach((m, i) => {
+      notes.push(n(m, i * 0.5, 0.45, 0.6), n(64, i * 0.5, 0.45, 0.75), n(67, i * 0.5 + 0.25, 0.2, 0.75)); // louder inner voices
+      notes.push(n(48, i * 0.5, 0.45, 0.7, 'L'));
+    });
+    expect(instrumentLine(tuneCandidates(notes)).map((x) => x.midi)).toEqual(top);
+  });
+
+  it('repeated notes of an instrument stay separate strikes', () => {
+    const notes = [0, 0.5, 1, 1.5].map((s) => n(72, s, 0.45, 0.8));
+    expect(instrumentLine(notes)).toHaveLength(4);
+  });
+
+  it('Easy folds an isolated octave leap of the tune back into the line', () => {
+    const notes = [72, 74, 76, 89, 76, 74, 72, 74].map((m, i) => n(m, i * 0.5, 0.45, 0.8));
+    const rh = generateEasy(notes, t, 4).filter((x) => x.hand === 'R');
+    expect(rh.map((x) => x.midi)).toEqual([72, 74, 76, 77, 76, 74, 72, 74]);
   });
 });

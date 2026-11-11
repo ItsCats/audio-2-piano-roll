@@ -7,8 +7,11 @@
  * Runs the app's own extractNotes() (noteExtraction.ts) and cleanNotes() (pipeline.ts) through Vite's
  * SSR loader on the dumped posteriors, exactly as the app re-detects after a preset change, and scores
  * every candidate with mir_eval-style onset-only note F1 (pitch exact, onset within 50 ms) against the
- * exact MAESTRO performance MIDI (<ref>/<piece>.midi). Also reports recall by octave and the median
- * onset bias (estimate - reference over matched notes) used to calibrate ONSET_LATENCY.
+ * exact MAESTRO performance MIDI (<ref>/<piece>.midi). Also reports onset+offset F1 ("F+off": offset
+ * within max(50 ms, 20 % of the reference note) of the reference offset, the reference notes extended
+ * by the sustain pedal as in the MAESTRO / onsets-and-frames evaluation; greedy per-pitch matching),
+ * recall by octave and the median onset bias (estimate - reference over matched notes) used to
+ * calibrate ONSET_LATENCY.
  *
  * A config is { name, preset: 'piano'|'sensitive'|'mix', params?: Partial<ExtractionParams>,
  * extraction?: Partial<NoteExtractionOptions> (e.g. register), latency?: seconds }. --configs FILE.mjs
@@ -67,10 +70,42 @@ const data = pieces.map((name) => {
   const rms = new Float32Array(rmsBuf.buffer.slice(rmsBuf.byteOffset, rmsBuf.byteOffset + rmsBuf.byteLength));
   const midiPath = path.join(refDir, `${name}.midi`);
   const ref = fs.existsSync(midiPath)
-    ? new Midi(fs.readFileSync(midiPath)).tracks.flatMap((t) => t.notes.map((n) => ({ midi: n.midi, start: n.time })))
+    ? pedalExtended(new Midi(fs.readFileSync(midiPath)))
     : JSON.parse(fs.readFileSync(path.join(postDir, `${name}.ref.json`), 'utf8'));
-  return { name, meta, frames: dequantize(u8('frames.u8')), onsets: dequantize(u8('onsets.u8')), rms, ref: byPitch(ref) };
+  return { name, meta, frames: dequantize(u8('frames.u8')), onsets: dequantize(u8('onsets.u8')), rms, ref: byPitch(ref), refNotes: notesByPitch(ref) };
 });
+
+/**
+ * Reference notes with the sustain pedal applied (CC64 >= 64): a note released while the pedal is
+ * down sounds until the pedal is lifted, or until the same key is struck again.
+ */
+function pedalExtended(midi) {
+  const out = [];
+  for (const t of midi.tracks) {
+    const ped = (t.controlChanges?.[64] ?? []).map((c) => ({ time: c.time, down: c.value >= 0.5 })).sort((a, b) => a.time - b.time);
+    const release = (time) => {
+      // pedal state at `time` and the next lift after it
+      let down = false;
+      let i = 0;
+      for (; i < ped.length && ped[i].time <= time; i++) down = ped[i].down;
+      if (!down) return time;
+      for (; i < ped.length; i++) if (!ped[i].down) return ped[i].time;
+      return Infinity;
+    };
+    const notes = t.notes.map((n) => ({ midi: n.midi, start: n.time, end: Math.max(n.time + n.duration, release(n.time + n.duration)) }));
+    const byP = new Map();
+    for (const n of notes) (byP.get(n.midi) ?? byP.set(n.midi, []).get(n.midi)).push(n);
+    for (const a of byP.values()) {
+      a.sort((x, y) => x.start - y.start);
+      for (let i = 0; i < a.length; i++) {
+        if (i + 1 < a.length && a[i].end > a[i + 1].start) a[i].end = Math.max(a[i + 1].start, a[i].start + 0.01);
+        if (!Number.isFinite(a[i].end)) a[i].end = a[i].start + 5;
+      }
+    }
+    out.push(...notes);
+  }
+  return out;
+}
 
 function byPitch(notes) {
   const m = new Map();
@@ -80,6 +115,47 @@ function byPitch(notes) {
   }
   for (const a of m.values()) a.sort((x, y) => x - y);
   return m;
+}
+
+function notesByPitch(notes) {
+  const m = new Map();
+  for (const n of notes) {
+    if (n.end === undefined) continue;
+    if (!m.has(n.midi)) m.set(n.midi, []);
+    m.get(n.midi).push(n);
+  }
+  for (const a of m.values()) a.sort((x, y) => x.start - y.start);
+  return m;
+}
+
+/** Onset+offset note F1 (mir_eval tolerances: onset 50 ms, offset max(50 ms, 0.2 x reference duration)), greedy per pitch. */
+function scoreOffsets(refNotes, est) {
+  if (!refNotes.size) return null;
+  const estMap = new Map();
+  for (const n of est) (estMap.get(n.midi) ?? estMap.set(n.midi, []).get(n.midi)).push(n);
+  for (const a of estMap.values()) a.sort((x, y) => x.start - y.start);
+  let nRef = 0;
+  let hit = 0;
+  for (const [p, r] of refNotes) {
+    nRef += r.length;
+    const e = estMap.get(p) ?? [];
+    const used = new Uint8Array(e.length);
+    let j0 = 0;
+    for (const rn of r) {
+      while (j0 < e.length && e[j0].start < rn.start - tol - 1e-9) j0++;
+      const offTol = Math.max(0.05, 0.2 * (rn.end - rn.start));
+      for (let j = j0; j < e.length && e[j].start <= rn.start + tol + 1e-9; j++) {
+        if (!used[j] && Math.abs(e[j].start + e[j].dur - rn.end) <= offTol) {
+          used[j] = 1;
+          hit++;
+          break;
+        }
+      }
+    }
+  }
+  const P = est.length ? hit / est.length : 0;
+  const R = nRef ? hit / nRef : 0;
+  return { P, R, F: P + R ? (2 * P * R) / (P + R) : 0 };
 }
 
 /**
@@ -138,14 +214,14 @@ function score(refMap, est) {
 
 function transcribe(d, cfg) {
   // { browser: 'piano' | 'sensitive' | 'pianoFirstPass' } scores the notes the browser produced in the dump run
-  if (cfg.browser) return d.meta.notes?.[cfg.browser]?.map((n) => ({ midi: n.midi, start: n.start })) ?? null;
+  if (cfg.browser) return d.meta.notes?.[cfg.browser]?.map((n) => ({ midi: n.midi, start: n.start, dur: n.dur })) ?? null;
   const params = { ...EXTRACTION_PRESETS[cfg.preset ?? 'piano'], ...(cfg.params ?? {}) };
   const wopts = { ...toWorkerOptions(params), ...(cfg.extraction ?? {}) };
   const raw = extractNotes(d.frames, d.onsets, d.meta.nFrames, wopts);
   // frames let cleanNotes apply the re-strike rule exactly as the app does (RESTRIKE / frameRise)
   const notes = cleanNotes(raw, d.rms, params, d.meta.duration, { frames: d.frames, nFrames: d.meta.nFrames });
   const shift = cfg.latency === undefined ? 0 : APP_LATENCY - cfg.latency;
-  return notes.map((n) => ({ midi: n.midi, start: Math.max(0, n.start + shift) }));
+  return notes.map((n) => ({ midi: n.midi, start: Math.max(0, n.start + shift), dur: n.dur }));
 }
 
 let configs = [
@@ -161,6 +237,13 @@ if (configFile) {
 }
 
 const mean = (a) => a.reduce((s, x) => s + x, 0) / (a.length || 1);
+/** Share of notes that restart their pitch within 40 ms of the previous same-pitch note's end (chopped held notes). */
+function splitRate(est) {
+  const s = [...est].sort((a, b) => a.midi - b.midi || a.start - b.start);
+  let c = 0;
+  for (let i = 1; i < s.length; i++) if (s[i].midi === s[i - 1].midi && Math.abs(s[i].start - (s[i - 1].start + s[i - 1].dur)) < 0.04) c++;
+  return s.length ? c / s.length : 0;
+}
 const results = [];
 const t0 = Date.now();
 for (const cfg of configs) {
@@ -168,7 +251,12 @@ for (const cfg of configs) {
   for (const d of data) {
     const est = transcribe(d, cfg);
     // (synthetic e2e-* pieces have no browser notes: a `browser` config skips them)
-    if (est) per[d.name] = score(d.ref, est);
+    if (est) {
+      per[d.name] = score(d.ref, est);
+      const off = scoreOffsets(d.refNotes, est);
+      if (off) per[d.name].offF = off.F;
+      per[d.name].splitRate = splitRate(est);
+    }
   }
   const tune = TUNE.filter((p) => per[p]).map((p) => per[p]);
   const hold = HOLDOUT.filter((p) => per[p]).map((p) => per[p]);
@@ -178,14 +266,16 @@ for (const cfg of configs) {
     tuneF: mean(tune.map((s) => s.F)),
     tuneP: mean(tune.map((s) => s.P)),
     tuneR: mean(tune.map((s) => s.R)),
+    tuneOffF: mean(tune.filter((s) => s.offF !== undefined).map((s) => s.offF)),
+    holdOffF: hold.length && hold[0].offF !== undefined ? mean(hold.map((s) => s.offF)) : null,
     holdF: hold.length ? mean(hold.map((s) => s.F)) : null,
     e2e: Object.fromEntries(E2E.filter((p) => per[p]).map((p) => [p, per[p].F])),
     per,
   };
   results.push(row);
   console.log(
-    `${cfg.name.padEnd(44)} tune F ${row.tuneF.toFixed(4)} (P ${row.tuneP.toFixed(3)} R ${row.tuneR.toFixed(3)})` +
-      (row.holdF !== null ? `  liszt F ${row.holdF.toFixed(4)}` : '') +
+    `${cfg.name.padEnd(44)} tune F ${row.tuneF.toFixed(4)} (P ${row.tuneP.toFixed(3)} R ${row.tuneR.toFixed(3)}) F+off ${row.tuneOffF.toFixed(4)}` +
+      (row.holdF !== null ? `  liszt F ${row.holdF.toFixed(4)}` + (row.holdOffF !== null ? ` F+off ${row.holdOffF.toFixed(4)}` : '') : '') +
       Object.entries(row.e2e)
         .map(([k, f]) => `  ${k} ${f.toFixed(3)}`)
         .join('') +

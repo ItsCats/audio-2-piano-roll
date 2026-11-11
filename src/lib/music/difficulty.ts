@@ -1,13 +1,20 @@
 /**
  * Generates Easy / Medium / Hard arrangements from the full (cleaned) transcription.
  *
- *  HARD   — the full transcription with both hands, untouched timing.
- *  MEDIUM — melody plus up to two supporting chord tones in the right hand, bass plus one
- *           consonant chord tone in the left hand, fast passages thinned to a 16th-note grid,
- *           light quantisation.
- *  EASY   — a single-line melody (skyline with ornament removal and octave-jump smoothing,
- *           kept in a comfortable range) over a sustained left-hand bass line that follows the
- *           lowest sounding note beat by beat, quantised to 8th notes.
+ *  HARD   — the full transcription with both hands, untouched timing (hands only reassigned
+ *           where a chord is out of one hand's reach: playability pass).
+ *  MEDIUM — the tune on top with up to two supporting chord tones below it in the right hand,
+ *           bass plus one consonant chord tone in the left hand, fast passages thinned to a
+ *           16th-note grid, light quantisation, then the playability pass.
+ *  EASY   — a single-line tune on 8th notes over a sustained left-hand bass line that follows the
+ *           lowest sounding note beat by beat.
+ *
+ * The tune without a singer is the instruments' tune (music/melody.ts instrumentLine): ONE smooth
+ * lead line through the right-hand notes, found like the sung line (best path, jumps cost), so
+ * the right hand no longer hops between a band's piano chord tops and the lead instrument. Easy
+ * plays it on the 8th grid (easySungLine) with isolated octave leaps folded back; Medium strikes
+ * each tune note with chord tones below it, keeps chords struck under a held tune note only up
+ * to a sixth above it (MEDIUM_TUNE) and drops the chord tops further up.
  *
  * When the transcription carries a sung melody line (notes with role 'melody', from the
  * separated vocal stem), the arrangements are built around it instead:
@@ -19,14 +26,34 @@
  * Easy and Medium move the sung line by whole phrases into the right-hand register (median E4–E5,
  * clear of the left hand: music/melody.ts rightHandShifts). Where nobody sings for two bars or more
  * (rap / spoken sections are not in the line, see melody.ts speechSections) the right hand plays
- * the accompaniment's top line instead.
+ * the instruments' tune there, as in a song without a singer.
+ *
+ * Measured (tests/accuracy/inst_eval.py: RH top line vs the reference tune, raw chroma accuracy),
+ * old per-onset skyline → tune line: Easy on 6 MAESTRO pieces vs the performance MIDI's top voice
+ * 0.395 → 0.438 (leaps over an octave 3.3 → 1.5 %), on 4 solo piano recordings vs a strong piano
+ * transcriber's top voice 0.222 → 0.266, on a band track (Dress-Up Darling) vs a pYIN lead proxy
+ * 0.334 → 0.407 (confident proxy frames 0.436 → 0.507); Medium 0.493 → 0.494, 0.289 → 0.288,
+ * 0.388 → 0.390 (confident frames 0.547 → 0.535). Sung sections of vocal songs are unchanged.
  */
 import type { Arrangement, Difficulty, Note, PedalRange, TempoInfo } from './types';
 import { clusterOnsets } from './hands';
 import { beatPeriodAt, beatToTime, timeToBeat } from './beats';
 import { quantizeNotes } from './quantize';
 import { newNoteId, songDuration, sortNotes } from './cleanup';
-import { rightHandShifts } from './melody';
+import { fixOctaveOutliers, instrumentLine, rightHandShifts, tuneCandidates, type TuneOptions } from './melody';
+
+/**
+ * Hand-span pass (music/playability.ts enforcePlayability, written in parallel): on Medium,
+ * out-of-reach notes move to the other hand when it is free and in range, else the least
+ * important ones go; on Hard notes are only reassigned. Loaded through a glob so this module
+ * still builds while that file does not exist yet (then the pass is skipped).
+ */
+type EnforcePlayability = (notes: Note[], level: 'easy' | 'medium' | 'hard', opts?: { maxSpan?: number }) => Note[];
+const playabilityModule = Object.values(import.meta.glob<{ enforcePlayability?: EnforcePlayability }>('./playability.ts', { eager: true }))[0];
+function playable(notes: Note[], level: 'medium' | 'hard'): Note[] {
+  const enforce = playabilityModule?.enforcePlayability;
+  return enforce ? sortNotes(enforce(notes, level)) : notes;
+}
 
 const CONSONANCE: Record<number, number> = { 3: 0.9, 4: 1, 5: 0.7, 7: 1, 8: 0.8, 9: 0.9, 12: 0.95, 15: 0.8, 16: 0.8 };
 
@@ -96,8 +123,55 @@ function inRanges(ranges: [number, number][], t: number): boolean {
 }
 
 export function generateHard(base: Note[]): Note[] {
-  return sortNotes(base.map((n) => ({ ...n })));
+  return playable(sortNotes(base.map((n) => ({ ...n }))), 'hard');
 }
+
+/**
+ * The instruments' tune (melody.ts instrumentLine) through the accompaniment notes that start in
+ * `ranges` (the instrumental stretches; everywhere for a song without a sung line).
+ */
+export function tuneLine(accomp: Note[], ranges: [number, number][], opts?: Partial<TuneOptions>): Note[] {
+  return instrumentLine(
+    tuneCandidates(accomp, opts?.leftMin).filter((n) => inRanges(ranges, n.start)),
+    opts,
+  );
+}
+
+/** The line note sounding at time t (or the nearest one within `reach` s), from a time-sorted monophonic line. */
+function lineNoteNear(line: Note[], starts: number[], t: number, reach: number): Note | null {
+  let lo = 0;
+  let hi = starts.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (starts[mid] <= t) lo = mid + 1;
+    else hi = mid;
+  }
+  const prev = line[lo - 1];
+  if (prev && prev.start + prev.dur > t + 0.03) return prev;
+  const next = line[lo];
+  const dPrev = prev ? t - (prev.start + prev.dur) : Infinity;
+  const dNext = next ? next.start - t : Infinity;
+  if (Math.min(dPrev, dNext) > reach) return null;
+  return dPrev <= dNext ? prev : next;
+}
+
+function chordTones(top: Note, below: Note[], count: number): Note[] {
+  return below
+    .filter((n) => n.midi < top.midi && top.midi - n.midi <= 12)
+    .map((n) => ({ n, s: (CONSONANCE[top.midi - n.midi] ?? 0.2) + n.vel * 0.5 }))
+    .sort((a, b) => b.s - a.s)
+    .slice(0, count)
+    .map((x) => x.n);
+}
+
+/**
+ * Medium right hand in instrumental stretches: a chord struck under a held tune note keeps its
+ * tones below the tune and those at most `keepAbove` semitones above it (a melody note the line
+ * reduction skipped, an ornament); chord tops further above (another instrument's register, the
+ * hopping skyline) are dropped. `reach` (s): how far from a tune note a chord still counts as
+ * under it.
+ */
+export const MEDIUM_TUNE = { keepAbove: 9, reach: 0.5 };
 
 export function generateMedium(base: Note[], tempo: TempoInfo): Note[] {
   const melody = base.filter((n) => n.role === 'melody');
@@ -105,23 +179,37 @@ export function generateMedium(base: Note[], tempo: TempoInfo): Note[] {
   const accomp = melody.length ? base.filter((n) => n.role !== 'melody') : base;
   const clusters = clusterOnsets(accomp, 0.04);
   // with a sung line the right hand follows it; the accompaniment's right hand only fills long
-  // instrumental stretches
+  // instrumental stretches, where its top voice follows the instruments' tune
   const gaps = melody.length ? melodyGaps(melody, tempo, songDuration(base), MELODY_GAP_BEATS, fine) : [[-Infinity, Infinity] as [number, number]];
+  const tune = tuneLine(accomp, gaps);
+  const tuneIds = new Set(tune.map((n) => n.id));
+  const tuneStarts = tune.map((n) => n.start);
   const rh: Note[][] = [];
   const lh: Note[][] = [];
+  // groups whose first note is a line note (the tune or the sung melody): kept when thinning
+  const lineGroups = new Set<Note[]>();
   for (const c of clusters) {
-    const r = c.filter((n) => n.hand === 'R').sort((a, b) => b.midi - a.midi);
-    const l = c.filter((n) => n.hand === 'L').sort((a, b) => a.midi - b.midi);
-    if (r.length && inRanges(gaps, c[0].start)) {
-      const top = r[0];
-      const support = r
-        .slice(1)
-        .filter((n) => top.midi - n.midi <= 12)
-        .map((n) => ({ n, s: (CONSONANCE[top.midi - n.midi] ?? 0.2) + n.vel * 0.5 }))
-        .sort((a, b) => b.s - a.s)
-        .slice(0, r.length >= 4 ? 2 : 1)
-        .map((x) => x.n);
-      rh.push([top, ...support]);
+    const r = c.filter((n) => n.hand === 'R' && !tuneIds.has(n.id)).sort((a, b) => b.midi - a.midi);
+    const l = c.filter((n) => n.hand === 'L' && !tuneIds.has(n.id)).sort((a, b) => a.midi - b.midi);
+    if (inRanges(gaps, c[0].start)) {
+      const own = c.find((n) => tuneIds.has(n.id));
+      const count = r.length + (own ? 1 : 0) >= 4 ? 2 : 1;
+      if (own) {
+        // the tune note on top, chord tones below it
+        const top = { ...own, hand: 'R' as const };
+        const g = [top, ...chordTones(top, r, count)];
+        lineGroups.add(g);
+        rh.push(g);
+      } else if (r.length) {
+        // chord under a held tune note: only the tones below it (the tops above it were the
+        // hopping skyline); far from any tune note: as before, top + support
+        const ref = lineNoteNear(tune, tuneStarts, c[0].start, MEDIUM_TUNE.reach);
+        const top = ref ? r.find((n) => n.midi - ref.midi <= MEDIUM_TUNE.keepAbove) : r[0];
+        if (top) {
+          const g = !ref || top.midi > ref.midi ? [top, ...chordTones(top, r.filter((n) => n !== top), count)] : chordTones(ref, r, count);
+          if (g.length) rh.push(g);
+        }
+      }
     }
     if (l.length) {
       const bass = l[0];
@@ -136,6 +224,7 @@ export function generateMedium(base: Note[], tempo: TempoInfo): Note[] {
     }
   }
   const sungGroups = new Set<Note[]>(melody.length ? placeSungGroups(melodyWithChordTones(melody, accomp, 2), accomp.filter((n) => n.hand === 'L')) : []);
+  for (const g of sungGroups) lineGroups.add(g);
   rh.push(...sungGroups);
   rh.sort((a, b) => a[0].start - b[0].start);
   const thin = (groups: Note[][], divisions: number): Note[] => {
@@ -145,7 +234,10 @@ export function generateMedium(base: Note[], tempo: TempoInfo): Note[] {
       const minGap = (beatPeriodAt(tempo.beats, g[0].start, tempo.bpm) / divisions) * 0.85;
       if (prev && g[0].start - prev[0].start < minGap) {
         const strength = (x: Note[]) => Math.max(...x.map((n) => n.vel)) + x[0].midi / 400;
-        if (strength(g) > strength(prev) + 0.15) kept[kept.length - 1] = g;
+        const gLine = lineGroups.has(g);
+        const pLine = lineGroups.has(prev);
+        // a line note is never dropped for a chord without one
+        if ((gLine && !pLine) || (gLine === pLine && strength(g) > strength(prev) + 0.15)) kept[kept.length - 1] = g;
         continue;
       }
       kept.push(g);
@@ -164,7 +256,7 @@ export function generateMedium(base: Note[], tempo: TempoInfo): Note[] {
   });
   // a sung line (and the chord tones struck with it) keeps its note ends
   for (let i = 0; i < keepEnd.length; i++) if (keepEnd[i]) q[i] = { ...q[i], dur: Math.max(0.06, notes[i].start + notes[i].dur - q[i].start) };
-  return fixSamePitchOverlaps(q);
+  return playable(fixSamePitchOverlaps(q), 'medium');
 }
 
 /**
@@ -284,66 +376,29 @@ export function easySungLine(sung: Note[], tempo: TempoInfo, div = 2): Note[] {
   return out;
 }
 
+/** Easy tune notes this many semitones or more from the local median move by an octave (fixOctaveOutliers). */
+export const EASY_TUNE = { octaveFix: 9 };
+
 export function generateEasy(base: Note[], tempo: TempoInfo, duration: number): Note[] {
   if (!base.length) return [];
   const sung = base.filter((n) => n.role === 'melody');
   const div = 2 * (sung.length ? gridFactor(tempo) : 1);
   const accomp = sung.length ? base.filter((n) => n.role !== 'melody') : base;
-  const medVel = median(accomp.map((n) => n.vel));
   // left hand first: the sung line is placed clear above it
   const lhNotes = easyBassLine(accomp.filter((n) => n.hand === 'L'), tempo, duration);
 
-  // 1) instruments' tune: the right-hand skyline of the accompaniment, in long instrumental
-  //    stretches of a song with singing (intro, interludes, solos, rap), else everywhere
+  // 1) instruments' tune (one smooth lead line, melody.ts instrumentLine) in long instrumental
+  //    stretches of a song with singing (intro, interludes, solos, rap), else everywhere; on the
+  //    8th grid like the sung line
   const gaps = sung.length ? melodyGaps(sung, tempo, duration, MELODY_GAP_BEATS, gridFactor(tempo)) : [[-Infinity, Infinity] as [number, number]];
-  const skyline: Note[] = [];
-  const rhShare = accomp.filter((n) => n.hand === 'R').length / (accomp.length || 1);
-  for (const c of clusterOnsets(accomp, 0.05)) {
-    if (!inRanges(gaps, c[0].start)) continue;
-    // melody comes from the right hand; only if the song has (almost) no right-hand part do
-    // we fall back to the upper register of everything
-    const pool = rhShare > 0.1 ? c.filter((n) => n.hand === 'R') : c.filter((n) => n.midi >= 57);
-    if (!pool.length) continue;
-    skyline.push(pool.reduce((a, b) => (b.midi > a.midi ? b : a)));
-  }
-  let tune = skyline.filter((n) => {
-    const eighth = beatPeriodAt(tempo.beats, n.start, tempo.bpm) / 2;
-    return !(n.dur < eighth * 0.4 && n.vel < medVel * 0.85); // ornaments: very short and quiet
-  });
-  // at most one note per 8th-note slot
-  const bySlot = new Map<number, Note>();
-  for (const n of tune) {
-    const slot = Math.round(timeToBeat(tempo.beats, n.start, tempo.bpm) * div);
-    const prev = bySlot.get(slot);
-    const score = (x: Note) => x.vel + Math.min(x.dur, 1) * 0.4 + x.midi / 300;
-    if (!prev || score(n) > score(prev)) bySlot.set(slot, n);
-  }
-  tune = [...bySlot.values()].sort((a, b) => a.start - b.start).map((n) => ({ ...n, hand: 'R' as const }));
-  // comfortable register & octave-jump smoothing
+  // isolated octave leaps are moved back into the line (a beginner's hand stays in one place)
+  let tune = fixOctaveOutliers(easySungLine(tuneLine(accomp, gaps), tempo, div), 3, EASY_TUNE.octaveFix);
+  // comfortable register: only an implausibly high / low line moves (by octaves, as a whole)
   const med = median(tune.map((n) => n.midi));
   const globalShift = med > 84 ? -12 * Math.ceil((med - 79) / 12) : med < 60 ? 12 * Math.ceil((60 - med) / 12) : 0;
-  const recent: number[] = [];
-  tune = tune.map((n) => {
-    let p = n.midi + globalShift;
-    if (recent.length) {
-      const ref = median(recent.slice(-6));
-      while (p - ref > 12 && p - 12 >= 55) p -= 12;
-      while (ref - p > 12 && p + 12 <= 91) p += 12;
-    }
-    recent.push(p);
-    return { ...n, midi: p };
-  });
-  // monophonic: each note ends when the next begins
-  for (let i = 0; i < tune.length - 1; i++) {
-    const gap = tune[i + 1].start - tune[i].start;
-    tune[i].dur = Math.max(0.08, Math.min(tune[i].dur, gap - 0.01));
-  }
+  tune = tune.map((n) => ({ ...n, midi: Math.max(21, Math.min(108, n.midi + globalShift)) }));
   const qOpts = { subdivision: div, strength: quantStrength(tempo), quantizeDurations: false, window: 0.5 };
-  const tuneQ = quantizeNotes(
-    tune.map((n) => ({ ...n, id: newNoteId(), vel: Math.min(1, 0.45 + n.vel * 0.45) })),
-    tempo,
-    qOpts,
-  );
+  const tuneQ = tune.map((n) => ({ ...n, id: newNoteId(), vel: Math.min(1, 0.45 + n.vel * 0.45) }));
 
   // 2) the sung line on the 8th grid, moved by whole phrases into the right-hand register
   const sungLine = easySungLine(sung, tempo, div);

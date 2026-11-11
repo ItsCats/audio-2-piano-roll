@@ -16,7 +16,9 @@ notes; song id = file name up to the first '.'). The reference "tune" per song, 
 
 Scores (mir_eval on the reference grid): RPA / RCA (octave-tolerant; Easy moves the line into the
 right-hand register) / voicing recall of the RH top line of Easy, Medium and Hard and of the
-base transcription's top note (any hand: the ceiling). Shape of the Easy RH line: median absolute
+base transcription's top note (any hand: the ceiling); for `lead` also on the proxy's confident
+frames only (voicing probability > 0.5, not among the quietest 30 %). For a song with a sung line
+(role 'melody' notes in the base) only frames at least 1 s away from any sung note are scored. Shape of the Easy RH line: median absolute
 interval, % leaps > an octave, % leaps >= a fifth, notes per second; the same for the reference.
 With WORK/refs/vocal/<id>.bass.f0.npz: Easy / Medium LH bottom-line RCA vs the bass reference.
 With WORK/stems/<id>/drums.wav: drum-suspect low notes per minute (evaluate.py drum_low_notes).
@@ -116,12 +118,36 @@ def main() -> None:
             P = np.load(leads[sid])
             times = P["times"]
             ref = np.where(P["other_v"], P["other_f0"], 0.0)
+            # confident frames only: pYIN voicing probability > 0.5 and not among the quietest 30 %
+            rms = P["other_rms"]
+            conf_ref = np.where((ref > 0) & (np.nan_to_num(P["other_p"]) > 0.5) & (rms > np.percentile(rms[ref > 0], 30)), ref, 0.0)
         else:
             print(f"{sid}: no tune reference, skipped", file=sys.stderr)
             continue
+        gap_frames = None
+        mel = [n for n in d.get("base") or [] if n.get("role") == "melody"]
+        if mel:
+            # a song with a sung line: score only frames at least 1 s away from any sung note
+            # (the instrumental stretches, where Easy / Medium play the instruments' tune)
+            sung = np.zeros(len(times), bool)
+            for n in mel:
+                sung[np.searchsorted(times, n["start"] - 1):np.searchsorted(times, n["start"] + n["dur"] + 1)] = True
+            ref = np.where(sung, 0.0, ref)
+            if kind == "lead":
+                conf_ref = np.where(sung, 0.0, conf_ref)
+            gap_frames = round(float((~sung).mean()), 4)
         r = {"ref": kind, "refVoiced": round(float((ref > 0).mean()), 4), "refShape": shape_of(ref)}
+        if gap_frames is not None:
+            r["gapsOnly"] = True
+            r["gapFrames"] = gap_frames
+        if kind == "lead":
+            r["confidentFrames"] = round(float((conf_ref > 0).mean()), 4)
+            for lv in ("easy", "medium", "hard"):
+                r[f"{lv}Confident"] = score(times, conf_ref, line_f0(N[lv], times, "R", mode="top"))
         for lv in ("easy", "medium", "hard"):
             r[lv] = score(times, ref, line_f0(N[lv], times, "R", mode="top"))
+        if d.get("line"):
+            r["line"] = score(times, ref, line_f0(NoteArr.from_list(d["line"]), times, "R", mode="top"))
         r["baseTopAnyHand"] = score(times, ref, line_f0(N["base"], times, None, mode="top"))
         r["easyShape"] = rh_shape(d.get("easy") or [], dur)
         r["mediumShape"] = rh_shape(d.get("medium") or [], dur)
@@ -138,13 +164,18 @@ def main() -> None:
                 y = load_audio(drums)
                 for lv in ("easy", "medium", "hard"):
                     r[f"{lv}DrumSuspectsPerMin"] = drum_low_notes(N[lv], y, (b["times"], b["f0"])).get("suspectDrumNotesPerMin")
-        res[sid] = r
+        res[os.path.basename(run).removesuffix(".json")] = r
         e, m = r["easy"], r["medium"]
-        print(f"{sid:28s} {kind:5s} easy RPA {e['rawPitch']:.3f} RCA {e['rawChroma']:.3f} VR {e['voicingRecall']:.3f} | "
-              f"med RCA {m['rawChroma']:.3f} | hard RCA {r['hard']['rawChroma']:.3f} | ceil RCA {r['baseTopAnyHand']['rawChroma']:.3f} | "
+        conf = ""
+        if kind == "lead":
+            conf = f" | confident frames: easy RCA {r['easyConfident']['rawChroma']:.3f} med {r['mediumConfident']['rawChroma']:.3f} hard {r['hardConfident']['rawChroma']:.3f}"
+        print(f"{os.path.basename(run).removesuffix('.json'):34s} {kind:5s} easy RPA {e['rawPitch']:.3f} RCA {e['rawChroma']:.3f} VR {e['voicingRecall']:.3f} | "
+              f"med RCA {m['rawChroma']:.3f} | "
+              + (f"line RPA {r['line']['rawPitch']:.3f} RCA {r['line']['rawChroma']:.3f} | " if "line" in r else "")
+              + f"hard RCA {r['hard']['rawChroma']:.3f} | ceil RCA {r['baseTopAnyHand']['rawChroma']:.3f} | "
               f"leap>8ve {r['easyShape'].get('pctLeapGtOctave')}% medStep {r['easyShape'].get('medianAbsInterval')}"
               + (f" | LH bass E {r['easyLHbassRCA']:.3f} M {r['mediumLHbassRCA']:.3f}" if "easyLHbassRCA" in r else "")
-              + (f" | drums/min E {r.get('easyDrumSuspectsPerMin')} M {r.get('mediumDrumSuspectsPerMin')}" if "easyDrumSuspectsPerMin" in r else ""),
+              + (f" | drums/min E {r.get('easyDrumSuspectsPerMin')} M {r.get('mediumDrumSuspectsPerMin')}" if "easyDrumSuspectsPerMin" in r else "") + conf,
               flush=True)
     groups = {}
     for sid, r in res.items():
