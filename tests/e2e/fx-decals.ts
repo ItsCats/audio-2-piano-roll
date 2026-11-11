@@ -1,11 +1,17 @@
 // Dev-only visual harness for note decals (src/lib/render/decals.ts).
 //   /tests/e2e/fx-decals.html?mode=gallery          all tiles, each tiled 2×2
 //   /tests/e2e/fx-decals.html?mode=seam&id=meadow   one tile 2×2 at full resolution
-//   /tests/e2e/fx-decals.html?mode=scene&h=1080     mock 1920×1080 piano roll (h scales it)
-//   /tests/e2e/fx-decals.html?mode=perf             150 decal notes × 60 frames timing
+//   /tests/e2e/fx-decals.html?mode=scene&h=1080&groups=meadow,sakura:note:0.3,galaxy:screen
+//        mock 16:9 piano roll; groups = patternId[:anchor[:tint[:opacity[:scale]]]] ('photo' = fake user image)
+//   /tests/e2e/fx-decals.html?mode=tints&id=meadow  tint ramp 0..1 over five note colours
+//   /tests/e2e/fx-decals.html?mode=real&id=meadow   the real PianoRollRenderer with a decal
+//   /tests/e2e/fx-decals.html?mode=perf             150 decal notes at 1920×1080: decal cost per frame
+//        (&nostroke=1 drops the glow outline, &tint=x, &alpha=x, &one=1 single pattern)
 import { DECAL_PATTERNS, getPatternTile, paintNoteDecal } from '../../src/lib/render/decals';
 import { BLACK_RGB, WHITE, hash, hexToRgb, mix, rgba, roundRect, type Ctx2D, type RGB } from '../../src/lib/render/color';
-import type { DecalSettings } from '../../src/lib/render/settings';
+import { DEFAULT_VISUAL, type DecalSettings, type VisualSettings } from '../../src/lib/render/settings';
+import { PianoRollRenderer } from '../../src/lib/render/renderer';
+import { bachPreludeDemo } from '../../src/lib/music/demo';
 
 const q = new URLSearchParams(location.search);
 const mode = q.get('mode') ?? 'gallery';
@@ -71,7 +77,7 @@ function buildScene(W: number, H: number, sc: number, count: number, groups: Par
     const g = groups[Math.floor((i / count) * groups.length)];
     const key = Math.floor(hash(i, 1) * 50) + 1;
     const black = hash(i, 2) < 0.3;
-    const w = (black ? keyW * 0.58 : keyW * 0.86) * (W / 1920) * (1920 / W);
+    const w = black ? keyW * 0.58 : keyW * 0.86;
     const x = key * keyW + (black ? keyW * 0.7 : (keyW - w) / 2);
     const h = (30 + hash(i, 3) * 260) * sc;
     const bottom = kbTop - hash(i, 4) * (kbTop - 60 * sc) * 0.95;
@@ -90,9 +96,32 @@ function buildScene(W: number, H: number, sc: number, count: number, groups: Par
   return notes;
 }
 
+let photo: HTMLCanvasElement | null = null;
+/** stand-in for a user-uploaded (non-tiling) photo: 1600×1000 sunset with a sun disc */
+function fakePhoto(): HTMLCanvasElement {
+  if (photo) return photo;
+  photo = document.createElement('canvas');
+  photo.width = 1600;
+  photo.height = 1000;
+  const c = photo.getContext('2d')!;
+  const g = c.createLinearGradient(0, 0, 0, 1000);
+  g.addColorStop(0, '#2b4c9b');
+  g.addColorStop(0.55, '#f08a5d');
+  g.addColorStop(1, '#ffd36e');
+  c.fillStyle = g;
+  c.fillRect(0, 0, 1600, 1000);
+  c.fillStyle = '#fff3c4';
+  c.beginPath();
+  c.arc(800, 640, 160, 0, Math.PI * 2);
+  c.fill();
+  c.fillStyle = '#1d2240';
+  c.fillRect(0, 760, 1600, 240);
+  return photo;
+}
+
 function drawNotes(ctx: Ctx2D, notes: MockNote[], sc: number, timing?: { t: number }) {
   for (const n of notes) {
-    const tile = getPatternTile(n.settings.patternId)!;
+    const tile = n.settings.patternId === 'photo' ? fakePhoto() : getPatternTile(n.settings.patternId)!;
     const r = { x: n.x, y: n.y, w: n.w, h: n.h };
     const radius = 6 * sc;
     const c = n.active ? mix(n.color, WHITE, 0.25) : n.color;
@@ -145,7 +174,6 @@ function background(ctx: Ctx2D, W: number, H: number, sc: number) {
 }
 
 function scene() {
-  if (q.get('cm')) (globalThis as unknown as { __cm?: string }).__cm = q.get('cm')!;
   const H = Number(q.get('h') ?? 1080);
   const W = Math.round((H * 16) / 9);
   const sc = H / 1080;
@@ -169,7 +197,6 @@ function scene() {
 }
 
 function perf() {
-  if (q.get('cm')) (globalThis as unknown as { __cm?: string }).__cm = q.get('cm')!;
   // 150 decal notes at 1920×1080 drawn the way the renderer draws a note (gradient fill →
   // decal → glowing outline). Decal cost = frame time with decals − frame time without,
   // measured in alternating blocks; medians reported to tame software-raster noise.
@@ -216,22 +243,28 @@ function perf() {
   });
 }
 
-try {
-  if (mode === 'gallery') gallery();
-  else if (mode === 'seam') seam();
-  else if (mode === 'scene') scene();
-  else if (mode === 'perf') perf();
-  else if (mode === 'tints' || mode === 'micro') throw new Error('skip');
-  if (mode !== 'perf') log.textContent = 'ready';
-  document.body.dataset.done = '1';
-} catch (e) {
-  log.textContent = 'ERROR ' + (e as Error).stack;
-  document.body.dataset.done = '1';
+/** The real renderer with a decal (other effects as configured by the app defaults). */
+function real() {
+  const H = Number(q.get('h') ?? 1080);
+  const W = Math.round((H * 16) / 9);
+  const c = document.createElement('canvas');
+  document.body.appendChild(c);
+  const vs: VisualSettings = {
+    ...DEFAULT_VISUAL,
+    range: (q.get('range') as VisualSettings['range']) ?? 'auto',
+    cornerRadius: 6,
+    decal: { ...DEFAULT_VISUAL.decal, source: 'pattern', patternId: q.get('id') ?? 'meadow', tint: Number(q.get('tint') ?? 0.15), anchor: (q.get('anchor') as 'note' | 'screen') ?? 'note' },
+    effects: { ...DEFAULT_VISUAL.effects, outlineGlow: 0.6 },
+  };
+  const r = new PianoRollRenderer(c, vs);
+  r.resize(W, H);
+  const demo = bachPreludeDemo();
+  r.setNotes(demo.notes, demo.pedal, demo.tempo);
+  r.render({ time: Number(q.get('t') ?? 6.3) });
 }
 
-// tint comparison: rows = colours, columns = tint 0..1
-if (mode === 'tints') {
-  (globalThis as unknown as { __tm?: string }).__tm = q.get('tm') ?? undefined;
+/** Tint comparison: rows = note colours, columns = tint 0, 0.2 … 1. */
+function tints() {
   const ctx = canvas(1200, 700);
   ctx.fillStyle = '#07070a';
   ctx.fillRect(0, 0, 1200, 700);
@@ -252,383 +285,18 @@ if (mode === 'tints') {
     }
   });
   ctx.globalAlpha = 1;
-  log.textContent = 'ready';
-  document.body.dataset.done = '1';
 }
 
-// micro-benchmark of fill strategies (dev only)
-if (mode === 'micro') {
-  const sw = q.get('sw') === '1';
-  const c = document.createElement('canvas');
-  c.width = 1920;
-  c.height = 1080;
-  document.body.appendChild(c);
-  const ctx = c.getContext('2d', sw ? { willReadFrequently: true } : undefined)!;
-  const notes = buildScene(1920, 1080, 1, 150, [{}]);
-  const tile = getPatternTile('meadow')!;
-  const small = document.createElement('canvas');
-  small.width = 300;
-  small.height = 300;
-  small.getContext('2d')!.drawImage(tile, 0, 0, 300, 300);
-  const pat = ctx.createPattern(small, 'repeat')!;
-  const res: Record<string, number> = {};
-  const run = (name: string, fn: (n: MockNote, f: number) => void) => {
-    for (let f = 0; f < 5; f++) for (const n of notes) fn(n, f);
-    ctx.getImageData(0, 0, 1, 1);
-    const t0 = performance.now();
-    for (let f = 0; f < 60; f++) {
-      ctx.fillStyle = '#000';
-      ctx.fillRect(0, 0, 1920, 1080);
-      for (const n of notes) fn(n, f);
-    }
-    ctx.getImageData(0, 0, 1, 1);
-    res[name] = +((performance.now() - t0) / 60).toFixed(2);
-  };
-  run('clearOnly', () => {});
-  run('solid', (n) => {
-    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
-    ctx.fillStyle = '#88f';
-    ctx.fill();
-  });
-  run('solidRect', (n) => {
-    ctx.fillStyle = '#88f';
-    ctx.fillRect(n.x, n.y, n.w, n.h);
-  });
-  run('patFrac', (n, f) => {
-    pat.setTransform({ a: 1, b: 0, c: 0, d: 1, e: n.x + 0.37, f: n.y + f * 0.3 });
-    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
-    ctx.fillStyle = pat;
-    ctx.fill();
-  });
-  run('patInt', (n) => {
-    pat.setTransform({ a: 1, b: 0, c: 0, d: 1, e: Math.round(n.x), f: Math.round(n.y) });
-    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
-    ctx.fillStyle = pat;
-    ctx.fill();
-  });
-  run('patIntRect', (n) => {
-    pat.setTransform({ a: 1, b: 0, c: 0, d: 1, e: Math.round(n.x), f: Math.round(n.y) });
-    ctx.fillStyle = pat;
-    ctx.fillRect(n.x, n.y, n.w, n.h);
-  });
-  run('drawImageClip', (n) => {
-    ctx.save();
-    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
-    ctx.clip();
-    ctx.drawImage(small, 0, 0, Math.min(300, n.w), Math.min(300, n.h), n.x, n.y, Math.min(300, n.w), Math.min(300, n.h));
-    ctx.restore();
-  });
-  run('drawImageNoClip', (n) => {
-    ctx.drawImage(small, 0, 0, Math.min(300, n.w), Math.min(300, n.h), Math.round(n.x), Math.round(n.y), Math.min(300, n.w), Math.min(300, n.h));
-  });
-  run('patIntAlpha', (n) => {
-    pat.setTransform({ a: 1, b: 0, c: 0, d: 1, e: Math.round(n.x), f: Math.round(n.y) });
-    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
-    ctx.globalAlpha = 0.95;
-    ctx.fillStyle = pat;
-    ctx.fill();
-    ctx.globalAlpha = 1;
-  });
-  run('patIntSave', (n) => {
-    ctx.save();
-    pat.setTransform({ a: 1, b: 0, c: 0, d: 1, e: Math.round(n.x), f: Math.round(n.y) });
-    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
-    ctx.fillStyle = pat;
-    ctx.fill();
-    ctx.restore();
-  });
-  const pats = ['meadow', 'sakura', 'galaxy'].map((id) => {
-    const cc = document.createElement('canvas');
-    cc.width = 300;
-    cc.height = 300;
-    cc.getContext('2d')!.drawImage(getPatternTile(id)!, 0, 0, 300, 300);
-    return ctx.createPattern(cc, 'repeat')!;
-  });
-  run('pat3', (n) => {
-    const pt = pats[n.id % 3];
-    pt.setTransform({ a: 1, b: 0, c: 0, d: 1, e: Math.round(n.x), f: Math.round(n.y) });
-    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
-    ctx.fillStyle = pt;
-    ctx.fill();
-  });
-  const trans = document.createElement('canvas');
-  trans.width = 300;
-  trans.height = 300;
-  const tc = trans.getContext('2d')!;
-  tc.globalAlpha = 0.95;
-  tc.drawImage(small, 0, 0);
-  const patT = ctx.createPattern(trans, 'repeat')!;
-  run('patTranslucent', (n) => {
-    patT.setTransform({ a: 1, b: 0, c: 0, d: 1, e: Math.round(n.x), f: Math.round(n.y) });
-    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
-    ctx.fillStyle = patT;
-    ctx.fill();
-  });
-  run('patIntAlphaRect', (n) => {
-    pat.setTransform({ a: 1, b: 0, c: 0, d: 1, e: Math.round(n.x), f: Math.round(n.y) });
-    ctx.globalAlpha = 0.95;
-    ctx.fillStyle = pat;
-    ctx.fillRect(n.x, n.y, n.w, n.h);
-    ctx.globalAlpha = 1;
-  });
-  run('realDecal', (n) => {
-    ctx.globalAlpha = 0.95;
-    paintNoteDecal(ctx, n, 6, { image: tile, imageWidth: 512, imageHeight: 512, settings: n.settings, color: n.color, noteId: n.id, anchorY: n.y + n.h, scale: 1, active: false });
-    ctx.globalAlpha = 1;
-  });
-  run('solidThenDecal', (n) => {
-    ctx.globalAlpha = 0.95;
-    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
-    ctx.fillStyle = '#88f';
-    ctx.fill();
-    paintNoteDecal(ctx, n, 6, { image: tile, imageWidth: 512, imageHeight: 512, settings: n.settings, color: n.color, noteId: n.id, anchorY: n.y + n.h, scale: 1, active: false });
-    ctx.globalAlpha = 1;
-  });
-  run('gradOnly', (n) => {
-    ctx.globalAlpha = 0.95;
-    const g = ctx.createLinearGradient(0, n.y, 0, n.y + n.h);
-    g.addColorStop(0, '#99f');
-    g.addColorStop(1, '#559');
-    ctx.fillStyle = g;
-    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
-    ctx.fill();
-    ctx.globalAlpha = 1;
-  });
-  run('gradThenDecal', (n) => {
-    ctx.globalAlpha = 0.95;
-    const g = ctx.createLinearGradient(0, n.y, 0, n.y + n.h);
-    g.addColorStop(0, '#99f');
-    g.addColorStop(1, '#559');
-    ctx.fillStyle = g;
-    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
-    ctx.fill();
-    paintNoteDecal(ctx, n, 6, { image: tile, imageWidth: 512, imageHeight: 512, settings: n.settings, color: n.color, noteId: n.id, anchorY: n.y + n.h, scale: 1, active: false });
-    ctx.globalAlpha = 1;
-  });
-  run('gradThenPatInt', (n) => {
-    ctx.globalAlpha = 0.95;
-    const g = ctx.createLinearGradient(0, n.y, 0, n.y + n.h);
-    g.addColorStop(0, '#99f');
-    g.addColorStop(1, '#559');
-    ctx.fillStyle = g;
-    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
-    ctx.fill();
-    ctx.globalAlpha = 1;
-    pat.setTransform({ a: 1, b: 0, c: 0, d: 1, e: Math.round(n.x), f: Math.round(n.y) });
-    ctx.fillStyle = pat;
-    ctx.fill();
-  });
-  const g1 = ctx.createLinearGradient(0, 0, 0, 1080);
-  g1.addColorStop(0, '#99f');
-  g1.addColorStop(1, '#559');
-  run('sharedGradThenPatInt', (n) => {
-    ctx.globalAlpha = 0.95;
-    ctx.fillStyle = g1;
-    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
-    ctx.fill();
-    ctx.globalAlpha = 1;
-    pat.setTransform({ a: 1, b: 0, c: 0, d: 1, e: Math.round(n.x), f: Math.round(n.y) });
-    ctx.fillStyle = pat;
-    ctx.fill();
-  });
-  run('solidThenPatInt', (n) => {
-    ctx.fillStyle = '#88f';
-    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
-    ctx.fill();
-    pat.setTransform({ a: 1, b: 0, c: 0, d: 1, e: Math.round(n.x), f: Math.round(n.y) });
-    ctx.fillStyle = pat;
-    ctx.fill();
-  });
-  run('solidThenSolid', (n) => {
-    ctx.fillStyle = '#88f';
-    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
-    ctx.fill();
-    ctx.fillStyle = '#f8a';
-    ctx.fill();
-  });
-  run('patThenPat', (n) => {
-    pat.setTransform({ a: 1, b: 0, c: 0, d: 1, e: Math.round(n.x), f: Math.round(n.y) });
-    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
-    ctx.fillStyle = pat;
-    ctx.fill();
-    ctx.fill();
-  });
-  run('patThenPatTiny', (n) => {
-    pat.setTransform({ a: 1, b: 0, c: 0, d: 1, e: Math.round(n.x), f: Math.round(n.y) });
-    roundRect(ctx, n.x, n.y, 6, 6, 2);
-    ctx.fillStyle = pat;
-    ctx.fill();
-    ctx.fill();
-  });
-  run('patIntOtherCtxPat', (n) => {
-    // same op count as patThenPat but the 2nd fill is offset (no overdraw)
-    pat.setTransform({ a: 1, b: 0, c: 0, d: 1, e: Math.round(n.x), f: Math.round(n.y) });
-    roundRect(ctx, n.x, n.y, n.w / 2, n.h, 6);
-    ctx.fillStyle = pat;
-    ctx.fill();
-    roundRect(ctx, n.x + n.w / 2, n.y, n.w / 2, n.h, 6);
-    ctx.fill();
-  });
-  run('gradThenDrawImage', (n) => {
-    ctx.globalAlpha = 0.95;
-    ctx.fillStyle = g1;
-    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
-    ctx.fill();
-    ctx.globalAlpha = 1;
-    ctx.drawImage(small, 0, 0, Math.min(300, n.w), Math.min(300, n.h), Math.round(n.x), Math.round(n.y), Math.min(300, n.w), Math.min(300, n.h));
-  });
-  run('drawImageTwice', (n) => {
-    ctx.drawImage(small, 0, 0, Math.min(300, n.w), Math.min(300, n.h), Math.round(n.x), Math.round(n.y), Math.min(300, n.w), Math.min(300, n.h));
-    ctx.drawImage(small, 0, 0, Math.min(300, n.w), Math.min(300, n.h), Math.round(n.x), Math.round(n.y), Math.min(300, n.w), Math.min(300, n.h));
-  });
-  run('gradRectThenPatRect', (n) => {
-    ctx.fillStyle = g1;
-    ctx.fillRect(n.x, n.y, n.w, n.h);
-    pat.setTransform({ a: 1, b: 0, c: 0, d: 1, e: Math.round(n.x), f: Math.round(n.y) });
-    ctx.fillStyle = pat;
-    ctx.fillRect(Math.round(n.x), Math.round(n.y), Math.round(n.w), Math.round(n.h));
-  });
-  const oc = new OffscreenCanvas(300, 300);
-  oc.getContext('2d')!.drawImage(small, 0, 0);
-  const bmp = oc.transferToImageBitmap();
-  const patB = ctx.createPattern(bmp, 'repeat')!;
-  run('gradThenPatBitmap', (n) => {
-    ctx.globalAlpha = 0.95;
-    ctx.fillStyle = g1;
-    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
-    ctx.fill();
-    ctx.globalAlpha = 1;
-    patB.setTransform({ a: 1, b: 0, c: 0, d: 1, e: Math.round(n.x), f: Math.round(n.y) });
-    ctx.fillStyle = patB;
-    ctx.fill();
-  });
-  run('patThenPatBitmap', (n) => {
-    patB.setTransform({ a: 1, b: 0, c: 0, d: 1, e: Math.round(n.x), f: Math.round(n.y) });
-    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
-    ctx.fillStyle = patB;
-    ctx.fill();
-    ctx.fill();
-  });
-  const padded = document.createElement('canvas');
-  padded.width = 600;
-  padded.height = 600;
-  for (let a = 0; a < 2; a++) for (let b = 0; b < 2; b++) padded.getContext('2d')!.drawImage(small, a * 300, b * 300);
-  const patNR = ctx.createPattern(padded, 'no-repeat')!;
-  const capGrad = (n: MockNote) => {
-    ctx.globalAlpha = 0.95;
-    ctx.fillStyle = g1;
-    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
-    ctx.fill();
-    ctx.globalAlpha = 1;
-    ctx.drawImage(padded, 10, 10, n.w, n.h - 12, n.x, n.y + 6, n.w, n.h - 12);
-  };
-  const capPath = (n: MockNote, top: boolean) => {
-    ctx.beginPath();
-    const y0 = top ? n.y : n.y + n.h - 6;
-    ctx.rect(n.x, y0, n.w, 6);
-  };
-  run('capsPatRepeat300', (n) => {
-    capGrad(n);
-    for (const top of [true, false]) {
-      capPath(n, top);
-      pat.setTransform({ a: 1, b: 0, c: 0, d: 1, e: Math.round(n.x), f: Math.round(n.y) });
-      ctx.fillStyle = pat;
-      ctx.fill();
-    }
-  });
-  run('capsPatNoRepeat600', (n) => {
-    capGrad(n);
-    for (const top of [true, false]) {
-      capPath(n, top);
-      patNR.setTransform({ a: 1, b: 0, c: 0, d: 1, e: Math.round(n.x) - 10, f: Math.round(n.y) - 10 });
-      ctx.fillStyle = patNR;
-      ctx.fill();
-    }
-  });
-  run('capsClipDraw', (n) => {
-    capGrad(n);
-    for (const top of [true, false]) {
-      ctx.save();
-      capPath(n, top);
-      ctx.clip();
-      ctx.drawImage(padded, 10, 10, n.w, 6, n.x, top ? n.y : n.y + n.h - 6, n.w, 6);
-      ctx.restore();
-    }
-  });
-  run('capsDrawOnly', (n) => {
-    capGrad(n);
-    for (const top of [true, false]) ctx.drawImage(padded, 10, 10, n.w, 6, n.x, top ? n.y : n.y + n.h - 6, n.w, 6);
-  });
-  run('capsRows', (n) => {
-    capGrad(n);
-    for (const top of [true, false]) for (let i = 0; i < 6; i++) ctx.drawImage(padded, 10 + i, 10 + i, n.w - 2 * i, 1, n.x + i, (top ? n.y : n.y + n.h - 6) + i, n.w - 2 * i, 1);
-  });
-  run('noCaps', (n) => capGrad(n));
-  const tinyC = document.createElement('canvas');
-  tinyC.width = 96;
-  tinyC.height = 16;
-  tinyC.getContext('2d')!.drawImage(padded, 0, 0);
-  const patTiny = ctx.createPattern(tinyC, 'no-repeat')!;
-  run('capsTinySrc', (n) => {
-    capGrad(n);
-    for (const top of [true, false]) {
-      capPath(n, top);
-      patTiny.setTransform({ a: 1, b: 0, c: 0, d: 1, e: Math.round(n.x), f: Math.round(top ? n.y : n.y + n.h - 6) });
-      ctx.fillStyle = patTiny;
-      ctx.fill();
-    }
-  });
-  run('capsSolid', (n) => {
-    capGrad(n);
-    for (const top of [true, false]) {
-      capPath(n, top);
-      ctx.fillStyle = '#8af';
-      ctx.fill();
-    }
-  });
-  const poc = new OffscreenCanvas(600, 600);
-  poc.getContext('2d')!.drawImage(padded, 0, 0);
-  const pbmp = poc.transferToImageBitmap();
-  run('noCapsBitmap', (n) => {
-    ctx.globalAlpha = 0.95;
-    ctx.fillStyle = g1;
-    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
-    ctx.fill();
-    ctx.globalAlpha = 1;
-    ctx.drawImage(pbmp, 10, 10, n.w, n.h - 12, n.x, n.y + 6, n.w, n.h - 12);
-  });
-  const poc2 = new OffscreenCanvas(600, 600);
-  poc2.getContext('2d')!.drawImage(padded, 0, 0);
-  run('noCapsOffscreen', (n) => {
-    ctx.globalAlpha = 0.95;
-    ctx.fillStyle = g1;
-    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
-    ctx.fill();
-    ctx.globalAlpha = 1;
-    ctx.drawImage(poc2, 10, 10, n.w, n.h - 12, n.x, n.y + 6, n.w, n.h - 12);
-  });
-  const patBmpNR = ctx.createPattern(pbmp, 'no-repeat')!;
-  run('capsBitmapPat', (n) => {
-    ctx.globalAlpha = 0.95;
-    ctx.fillStyle = g1;
-    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
-    ctx.fill();
-    ctx.globalAlpha = 1;
-    ctx.drawImage(pbmp, 10, 10, n.w, n.h - 12, n.x, n.y + 6, n.w, n.h - 12);
-    for (const top of [true, false]) {
-      capPath(n, top);
-      patBmpNR.setTransform({ a: 1, b: 0, c: 0, d: 1, e: Math.round(n.x) - 10, f: Math.round(n.y) - 10 });
-      ctx.fillStyle = patBmpNR;
-      ctx.fill();
-    }
-  });
-  run('multiplyFill', (n) => {
-    ctx.globalCompositeOperation = 'multiply';
-    roundRect(ctx, n.x, n.y, n.w, n.h, 6);
-    ctx.fillStyle = '#8af';
-    ctx.fill();
-    ctx.globalCompositeOperation = 'source-over';
-  });
-  log.textContent = JSON.stringify(res);
+try {
+  if (mode === 'gallery') gallery();
+  else if (mode === 'real') real();
+  else if (mode === 'seam') seam();
+  else if (mode === 'scene') scene();
+  else if (mode === 'perf') perf();
+  else if (mode === 'tints') tints();
+  if (mode !== 'perf') log.textContent = 'ready';
+  document.body.dataset.done = '1';
+} catch (e) {
+  log.textContent = 'ERROR ' + (e as Error).stack;
   document.body.dataset.done = '1';
 }
