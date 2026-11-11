@@ -13,3 +13,6 @@ server/__pycache__
 server/**/__pycache__
 server/data
 *.pyc
+__pycache__/
+*.nbi
+*.nbc
