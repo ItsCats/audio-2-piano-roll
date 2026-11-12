@@ -153,6 +153,11 @@ export const VOCAL_EXTRACTION: ExtractionParams = {
   // the chopped-note join costs the sung line a little (5 songs: line raw pitch accuracy
   // 0.561 → 0.559, vocal-5 0.462 → 0.454); it runs on the accompaniment only
   joinRepeats: false,
+  // the ghost-note gate (music/cleanup.ts TAIL_GATE) also removed quiet bleed notes from the vocal
+  // stem while nobody sings (vocal-1: 8 of 327 line notes, the line's voicing-counted accuracy
+  // 0.686 → 0.709), but those stretches then became instrumental gaps that Easy fills with the
+  // instruments' tune (Easy voicing-counted accuracy vs the singer 0.518 → 0.474): off here
+  tailGate: false,
 };
 
 /** Fewer melody notes than this over a whole song: treat the vocal stem as noise, not a melody. */

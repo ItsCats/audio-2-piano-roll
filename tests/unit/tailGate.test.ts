@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { TAIL_GATE, isTailGhost, onsetLevel } from '../../src/lib/music/cleanup';
 import { clampToDuration, generateAllArrangements } from '../../src/lib/music/difficulty';
-import { EXTRACTION_PRESETS, addVocalsInto, cleanNotes } from '../../src/lib/transcription/pipeline';
+import { EXTRACTION_PRESETS, VOCAL_EXTRACTION, addVocalsInto, cleanNotes } from '../../src/lib/transcription/pipeline';
 import { timeToFrame } from '../../src/lib/transcription/constants';
 import type { RawNoteEvent } from '../../src/lib/transcription/noteExtraction';
 import type { Note, TempoInfo } from '../../src/lib/music/types';
@@ -41,6 +41,8 @@ describe('tail gate (ghost notes in near-silence)', () => {
     // no level information at all: nothing is gated
     expect(cleanNotes(raw, new Float32Array(1600), params, 16)).toHaveLength(2);
     expect(TAIL_GATE.enabled).toBe(true);
+    // the vocal stem keeps its quiet notes (see VOCAL_EXTRACTION.tailGate)
+    expect(VOCAL_EXTRACTION.tailGate).toBe(false);
   });
 
   it('cleanNotes and the arrangements end every note at the end of the audio', () => {
