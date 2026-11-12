@@ -29,6 +29,8 @@ import { PianoRollView } from '../components/studio/PianoRollView';
 import { Transport } from '../components/studio/Transport';
 import { EditToolbar } from '../components/studio/EditToolbar';
 import { ExportVideoDialog } from '../components/studio/ExportVideoDialog';
+import { FullscreenStage } from '../components/studio/FullscreenStage';
+import { isStageFullscreen, toggleStageFullscreen } from '../state/fullscreenStore';
 import { LookPanel } from '../components/studio/panels/LookPanel';
 import { LabelsPanel } from '../components/studio/panels/LabelsPanel';
 import { SoundPanel } from '../components/studio/panels/SoundPanel';
@@ -136,7 +138,9 @@ function useStudioKeyboard(computerKeys: boolean) {
         player.seek(player.getTime() - (e.shiftKey ? 1 : 5));
       } else if (e.code === 'ArrowRight' && !st.editMode) {
         player.seek(player.getTime() + (e.shiftKey ? 1 : 5));
-      } else if (e.code === 'KeyE' && !mod) {
+      } else if (e.code === 'KeyF' && !mod) {
+        toggleStageFullscreen();
+      } else if (e.code === 'KeyE' && !mod && !isStageFullscreen()) {
         st.setEditMode(!st.editMode);
       } else if (st.editMode) {
         if (mod && e.code === 'KeyZ') {
@@ -351,9 +355,10 @@ export default function StudioPage() {
           </IconButton>
         </header>
         {editMode && <EditToolbar />}
-        <div className="relative min-h-0 flex-1">
+        {/* full screen covers the app and the controls around the view (edit mode is for the normal layout) */}
+        <FullscreenStage onEnter={() => setEditMode(false)}>
           <PianoRollView />
-        </div>
+        </FullscreenStage>
         <Transport />
       </div>
 

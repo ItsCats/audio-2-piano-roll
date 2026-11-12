@@ -11,6 +11,7 @@ import type { Note } from '../../lib/music/types';
 import { useBackgroundMedia } from './useBackgroundMedia';
 import { useDecalImage } from './useDecalImage';
 import { midiInput } from '../../lib/midiInput/webmidi';
+import { isSmallTouchScreen } from '../../lib/fullscreen';
 
 type Drag =
   | { mode: 'move' | 'resize-end' | 'resize-start'; x0: number; y0: number; anchor: Note; originals: Map<number, Note>; key: string; moved: boolean }
@@ -53,8 +54,17 @@ export function PianoRollView() {
     };
   }, []);
 
+  // where the on-screen keys start (CSS px), so the full-screen stage lets taps there play them
+  const markKeysTop = () => {
+    const r = rendererRef.current;
+    const canvas = canvasRef.current;
+    if (!r || !canvas || !canvas.clientHeight) return;
+    canvas.dataset.keysTop = String(Math.round((r.hitY * canvas.clientHeight) / r.height));
+  };
+
   useEffect(() => {
     rendererRef.current?.setSettings(visual);
+    markKeysTop();
     dirty.current = true;
   }, [visual]);
 
@@ -86,11 +96,13 @@ export function PianoRollView() {
       const canvas = canvasRef.current;
       if (!canvas) return; // observer fired after the Studio unmounted
       const r = el.getBoundingClientRect();
-      setNarrow(r.width < 700);
+      // a phone turned sideways (e.g. in full screen) is wider than 700 px but still small
+      setNarrow(r.width < 700 || isSmallTouchScreen());
       const dpr = Math.min(2, window.devicePixelRatio || 1);
       canvas.style.width = `${r.width}px`;
       canvas.style.height = `${r.height}px`;
       rendererRef.current?.resize(r.width * dpr, r.height * dpr);
+      markKeysTop();
       dirty.current = true;
     });
     ro.observe(el);
