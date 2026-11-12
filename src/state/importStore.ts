@@ -7,7 +7,7 @@ import { transcribeAudio, type ProgressEvent, type TranscribeOptions, type Trans
 import type { TranscriptionStage } from '../lib/transcription/workerProtocol';
 import { classifyFile } from '../lib/transcription/decode';
 import { parseMidi } from '../lib/music/midi';
-import { buildSong, demoSong, songFromMidi, titleFromFileName } from '../lib/songs';
+import { buildSong, demoSong, songFromMidi, songFromScore, titleFromFileName } from '../lib/songs';
 import { deletePending, newId, saveAudio, savePending, savePosteriors, saveSong, type PendingImport } from '../lib/storage/db';
 import { createScreenWakeLock } from '../lib/wakeLock';
 import { detectionParams, useSettings } from './settingsStore';
@@ -27,6 +27,7 @@ import { separationSupport, type SeparationSupport } from '../lib/separation';
 import { pianoSpecialistSupport } from '../lib/pianoSpecialist';
 import { isMemoryConstrained, pageDeviceInfo } from '../lib/transcription/backendChoice';
 import type { Song, SongSource } from '../lib/music/types';
+import type { ParsedScore, ScoreMeta } from '../lib/score';
 import { toast } from './toastStore';
 
 export type ImportStage = TranscriptionStage | 'downloading' | 'uploading' | 'done' | 'error';
@@ -112,6 +113,11 @@ interface ImportState {
   failed: FailedImport | null;
   /** `separate` defaults to the user's choice for the current detection preset */
   importFile: (file: File, opts?: { separate?: boolean; title?: string } & ImportRunOptions) => Promise<string | null>;
+  /**
+   * Sheet music as MusicXML text (the hook for PDF / photo recognition, which produces MusicXML):
+   * same as importing a .musicxml file. `source` defaults to a sheet-music file named `fileName`.
+   */
+  importMusicXml: (xml: string, meta?: ScoreMeta & { title?: string; source?: SongSource & { kind: 'score' } }) => Promise<string | null>;
   importAudioBlob: (
     blob: Blob,
     meta: { title: string; artist?: string; source: SongSource; separate?: boolean } & ImportRunOptions,
@@ -439,7 +445,7 @@ const BROWSER_SEP: ImportStage[] = ['decoding', 'separating', 'loading-model', '
 const SERVER_SEP: ImportStage[] = ['uploading', 'separating', 'downloading', ...TRANSCRIBE];
 
 function planFor(kind: SongSource['kind'], sep: SeparationEngine | undefined, youtubeServer = false): ImportStage[] {
-  if (kind === 'midi' || kind === 'demo') return ['validating', 'arranging', 'saving'];
+  if (kind === 'midi' || kind === 'demo' || kind === 'score') return ['validating', 'arranging', 'saving'];
   const rest = sep === 'server' ? SERVER_SEP : sep === 'browser' ? BROWSER_SEP : TRANSCRIBE;
   // unique: a YouTube import via the server downloads twice (the video's audio, then the stems)
   return [...new Set<ImportStage>(['validating', ...(youtubeServer ? (['downloading'] as ImportStage[]) : []), ...rest])];
@@ -535,8 +541,8 @@ export const useImport = create<ImportState>((set, get) => {
     const controller = new AbortController();
     const id = seq++;
     const presetId = preset ?? (useSettings.getState().detectionPreset as PresetId);
-    // audio imports only (MIDI and the demo have no model)
-    const model = kind === 'midi' || kind === 'demo' ? 'basic-pitch' : (transcriber ?? transcriberChoice(get().prefs, presetId));
+    // audio imports only (MIDI, sheet music and the demo have no model)
+    const model = kind === 'midi' || kind === 'demo' || kind === 'score' ? 'basic-pitch' : (transcriber ?? transcriberChoice(get().prefs, presetId));
     set({
       failed: null,
       controller,
@@ -596,6 +602,15 @@ export const useImport = create<ImportState>((set, get) => {
     void useLibrary.getState().refresh();
     update({ stage: 'done', progress: 1, songId: song.id, finishedAt: Date.now(), detail: undefined });
     return song.id;
+  };
+
+  /** A sheet-music import's Song (the file's warnings are shown on the import card too). */
+  const finishScore = async (ctx: Ctx, parsed: ParsedScore, source: SongSource & { kind: 'score' }, title?: string) => {
+    if (ctx.signal.aborted) return null;
+    const song = songFromScore(parsed, source);
+    if (title) song.title = title;
+    if (parsed.warnings.length) ctx.update({ warnings: parsed.warnings });
+    return await finish(ctx, song);
   };
 
   const isQuotaError = (err: unknown) => {
@@ -806,11 +821,23 @@ export const useImport = create<ImportState>((set, get) => {
     importFile: async (file, opts = {}) => {
       const kind = classifyFile(file);
       const title = opts.title ?? titleFromFileName(file.name);
+      if (kind === 'score') {
+        const ctx = start(title, 'score', planFor('score', undefined));
+        try {
+          ctx.update({ stage: 'arranging', detail: 'Reading sheet music' });
+          const { readScoreFile, MAX_SCORE_BYTES } = await import('../lib/score');
+          if (file.size > MAX_SCORE_BYTES) throw new Error('This sheet-music file is too large (max 30 MB).');
+          const parsed = readScoreFile(file.name, new Uint8Array(await file.arrayBuffer()));
+          return await finishScore(ctx, parsed, { kind: 'score', fileName: file.name, fileSize: file.size, ...(file.type ? { mimeType: file.type } : {}) }, opts.title);
+        } catch (err) {
+          return fail(ctx, err);
+        }
+      }
       if (kind === 'midi' || kind === 'unsupported') {
         const ctx = start(title, kind === 'midi' ? 'midi' : 'audio', planFor('midi', undefined));
         const { update } = ctx;
         try {
-          if (kind === 'unsupported') throw new Error(`"${file.name}" is not a supported audio, video or MIDI file.`);
+          if (kind === 'unsupported') throw new Error(`"${file.name}" is not a supported audio, video, MIDI or sheet-music file.`);
           update({ kind: 'midi', stage: 'arranging', detail: 'Reading MIDI file' });
           if (file.size > 20 * 1024 * 1024) throw new Error('MIDI file is unusually large (max 20 MB).');
           const parsed = parseMidi(await file.arrayBuffer());
@@ -850,6 +877,19 @@ export const useImport = create<ImportState>((set, get) => {
         const again = (transcriber: TranscriptionEngine) => () =>
           get().importFile(file, { ...opts, separate, presetId: ctx.preset, transcriber, pendingId: undefined });
         return fail(ctx, err, { retry: () => again(retryModel(ctx))(), retryFast: withFast(ctx, again('basic-pitch')) });
+      }
+    },
+
+    importMusicXml: async (xml, meta = {}) => {
+      const title = meta.title ?? (meta.fileName ? titleFromFileName(meta.fileName) : 'Sheet music');
+      const ctx = start(title, 'score', planFor('score', undefined));
+      try {
+        ctx.update({ stage: 'arranging', detail: 'Reading sheet music' });
+        const { importMusicXml } = await import('../lib/score');
+        const parsed = importMusicXml(xml, meta);
+        return await finishScore(ctx, parsed, meta.source ?? { kind: 'score', ...(meta.fileName ? { fileName: meta.fileName } : {}) }, meta.title);
+      } catch (err) {
+        return fail(ctx, err);
       }
     },
 

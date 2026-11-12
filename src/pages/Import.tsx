@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { FileAudio, SquarePlay, Music2, Mic, Loader2, CheckCircle2, XCircle, Circle, ArrowRight, Square, Info, Server, RotateCcw, Download, Smartphone } from 'lucide-react';
+import { FileAudio, SquarePlay, FileMusic, Mic, Loader2, CheckCircle2, XCircle, Circle, ArrowRight, Square, Info, Server, RotateCcw, Download, Smartphone } from 'lucide-react';
 import { Dropzone } from '../components/import/Dropzone';
 import { SeparationOption, useSeparationChoice } from '../components/import/SeparationOption';
 import { PianoModelOption, usePianoModelChoice } from '../components/import/PianoModelOption';
@@ -149,7 +149,7 @@ function JobProgress() {
         <div className="min-w-0">
           <p className="truncate text-[15px] font-semibold text-ink-50">{job.title}</p>
           <p className="mt-0.5 text-[12.5px] text-ink-300">
-            {done ? 'Transcription complete' : err ? 'Import failed' : job.detail ?? STAGE_LABELS[job.stage]} · {formatTime(elapsed)}
+            {done ? (job.kind === 'score' || job.kind === 'midi' ? 'Ready' : 'Transcription complete') : err ? 'Import failed' : job.detail ?? STAGE_LABELS[job.stage]} · {formatTime(elapsed)}
           </p>
         </div>
         {!done && !err && (
@@ -161,7 +161,7 @@ function JobProgress() {
       {!done && !err && (
         <div className="mt-4">
           <ProgressBar value={job.progress} />
-          {touch && job.kind !== 'midi' && job.kind !== 'demo' && (
+          {touch && job.kind !== 'midi' && job.kind !== 'demo' && job.kind !== 'score' && (
             <p className="mt-2 flex items-center gap-1.5 text-[12px] text-ink-300">
               <Smartphone size={13} className="shrink-0 text-accent-400" /> Keep this page open while it’s analysing.
             </p>
@@ -561,7 +561,7 @@ export default function ImportPage() {
   const tabs = [
     { id: 'audio', label: 'Audio / Video', icon: FileAudio },
     { id: 'youtube', label: 'YouTube', icon: SquarePlay },
-    { id: 'midi', label: 'MIDI', icon: Music2 },
+    { id: 'midi', label: 'MIDI / Sheet music', icon: FileMusic },
     { id: 'record', label: 'Record', icon: Mic },
   ] as const;
 
@@ -618,10 +618,15 @@ export default function ImportPage() {
             )}
             {tab === 'midi' && (
               <div className="flex flex-col gap-3">
-                <Dropzone onFile={onFile}>
-                  <p className="text-[15px] font-medium text-ink-50">Drop a MIDI file (.mid, .midi)</p>
-                  <p className="text-[12.5px] text-ink-300">Notes, velocities, sustain pedal and tempo are imported exactly.</p>
+                <Dropzone onFile={onFile} accept="">
+                  <p className="text-[15px] font-medium text-ink-50">Drop a MIDI or sheet-music file</p>
+                  <p className="text-[12.5px] text-ink-300">MIDI (.mid) · MusicXML (.musicxml, .mxl) · MuseScore (.mscz)</p>
                 </Dropzone>
+                <p className="text-[12.5px] text-ink-300">
+                  The notes are used exactly as written, and repeats are played in order. Hard is the piece as written; Easy and Medium are
+                  made simpler for you.
+                </p>
+                <p className="text-[12px] text-ink-400">From other notation apps, save or export as MusicXML. PDFs and photos of sheet music are coming soon.</p>
               </div>
             )}
             {tab === 'record' && <RecordTab busy={busy} />}

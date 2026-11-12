@@ -587,3 +587,37 @@ describe('crash marker for the high-accuracy piano model', () => {
     expect(turnOff).not.toHaveBeenCalled();
   });
 });
+
+describe('sheet-music import', () => {
+  const xml = `<?xml version="1.0"?><score-partwise version="4.0"><work><work-title>Minuet</work-title></work><part-list><score-part id="P1"><part-name>Piano</part-name></score-part><score-part id="P2"><part-name>Flute</part-name></score-part></part-list>
+<part id="P1"><measure number="1"><attributes><divisions>1</divisions><time><beats>3</beats><beat-type>4</beat-type></time><staves>2</staves></attributes><note><pitch><step>C</step><octave>5</octave></pitch><duration>3</duration><staff>1</staff></note><backup><duration>3</duration></backup><note><pitch><step>C</step><octave>3</octave></pitch><duration>3</duration><staff>2</staff></note><barline location="right"><repeat direction="backward"/></barline></measure></part>
+<part id="P2"><measure number="1"><attributes><divisions>1</divisions></attributes><note><pitch><step>G</step><octave>5</octave></pitch><duration>3</duration></note></measure></part></score-partwise>`;
+
+  it('a .musicxml file becomes an exact song (source "score") with the file’s notes shown on the import card', async () => {
+    const id = await useImport.getState().importFile(new File([xml], 'minuet.musicxml', { type: '' }));
+    const job = useImport.getState().job!;
+    expect(job.stage).toBe('done');
+    expect(job.kind).toBe('score');
+    expect(job.plan).toEqual(['validating', 'arranging', 'saving']);
+    expect(job.warnings.join(' ')).toMatch(/2 parts/);
+    const song = vi.mocked(db.saveSong).mock.calls[0][0];
+    expect(song.id).toBe(id);
+    expect(song.title).toBe('Minuet');
+    expect(song.source).toMatchObject({ kind: 'score', fileName: 'minuet.musicxml' });
+    expect(song.transcription).toMatchObject({ method: 'score-file', estimated: false });
+    // the repeat is played out: 2 × (C5, C3, G5)
+    expect(song.base.length).toBe(6);
+    expect(song.tempo.beatsPerBar).toBe(3);
+  });
+
+  it('a damaged file fails with a plain message; MusicXML text can be imported directly (PDF / photo hook)', async () => {
+    await useImport.getState().importFile(new File(['not a score'], 'broken.mxl'));
+    expect(useImport.getState().job!.stage).toBe('error');
+    expect(useImport.getState().job!.error).toMatch(/damaged/);
+    const id = await useImport.getState().importMusicXml(xml, { fileName: 'scan.pdf', title: 'Scanned minuet' });
+    expect(id).toBeTruthy();
+    const song = vi.mocked(db.saveSong).mock.calls.at(-1)![0];
+    expect(song.title).toBe('Scanned minuet');
+    expect(song.source).toMatchObject({ kind: 'score', fileName: 'scan.pdf' });
+  });
+});
