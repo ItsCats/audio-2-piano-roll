@@ -4,7 +4,7 @@
  * in chunks): the range starts with a complete <attributes> block and the octave marks in force.
  */
 import { decompose, beams, type Piece, type RhythmContext, type BeamValue } from './rhythm';
-import { AccidentalTracker, spell } from './spelling';
+import { AccidentalTracker, spellChord, type Spelled } from './spelling';
 import { DIV, type Chord, type Score, type Staff } from './types';
 
 export const CREDIT_LINE = 'Transcribed with Piano2Vision';
@@ -59,6 +59,14 @@ function bucket(score: Score): Chord[][][][] {
       return per;
     }),
   );
+}
+
+const spelledMemo = new WeakMap<Chord, Spelled[]>();
+/** Spelling of a chord's notes (ascending), the same for every tied piece of it. */
+function spelled(score: Score, c: Chord): Spelled[] {
+  let sp = spelledMemo.get(c);
+  if (!sp) spelledMemo.set(c, (sp = spellChord(c.midis, score.fifths, score.minorTonic)));
+  return sp;
 }
 
 const memo = new WeakMap<Score, Chord[][][][]>();
@@ -153,35 +161,33 @@ function voiceItems(score: Score, chords: Chord[], m: number, voice: 0 | 1): Ite
 const fmtNote = (
   out: string[],
   it: Item,
-  midi: number | null,
+  sp: Spelled | null,
   chordTone: boolean,
   voiceNo: number,
   staff: Staff,
   stem: string,
   acc: string | null,
-  score: Score,
 ) => {
   const pc = it.piece;
   let s = '<note>';
   if (chordTone) s += '<chord/>';
-  if (midi === null) s += it.kind === 'mrest' ? '<rest measure="yes"/>' : '<rest/>';
+  if (sp === null) s += it.kind === 'mrest' ? '<rest measure="yes"/>' : '<rest/>';
   else {
-    const sp = spell(midi, score.fifths, score.minorTonic);
     s += `<pitch><step>${sp.step}</step>${sp.alter ? `<alter>${sp.alter}</alter>` : ''}<octave>${sp.octave}</octave></pitch>`;
   }
   s += `<duration>${pc.dur}</duration>`;
-  if (midi !== null && it.tieStop) s += '<tie type="stop"/>';
-  if (midi !== null && it.tieStart) s += '<tie type="start"/>';
+  if (sp !== null && it.tieStop) s += '<tie type="stop"/>';
+  if (sp !== null && it.tieStart) s += '<tie type="start"/>';
   s += `<voice>${voiceNo}</voice>`;
   if (it.kind !== 'mrest') s += `<type>${pc.type}</type>${pc.dots ? '<dot/>' : ''}`;
   if (acc) s += `<accidental>${acc}</accidental>`;
   if (pc.triplet) s += '<time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification>';
-  if (stem && midi !== null) s += `<stem>${stem}</stem>`;
+  if (stem && sp !== null) s += `<stem>${stem}</stem>`;
   s += `<staff>${staff}</staff>`;
   if (!chordTone && it.beams?.length) for (const [n, v] of it.beams) s += `<beam number="${n}">${v}</beam>`;
   const nots: string[] = [];
-  if (midi !== null && it.tieStop) nots.push('<tied type="stop"/>');
-  if (midi !== null && it.tieStart) nots.push('<tied type="start"/>');
+  if (sp !== null && it.tieStop) nots.push('<tied type="stop"/>');
+  if (sp !== null && it.tieStart) nots.push('<tied type="start"/>');
   if (!chordTone && it.tuplet) nots.push(`<tuplet type="${it.tuplet}"${it.tuplet === 'start' ? ' bracket="no"' : ''}/>`);
   if (nots.length) s += `<notations>${nots.join('')}</notations>`;
   out.push(s + '</note>');
@@ -265,7 +271,7 @@ export function toMusicXml(score: Score, opts: MusicXmlOptions): string {
         .filter((st) => st.staff === s)
         .flatMap((st) => st.items.filter((it) => it.kind === 'note'))
         .sort((p, q) => p.piece.pos - q.piece.pos);
-      for (const it of notes) it.acc = it.chord!.midis.map((mi) => tracker.need(spell(mi, score.fifths, score.minorTonic), !!it.tieStop));
+      for (const it of notes) it.acc = spelled(score, it.chord!).map((sp) => tracker.need(sp, !!it.tieStop));
     }
     let first = true;
     for (const st of streams) {
@@ -280,12 +286,12 @@ export function toMusicXml(score: Score, opts: MusicXmlOptions): string {
           continue;
         }
         if (it.kind !== 'note') {
-          fmtNote(x, it, null, false, voiceNo, st.staff, '', null, score);
+          fmtNote(x, it, null, false, voiceNo, st.staff, '', null);
           continue;
         }
         const c = it.chord!;
         if (it.firstOfChord && c.ottavaStart) x.push(octaveShift(c.ottavaStart > 0 ? 'down' : 'up', st.staff));
-        c.midis.forEach((mi, j) => fmtNote(x, it, mi, j > 0, voiceNo, st.staff, st.stem, it.acc?.[j] ?? null, score));
+        spelled(score, c).forEach((sp, j) => fmtNote(x, it, sp, j > 0, voiceNo, st.staff, st.stem, it.acc?.[j] ?? null));
         if (it.lastOfChord && c.ottavaStop) x.push(octaveShift('stop', st.staff));
       }
       if (st.voice === 0 && m === to - 1 && to < score.measureCount)

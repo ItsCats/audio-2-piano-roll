@@ -5,7 +5,7 @@ import { buildGrid } from '../../src/lib/sheet/grid';
 import { quantize, type RawNote } from '../../src/lib/sheet/quantize';
 import { assignVoices, trimLegato, type VoiceContext } from '../../src/lib/sheet/voices';
 import { beams, decompose, type RhythmContext } from '../../src/lib/sheet/rhythm';
-import { AccidentalTracker, keyFifths, spell } from '../../src/lib/sheet/spelling';
+import { AccidentalTracker, keyAlter, keyFifths, spell, spellChord } from '../../src/lib/sheet/spelling';
 import { chooseClefs } from '../../src/lib/sheet/clefs';
 import { buildScore } from '../../src/lib/sheet/score';
 import { toMusicXml, xmlEscape } from '../../src/lib/sheet/musicxml';
@@ -292,6 +292,39 @@ describe('sheet spelling', () => {
     expect(name(61, -1, 2)).toBe('C♯4'); // D minor leading tone
     expect(name(71, -1, 2)).toBe('B4'); // D minor raised 6th
     expect(name(66, -2, 7)).toBe('F♯4'); // G minor leading tone
+  });
+  it('never writes double accidentals, and E♯ / B♯ / F♭ / C♭ only when the key has them', () => {
+    for (let tonic = 0; tonic < 12; tonic++)
+      for (const mode of ['major', 'minor'] as const) {
+        const f = keyFifths({ tonic, mode });
+        for (let pc = 0; pc < 12; pc++) {
+          const s = spell(60 + pc, f, mode === 'minor' ? tonic : undefined);
+          expect(Math.abs(s.alter)).toBeLessThanOrEqual(1);
+          const odd = (s.step === 'E' || s.step === 'B') && s.alter === 1 ? 1 : (s.step === 'F' || s.step === 'C') && s.alter === -1 ? -1 : 0;
+          // allowed only when the key signature alters that letter, or as a minor key's leading tone / raised 6th
+          if (odd && keyAlter(s.step, f) !== odd) expect(mode === 'minor' && (pc === (tonic + 11) % 12 || pc === (tonic + 9) % 12)).toBe(true);
+        }
+      }
+    expect([69, 64, 71].map((m) => name(m, -5))).toEqual(['A4', 'E4', 'B4']); // D♭ major: not B𝄫, F♭, C♭
+    expect([62, 69].map((m) => name(m, -6))).toEqual(['D4', 'A4']); // G♭ major: not E𝄫, B𝄫
+    expect([67, 60].map((m) => name(m, 5))).toEqual(['G4', 'C4']); // B major: not F𝄪, B♯
+    expect(name(65, 3)).toBe('F4'); // A major: not E♯
+    expect(name(71, -3)).toBe('B4'); // E♭ major: not C♭
+    expect([64, 71].map((m) => name(m, -4))).toEqual(['E4', 'B4']); // A♭ major: not F♭, C♭
+  });
+  it('never puts two notes of a chord on the same letter', () => {
+    const nm = (s: { step: string; alter: number; octave: number }) => s.step + (s.alter > 0 ? '♯' : s.alter < 0 ? '♭' : '') + s.octave;
+    expect(spellChord([62, 65, 69], 3).map(nm)).toEqual(['D4', 'F4', 'A4']); // A major iv chord
+    expect(spellChord([65, 66], 0).map(nm)).toEqual(['F4', 'G♭4']);
+    expect(spellChord([67, 68], 0).map(nm)).toEqual(['G4', 'A♭4']);
+    expect(spellChord([62, 64, 65], -5).map(nm)).toEqual(['D4', 'E4', 'F4']);
+    for (let f = -6; f <= 5; f++)
+      for (let a = 60; a < 72; a++)
+        for (let b = a + 1; b < 72; b++) {
+          const [x, y] = spellChord([a, b], f);
+          expect(x.step + x.octave === y.step + y.octave, `${a},${b} in ${f}`).toBe(false);
+          expect(Math.abs(x.alter) <= 1 && Math.abs(y.alter) <= 1).toBe(true);
+        }
   });
   it('tracks accidentals per bar; tie continuations print none', () => {
     const acc = new AccidentalTracker(0);
