@@ -191,6 +191,11 @@ export class PianoRollRenderer {
     return hexToRgb(n.hand === 'L' ? s.leftColor : s.rightColor);
   }
 
+  /** Paints only the background (preset, colour, image or current video frame), e.g. for a title page. */
+  drawBackdrop(ctx: Ctx2D): void {
+    this.drawBackground(ctx);
+  }
+
   private drawBackground(ctx: Ctx2D) {
     const b = this.s.background;
     const key = JSON.stringify([b, this.w, this.h, this.bgMediaKind === 'image' ? 1 : 0]);
