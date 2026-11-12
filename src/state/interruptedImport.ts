@@ -31,13 +31,26 @@ export interface InterruptedNotice {
   canSave: boolean;
 }
 
-/** Plain-language notice for an interrupted import (no technical terms: most of these are phones). */
-export function interruptedNotice(rec: Pick<PendingImport, 'title' | 'kind' | 'blob'>): InterruptedNotice {
+/**
+ * Plain-language notice for an interrupted import (no technical terms: most of these are phones).
+ * For a high-accuracy piano model run, `retryWith` (importStore resumeTranscriber) says which model
+ * Try again will use.
+ */
+export function interruptedNotice(
+  rec: Pick<PendingImport, 'title' | 'kind' | 'blob'> & { transcriber?: string },
+  retryWith?: 'basic-pitch' | 'piano-specialist',
+): InterruptedNotice {
   const kept = !!rec.blob;
   const what = isRecording(rec) ? 'Your recording was kept.' : kept ? 'Your file was kept.' : 'Choose the file again to try once more.';
+  const model =
+    kept && rec.transcriber === 'piano-specialist' && retryWith
+      ? retryWith === 'basic-pitch'
+        ? ' It was using the high-accuracy piano model, which needs a lot of memory: Try again uses the normal model.'
+        : ' Try again uses the high-accuracy piano model again; close other tabs first.'
+      : '';
   return {
     title: 'Your last import was interrupted',
-    body: `Your last import (“${rec.title}”) was interrupted — your browser probably ran out of memory. ${what}`,
+    body: `Your last import (“${rec.title}”) was interrupted — your browser probably ran out of memory. ${what}${model}`,
     canRetry: kept,
     canSave: kept && isRecording(rec),
   };
