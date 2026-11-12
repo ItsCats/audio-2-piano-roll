@@ -27,6 +27,13 @@ export function downloadMidi(song: Song, difficulty: Difficulty): void {
   downloadBlob(new Blob([bytes as BlobPart], { type: 'audio/midi' }), `${safeFileName(song.title)} (${difficulty}).mid`);
 }
 
+/** MusicXML of the arrangement (opens in MuseScore, Sibelius, Finale…). */
+export async function downloadMusicXml(song: Song, difficulty: Difficulty): Promise<void> {
+  const { songMusicXml } = await import('../sheet');
+  const xml = songMusicXml(song, difficulty);
+  downloadBlob(new Blob([xml], { type: 'application/vnd.recordare.musicxml+xml' }), `${safeFileName(song.title)} (${difficulty}).musicxml`);
+}
+
 export async function renderWav(
   song: Song,
   difficulty: Difficulty,

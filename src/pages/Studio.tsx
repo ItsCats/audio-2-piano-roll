@@ -19,6 +19,9 @@ import {
   Sparkles,
   Library,
   AlertTriangle,
+  Piano,
+  FileMusic,
+  FileText,
 } from 'lucide-react';
 import { useStudio, currentArrangement } from '../state/studioStore';
 import { useSettings } from '../state/settingsStore';
@@ -29,6 +32,9 @@ import { PianoRollView } from '../components/studio/PianoRollView';
 import { Transport } from '../components/studio/Transport';
 import { EditToolbar } from '../components/studio/EditToolbar';
 import { ExportVideoDialog } from '../components/studio/ExportVideoDialog';
+import { SheetMusicView } from '../components/studio/SheetMusicView';
+import { SheetPdfDialog } from '../components/studio/SheetPdfDialog';
+import { loadOsmd } from '../lib/sheet/render';
 import { LookPanel } from '../components/studio/panels/LookPanel';
 import { LabelsPanel } from '../components/studio/panels/LabelsPanel';
 import { SoundPanel } from '../components/studio/panels/SoundPanel';
@@ -36,7 +42,7 @@ import { PracticePanel } from '../components/studio/panels/PracticePanel';
 import { ArrangementPanel } from '../components/studio/panels/ArrangementPanel';
 import { Badge, Button, EmptyState, IconButton, Modal, ProgressBar, Segmented, cn } from '../components/ui';
 import { getAudio } from '../lib/storage/db';
-import { downloadBlob, downloadMidi, exportProject, renderWav, safeFileName } from '../lib/export/downloads';
+import { downloadBlob, downloadMidi, downloadMusicXml, exportProject, renderWav, safeFileName } from '../lib/export/downloads';
 import { midiInput, QWERTY_MAP } from '../lib/midiInput/webmidi';
 import type { Difficulty } from '../lib/music/types';
 import { toast } from '../state/toastStore';
@@ -44,7 +50,40 @@ import { useImport } from '../state/importStore';
 
 type PanelTab = 'look' | 'labels' | 'sound' | 'practice' | 'arrangement';
 
-function ExportMenu({ onVideo }: { onVideo: () => void }) {
+const warmSheet = () => void loadOsmd().catch(() => undefined);
+
+/** "Piano roll / Sheet music" switch (words on wide screens, icons with tooltips otherwise). */
+function ViewSwitch({ className }: { className?: string }) {
+  const view = useSettings((s) => s.sheet.view);
+  const setSheet = useSettings((s) => s.setSheet);
+  const option = (value: 'roll' | 'sheet', label: string, Icon: typeof Piano) => ({
+    value,
+    title: label,
+    label: (
+      <span className="flex items-center gap-1.5">
+        <Icon size={15} />
+        <span className="hidden 2xl:inline">{label}</span>
+      </span>
+    ),
+  });
+  return (
+    // start loading the notation library as soon as the switch is approached
+    <span className={cn('shrink-0', className)} onPointerOver={warmSheet} onFocus={warmSheet} onTouchStart={warmSheet}>
+      <Segmented<'roll' | 'sheet'>
+        ariaLabel="View"
+        value={view}
+        onChange={(v) => {
+          const st = useStudio.getState();
+          if (v === 'sheet' && st.editMode) st.setEditMode(false);
+          setSheet({ view: v });
+        }}
+        options={[option('roll', 'Piano roll', Piano), option('sheet', 'Sheet music', FileMusic)]}
+      />
+    </span>
+  );
+}
+
+function ExportMenu({ onVideo, onSheetPdf }: { onVideo: () => void; onSheetPdf: () => void }) {
   const [open, setOpen] = useState(false);
   const [wav, setWav] = useState<{ progress: number; abort: AbortController } | null>(null);
   const song = useStudio((s) => s.song)!;
@@ -56,6 +95,15 @@ function ExportMenu({ onVideo }: { onVideo: () => void }) {
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
   }, [open]);
+  const exportMusicXml = async () => {
+    setOpen(false);
+    try {
+      await downloadMusicXml(song, difficulty);
+      toast.success('MusicXML saved', 'Opens in MuseScore, Sibelius and Finale');
+    } catch (e) {
+      toast.error('Couldn’t save the MusicXML', (e as Error).message);
+    }
+  };
   const exportWav = async () => {
     setOpen(false);
     const abort = new AbortController();
@@ -84,6 +132,8 @@ function ExportMenu({ onVideo }: { onVideo: () => void }) {
           {[
             { icon: Film, label: 'Video (MP4 / WebM)…', onClick: () => { setOpen(false); onVideo(); } },
             { icon: Music2, label: `MIDI file (${difficulty})`, onClick: () => { setOpen(false); downloadMidi(song, difficulty); } },
+            { icon: FileText, label: `Sheet music PDF (${difficulty})…`, onClick: () => { setOpen(false); onSheetPdf(); } },
+            { icon: FileMusic, label: `MusicXML (${difficulty})`, onClick: () => void exportMusicXml() },
             { icon: FileAudio, label: `Audio WAV (${difficulty})`, onClick: () => void exportWav() },
             { icon: FileJson, label: 'Project file (.json)', onClick: () => { setOpen(false); exportProject(song); } },
           ].map((item) => (
@@ -242,6 +292,9 @@ export default function StudioPage() {
   const [panelOpen, setPanelOpen] = useState(() => window.innerWidth >= 1100);
   const [tab, setTab] = useState<PanelTab>('look');
   const [exportOpen, setExportOpen] = useState(false);
+  const [pdfOpen, setPdfOpen] = useState(false);
+  const view = useSettings((s) => s.sheet.view);
+  const setSheet = useSettings((s) => s.setSheet);
   const [computerKeys, setComputerKeys] = useState(false);
   const importDemo = useImport((s) => s.importDemo);
 
@@ -252,6 +305,14 @@ export default function StudioPage() {
 
   usePlayerSync();
   useStudioKeyboard(computerKeys);
+
+  // editing happens on the piano roll
+  useEffect(() => {
+    if (editMode && view === 'sheet') {
+      setSheet({ view: 'roll' });
+      toast.info('Editing works in the piano roll.');
+    }
+  }, [editMode, view, setSheet]);
 
   if (!id && !song) {
     return (
@@ -320,7 +381,8 @@ export default function StudioPage() {
               <Badge tone="ok">{song.source.kind === 'midi' ? 'MIDI' : 'Exact'}</Badge>
             )}
             <span className="hidden text-[11.5px] text-ink-400 2xl:inline">{saving ? 'Saving…' : 'Saved'}</span>
-            <IconButton className="ml-auto md:hidden" label={panelOpen ? 'Hide panel' : 'Show panel'} onClick={() => setPanelOpen((o) => !o)}>
+            <ViewSwitch className="ml-auto md:hidden" />
+            <IconButton className="md:hidden" label={panelOpen ? 'Hide panel' : 'Show panel'} onClick={() => setPanelOpen((o) => !o)}>
               {panelOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
             </IconButton>
           </div>
@@ -339,21 +401,20 @@ export default function StudioPage() {
               title: `${counts(d)} notes`,
             }))}
           />
+          <ViewSwitch className="hidden md:inline-flex" />
           <Button size="sm" variant={editMode ? 'primary' : 'subtle'} icon={<PencilRuler size={15} />} onClick={() => setEditMode(!editMode)} title="Edit notes (E)">
             <span className="hidden sm:inline">{editMode ? 'Editing' : 'Edit'}</span>
           </Button>
           <Button size="sm" variant="primary" icon={<Film size={15} />} onClick={() => setExportOpen(true)}>
             <span className="hidden lg:inline">Export Video</span>
           </Button>
-          <ExportMenu onVideo={() => setExportOpen(true)} />
-          <IconButton className="hidden md:inline-flex" label={panelOpen ? 'Hide panel' : 'Show panel'} onClick={() => setPanelOpen((o) => !o)}>
+          <ExportMenu onVideo={() => setExportOpen(true)} onSheetPdf={() => setPdfOpen(true)} />
+          <IconButton className="max-md:hidden" label={panelOpen ? 'Hide panel' : 'Show panel'} onClick={() => setPanelOpen((o) => !o)}>
             {panelOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
           </IconButton>
         </header>
         {editMode && <EditToolbar />}
-        <div className="relative min-h-0 flex-1">
-          <PianoRollView />
-        </div>
+        <div className="relative min-h-0 flex-1">{view === 'sheet' ? <SheetMusicView /> : <PianoRollView />}</div>
         <Transport />
       </div>
 
@@ -392,6 +453,7 @@ export default function StudioPage() {
         </aside>
       )}
       <ExportVideoDialog open={exportOpen} onClose={() => setExportOpen(false)} />
+      <SheetPdfDialog open={pdfOpen} onClose={() => setPdfOpen(false)} />
     </div>
   );
 }
