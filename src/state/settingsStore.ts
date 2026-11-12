@@ -46,13 +46,24 @@ interface SettingsState {
   resetAudio: () => void;
 }
 
+/**
+ * Saved settings from older versions. v2 (2026-11-12): the default level became Hard (the closest to
+ * the original), so a saved default that is still the old default, Medium, moves to Hard; Easy, picked
+ * on purpose, is kept.
+ */
+export function migrateSettings(persisted: unknown, version: number): unknown {
+  const p = (persisted && typeof persisted === 'object' ? { ...(persisted as Record<string, unknown>) } : {}) as Record<string, unknown>;
+  if (version < 2 && (p.defaultDifficulty === 'medium' || p.defaultDifficulty === undefined)) p.defaultDifficulty = 'hard';
+  return p;
+}
+
 export const useSettings = create<SettingsState>()(
   persist(
     (set) => ({
       visual: DEFAULT_VISUAL,
       audio: DEFAULT_AUDIO_SETTINGS,
       practice: { countIn: false, metronome: false, metronomeVolume: 0.6, waitMode: false, timingWindowMs: 150 },
-      defaultDifficulty: 'medium',
+      defaultDifficulty: 'hard',
       detectionPreset: 'piano',
       customDetection: EXTRACTION_PRESETS.piano,
       backendUrl: '',
@@ -74,7 +85,8 @@ export const useSettings = create<SettingsState>()(
     }),
     {
       name: 'pianovision-settings', // storage key predates the rename; keep so saved settings survive
-      version: 1,
+      version: 2,
+      migrate: migrateSettings,
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as Partial<SettingsState>;
         return {
