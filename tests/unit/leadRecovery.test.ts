@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { LEAD_RECOVERY, capDensity, freshCandidates, recoverLead } from '../../src/lib/music/leadRecovery';
 import { mergeMelody } from '../../src/lib/music/melody';
 import { generateAllArrangements, withoutHardOnly } from '../../src/lib/music/difficulty';
-import { EXTRACTION_PRESETS, LEAD_PASS, accompFromRaw, leadHardOnly, leadWorkerOptions, sungRanges } from '../../src/lib/transcription/pipeline';
+import { EXTRACTION_PRESETS, LEAD_PASS, accompFromRaw, leadPassParams, leadWorkerOptions, sungRanges, withLeadPass } from '../../src/lib/transcription/pipeline';
 import { timeToFrame } from '../../src/lib/transcription/constants';
 import type { RawNoteEvent } from '../../src/lib/transcription/noteExtraction';
 import type { Note, TempoInfo } from '../../src/lib/music/types';
@@ -67,25 +67,43 @@ describe('lead recovery', () => {
     expect(arr.medium.notes.some((n) => n.role === 'lead')).toBe(false);
   });
 
-  it('is part of the "Full song" preset only, and accompFromRaw keeps the main notes for the tempo', () => {
-    expect(EXTRACTION_PRESETS.mix.leadPass).toBe(LEAD_PASS);
+  it('is part of the "Full song" preset only, read at run time, skipped when the main pass is as sensitive', () => {
+    expect(EXTRACTION_PRESETS.mix.leadPass).toBe(true);
+    expect(leadPassParams(EXTRACTION_PRESETS.mix)).toBe(LEAD_PASS);
     expect(leadWorkerOptions(EXTRACTION_PRESETS.piano)).toBeUndefined();
     expect(leadWorkerOptions(EXTRACTION_PRESETS.sensitive)).toBeUndefined();
     expect(leadWorkerOptions(EXTRACTION_PRESETS.mix)?.frameThreshold).toBe(LEAD_PASS.frameThreshold);
-    const rms = new Float32Array(500).fill(0.3);
-    const raw = [ev(48, timeToFrame(0), timeToFrame(4)), ev(72, timeToFrame(0), timeToFrame(0.4)), ev(74, timeToFrame(0.5), timeToFrame(0.9))];
-    const leadRaw = [...raw, ev(76, timeToFrame(1), timeToFrame(1.4))];
-    const r = accompFromRaw(raw, leadRaw, rms, EXTRACTION_PRESETS.mix, 5, {}, { hardOnly: true });
-    expect(r.main).toHaveLength(3);
-    expect(r.notes.length).toBeGreaterThanOrEqual(r.main.length);
-    for (const n of r.notes.filter((x) => !r.main.includes(x))) expect(n.role).toBe('lead');
-    expect(accompFromRaw(raw, undefined, rms, EXTRACTION_PRESETS.mix, 5).notes).toHaveLength(3);
+    // a slider edit keeps the flag; the pass follows LEAD_PASS, not a stored copy
+    expect(leadPassParams({ ...EXTRACTION_PRESETS.mix, onsetThreshold: 0.4 })).toBe(LEAD_PASS);
+    // main thresholds lowered to the pass's or below: the pass would add nothing
+    expect(leadPassParams({ ...EXTRACTION_PRESETS.mix, frameThreshold: 0.25, minNoteMs: 50 })).toBeUndefined();
+    expect(leadPassParams({ ...EXTRACTION_PRESETS.mix, frameThreshold: 0.25 })).toBe(LEAD_PASS);
   });
 
-  it('recovered notes reach Easy / Medium only for songs known to be instrumental', () => {
-    expect(leadHardOnly(false, [])).toBe(true); // not separated: the singer may be the lead
-    expect(leadHardOnly(true, [note(60, 0, 1, 0.7, { role: 'melody' })])).toBe(true); // separated, sung
-    expect(leadHardOnly(true, [])).toBe(false); // separated, no singing: an instrumental
+  it('songs imported with "Full song" before the flag existed re-detect like a new import', () => {
+    const { leadPass: _f, ...legacy } = EXTRACTION_PRESETS.mix;
+    void _f;
+    expect(withLeadPass(legacy).leadPass).toBe(true);
+    expect(withLeadPass({ ...legacy, frameThreshold: 0.4 }).leadPass).toBeUndefined(); // edited: left alone
+    expect(withLeadPass(EXTRACTION_PRESETS.piano)).toBe(EXTRACTION_PRESETS.piano);
+    expect(withLeadPass({ ...EXTRACTION_PRESETS.mix, leadPass: false }).leadPass).toBe(false);
+  });
+
+  it('accompFromRaw recovers a missing tune note as Hard-only and keeps the main notes for the tempo', () => {
+    const rms = new Float32Array(500).fill(0.3);
+    const raw = [ev(48, timeToFrame(0), timeToFrame(4)), ev(72, timeToFrame(0), timeToFrame(0.4)), ev(74, timeToFrame(0.5), timeToFrame(0.9)), ev(77, timeToFrame(1.5), timeToFrame(1.9))];
+    const leadRaw = [...raw, ev(76, timeToFrame(1), timeToFrame(1.4))];
+    const r = accompFromRaw(raw, leadRaw, rms, EXTRACTION_PRESETS.mix, 5);
+    expect(r.main).toHaveLength(4);
+    const added = r.notes.filter((x) => !r.main.includes(x));
+    expect(added.map((n) => n.midi)).toEqual([76]);
+    expect(added[0].role).toBe('lead');
+    // inside a sung phrase nothing is recovered
+    const sung = accompFromRaw(raw, leadRaw, rms, EXTRACTION_PRESETS.mix, 5, {}, { melody: [note(64, 0.9, 0.6, 0.7, { role: 'melody' })] });
+    expect(sung.notes).toHaveLength(4);
+    // no lead pass in the params, or no lead events: the main notes only
+    expect(accompFromRaw(raw, leadRaw, rms, { ...EXTRACTION_PRESETS.mix, leadPass: false }, 5).notes).toHaveLength(4);
+    expect(accompFromRaw(raw, undefined, rms, EXTRACTION_PRESETS.mix, 5).notes).toHaveLength(4);
   });
 
   it('sung phrases as merged time ranges', () => {

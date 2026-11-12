@@ -14,8 +14,7 @@ export interface Note {
    * Musical role, when known. 'melody' marks notes of the sung melody line extracted from the
    * separated vocal stem: they always sit in the right hand and Easy/Medium are built around them.
    * 'lead' marks lead-line notes recovered by the "Full song" preset's sensitive pass
-   * (music/leadRecovery.ts) in a song not known to be instrumental (not separated, or separated
-   * with singing): they are shown on Hard only (Easy and Medium are built without them).
+   * (music/leadRecovery.ts): they are shown on Hard only (Easy and Medium are built without them).
    */
   role?: 'melody' | 'lead';
 }
@@ -106,10 +105,10 @@ export interface ExtractionParams {
   tailGate?: boolean;
   /**
    * Lead-line recovery (music/leadRecovery.ts): a second, more sensitive extraction of the same
-   * posteriors whose notes are kept only where the instruments' tune line goes through them.
-   * Omitted = off.
+   * posteriors (transcription/pipeline.ts LEAD_PASS, read at run time) whose notes are kept only
+   * where the instruments' tune line goes through them; Hard-only. Omitted / false = off.
    */
-  leadPass?: Omit<ExtractionParams, 'leadPass'>;
+  leadPass?: boolean;
 }
 
 export interface TranscriptionInfo {
@@ -130,7 +129,7 @@ export interface TranscriptionInfo {
   separation?: {
     engine: 'scnet-browser' | 'scnet-server';
     vocals: boolean;
-    /** no singing was found: the vocal stem was transcribed together with the accompaniment (pipeline.ts addVocalsInto) */
+    /** no singing, or no melody line from it: the vocal stem was transcribed together with the accompaniment (pipeline.ts vocalsIntoAccomp) */
     vocalsInAccomp?: boolean;
     ms: number;
     threads?: number;
