@@ -311,8 +311,10 @@ describe('repeats and jumps', () => {
   it('simple repeat, implicit start, and repeat times', () => {
     expect(playOrder(structure({ 2: back() }, 3))).toEqual(['1', '2', '1', '2', '3']);
     expect(playOrder(structure({ 2: fwd, 3: back(3) }, 4))).toEqual(['1', '2', '3', '2', '3', '2', '3', '4']);
-    // a second repeat with no start goes back to just after the first one
-    expect(playOrder(structure({ 1: back(), 3: back() }, 3))).toEqual(['1', '1', '2', '3', '2', '3']);
+    // a second repeat with no forward repeat goes back to the start; the first isn't taken again
+    expect(playOrder(structure({ 1: back(), 3: back() }, 3))).toEqual(['1', '1', '2', '3', '1', '2', '3']);
+    // ||: | :|| :|| — both go back to the forward repeat
+    expect(playOrder(structure({ 2: fwd, 3: back(), 4: back() }, 5))).toEqual(['1', '2', '3', '2', '3', '4', '2', '3', '4', '5']);
   });
   it('volta endings 1 and 2', () => {
     const x = structure({ 1: fwd, 3: endStart('1') + endStop('1') + back(), 4: endStart('2') + endStop('2', 'discontinue') }, 5);
@@ -326,24 +328,39 @@ describe('repeats and jumps', () => {
     const x = structure({ 2: endStart('1') + endStop('1'), 3: endStart('2') + endStop('2', 'discontinue') }, 4);
     expect(playOrder(x)).toEqual(['1', '2', '1', '3', '4']);
   });
+  it('a D.S. inside a repeated section is taken on its last pass', () => {
+    const x = structure({ 3: fwd, 5: back() }, 6, { 2: words('Segno'), 4: words('D.S. al Fine') + '' });
+    // (no Fine: plays to the end after the jump)
+    expect(playOrder(x)).toEqual(['1', '2', '3', '4', '5', '3', '4', '2', '3', '4', '5', '6']);
+  });
   it('D.C. al Fine (words) with repeats not taken again', () => {
     const x = structure({ 2: back() }, 4, { 2: words('Fine'), 4: words('D.C. al Fine') });
     expect(playOrder(x)).toEqual(['1', '2', '1', '2', '3', '4', '1', '2']);
   });
   it('D.S. al Coda with segno / To Coda / Coda from <sound>', () => {
-    const x = structure({}, 6, {
+    // (To Coda and D.S. after the measure's notes, segno and Coda before them)
+    const x = structure({ 3: words('To Coda', '<sound tocoda="c1"/>'), 5: words('D.S. al Coda', '<sound dalsegno="s1"/>') }, 6, {
       2: words('', '<sound segno="s1"/>'),
-      3: words('To Coda', '<sound tocoda="c1"/>'),
-      5: words('D.S. al Coda', '<sound dalsegno="s1"/>'),
       6: words('Coda', '<sound coda="c1"/>'),
     });
     expect(playOrder(x)).toEqual(['1', '2', '3', '4', '5', '2', '3', '6']);
+    // a To Coda at the very start of a measure means after the previous one; a segno at the very end, from the next one
+    const y = structure({ 1: words('', '<sound segno="s1"/>'), 5: words('D.S. al Coda') }, 6, { 4: words('To Coda'), 6: words('Coda') });
+    expect(playOrder(y)).toEqual(['1', '2', '3', '4', '5', '2', '3', '6']);
   });
   it('D.S. al Coda with symbols only (segno, two coda signs)', () => {
     const sign = (t: string) => `<direction><direction-type><${t}/></direction-type></direction>`;
     const x = structure({}, 6, { 2: sign('segno'), 3: `${N(null, 0)}`.replace(/.*/, '') + sign('coda').replace('<direction>', '<direction placement="above">'), 5: words('D.S. al Coda'), 6: sign('coda') });
     // the first coda sign sits at the start of measure 3: "To Coda" after measure 2
     expect(playOrder(x)).toEqual(['1', '2', '3', '4', '5', '2', '6']);
+  });
+  it('numbered codas: D.S. al Coda II goes to To Coda II and Coda II', () => {
+    const x = structure({ 3: words('To Coda I'), 4: words('To Coda II'), 5: words('D.S. al Coda I'), 7: words('D.S. al Coda II') }, 9, {
+      1: words('Segno'),
+      6: words('Coda I'),
+      8: words('Coda II'),
+    });
+    expect(playOrder(x)).toEqual(['1', '2', '3', '4', '5', '1', '2', '3', '6', '7', '1', '2', '3', '4', '8', '9']);
   });
   it('D.C. with the last volta on the second pass', () => {
     const x = structure({ 1: fwd, 2: endStart('1') + endStop('1') + back(), 3: endStart('2') + endStop('2') }, 4, { 4: words('D.C.') });
@@ -364,6 +381,9 @@ describe('repeats and jumps', () => {
     expect(jumpFromWords('D.S. al Coda')).toEqual({ jump: { to: 'segno', alFine: false, alCoda: true } });
     expect(jumpFromWords('Da Capo al Fine')).toEqual({ jump: { to: 'start', alFine: true, alCoda: false } });
     expect(jumpFromWords('To Coda')).toEqual({ toCoda: true });
+    expect(jumpFromWords('To Coda II')).toEqual({ toCoda: true, id: 'ii' });
+    expect(jumpFromWords('D.$. al Coda')).toEqual({ jump: { to: 'segno', alFine: false, alCoda: true } });
+    expect(jumpFromWords('Ø Coda')).toEqual({ coda: true });
     expect(jumpFromWords('Fine')).toEqual({ fine: true });
     expect(jumpFromWords('dolce')).toBeNull();
     expect(parseEndingNumbers('1, 2')).toEqual([1, 2]);
@@ -502,5 +522,149 @@ describe('round trip: our MusicXML writer → importer', () => {
     expect(song.arrangements.medium.notes.length).toBeGreaterThan(0);
     // hands as written on Hard
     expect(song.arrangements.hard.notes.map((n) => n.hand)).toEqual(song.base.map((n) => n.hand));
+  });
+});
+
+// ---------------------------------------------------------------- MuseScore
+
+/** A MuseScore file: parts (instrument id, staves) and, per staff, measures of voices. */
+function mscx(o: { version?: string; parts?: { id: string; staves: number; drums?: boolean }[]; staves: string[][]; extra?: string; meta?: string }): string {
+  const parts = o.parts ?? [{ id: 'piano', staves: o.staves.length }];
+  return `<?xml version="1.0" encoding="UTF-8"?><museScore version="${o.version ?? '4.20'}"><Score><Division>480</Division>${o.meta ?? ''}${parts
+    .map(
+      (p) =>
+        `<Part><Instrument id="${p.id}"><longName>${p.id}</longName><instrumentId>${p.id === 'piano' ? 'keyboard.piano' : p.id}</instrumentId>${p.drums ? '<useDrumset>1</useDrumset>' : ''}</Instrument>${'<Staff><StaffType group="pitched"/></Staff>'.repeat(p.staves)}</Part>`,
+    )
+    .join('')}${o.staves.map((ms, i) => `<Staff id="${i + 1}">${ms.map((m) => (m.startsWith('<Measure') ? m : `<Measure>${m}</Measure>`)).join('')}</Staff>`).join('')}${o.extra ?? ''}</Score></museScore>`;
+}
+const V = (...xs: string[]) => `<voice>${xs.join('')}</voice>`;
+const C = (dur: string, pitches: number[], inner = '', noteInner: (p: number) => string = () => '') =>
+  `<Chord>${inner}<durationType>${dur}</durationType>${pitches.map((p) => `<Note>${noteInner(p)}<pitch>${p}</pitch></Note>`).join('')}</Chord>`;
+const R = (dur: string) => `<Rest><durationType>${dur}</durationType></Rest>`;
+const TS = (n: number, d: number) => `<TimeSig><sigN>${n}</sigN><sigD>${d}</sigD></TimeSig>`;
+const MTEMPO = (qpm: number) => `<Tempo><tempo>${qpm / 60}</tempo></Tempo>`;
+
+describe('MuseScore files', () => {
+  it('notes, chords, rests, voices, two staves → hands, tempo and title', () => {
+    const x = mscx({
+      meta: '<metaTag name="workTitle">Little Piece</metaTag><metaTag name="composer">Someone</metaTag>',
+      staves: [
+        [V(TS(4, 4), MTEMPO(60), C('quarter', [72]), R('quarter'), C('half', [76, 79])) + V(R('half'), C('half', [67]))],
+        [V(TS(4, 4), C('whole', [48]))],
+      ],
+    });
+    const p = readScoreFile('piece.mscx', strToU8(x));
+    expect(p.title).toBe('Little Piece');
+    expect(p.composer).toBe('Someone');
+    expect(p.format).toBe('mscx');
+    expect(tuples(p.notes)).toEqual([
+      [48, 0, 4],
+      [72, 0, 1],
+      [67, 2, 2],
+      [76, 2, 2],
+      [79, 2, 2],
+    ]);
+    expect(p.notes.find((n) => n.midi === 48)!.hand).toBe('L');
+    expect(p.handsKnown).toBe(true);
+  });
+
+  it('dots, tuplets (nested), measure rests and irregular measures', () => {
+    const tup = (n: number, a: number) => `<Tuplet><normalNotes>${n}</normalNotes><actualNotes>${a}</actualNotes><baseNote>eighth</baseNote></Tuplet>`;
+    const x = mscx({
+      staves: [
+        [
+          `<Measure len="1/4">${V(TS(4, 4), MTEMPO(60), C('quarter', [67]))}</Measure>`,
+          V(C('quarter', [60], '<dots>1</dots>'), C('eighth', [62]), tup(2, 3), C('eighth', [64]), C('eighth', [65]), C('eighth', [67]), '<endTuplet/>', R('quarter')),
+          V('<Rest><durationType>measure</durationType><duration>4/4</duration></Rest>'),
+          V(C('whole', [72])),
+        ],
+      ],
+    });
+    const p = readScoreFile('a.mscx', strToU8(x));
+    expect(p.notes.map((n) => [n.midi, +n.start.toFixed(4)])).toEqual([
+      [67, 0],
+      [60, 1],
+      [62, 2.5],
+      [64, 3],
+      [65, 3.3333],
+      [67, 3.6667],
+      [72, 9],
+    ]);
+    expect(p.tempo.downbeatIndex).toBe(1);
+  });
+
+  it('ties: old <Spanner type="Tie"> and new <Tie> with element ids', () => {
+    const tieNext = '<Spanner type="Tie"><Tie/><next><location><fractions>1/4</fractions></location></next></Spanner>';
+    const tiePrev = '<Spanner type="Tie"><prev><location><fractions>-1/4</fractions></location></prev></Spanner>';
+    const old = mscx({ version: '3.02', staves: [[V(TS(4, 4), MTEMPO(60), R('half'), C('quarter', [60], '', () => tieNext), C('quarter', [60], '', () => tiePrev + tieNext)), V(C('quarter', [60], '', () => tiePrev), R('quarter'), R('half'))]] });
+    expect(tuples(readScoreFile('a.mscx', strToU8(old)).notes)).toEqual([[60, 2, 3]]);
+    const neu = mscx({
+      version: '5.00',
+      staves: [[V(TS(4, 4), MTEMPO(60), R('half'), `<Chord><durationType>half</durationType><Note><eid>A</eid><pitch>64</pitch></Note></Chord>`), V(`<Chord><durationType>quarter</durationType><Note><eid>B</eid><Tie><startElement>A</startElement><endElement>B</endElement></Tie><pitch>64</pitch></Note></Chord>`, R('quarter'), R('half'))]],
+    });
+    expect(tuples(readScoreFile('a.mscx', strToU8(neu)).notes)).toEqual([[64, 2, 3]]);
+  });
+
+  it('octave lines (in a voice, or in the score-wide SpannerMap) and pedal', () => {
+    const ott = '<Spanner type="Ottava"><Ottava><subtype>8va</subtype></Ottava><next><location><fractions>1/2</fractions></location></next></Spanner>';
+    const ped = '<Spanner type="Pedal"><Pedal/><next><location><measures>1</measures></location></next></Spanner>';
+    const a = mscx({ staves: [[V(TS(4, 4), MTEMPO(60), ped, ott, C('quarter', [72]), C('quarter', [72]), C('half', [72])), V(C('whole', [60]))]] });
+    const p = readScoreFile('a.mscx', strToU8(a));
+    expect(p.notes.map((n) => n.midi)).toEqual([84, 84, 72, 60]);
+    expect(p.pedal).toEqual([{ start: 0, end: 4 }]);
+    const b = mscx({
+      version: '5.00',
+      staves: [[V(TS(4, 4), MTEMPO(60), C('quarter', [60]), C('quarter', [60]), C('half', [60]))]],
+      extra: '<SpannerMap><Ottava><subtype>8vb</subtype><startTick>1/4</startTick><ticks>1/4</ticks><track>0</track></Ottava></SpannerMap>',
+    });
+    expect(readScoreFile('b.mscx', strToU8(b)).notes.map((n) => n.midi)).toEqual([60, 48, 60]);
+  });
+
+  it('grace notes, accents, dynamics and drums', () => {
+    const x = mscx({
+      parts: [
+        { id: 'piano', staves: 1 },
+        { id: 'drumset', staves: 1, drums: true },
+      ],
+      staves: [
+        [V(TS(4, 4), MTEMPO(60), '<Dynamic><subtype>p</subtype><velocity>49</velocity></Dynamic>', C('eighth', [74], '<acciaccatura/>'), C('quarter', [72]), C('quarter', [72], '<Articulation><subtype>articAccentAbove</subtype></Articulation>'), R('half'))],
+        [V(TS(4, 4), C('whole', [36]))],
+      ],
+    });
+    const p = readScoreFile('a.mscx', strToU8(x));
+    expect(p.notes.map((n) => n.midi)).toEqual([74, 72, 72]);
+    expect(p.notes[0].dur).toBeCloseTo(0.09, 3);
+    expect(p.notes[1].start).toBeCloseTo(0.09, 3);
+    expect(p.notes[1].vel).toBeCloseTo(49 / 127, 3);
+    expect(p.notes[2].vel).toBeCloseTo(49 / 127 + 0.12, 3);
+    expect(p.warnings.join(' ')).toMatch(/drum/);
+  });
+
+  it('repeats, voltas, markers and jumps', () => {
+    const volta = (e: string, measures: number) => `<Spanner type="Volta"><Volta><endings>${e}</endings></Volta><next><location><measures>${measures}</measures></location></next></Spanner>`;
+    const m = (k: number, inner = '', outer = '') => `<Measure>${outer}${V(k === 1 ? TS(4, 4) + MTEMPO(60) : '', inner, C('whole', [59 + k]))}</Measure>`;
+    const x = mscx({
+      staves: [
+        [
+          m(1),
+          m(2, '', '<Marker><label>segno</label><markerType>segno</markerType></Marker><startRepeat/>'),
+          m(3, volta('1', 1), '<endRepeat>2</endRepeat>'),
+          m(4, volta('2', 1), '<Marker><label>coda</label><markerType>coda</markerType></Marker>'),
+          m(5, '', '<Jump><jumpTo>segno</jumpTo><playUntil>coda</playUntil><continueAt>codab</continueAt></Jump>'),
+          m(6, '', '<Marker><label>codab</label><markerType>codab</markerType></Marker>'),
+        ],
+      ],
+    });
+    const p = readScoreFile('a.mscx', strToU8(x));
+    expect(p.notes.map((n) => n.midi - 59)).toEqual([1, 2, 3, 2, 4, 5, 2, 4, 6]);
+  });
+
+  it('.mscz, MuseScore 2 files and damaged files tell the user to export MusicXML', () => {
+    const x = mscx({ staves: [[V(TS(4, 4), C('whole', [60]))]] });
+    const z = zipSync({ 'META-INF/container.xml': strToU8('<container><rootfiles><rootfile full-path="score.mscx"/></rootfiles></container>'), 'score.mscx': strToU8(x), 'Thumbnails/thumbnail.png': new Uint8Array([1, 2, 3]) });
+    expect(readScoreFile('Song.mscz', z).notes).toHaveLength(1);
+    expect(readScoreFile('Song.mscz', z).format).toBe('mscz');
+    expect(() => readScoreFile('old.mscx', strToU8('<museScore version="2.06"><Score/></museScore>'))).toThrow(/MuseScore 2[\s\S]*File → Export → MusicXML/);
+    expect(() => readScoreFile('x.mscz', zipSync({ 'a.txt': strToU8('x') }))).toThrow(/Export → MusicXML/);
   });
 });

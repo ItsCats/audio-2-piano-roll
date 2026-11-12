@@ -16,7 +16,7 @@ import { newNoteId, sortNotes } from '../music/cleanup';
 import { PIANO_MAX, PIANO_MIN, prefersFlats } from '../music/theory';
 import type { ScoreIR } from './ir';
 import { musicXmlToIR } from './musicxml';
-import { mscxToIR } from './mscx';
+import { MscxError, mscxToIR } from './mscx';
 import { perform, qToSec, type Performance } from './perform';
 import { decodeXmlBytes, parseXml, child, childrenNamed } from './xml';
 
@@ -121,7 +121,7 @@ function fromMscx(text: string, fileName: string, format: ScoreFormat): ParsedSc
   try {
     ir = mscxToIR(text);
   } catch (err) {
-    throw new ScoreImportError(museScoreHelp(err instanceof ScoreImportError ? err.message : 'This MuseScore file could not be read.'));
+    throw new ScoreImportError(museScoreHelp(err instanceof MscxError ? err.message : 'This MuseScore file could not be read.'));
   }
   return fromIR(ir, { fileName, format });
 }
@@ -265,7 +265,7 @@ export function fromIR(ir: ScoreIR, meta: ScoreMeta = {}): ParsedScore {
     }
   }
   const tempo: TempoInfo = {
-    bpm: Math.round((60 / perf.tempo.spq[0]) * (meter.beatUnit / 4) * 10) / 10,
+    bpm: Math.round(perf.firstQpm * (meter.beatUnit / 4) * 10) / 10,
     beats,
     beatsPerBar: meter.beatsPerBar,
     beatUnit: meter.beatUnit,

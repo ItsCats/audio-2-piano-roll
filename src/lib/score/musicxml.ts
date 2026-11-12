@@ -121,6 +121,8 @@ export function musicXmlToIR(text: string): ScoreIR {
   let seq = 0;
   let endingId = 0;
   const endingsFromPart: number[] = []; // measure index → part whose endings were used
+  /** segno / coda / To Coda marks, placed once the measure lengths are known */
+  const marks: { m: number; pos: number; kind: 'segno' | 'coda' | 'toCoda'; id?: string }[] = [];
   const keyFromPart: number[] = [];
 
   partEls.forEach((partEl, pi) => {
@@ -173,9 +175,9 @@ export function musicXmlToIR(text: string): ScoreIR {
         if (t > 0 && Number.isFinite(t)) M.tempos.push({ pos, qpm: t });
         if (a.dacapo === 'yes' && !hasWordsJump) M.jump = { ...M.jump, to: 'start' };
         if (a.dalsegno !== undefined && !hasWordsJump) M.jump = { ...M.jump, to: 'segno' };
-        if (a.segno !== undefined) M.segno = true;
-        if (a.coda !== undefined) M.coda = true;
-        if (a.tocoda !== undefined) M.toCoda = true;
+        if (a.segno !== undefined) marks.push({ m: mi, pos, kind: 'segno' });
+        if (a.coda !== undefined) marks.push({ m: mi, pos, kind: 'coda' });
+        if (a.tocoda !== undefined) marks.push({ m: mi, pos, kind: 'toCoda' });
         if (a.fine !== undefined) M.fine = true;
         if (a['damper-pedal'] !== undefined && !hasPedalMark) {
           const v = a['damper-pedal'];
@@ -271,7 +273,7 @@ export function musicXmlToIR(text: string): ScoreIR {
                   words.push(t.text);
                   break;
                 case 'segno':
-                  M.segno = true;
+                  marks.push({ m: mi, pos, kind: 'segno' });
                   break;
                 case 'coda':
                   if (!el.children.some((c) => c.name === 'sound' && (c.attrs.coda !== undefined || c.attrs.tocoda !== undefined))) M.codaSign = { pos };
@@ -295,10 +297,10 @@ export function musicXmlToIR(text: string): ScoreIR {
                   M.jump = j.jump;
                   wordsJump = true;
                 }
-                if (j.toCoda) M.toCoda = true;
+                if (j.toCoda) marks.push({ m: mi, pos, kind: 'toCoda', id: j.id });
                 if (j.fine) M.fine = true;
-                if (j.coda && !types.some((t) => t.name === 'coda')) M.codaSign = { pos };
-                if (j.segno) M.segno = true;
+                if (j.coda) marks.push({ m: mi, pos, kind: 'coda', id: j.id });
+                if (j.segno) marks.push({ m: mi, pos, kind: 'segno' });
               }
             }
             const snd = el.name === 'sound' ? el : child(el, 'sound');
@@ -319,6 +321,7 @@ export function musicXmlToIR(text: string): ScoreIR {
             if (rep?.attrs.direction === 'backward') {
               const times = parseInt(rep.attrs.times ?? '', 10);
               M.repeatEnd = Math.max(M.repeatEnd ?? 0, times >= 1 ? times : 2);
+              if (!(times >= 1)) M.repeatTimesImplied = true;
             }
             const end = child(el, 'ending');
             if (end && (endingsFromPart[mi] === undefined || endingsFromPart[mi] === pi)) {
@@ -327,7 +330,7 @@ export function musicXmlToIR(text: string): ScoreIR {
               if (end.attrs.type === 'start' && passes.length) (M as IRMeasure & { _endStart?: number[] })._endStart = passes;
               if (end.attrs.type === 'stop' || end.attrs.type === 'discontinue') (M as IRMeasure & { _endStop?: boolean })._endStop = true;
             }
-            if (child(el, 'segno')) M.segno = true;
+            if (child(el, 'segno')) marks.push({ m: mi, pos: loc === 'left' ? 0 : Infinity, kind: 'segno' });
             if (child(el, 'coda')) M.codaSign = { pos: loc === 'left' ? 0 : Infinity };
             if (child(el, 'fermata') && loc === 'right') {
               /* a fermata on the barline: held at the end of the bar (applied below, once the length is known) */
@@ -424,6 +427,24 @@ export function musicXmlToIR(text: string): ScoreIR {
     delete ext._endStop;
     delete ext._barFermata;
   });
+  // a segno or coda at the very end of a measure belongs to the next one; a To Coda at the very
+  // start of a measure means "after the previous one"
+  for (const mk of marks) {
+    const M = measures[mk.m];
+    const end = !Number.isFinite(mk.pos) || mk.pos >= M.length - EPS;
+    if (mk.kind === 'toCoda') {
+      const T = measures[mk.pos <= EPS && mk.m > 0 ? mk.m - 1 : mk.m];
+      T.toCoda = true;
+      if (mk.id) T.toCodaId = mk.id;
+    } else {
+      const T = measures[end && mk.m + 1 < measures.length ? mk.m + 1 : mk.m];
+      if (mk.kind === 'segno') T.segno = true;
+      else {
+        T.coda = true;
+        if (mk.id) T.codaId = mk.id;
+      }
+    }
+  }
   resolveCodaSigns(measures);
   return { title: title || undefined, composer: composer || undefined, parts, measures, warnings };
 }

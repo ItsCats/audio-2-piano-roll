@@ -48,6 +48,20 @@ export interface IRDynamic {
 
 export interface IRJump {
   to: 'start' | 'segno';
+  /** The measure to jump to, when the file says exactly (MuseScore jumps name their marker). */
+  target?: number;
+  /**
+   * When the file says exactly where this jump's pass ends (MuseScore "play until"): the measure
+   * after which the pass stops (Fine) or, with codaAt, jumps to the coda.
+   */
+  until?: number;
+  codaAt?: number;
+  /** until / codaAt are all there is (no Fine / To Coda marks apply; no until = to the end). */
+  exact?: boolean;
+  /** "D.S. al Coda II": which To Coda / Coda belong to this jump (lower-case roman numeral or digits). */
+  codaId?: string;
+  /** Repeats are played again on the pass after the jump (MuseScore "play repeats"). */
+  playRepeats?: boolean;
   alFine?: boolean;
   alCoda?: boolean;
 }
@@ -75,9 +89,13 @@ export interface IRMeasure {
   /** Fermatas over notes or rests: the span that is held longer. */
   fermatas: { pos: number; dur: number }[];
   // repeat structure
+  /** A new section (piece / movement) starts here: D.C. goes back to here, repeats start afresh. */
+  newSection?: boolean;
   repeatStart?: boolean;
   /** A backward repeat at the end: total number of times the section is played (usually 2). */
   repeatEnd?: number;
+  /** The file gave no count for the backward repeat (2 assumed). */
+  repeatTimesImplied?: boolean;
   /** Inside a volta bracket: which passes play it; `id` tells adjacent brackets apart. */
   ending?: { id: number; passes: number[] };
   segno?: boolean;
@@ -85,6 +103,9 @@ export interface IRMeasure {
   coda?: boolean;
   /** "To Coda": on the pass after a D.C./D.S., jump to the coda after this measure. */
   toCoda?: boolean;
+  /** "To Coda II" / "Coda II": numbered codas (lower-case roman numeral or digits). */
+  toCodaId?: string;
+  codaId?: string;
   /**
    * A coda sign whose meaning the file doesn't say (MusicXML <coda/> without <sound>): "To Coda"
    * before the D.C./D.S., the start of the coda after it (resolveCodaSigns).
@@ -180,21 +201,31 @@ export function tempoFromWords(words: string): number | null {
   return best?.qpm ?? null;
 }
 
-/** Repeat / jump instructions written as words ("D.S. al Coda", "To Coda", "Fine"). */
-export function jumpFromWords(words: string): { jump?: IRJump; toCoda?: boolean; fine?: boolean; coda?: boolean; segno?: boolean } | null {
+/**
+ * Repeat / jump instructions written as words ("D.S. al Coda", "To Coda", "Fine", "Coda II").
+ * Also reads common font quirks ("D.$." for D.S., "Ø" for the coda sign).
+ */
+export function jumpFromWords(words: string): { jump?: IRJump; toCoda?: boolean; fine?: boolean; coda?: boolean; segno?: boolean; id?: string } | null {
   const w = words
     .toLowerCase()
-    .replace(/[.\s '’]+/g, '')
-    .replace(/𝄋/g, 'segno')
-    .replace(/𝄌/g, 'coda');
+    .replace(/[\u{1D10C}ø⊕]/gu, '')
+    .replace(/\u{1D10B}|§/gu, 'segno')
+    .replace(/\$/g, 's')
+    .replace(/[.\s '’:()]+/g, '');
   if (!w) return null;
-  if (/^(tocoda|alcoda)$/.test(w) || /^tocoda/.test(w)) return { toCoda: true };
-  const dc = /^(dc|dacapo)(al|alla)?(fine|coda)?/.exec(w);
-  if (dc) return { jump: { to: 'start', alFine: dc[3] === 'fine', alCoda: dc[3] === 'coda' } };
-  const ds = /^(ds|dalsegno)(al|alla)?(fine|coda)?/.exec(w);
-  if (ds) return { jump: { to: 'segno', alFine: ds[3] === 'fine', alCoda: ds[3] === 'coda' } };
+  const idOf = (rest: string | undefined) => (rest && /^(i{1,3}|iv|v|\d+)$/.test(rest) ? rest : undefined);
+  let m = /^(?:tocoda|alcoda)(.*)$/.exec(w);
+  if (m && (m[1] === '' || idOf(m[1]))) return idOf(m[1]) ? { toCoda: true, id: idOf(m[1]) } : { toCoda: true };
+  m = /^(dc|dacapo|ds|dalsegno)(?:al|alla)?(fine|coda)?(.*)$/.exec(w);
+  if (m && (m[3] === '' || idOf(m[3]) || /^(senza|no|without)/.test(m[3]))) {
+    const jump: IRJump = { to: m[1] === 'dc' || m[1] === 'dacapo' ? 'start' : 'segno', alFine: m[2] === 'fine', alCoda: m[2] === 'coda' };
+    const id = idOf(m[3]);
+    if (id) jump.codaId = id;
+    return { jump };
+  }
   if (w === 'fine') return { fine: true };
-  if (w === 'coda') return { coda: true };
+  m = /^coda(.*)$/.exec(w);
+  if (m && (m[1] === '' || idOf(m[1]))) return idOf(m[1]) ? { coda: true, id: idOf(m[1]) } : { coda: true };
   if (w === 'segno') return { segno: true };
   return null;
 }
@@ -232,10 +263,9 @@ export function resolveCodaSigns(measures: IRMeasure[]): void {
     delete m.codaSign;
     const after = lastJump >= 0 ? i > lastJump : i === signs[signs.length - 1] && signs.length > 1;
     if (after) {
-      if (!hasCoda) m.coda = true;
+      if (!hasCoda) measures[sign.pos >= m.length - 1e-6 && i + 1 < measures.length ? i + 1 : i].coda = true;
     } else if (!hasTo) {
-      const at = sign.pos >= m.length / 2 || i === 0 ? i : i - 1;
-      measures[at].toCoda = true;
+      measures[sign.pos <= 1e-6 && i > 0 ? i - 1 : i].toCoda = true;
     }
   }
 }
