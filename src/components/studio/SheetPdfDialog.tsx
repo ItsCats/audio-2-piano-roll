@@ -1,5 +1,5 @@
 /** "Sheet music PDF" dialog: paper size, then the PDF is made in the page and downloaded. */
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { FileText } from 'lucide-react';
 import { Button, Modal, ProgressBar, Segmented } from '../ui';
 import { useStudio } from '../../state/studioStore';
@@ -14,35 +14,49 @@ export function SheetPdfDialog({ open, onClose }: { open: boolean; onClose: () =
   const paperSetting = useSettings((s) => s.sheet.paper);
   const setSheet = useSettings((s) => s.setSheet);
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<number | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const paper = paperSetting === 'auto' ? defaultPaper() : paperSetting;
 
   const make = async () => {
     if (!song || busy) return;
     setBusy(true);
+    setProgress(null);
+    const ac = new AbortController();
+    abortRef.current = ac;
     // let the dialog paint "Making the PDF…" before the heavy work starts
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
     try {
       const [{ buildSheet }, { makeSheetPdf }] = await Promise.all([import('../../lib/sheet'), import('../../lib/sheet/pdf')]);
-      const { blob, pages } = await makeSheetPdf(buildSheet(song, difficulty), { title: song.title || 'Untitled', artist: song.artist }, paper);
+      const { blob, pages } = await makeSheetPdf(buildSheet(song, difficulty), { title: song.title || 'Untitled', artist: song.artist }, paper, {
+        signal: ac.signal,
+        onProgress: (done, total) => setProgress(done / total),
+      });
       downloadBlob(blob, `${safeFileName(song.title)} (${difficulty}).pdf`);
       toast.success('PDF ready', `${pages} ${pages === 1 ? 'page' : 'pages'}`);
       onClose();
     } catch (e) {
+      if ((e as Error).name === 'AbortError') return;
       console.error(e);
       toast.error('Couldn’t make the PDF', (e as Error).message);
     } finally {
+      abortRef.current = null;
       setBusy(false);
     }
+  };
+  const cancel = () => {
+    abortRef.current?.abort();
+    onClose();
   };
 
   return (
     <Modal
       open={open}
-      onClose={() => !busy && onClose()}
+      onClose={cancel}
       title="Sheet music PDF"
       footer={
         <>
-          <Button size="sm" variant="ghost" onClick={onClose} disabled={busy}>
+          <Button size="sm" variant="ghost" onClick={cancel}>
             Cancel
           </Button>
           <Button size="sm" variant="primary" icon={<FileText size={15} />} onClick={() => void make()} disabled={busy || !song?.arrangements[difficulty].notes.length}>
@@ -70,7 +84,7 @@ export function SheetPdfDialog({ open, onClose }: { open: boolean; onClose: () =
         {busy && (
           <div className="flex flex-col gap-2" aria-live="polite">
             <span className="text-[12.5px] text-ink-300">Making the PDF…</span>
-            <ProgressBar value={null} indeterminate />
+            <ProgressBar value={progress} />
           </div>
         )}
       </div>

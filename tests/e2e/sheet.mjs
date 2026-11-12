@@ -11,7 +11,9 @@
  *  - MusicXML and PDF downloads arrive (MusicXML 4.0 partwise; the PDF starts with %PDF);
  *  - a synthetic dense 3-minute Hard song (generated here, made-up notes): drawn with the notation
  *    library loaded, the first music shows within 300 ms and no long task exceeds 250 ms (the
- *    one-off library start on first open is reported separately); its PDF has many pages;
+ *    one-off library start on first open is reported separately); its PDF has many pages and is
+ *    made without freezing the page (no task over 400 ms);
+ *  - a level with no notes, then one with notes: the music is drawn again;
  *  - iPhone 14 size: no sideways page scroll at any zoom.
  * `--extra` files (MIDI, or Piano2Vision project files) are opened too, for screenshots only; they
  * and the screenshots stay outside the repo (`--shots`, default: the OS temp folder).
@@ -165,6 +167,26 @@ try {
     const c2 = await cursor(page);
     const s1 = await scrollTop();
     check('demo: tapping a measure moves the cursor there (and keeps the view still)', !!c2 && s1 === s0 && Math.abs(c2.x - target.x) < 140 && target.y >= c2.y - 40 && target.y <= c2.y + c2.h + 40, { target, c2, s0, s1 });
+    // trackpad pinch (many small ctrl + wheel events): small gestures do nothing, a real one
+    // zooms in 10 % steps and draws the music once, when the gesture ends
+    const zoomLabel = () => page.locator('button[title="Reset size"]').innerText();
+    const renders = () => page.evaluate(() => performance.getEntriesByName('sheet:render-start').length);
+    const wheel = async (n, dy) => {
+      await page.mouse.move(700, 500);
+      for (let i = 0; i < n; i++) await page.mouse.wheel(0, dy).catch(() => undefined);
+    };
+    await page.keyboard.down('Control');
+    const r0 = await renders();
+    await wheel(20, -2);
+    const z1 = await zoomLabel();
+    await wheel(10, -10);
+    await page.keyboard.up('Control');
+    await page.waitForTimeout(1500);
+    const z2 = await zoomLabel();
+    const r1 = await renders();
+    check('demo: a pinch zooms in steps and redraws once', z1 === '100%' && ['110%', '120%'].includes(z2) && r1 - r0 === 1, { z1, z2, redraws: r1 - r0 });
+    await page.locator('button[title="Reset size"]').click();
+    await page.waitForTimeout(1200);
     const xml = await download(page, () => exportItem(page, /MusicXML/));
     const xmlText = fs.readFileSync(xml, 'utf8');
     check('demo: MusicXML download', xmlText.startsWith('<?xml') && xmlText.includes('<score-partwise version="4.0">') && xmlText.includes('Transcribed with Piano2Vision'), path.basename(xml));
@@ -173,6 +195,23 @@ try {
     const head = fs.readFileSync(pdf).subarray(0, 5).toString('latin1');
     summary.demoPdf = { bytes: fs.statSync(pdf).size, pages: pdfPages(pdf) };
     check('demo: PDF download', head === '%PDF-' && summary.demoPdf.pages >= 1, summary.demoPdf);
+    // a level with no notes, then back to one with notes: the music is drawn again
+    await page.getByRole('radio', { name: /Piano roll/ }).click();
+    await page.getByRole('radio', { name: /easy/i }).click();
+    await page.keyboard.press('e');
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Delete');
+    await page.keyboard.press('e');
+    await page.getByRole('radio', { name: /medium/i }).click();
+    await toSheet(page);
+    await page.getByRole('radio', { name: /easy/i }).click();
+    await page.getByText('No notes to show yet.').waitFor({ timeout: 10000 });
+    await page.getByRole('radio', { name: /medium/i }).click();
+    const redrawn = await page
+      .waitForSelector('[data-testid="sheet-music"] .sheet-chunk svg', { timeout: 15000 })
+      .then(() => true)
+      .catch(() => false);
+    check('demo: music comes back after a level with no notes', redrawn, { chunks: await page.locator('.sheet-chunk svg').count() });
     const csp = await page.evaluate(() => window.__csp);
     check('demo: no CSP violations or console errors', !csp.length && !errors.length, { csp, errors });
     await ctx.close();
@@ -211,9 +250,13 @@ try {
     summary.dense = { ...span(m2), longTasks: long2.length, maxLongTask: Math.max(0, ...long2), chunks: await page.locator('.sheet-chunk').count() };
     check('dense Hard: first music within 300 ms, no long task over 250 ms while drawing', summary.dense.firstMs < 300 && summary.dense.maxLongTask < 250, summary);
     await page.screenshot({ path: path.join(shots, 'desktop-dense-hard.png') });
+    await page.evaluate(() => (window.__long.length = 0));
+    const t0 = Date.now();
     const pdf = await pdfOf(page);
-    summary.densePdf = { bytes: fs.statSync(pdf).size, pages: pdfPages(pdf) };
+    const longPdf = await page.evaluate(() => window.__long.slice());
+    summary.densePdf = { bytes: fs.statSync(pdf).size, pages: pdfPages(pdf), ms: Date.now() - t0, maxLongTask: Math.max(0, ...longPdf), longTasks: longPdf.length };
     check('dense Hard: PDF has many pages', summary.densePdf.pages > 3, summary.densePdf);
+    check('dense Hard: the page stays responsive while the PDF is made (no task over 400 ms)', summary.densePdf.maxLongTask < 400, summary.densePdf);
     check('dense Hard: no console errors', !errors.length, errors);
     await ctx.close();
   }
