@@ -60,7 +60,11 @@ export function PianoModelOption({ className }: { className?: string }) {
           <span>{`For solo piano. Takes longer and downloads a ${support.downloadMB} MB model once.`}</span>
           {unavailable && <span className="text-ink-400">Not available in this browser.</span>}
           {!unavailable && !support.recommended && (
-            <span className="text-warn">{support.phone ? 'May be slow on phones.' : 'May be slow on this device.'}</span>
+            <span className="text-warn">
+              {support.phone
+                ? 'May be slow on phones. Songs over 6 minutes might not work on phones with little memory.'
+                : 'May be slow on this device. Songs over 6 minutes might not work.'}
+            </span>
           )}
         </span>
       </span>

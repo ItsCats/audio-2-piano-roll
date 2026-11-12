@@ -38,9 +38,9 @@ export function specialistMemoryMB(seconds: number): number {
   return Math.round((PTI_BASE_MB + PTI_MB_PER_SECOND * Math.max(0, seconds)) / 50) * 50;
 }
 /**
- * Longest recording the piano model runs on for memory-constrained devices (phones, tablets, ≤ 4 GB):
- * past this the import uses Basic Pitch (the normal model) with a warning. At 6 minutes the model
- * needs ~800 MB extra and, on a phone's processor, roughly half an hour.
+ * Recordings longer than this may not work on memory-constrained devices (phones, tablets, ≤ 4 GB):
+ * the checkbox warns about it, but the model still runs. At 6 minutes it needs ~800 MB extra and, on
+ * a phone's processor, a long time.
  */
 export const PTI_CONSTRAINED_MAX_SECONDS = 6 * 60;
 

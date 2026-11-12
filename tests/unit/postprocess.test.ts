@@ -221,32 +221,30 @@ describe('transcribeAudio with the piano specialist', () => {
     expect(SPECIALIST_CODE_FAILED).toMatch(/reload the page/);
   });
 
-  it('memory-constrained devices: recordings over the cap use Basic Pitch instead (desktops run any length)', async () => {
-    const { specialistFits } = await import('../../src/lib/transcription/pipeline');
-    const { PTI_CONSTRAINED_MAX_SECONDS } = await import('../../src/lib/pianoSpecialist/protocol');
-    expect(specialistFits(PTI_CONSTRAINED_MAX_SECONDS, true)).toBe(true);
-    expect(specialistFits(PTI_CONSTRAINED_MAX_SECONDS + 1, true)).toBe(false);
-    expect(specialistFits(20 * 60, false)).toBe(true);
-
+  it('memory-constrained devices: long recordings still run the high-accuracy model (no switch to the normal one)', async () => {
     const decode = await import('../../src/lib/transcription/decode');
     const spec = await import('../../src/lib/pianoSpecialist');
     const pipeline = await import('../../src/lib/transcription/pipeline');
+    const { PTI_CONSTRAINED_MAX_SECONDS } = await import('../../src/lib/pianoSpecialist/protocol');
     vi.mocked(decode.decodeToRate).mockReset();
-    vi.mocked(decode.decodeToRate).mockResolvedValue(fakeBuffer(PTI_CONSTRAINED_MAX_SECONDS + 60));
+    vi.mocked(decode.decodeToRate).mockResolvedValue(fakeBuffer(PTI_CONSTRAINED_MAX_SECONDS + 120));
     vi.mocked(spec.runPianoSpecialist).mockReset();
-    // Basic Pitch's worker is not run here: the first model call stops the test once the fallback got there
+    // the model call stops the test once the pipeline got there
+    vi.mocked(spec.runPianoSpecialist).mockRejectedValue(new Error('specialist reached'));
     const bp = vi.spyOn(pipeline.transcriber, 'run').mockRejectedValue(new Error('basic pitch reached'));
     vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Safari/604.1', maxTouchPoints: 5 });
     vi.stubGlobal('location', { href: 'http://localhost/', origin: 'http://localhost' });
     try {
       await expect(pipeline.transcribeAudio(new Blob([new Uint8Array(8)]), pipeline.EXTRACTION_PRESETS.piano, () => {}, undefined, { engine: 'piano-specialist' })).rejects.toThrow(
-        'basic pitch reached',
+        'specialist reached',
       );
-      expect(spec.runPianoSpecialist).not.toHaveBeenCalled();
-      expect(vi.mocked(decode.decodeToRate).mock.calls.map((c) => c[1])).toEqual([16000, 22050]);
+      expect(spec.runPianoSpecialist).toHaveBeenCalledTimes(1);
+      expect(bp).not.toHaveBeenCalled();
+      expect(vi.mocked(decode.decodeToRate).mock.calls.map((c) => c[1])).toEqual([16000]);
     } finally {
       vi.unstubAllGlobals();
       bp.mockRestore();
+      vi.mocked(spec.runPianoSpecialist).mockReset();
     }
   });
 
