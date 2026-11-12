@@ -68,12 +68,28 @@ export function quantize(raw: RawNote[], rules: SheetLevelRules): Quantized {
     const g = gridOf.get(k) ?? emptyGrid;
     return Math.round((Math.round(q * g) / g) * DIV);
   };
+  // a note struck again quickly (same staff and pitch, at least half the shortest note later) that
+  // lands on the same grid point: its quarter takes the finest straight grid so both strikes fit
+  const finest = Math.max(...rules.grids.filter((g) => g !== 3));
+  const firstAt = new Map<number, number>();
+  for (const r of [...raw].sort((a, b) => a.on - b.on)) {
+    const on = snap(r.on);
+    const id = (r.staff * 128 + r.midi) * 1e7 + on;
+    const prev = firstAt.get(id);
+    if (prev === undefined) firstAt.set(id, r.on);
+    else if (r.on - prev >= rules.minDur / 2) {
+      const k = Math.floor(on / DIV + 1 / 8);
+      if (!tripletQuarters.has(k) && (gridOf.get(k) ?? emptyGrid) < finest) gridOf.set(k, finest);
+    }
+  }
+  const stepAt = (on: number) => Math.max(rules.minDur, Math.min(rules.maxStep ?? Infinity, DIV / (gridOf.get(Math.floor(on / DIV)) ?? emptyGrid)));
+  const rawOn = new Map<QNote, number>();
   let notes: QNote[] = raw.map((r) => {
     const on = Math.max(0, snap(r.on));
-    const k = Math.floor(on / DIV);
-    const step = Math.max(rules.minDur, Math.min(rules.maxStep ?? Infinity, DIV / (gridOf.get(k) ?? emptyGrid)));
-    const off = Math.max(on + step, snap(r.off));
-    return { midi: r.midi, on, off, staff: r.staff };
+    const off = Math.max(on + stepAt(on), snap(r.off));
+    const n: QNote = { midi: r.midi, on, off, staff: r.staff };
+    rawOn.set(n, r.on);
+    return n;
   });
   // inside a triplet quarter, an end stays on a triplet point only if the staff plays again later
   // in that quarter; otherwise it moves to the quarter's edge (no "triplet quarter + triplet rest")
@@ -89,13 +105,29 @@ export function quantize(raw: RawNote[], rules: SheetLevelRules): Quantized {
       n.off = n.off - lo <= 4 && lo > n.on ? lo : (k + 1) * DIV;
     }
   }
-  // same staff + pitch + onset: keep the longest; same pitch overlapping: cut the earlier note
-  notes.sort((a, b) => a.staff - b.staff || a.midi - b.midi || a.on - b.on || b.off - a.off);
+  // same staff + pitch + onset: a re-struck note (played at least half a grid step later) moves to
+  // the next grid point when that is within a step of where it was played; otherwise it is a
+  // duplicate and the longer one is kept. Same pitch overlapping: cut the earlier note.
+  notes.sort((a, b) => a.staff - b.staff || a.midi - b.midi || a.on - b.on || rawOn.get(a)! - rawOn.get(b)!);
   const out: QNote[] = [];
-  for (const n of notes) {
+  for (let i = 0; i < notes.length; i++) {
+    const n = notes[i];
     const prev = out[out.length - 1];
     if (prev && prev.staff === n.staff && prev.midi === n.midi) {
-      if (prev.on === n.on) continue;
+      if (prev.on === n.on) {
+        const step = stepAt(n.on);
+        const to = n.on + step;
+        const next = notes[i + 1];
+        const nextOn = next && next.staff === n.staff && next.midi === n.midi ? next.on : Infinity;
+        const r = rawOn.get(n)!;
+        if (r - rawOn.get(prev)! >= step / 2 && to - r <= step && to <= nextOn) {
+          n.on = to;
+          n.off = Math.max(n.off, to + step);
+        } else {
+          prev.off = Math.max(prev.off, n.off);
+          continue;
+        }
+      }
       if (prev.off > n.on) prev.off = n.on;
     }
     out.push(n);

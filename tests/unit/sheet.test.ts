@@ -148,6 +148,25 @@ describe('sheet quantization', () => {
       [6, 18],
     ]);
   });
+  it('keeps a quickly re-struck note (Hard) instead of dropping it', () => {
+    // pairs 0.16 quarter apart that would both snap to the same 16th
+    const notes = [1, 2, 3, 4].flatMap((b) => [raw(64, b - 0.1, b + 0.02), raw(64, b + 0.06, b + 0.2)]);
+    const q = quantize(notes, LEVEL_RULES.hard);
+    expect(q.notes.map((n) => [n.on, n.off])).toEqual([1, 2, 3, 4].flatMap((b) => [[b * 12, b * 12 + 3], [b * 12 + 3, b * 12 + 6]]));
+  });
+  it('writes every Hard arrangement note (none lost between the arrangement and the page)', () => {
+    const r = rng(9);
+    const notes: Note[] = [];
+    for (let i = 0; i < 200; i++) {
+      const t = i * 0.13 + r() * 0.03;
+      notes.push(note(60 + Math.floor(r() * 12), t, 0.1 + r() * 0.5, r() < 0.5 ? 'R' : 'L'));
+      if (r() < 0.15) notes.push(note(notes[notes.length - 1].midi, t + 0.075, 0.1)); // re-strike 75 ms later
+    }
+    const score = buildScore({ notes, tempo: tempo(100), duration: 30, level: 'hard' });
+    let written = 0;
+    for (const sv of score.staves) for (const v of sv.voices) for (const c of v) written += c.midis.length;
+    expect(written).toBeGreaterThanOrEqual(Math.floor(notes.length * 0.99));
+  });
 });
 
 const vctx = (tripletQuarters = new Set<number>()): VoiceContext => ({ beatLen: 12, isBeat: (p) => p % 12 === 0, tripletQuarters });
