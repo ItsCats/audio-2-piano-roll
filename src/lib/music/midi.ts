@@ -91,6 +91,7 @@ export function parseMidi(data: ArrayBuffer): ParsedMidi {
       bpm: Math.round(bpm * 10) / 10,
       beats,
       beatsPerBar: ts[0] || 4,
+      ...(ts[1] === 2 || ts[1] === 8 ? { beatUnit: ts[1] as 2 | 8 } : {}),
       downbeatIndex: 0,
       confidence: 1,
       source: 'midi',
@@ -105,7 +106,7 @@ export function exportMidi(notes: Note[], pedal: PedalRange[], tempo: TempoInfo,
   const midi = new Midi();
   midi.name = title;
   midi.header.setTempo(tempo.bpm);
-  midi.header.timeSignatures.push({ ticks: 0, timeSignature: [tempo.beatsPerBar, 4], measures: 0 });
+  midi.header.timeSignatures.push({ ticks: 0, timeSignature: [tempo.beatsPerBar, tempo.beatUnit ?? 4], measures: 0 });
   midi.header.update();
   const rh = midi.addTrack();
   rh.name = 'Right Hand';
