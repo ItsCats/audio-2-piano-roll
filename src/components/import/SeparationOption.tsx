@@ -52,9 +52,11 @@ const explainBrowser = (est: number, maxSeconds: number) =>
   `Memory grows with length (${formatMemory(estimateSeparationMB(240))} for a 4-minute song), so recordings over ${Math.round(maxSeconds / 60)} minutes are transcribed without it`;
 const EXPLAIN_SERVER = 'Better melody and fewer false notes on songs with drums or singing; runs on your processing server';
 
-export function SeparationOption({ className }: { className?: string }) {
-  const { avail, checked, setChecked } = useSeparationChoice();
-  const disabled = !avail.available;
+/** `unusedReason`: separation does not apply to this import (shown unticked and disabled, with the reason; the remembered choice is kept). */
+export function SeparationOption({ className, unusedReason }: { className?: string; unusedReason?: string }) {
+  const { avail, checked: chosen, setChecked } = useSeparationChoice();
+  const disabled = !avail.available || !!unusedReason;
+  const checked = chosen && !unusedReason;
   const lowMemory = avail.engine === 'browser' && !avail.browser.recommended;
   return (
     <div className={cn('rounded-xl border border-ink-700 bg-ink-900/60 p-3.5', className)}>
@@ -84,8 +86,12 @@ export function SeparationOption({ className }: { className?: string }) {
           <span id="sep-explain" className="text-[12px] leading-relaxed text-ink-300">
             {avail.engine === 'server' ? EXPLAIN_SERVER : explainBrowser(avail.browser.estSecondsPerMinute, avail.browser.maxSeconds)}
           </span>
-          {disabled && avail.reason && <span className="text-[11.5px] text-ink-400">Not available: {avail.reason}</span>}
-          {lowMemory && (
+          {unusedReason ? (
+            <span className="text-[11.5px] text-ink-400">{unusedReason}</span>
+          ) : (
+            disabled && avail.reason && <span className="text-[11.5px] text-ink-400">Not available: {avail.reason}</span>
+          )}
+          {lowMemory && !unusedReason && (
             <span className="flex gap-1.5 text-[11.5px] leading-relaxed text-warn">
               <AlertTriangle size={13} className="mt-0.5 shrink-0" />
               <span>May run out of memory on this device. {avail.reason}</span>

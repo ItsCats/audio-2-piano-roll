@@ -3,8 +3,11 @@ Reference-grade piano transcription with the ByteDance high-resolution piano tra
 (Kong et al. 2021, `piano_transcription_inference`, MIT; checkpoint
 CRNN_note_F1=0.9677_pedal_F1=0.9186.pth from zenodo.org/record/4034264, ~165 MB).
 
-Used ONLY as an evaluation aid for solo-piano recordings (to snap score-aligned notes to the
-recording's real onsets, and as a strong-model proxy), never by the app.
+The original PyTorch version of the app's optional "High-accuracy piano model" (which runs an ONNX
+conversion of the same note model in the browser, src/lib/pianoSpecialist). Here it is an evaluation aid
+for solo-piano recordings: it snaps score-aligned notes to the recording's real onsets, is a strong-model
+proxy for Basic Pitch, and is the parity reference for the browser port (specialist_eval.py) — which
+makes it circular as an accuracy reference for the specialist itself.
 
     server/.venv/bin/python tests/accuracy/pti_transcribe.py CHECKPOINT OUT_DIR audio1 [audio2 ...]
 Writes OUT_DIR/<name>.pti.json (acclib notes format, pedal-extended offsets kept as the model gives).
@@ -43,7 +46,10 @@ def main() -> None:
         if os.path.exists(out):
             print("skip", name)
             continue
-        y = load_audio(f, sample_rate)
+        # Mono = the mean of the channels, like the package's own load_audio (librosa.load(mono=True)) and the
+        # app (decode.ts mixToMono). Not ffmpeg's "-ac 1", which mixes stereo as 0.707·(L+R): 3 dB louder, which
+        # moved near-threshold notes (browser parity 0.94–0.98 on loud MP3s instead of 0.99).
+        y = load_audio(f, sample_rate, mono=False).mean(axis=0).astype(np.float32)
         t0 = time.time()
         res = tr.transcribe(y, os.path.join(out_dir, f"{name}.pti.mid"))
         ev = res["est_note_events"]

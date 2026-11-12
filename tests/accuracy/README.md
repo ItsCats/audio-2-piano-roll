@@ -15,7 +15,14 @@ piano_transcription_inference, remotezip). Node 22 + Playwright Chromium.
 | vocal / bass pitch reference | `vocal_ref.py WORK/stems/<id> WORK/refs/vocal/<id>.vocals` (bass: `--stem bass --fmin 35 --fmax 400`; fmin must stay >= 32.7 Hz) | `refs/vocal/<id>.<stem>.f0.npz, .notes.json` |
 | vocal reference cross-check (pYIN) | `vocal_ref_check.py WORK/stems/<id> REF.f0.npz --seconds 90` | stdout JSON |
 | score MIDI to recording alignment (DTW) | `align_score.py SCORE.mid AUDIO OUT.json [--truth PERF.midi]` | `refs/aligned/<id>.json` |
-| strong piano transcriber (eval aid only) | `pti_transcribe.py CKPT WORK/refs/pti FILES...` | `refs/pti/<id>.pti.json` |
+| piano specialist ONNX export (note model, float16 weights, 5 pieces + sha256) | `server/.venv/bin/python tests/accuracy/pti_export.py CKPT OUT/piano-note.fp16.onnx --split 5 [--from-fp32 FP32.onnx]` (~5 min; seconds with `--from-fp32`) | `OUT/piano-note.fp16.onnx`, `.part1..5.bin`, sha256 on stdout |
+| piano specialist parity, Python (float16 ONNX vs float32 PyTorch) | `pti_export_check.py CKPT MODEL.onnx WORK/pti-parity AUDIO[@START+SECONDS] ...` | `pti-parity/<id>.audio16k.f32`, `<id>.{torch,onnx}.*.f32`, JSON (max abs diff, thresholded agreement, note matches) |
+| piano specialist parity / speed in Chromium | `node tests/accuracy/pti_export_browser.mjs --dir WORK/pti-parity [--threads 1,3] [--save] IDS...` | one JSON line per run (timings, s/min, peak RSS, diffs vs torch / onnx) |
+| strong piano transcriber (the original PyTorch model of the app's "High-accuracy piano model") | `pti_transcribe.py CKPT WORK/refs/pti FILES...` (mono = channel mean, like the package and the app; references made before 2026-11-12 used ffmpeg's 3 dB louder `-ac 1` mix — regenerate them for parity checks) | `refs/pti/<id>.pti.json` |
+| the high-accuracy piano model in the browser (the app's specialist engine) | `node tests/accuracy/transcribe.mjs --coi --presets specialist --out WORK/specialist [--timeout-min 20] FILES...` (fresh tab per file, ≈ 38 s per audio minute with 3 threads (36–41 s on 11 recordings, more when the machine is busy), peak tab 0.8–0.9 GB; without `--coi` one thread, ≈ 97 s) | `specialist/<id>.specialist.json` |
+| specialist scoring (headline MAESTRO test split, onset / onset+offset / +velocity F1, velocity r, parity with Python, speed, memory) | `specialist_eval.py --work WORK --trans WORK/specialist --out OUT FILES...` | `OUT.json`, `OUT.md` |
+| everything for the specialist, strictly sequential, with timeouts | `WORK=... RECORDINGS="..." [PTI_CKPT=...] [ONE_THREAD=1] bash tests/accuracy/run_specialist.sh` | `WORK/specialist/`, `WORK/eval/specialist*.{json,md}` |
+| specialist end-to-end check (rendered excerpt, MAESTRO excerpt, cancel) | `node tests/e2e/specialist.mjs [--maestro WORK/maestro/m-mozart-k280-1.wav]` | stdout PASS/FAIL |
 | score-informed snapping | `snap_ref.py ALIGNED.json PTI.json OUT.json [--truth PERF.midi]` | `refs/snapped/<id>.json` |
 | metric sanity checks | `sanity.py REF AUDIO [VOCAL.f0.npz] [--no-proxies]` | stdout, `$SANITY_OUT` |
 | posterior dump | `node tests/accuracy/transcribe.mjs --dump-posteriors WORK/posteriors WORK/maestro/m-*.wav` | `posteriors/<id>.{frames.u8,onsets.u8,rms.f32,post.json}` |
@@ -79,3 +86,26 @@ Build the oracle inputs from the stems (16-bit stereo, 44.1 kHz; the stems are s
 - The CREPE-tiny tracker (`src/lib/pitch`) is built and measured but not wired into the app: against
   the independent pYIN-on-Demucs reference its gain was small and mixed (+0.02 RPA mean, worse on one
   song of five).
+
+## Notes on the piano specialist ("High-accuracy piano model")
+
+- Preset id `specialist` everywhere in the harness (`songs.json` lists it for the solo-piano recordings; `transcribe.mjs`
+  passes `engine: 'piano-specialist'` to `transcribeAudio`). The run JSON has the same format (no posteriors, `params` null);
+  `timing.stagesMs` has `loading-model` (the first run of a browser downloads the model) and `analyzing`.
+- Headline numbers come ONLY from the MAESTRO pieces with exact performance MIDI in the **test** split
+  (`songs.json maestroSplit`). The model was trained on the MAESTRO v2.0.0 train split; `m-chopin-ballade1` is a train
+  piece (looked up in maestro-v2.0.0.csv / v3.0.0.csv, same split in both) and is reported but never averaged.
+- Circular references: `refs/pti` IS this model (Python), and the `snapped` score references take their timing from it.
+  For the specialist both measure the browser port (parity), not accuracy; specialist_eval.py reports them as parity.
+  Basic Pitch's vs-PTI numbers remain a strong-model proxy.
+- Offsets: MAESTRO references are extended by the sustain pedal (`acclib.midi_notes(pedal_extend=True)`), which is also
+  how the model's training targets were made, so onset+offset F1 is meaningful for it (Basic Pitch has no pedal and scores
+  ≈ 0.3 there).
+- Velocity: `onsetOffsetVelocity` is mir_eval.transcription_velocity (tolerance 0.1 after its linear fit, so the scale does
+  not matter); `velocityPearson` is the correlation of matched notes' velocities.
+- Licences (checked 2026-11-12): checkpoint CC BY 4.0 per the Zenodo API (`license.id: cc-by-4.0`, record 4034264), and the
+  local `CRNN_note_F1=0.9677_pedal_F1=0.9186.pth` matches the record's md5 `22b961b77c1878239fec963362097045`;
+  piano_transcription_inference 0.0.6 MIT (PyPI classifier and setup.py; the repository has no LICENSE file);
+  bytedance/piano_transcription Apache-2.0 (its README; no LICENSE file); torchlibrosa 0.1.0 MIT (LICENSE.md in the wheel).
+  Authors from the paper (arXiv:2010.01815 v0.2 PDF in bytedance/piano_transcription): Qiuqiang Kong, Bochen Li,
+  Xuchen Song, Yuan Wan, Yuxuan Wang.

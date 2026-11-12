@@ -15,6 +15,8 @@ import {
   SEPARATION_EFFECT,
   SONG_ROWS,
   SONG_SUMMARY,
+  SPECIALIST,
+  SPECIALIST_ROWS,
   SPEED_ROWS,
   SYNTHETIC_BENCHMARK,
   type Rating,
@@ -22,6 +24,8 @@ import {
 import { Badge, cn } from '../components/ui';
 
 const pct = (x: number) => `${Math.round(x * 100)}%`;
+/** like pct, but never rounds a score below 1 up to "100%" */
+const pctTop = (x: number) => (x >= 0.995 && x < 1 ? `${(Math.floor(x * 1000) / 10).toFixed(1)}%` : pct(x));
 
 function Stars({ rating }: { rating: Rating }) {
   return (
@@ -71,6 +75,25 @@ function MobileStat({ label, value, strong, dim }: { label: string; value: strin
       <span>{label}</span>
       <span className={cn('font-mono text-[13px]', strong ? 'font-semibold text-ink-50' : dim ? 'text-ink-400' : 'text-ink-100')}>{value}</span>
     </div>
+  );
+}
+
+function SpecialistStat({ label, fast, accurate, corr }: { label: string; fast: number; accurate: number; corr?: boolean }) {
+  const f = (x: number) => (corr ? x.toFixed(2) : pct(x));
+  return (
+    <div className="panel flex flex-col gap-1 p-3 sm:p-4">
+      <span className="text-[22px] leading-none font-semibold text-ok tabular-nums sm:text-[26px]">{f(accurate)}</span>
+      <span className="text-[12.5px] font-medium text-ink-100">{label}</span>
+      <span className="text-[11.5px] text-ink-400">normal model: {f(fast)}</span>
+    </div>
+  );
+}
+
+function TrainingTag() {
+  return (
+    <span className="mt-1 inline-flex rounded-full border border-warn/30 bg-warn/10 px-2 py-0.5 text-[11px] text-warn" title="MAESTRO train split">
+      In the model’s training data — flattering, not in the averages
+    </span>
   );
 }
 
@@ -213,9 +236,100 @@ export default function AccuracyPage() {
         </section>
 
         <section>
+          <SectionTitle title={SPECIALIST.title} sub={SPECIALIST.intro} />
+          <div className="mb-3 grid grid-cols-3 gap-2 sm:gap-3">
+            <SpecialistStat label="Notes right" fast={SPECIALIST.mean.f1Fast} accurate={SPECIALIST.mean.f1} />
+            <SpecialistStat label="Notes that also end right" fast={SPECIALIST.mean.endsFast} accurate={SPECIALIST.mean.ends} />
+            <SpecialistStat label="Loudness follows the playing" fast={SPECIALIST.mean.velRFast} accurate={SPECIALIST.mean.velR} corr />
+          </div>
+          <div className="flex flex-col gap-2 sm:hidden">
+            {SPECIALIST_ROWS.map((r) => (
+              <div key={r.piece} className={cn('panel p-3.5', r.inTraining && 'opacity-80')}>
+                <p className="text-[13.5px] font-medium text-ink-50">{r.piece}</p>
+                {r.inTraining && <TrainingTag />}
+                <div className="mt-2 grid grid-cols-3 gap-2 text-[11px] text-ink-400">
+                  <MobileStat label="Notes right" value={`${pct(r.f1Fast)} → ${pctTop(r.f1)}`} strong />
+                  <MobileStat label="Ends right" value={`${pct(r.endsFast)} → ${pct(r.ends)}`} />
+                  <MobileStat label="Loudness r" value={`${r.velRFast.toFixed(2)} → ${r.velR.toFixed(2)}`} />
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="panel hidden overflow-x-auto sm:block">
+            <table className="w-full min-w-[640px] text-left text-[13px]">
+              <thead>
+                <tr className="border-b border-ink-700 text-[11.5px] text-ink-400">
+                  <th className="px-4 py-2.5 font-medium">Piece</th>
+                  <th className="px-3 py-2.5 text-right font-medium">Notes right: normal → high-accuracy model</th>
+                  <th className="px-3 py-2.5 text-right font-medium">Also end right</th>
+                  <th className="px-4 py-2.5 text-right font-medium" title="Correlation of the played and the transcribed loudness of each note (1 = perfect)">Loudness (r)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {SPECIALIST_ROWS.map((r) => (
+                  <tr key={r.piece} className={cn('border-b border-ink-800 last:border-0', r.inTraining && 'opacity-80')}>
+                    <td className="px-4 py-3">
+                      <p className="font-medium text-ink-50">{r.piece}</p>
+                      {r.inTraining && <TrainingTag />}
+                    </td>
+                    <td className="px-3 py-3 text-right font-mono">
+                      <span className="text-ink-400">{pct(r.f1Fast)} → </span>
+                      <b className="text-ok">{pctTop(r.f1)}</b>
+                    </td>
+                    <td className="px-3 py-3 text-right font-mono">
+                      <span className="text-ink-400">{pct(r.endsFast)} → </span>
+                      <b className="text-ink-50">{pct(r.ends)}</b>
+                    </td>
+                    <td className="px-4 py-3 text-right font-mono">
+                      <span className="text-ink-400">{r.velRFast.toFixed(2)} → </span>
+                      <b className="text-ink-50">{r.velR.toFixed(2)}</b>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="mt-4 flex flex-col gap-4">
+            <div>
+              <h3 className="mb-2 text-[13px] font-semibold text-ink-100">Where the difference is</h3>
+              <BeforeAfterTable rows={SPECIALIST.found} cols={['Notes found, 5 pieces', 'Normal', 'High-accuracy']} />
+            </div>
+            <div>
+              <h3 className="mb-2 text-[13px] font-semibold text-ink-100">What it costs</h3>
+              <BeforeAfterTable rows={SPECIALIST.cost} cols={['Measured on a 4-core computer', 'Normal', 'High-accuracy']} />
+            </div>
+          </div>
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
+            <div className="rounded-xl border border-ok/25 bg-ok/5 p-3.5">
+              <p className="flex items-center gap-1.5 text-[13px] font-medium text-ink-50">
+                <CheckCircle2 size={14} className="text-ok" /> Use it for
+              </p>
+              <ul className="mt-1.5 flex list-disc flex-col gap-1.5 pl-5 text-[12.5px] leading-relaxed text-ink-300">
+                {SPECIALIST.useWhen.map((t) => (
+                  <li key={t}>{t}</li>
+                ))}
+              </ul>
+            </div>
+            <div className="rounded-xl border border-ink-700 bg-ink-900/60 p-3.5">
+              <p className="flex items-center gap-1.5 text-[13px] font-medium text-ink-50">
+                <AlertTriangle size={14} className="text-warn" /> Stay with the normal model for
+              </p>
+              <ul className="mt-1.5 flex list-disc flex-col gap-1.5 pl-5 text-[12.5px] leading-relaxed text-ink-300">
+                {SPECIALIST.skipWhen.map((t) => (
+                  <li key={t}>{t}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+          {SPECIALIST.notes.map((n) => (
+            <Note key={n}>{n}</Note>
+          ))}
+        </section>
+
+        <section>
           <SectionTitle
             title="Other piano recordings (no answer key)"
-            sub="For recordings without a key-by-key record we compare with a second, piano-specialist AI model that is too heavy to run in a browser. On the three answer-key pieces above it was checked on (Liszt, Mozart and Chopin’s Nocturne Op. 15) it scores 94–99 %, so high agreement is a good sign — but it is a second opinion, not the truth (it is weaker on pianos, rooms and styles unlike its training data, such as the jazz cover)."
+            sub="For recordings without a key-by-key record we compare the normal model with the piano-specialist model (the original Python version of the high-accuracy piano model). On the answer-key pieces above it scores 94–99 %, so high agreement is a good sign — but it is a second opinion, not the truth (it is weaker on pianos, rooms and styles unlike its training data, such as the jazz cover). For the same reason these rows say nothing about the high-accuracy option itself: compared with its own model it would always agree."
           />
           <div className="flex flex-col gap-2 sm:hidden">
             {OTHER_PIANO_ROWS.map((r) => (
@@ -399,7 +513,7 @@ export default function AccuracyPage() {
           <h2 className="text-[15px] font-semibold text-ink-50">Getting the best result</h2>
           <ol className="mt-3 flex flex-col gap-2 text-[13px] leading-relaxed text-ink-200">
             {[
-              'Choose the right detection preset when importing: Piano solo, Full song or Sensitive (fast or very soft playing).',
+              'Choose the right detection preset when importing: Piano solo, Full song or Sensitive (fast or very soft playing). For solo piano on a computer, pick “High-accuracy piano model” when you can wait a few minutes.',
               'For songs with a singer, keep “Separate vocals & drums” on: the right hand then follows the singer.',
               'Use the cleanest recording you can — less reverb, crowd noise and background music means better notes.',
               'In the Studio, blend in the original recording (Sound tab → Original recording) to hear differences.',

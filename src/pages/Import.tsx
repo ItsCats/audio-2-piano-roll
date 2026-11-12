@@ -3,6 +3,8 @@ import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-do
 import { FileAudio, SquarePlay, Music2, Mic, Loader2, CheckCircle2, XCircle, Circle, ArrowRight, Square, Info, Server, RotateCcw, Download, Smartphone } from 'lucide-react';
 import { Dropzone } from '../components/import/Dropzone';
 import { SeparationOption, useSeparationChoice } from '../components/import/SeparationOption';
+import { PianoModelOption, usePianoModelChoice } from '../components/import/PianoModelOption';
+import type { TranscriptionEngine } from '../lib/transcription/pipeline';
 import { Badge, Button, ProgressBar, Segmented, cn } from '../components/ui';
 import { STAGE_LABELS, rememberServerHealth, useImport, type ImportJob, type ImportStage } from '../state/importStore';
 import { useSettings } from '../state/settingsStore';
@@ -62,6 +64,7 @@ function DetectionOptions() {
         ]}
       />
       <p className="text-[12px] text-ink-300">{descriptions[preset]}</p>
+      <PianoModelOption className="mt-1" />
     </div>
   );
 }
@@ -89,12 +92,15 @@ function formatEta(sec: number): string {
  * The step the speed measurement covers ("separation", "pitch detection 1 of 2"): the ETA is for
  * this step only, so it says which one (more steps follow, see the checklist below the bar).
  */
-function etaStep(job: Pick<ImportJob, 'stage' | 'detail'>): string {
+function etaStep(job: Pick<ImportJob, 'stage' | 'detail' | 'transcriber'>): string {
   const part = job.detail?.match(/\((\d+) of (\d+)\)/);
   switch (job.stage) {
     case 'separating':
       return 'separation';
+    case 'loading-model':
+      return job.transcriber === 'piano-specialist' ? 'loading the piano model' : STAGE_LABELS[job.stage].toLowerCase();
     case 'analyzing':
+      if (job.transcriber === 'piano-specialist') return 'piano model';
       return part ? `pitch detection ${part[1]} of ${part[2]}` : 'pitch detection';
     case 'downloading':
       return 'download';
@@ -118,6 +124,8 @@ function JobProgress() {
   const cancel = useImport((s) => s.cancel);
   const clear = useImport((s) => s.clear);
   const failed = useImport((s) => s.failed);
+  // a failed high-accuracy run: offer the fast model while the high-accuracy one is still selected
+  const pianoModelSelected = useImport((s) => s.prefs.pianoModel === true);
   const navigate = useNavigate();
   const [touch] = useState(isTouchDevice);
   const [, force] = useState(0);
@@ -200,6 +208,11 @@ function JobProgress() {
               Try again
             </Button>
           )}
+          {err && failedHere?.retryFast && pianoModelSelected && (
+            <Button onClick={() => void failedHere.retryFast!()} icon={<RotateCcw size={15} />}>
+              Try with the normal model
+            </Button>
+          )}
           {err && failedHere?.recording && (
             <Button onClick={() => saveBlobAs(failedHere.recording!.blob, failedHere.recording!.fileName)} icon={<Download size={15} />}>
               Download recording
@@ -214,7 +227,7 @@ function JobProgress() {
   );
 }
 
-function YouTubeTab({ busy, separate }: { busy: boolean; separate: boolean }) {
+function YouTubeTab({ busy, separate, transcriber }: { busy: boolean; separate: boolean; transcriber: TranscriptionEngine }) {
   const [params] = useSearchParams();
   const [url, setUrl] = useState(() => params.get('url') ?? '');
   // Only reachable while an import was running when the tab was opened (App.tsx IsolationGate):
@@ -298,6 +311,7 @@ function YouTubeTab({ busy, separate }: { busy: boolean; separate: boolean }) {
       artist: meta?.author,
       source: { kind: 'youtube', youtubeId: id ?? undefined, url, mimeType: blob.type, fileSize: blob.size },
       separate,
+      transcriber,
     });
   };
 
@@ -379,7 +393,7 @@ function YouTubeTab({ busy, separate }: { busy: boolean; separate: boolean }) {
               <p className="mt-1.5 text-[12px] leading-relaxed text-ink-300">
                 Fastest and most reliable. Your self-hosted processing server fetches the audio. See the README to set one up.
               </p>
-              <Button className="mt-3" variant="primary" size="sm" disabled={!!serverBlock} onClick={() => void importYT(url, id, separate, { title: meta?.title, artist: meta?.author })}>
+              <Button className="mt-3" variant="primary" size="sm" disabled={!!serverBlock} onClick={() => void importYT(url, id, separate, { title: meta?.title, artist: meta?.author, transcriber })}>
                 Fetch & transcribe
               </Button>
               {serverBlock && <p className="mt-1.5 text-[11.5px] text-ink-400">{serverBlock}</p>}
@@ -472,7 +486,8 @@ function RecordTab({ busy }: { busy: boolean }) {
         const blob = new Blob(chunks.current, { type: r.mimeType || 'audio/webm' });
         // the Blob holds the data now: don't keep a second reference to every chunk
         chunks.current = [];
-        void importBlob(blob, { title: `Recording ${new Date().toLocaleString()}`, source: { kind: 'capture', mimeType: blob.type, fileSize: blob.size } });
+        // (no preset or model choice on this tab: Basic Pitch with the current preset, as always)
+        void importBlob(blob, { title: `Recording ${new Date().toLocaleString()}`, source: { kind: 'capture', mimeType: blob.type, fileSize: blob.size }, transcriber: 'basic-pitch' });
         // the import has asked for its own lock by now (importStore.ts)
         void wake.hold(false);
       };
@@ -519,6 +534,10 @@ export default function ImportPage() {
   const importFile = useImport((s) => s.importFile);
   const navigate = useNavigate();
   const sep = useSeparationChoice();
+  const model = usePianoModelChoice();
+  // the piano model is for solo piano: separation is not used with it
+  const pianoModel = model.transcriber === 'piano-specialist';
+  const separate = sep.checked && !pianoModel;
   const busy = !!job && job.stage !== 'done' && job.stage !== 'error';
 
   // jump to the studio as soon as an import started on this page finishes
@@ -535,7 +554,7 @@ export default function ImportPage() {
 
   const onFile = (f: File) => {
     if (busy) return;
-    void importFile(f, { separate: sep.checked }).then(() => {});
+    void importFile(f, { separate, transcriber: model.transcriber }).then(() => {});
     startedHere.current = (useImport.getState().job?.id ?? 0);
   };
 
@@ -552,7 +571,8 @@ export default function ImportPage() {
         <header>
           <h1 className="text-[26px] font-semibold tracking-tight text-ink-50">Import music</h1>
           <p className="mt-1 text-[14px] text-ink-300">
-            Audio is analysed on your device with Spotify’s Basic Pitch neural network. Nothing is uploaded unless you use your own processing server.
+            Audio is analysed on your device with Spotify’s Basic Pitch neural network (or, for solo piano, an optional high-accuracy piano model).
+            Nothing is uploaded unless you use your own processing server.
             The result is an AI estimate —{' '}
             <Link to="/accuracy" className="text-accent-400 hover:text-accent-300">
               see how accurate it is
@@ -585,15 +605,15 @@ export default function ImportPage() {
               <div className="flex flex-col gap-5">
                 <Dropzone onFile={onFile} />
                 <DetectionOptions />
-                <SeparationOption />
+                <SeparationOption unusedReason={pianoModel ? 'Not used with the high-accuracy piano model.' : undefined} />
                 <p className="text-[12px] text-ink-400">Up to 20 minutes / 300 MB. Longer files: trim first. Video files use their audio track.</p>
               </div>
             )}
             {tab === 'youtube' && (
               <div className="flex flex-col gap-5">
-                <YouTubeTab busy={busy} separate={sep.checked} />
+                <YouTubeTab busy={busy} separate={separate} transcriber={model.transcriber} />
                 <DetectionOptions />
-                <SeparationOption />
+                <SeparationOption unusedReason={pianoModel ? 'Not used with the high-accuracy piano model.' : undefined} />
               </div>
             )}
             {tab === 'midi' && (

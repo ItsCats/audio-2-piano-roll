@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AT_A_GLANCE, EXPECTATIONS, MAESTRO_ROWS, SONG_ROWS } from '../../src/lib/accuracyStats';
+import { AT_A_GLANCE, EXPECTATIONS, LIMITATIONS, MAESTRO_ROWS, SONG_ROWS, SPECIALIST, SPECIALIST_ROWS } from '../../src/lib/accuracyStats';
 
 const pct = (x: number) => Math.round(x * 100);
 const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
@@ -29,5 +29,23 @@ describe('Accuracy page figures', () => {
     const e = EXPECTATIONS.find((x) => x.kind === 'Virtuoso or heavily pedalled piano')!;
     expect(e.summary).toContain(`${Math.min(...piano)}–${Math.max(...piano)}% of notes right on concert performances with “Piano solo”`);
     expect(e.summary).toContain(`(${Math.min(...sensitive)}–${Math.max(...sensitive)}% with “Sensitive”)`);
+  });
+
+  it('the high-accuracy averages leave out the training-data piece and match the rows', () => {
+    const test = SPECIALIST_ROWS.filter((r) => !r.inTraining);
+    expect(test).toHaveLength(5);
+    expect(SPECIALIST_ROWS.filter((r) => r.inTraining).map((r) => r.piece)).toEqual([expect.stringContaining('Ballade')]);
+    const m = (k: 'f1' | 'f1Fast' | 'ends' | 'endsFast' | 'velR' | 'velRFast') => mean(test.map((r) => r[k]));
+    for (const k of ['f1', 'f1Fast', 'ends', 'endsFast', 'velR', 'velRFast'] as const) expect(SPECIALIST.mean[k]).toBeCloseTo(m(k), 2);
+    // the fast-model column is the "Piano solo" score of the table above
+    for (const key of ['BWV 850', 'neige', 'K. 280', 'Op. 15', 'Waldesrauschen', 'Ballade']) {
+      const a = SPECIALIST_ROWS.find((x) => x.piece.includes(key));
+      const b = MAESTRO_ROWS.find((x) => x.piece.includes(key));
+      expect(a && b, key).toBeTruthy();
+      expect(pct(a!.f1Fast)).toBe(pct(b!.f1));
+    }
+    expect(AT_A_GLANCE[0].sub).toContain(`${pct(SPECIALIST.mean.f1)}% on the 5 it was not trained on`);
+    const ends = test.map((r) => pct(r.ends));
+    expect(LIMITATIONS.find((l) => l.title.startsWith('Note lengths'))!.body).toContain(`${Math.min(...ends)}–${Math.max(...ends)}%`);
   });
 });

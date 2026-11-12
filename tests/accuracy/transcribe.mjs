@@ -21,6 +21,18 @@
  * renderer with its workers, and the peak summed PSS of the whole tree). With --separate each run
  * gets a fresh tab so the peaks are per song.
  *
+ * --presets specialist runs the high-accuracy piano model engine instead of Basic Pitch
+ * (TranscribeOptions.engine 'piano-specialist': the ByteDance piano model, ONNX in a WASM worker) and
+ * writes DIR/<basename>.specialist.json in the same format (no posteriors; `params` is null). Each
+ * specialist run gets a fresh tab (per-song memory peaks; the model file stays in the browser's HTTP
+ * cache, so only the first run downloads it — see timing.stagesMs['loading-model']). Use --coi for
+ * the desktop speed (WASM threads); one run at a time.
+ *
+ * --timeout-min N (default 30) gives up on a run after N minutes (the tab is closed, which stops its
+ * workers) and goes on with the next one.
+ *
+ * ACC_VITE_CACHE=DIR uses a private Vite dependency cache (node_modules is shared between checkouts).
+ *
  * --override '{"piano":{...}}' merges partial ExtractionParams into the app's EXTRACTION_PRESETS
  * in the page before transcribing (candidate presets through the full browser path).
  *
@@ -62,6 +74,7 @@ const separate = flag('separate');
 const override = JSON.parse(opt('override', 'null'));
 const force = flag('force');
 const coi = flag('coi');
+const timeoutMs = +opt('timeout-min', '30') * 60000;
 const songs = args;
 if (!outDir || !songs.length) {
   console.error('usage: node tests/accuracy/transcribe.mjs --out DIR [--port N] [--presets piano,mix] [--posteriors] [--separate] [--coi] [--force] files...');
@@ -89,7 +102,14 @@ const serveAudio = {
     });
   },
 };
-const server = await createServer({ root, configFile: path.join(root, 'vite.config.ts'), plugins: [serveAudio], server: { port, strictPort: true }, logLevel: 'error' });
+const server = await createServer({
+  root,
+  configFile: path.join(root, 'vite.config.ts'),
+  plugins: [serveAudio],
+  server: { port, strictPort: true },
+  logLevel: 'error',
+  ...(process.env.ACC_VITE_CACHE ? { cacheDir: path.resolve(process.env.ACC_VITE_CACHE) } : {}),
+});
 await server.listen();
 const browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
 let sampler;
@@ -210,8 +230,8 @@ try {
         console.log(`skip ${name} ${preset}`);
         continue;
       }
-      if (separate) {
-        // a fresh tab per separated run: per-song memory peaks, no heap carried over
+      if (separate || preset === 'specialist') {
+        // a fresh tab per separated / specialist run: per-song memory peaks, no heap carried over
         await page.close().catch(() => {});
         await openPage();
       }
@@ -223,18 +243,25 @@ try {
       let failed = false;
       for (let attempt = 0; ; attempt++) {
         try {
-          r = await page.evaluate(
-            ([u, p, w, s]) => window.transcribeUrl(u, p, w, s),
-            [`http://localhost:${port}/__accaudio/${i}`, preset, withPosteriors, separate],
-          );
+          let timer;
+          r = await Promise.race([
+            page.evaluate(
+              ([u, p, w, s]) => window.transcribeUrl(u, p, w, s),
+              [`http://localhost:${port}/__accaudio/${i}`, preset, withPosteriors, separate],
+            ),
+            new Promise((_, reject) => {
+              timer = setTimeout(() => reject(new Error(`timed out after ${timeoutMs / 60000} min`)), timeoutMs);
+            }),
+          ]).finally(() => clearTimeout(timer));
           break;
         } catch (err) {
-          // a dev-server dependency re-optimisation reloads the page once: retry that, nothing else
+          // a dev-server dependency re-optimisation reloads the page (up to twice with a fresh cache: the
+          // page's and then the worker's dependencies): retry that, nothing else
           const reload = /context was destroyed|navigation/i.test(err.message);
-          console.error(`${reload && attempt === 0 ? 'RETRY (page reloaded)' : 'FAILED'} ${name} ${preset}: ${err.message}`);
+          console.error(`${reload && attempt < 2 ? 'RETRY (page reloaded)' : 'FAILED'} ${name} ${preset}: ${err.message}`);
           await page.close().catch(() => {});
           await openPage();
-          if (reload && attempt === 0) {
+          if (reload && attempt < 2) {
             mem = { peakProcRssMB: 0, peakTreeRssMB: 0, peakTreePssMB: 0, samples: 0 };
             continue;
           }
@@ -256,7 +283,7 @@ try {
       r.host = { cpus: os.cpus().length, loadavg1Before: +loadBefore.toFixed(2), loadavg1After: +os.loadavg()[0].toFixed(2) };
       fs.writeFileSync(out, JSON.stringify(r));
       console.log(
-        `${name.padEnd(24)} ${preset.padEnd(9)} ${r.base.length} notes (E ${r.easy.length} / M ${r.medium.length}) ` +
+        `${name.padEnd(24)} ${preset.padEnd(10)} ${r.base.length} notes (E ${r.easy.length} / M ${r.medium.length}) ` +
           `${(r.timing.transcribeMs / 1000).toFixed(1)}s for ${r.duration.toFixed(0)}s audio, ${r.info.backend}, ${r.tempo.bpm.toFixed(1)} BPM, ${r.key?.name}, ` +
           `peak ${r.memory.peakProcRssMB} MB (tab), ${r.memory.peakTreePssMB} MB PSS (all)`,
       );

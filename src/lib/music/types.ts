@@ -102,7 +102,8 @@ export interface ExtractionParams {
 }
 
 export interface TranscriptionInfo {
-  method: 'basic-pitch' | 'midi-file' | 'demo';
+  /** 'piano-specialist': the high-accuracy solo-piano model (Kong et al. 2021, lib/pianoSpecialist). */
+  method: 'basic-pitch' | 'piano-specialist' | 'midi-file' | 'demo';
   /** True whenever the notes were inferred from audio (always an estimate). */
   estimated: boolean;
   /**

@@ -1,5 +1,5 @@
 {
- "_doc": "Per-song evaluation config for tests/accuracy/evaluate.py. Keys are audio basenames (without extension). Audio files are passed on the command line and never stored in the repo. 'suggested' is the preset the UI would suggest; 'presets' are all presets run. noteRef: 'exact' (sibling .midi = exact performance MIDI), 'snapped' (refs/snapped/<id>.json: score aligned + snapped to a strong piano transcriber), 'aligned' (refs/aligned/<id>.json: score DTW-aligned only), or null. vocalRef/bassRef: use refs/vocal/<id>.<stem>.f0.npz. stems: refs from stems/<id>/ (drums onsets).",
+ "_doc": "Per-song evaluation config for tests/accuracy/evaluate.py. Keys are audio basenames (without extension). Audio files are passed on the command line and never stored in the repo. 'suggested' is the preset the UI would suggest; 'presets' are all presets run. noteRef: 'exact' (sibling .midi = exact performance MIDI), 'snapped' (refs/snapped/<id>.json: score aligned + snapped to a strong piano transcriber), 'aligned' (refs/aligned/<id>.json: score DTW-aligned only), or null. vocalRef/bassRef: use refs/vocal/<id>.<stem>.f0.npz. stems: refs from stems/<id>/ (drums onsets). Preset 'specialist' = the \"Solo piano – high accuracy\" engine (ByteDance piano model; transcribe.mjs --presets specialist). maestroSplit: the piece's MAESTRO v2.0.0/v3.0.0 split (the specialist model was trained on the v2.0.0 train split, so 'train' pieces flatter it).",
  "songs": {
   "vocal-1": {
    "kind": "vocal",
@@ -72,6 +72,7 @@
    "presets": [
     "piano",
     "sensitive",
+    "specialist",
     "mix"
    ],
    "ptiRef": true,
@@ -83,6 +84,7 @@
    "presets": [
     "piano",
     "sensitive",
+    "specialist",
     "mix"
    ],
    "ptiRef": true
@@ -93,6 +95,7 @@
    "presets": [
     "piano",
     "sensitive",
+    "specialist",
     "mix"
    ],
    "noteRef": "snapped",
@@ -104,6 +107,7 @@
    "presets": [
     "piano",
     "sensitive",
+    "specialist",
     "mix"
    ],
    "noteRef": "snapped",
@@ -115,6 +119,7 @@
    "presets": [
     "piano",
     "sensitive",
+    "specialist",
     "mix"
    ],
    "noteRef": "snapped",
@@ -126,10 +131,12 @@
    "presets": [
     "piano",
     "sensitive",
+    "specialist",
     "mix"
    ],
    "noteRef": "exact",
-   "ptiRef": true
+   "ptiRef": true,
+   "maestroSplit": "test"
   },
   "m-chopin-noct15-1": {
    "kind": "piano-maestro",
@@ -137,10 +144,12 @@
    "presets": [
     "piano",
     "sensitive",
+    "specialist",
     "mix"
    ],
    "noteRef": "exact",
-   "ptiRef": true
+   "ptiRef": true,
+   "maestroSplit": "test"
   },
   "m-bach-bwv850": {
    "kind": "piano-maestro",
@@ -148,10 +157,12 @@
    "presets": [
     "piano",
     "sensitive",
+    "specialist",
     "mix"
    ],
    "noteRef": "exact",
-   "ptiRef": true
+   "ptiRef": true,
+   "maestroSplit": "test"
   },
   "m-mozart-k280-1": {
    "kind": "piano-maestro",
@@ -159,10 +170,12 @@
    "presets": [
     "piano",
     "sensitive",
+    "specialist",
     "mix"
    ],
    "noteRef": "exact",
-   "ptiRef": true
+   "ptiRef": true,
+   "maestroSplit": "test"
   },
   "m-liszt-waldesrauschen": {
    "kind": "piano-maestro",
@@ -170,10 +183,12 @@
    "presets": [
     "piano",
     "sensitive",
+    "specialist",
     "mix"
    ],
    "noteRef": "exact",
-   "ptiRef": true
+   "ptiRef": true,
+   "maestroSplit": "test"
   },
   "m-chopin-ballade1": {
    "kind": "piano-maestro",
@@ -181,11 +196,13 @@
    "presets": [
     "piano",
     "sensitive",
+    "specialist",
     "mix"
    ],
    "noteRef": "exact",
    "ptiRef": true,
-   "note": "MAESTRO train split (the PTI reference model was trained on it); same piece as chopin-ballade-1"
+   "note": "MAESTRO train split (the PTI reference model was trained on it); same piece as chopin-ballade-1",
+   "maestroSplit": "train"
   }
  }
 }
