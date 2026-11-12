@@ -197,6 +197,10 @@ export async function saveAudio(id: string, blob: Blob, name: string): Promise<v
 export async function getAudio(id: string): Promise<Blob | undefined> {
   return (await (await db()).get('audio', id))?.blob;
 }
+/** Whether the song's original recording is still stored (without reading it). */
+export async function hasStoredAudio(id: string): Promise<boolean> {
+  return (await (await db()).getKey('audio', id)) !== undefined;
+}
 export async function savePosteriors(id: string, p: StoredPosteriors): Promise<void> {
   await (await db()).put('posteriors', p, id);
 }

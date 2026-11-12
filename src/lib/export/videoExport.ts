@@ -10,10 +10,14 @@
  *   3. The muxed file is streamed to the Origin Private File System when available, so
  *      long exports don't have to fit in RAM.
  *
- * Fallback (no WebCodecs): real-time capture with MediaRecorder (WebM).
+ * Optional original recording (songs imported from audio): decoded once at 48 kHz and added
+ * sample by sample at the song time the picture shows (src/lib/export/originalMix.ts). Only at
+ * 100 % speed; it is dropped before the video frames are drawn.
  *
  * Optional title page / end card (src/lib/render/titleCard/exportHooks.ts): the roll export is
  * unchanged; the cards wrap its audio and video tracks (everything moves by the title's length).
+ *
+ * Fallback (no WebCodecs): real-time capture with MediaRecorder (WebM), piano only.
  */
 import {
   ALL_FORMATS,
@@ -40,12 +44,29 @@ import { PianoRollRenderer } from '../render/renderer';
 import { renderOfflineChunks } from '../audio/offlineRender';
 import { PianoEngine } from '../audio/pianoEngine';
 import { buildEvents } from '../audio/events';
-import { getMedia } from '../storage/db';
-import { outputSize, type ExportSettings } from './types';
+import { getAudio, getMedia } from '../storage/db';
+import { decodeToRate } from '../transcription/decode';
+import { isMemoryConstrained, pageDeviceInfo } from '../transcription/backendChoice';
+import { outputSize, type ExportSettings, type ExportSound } from './types';
 import { prepareTitleCards, type TitleCardJob } from '../render/titleCard/exportHooks';
+import {
+  EXPORT_SAMPLE_RATE,
+  effectiveRate,
+  effectiveSound,
+  exportTimeline,
+  fadeGain,
+  mixOriginal,
+  neededSpan,
+  originalGain,
+  shouldDownmix,
+  softClipInPlace,
+  trimOriginal,
+  type ExportTimeline,
+  type OriginalSource,
+} from './originalMix';
 
 export interface ExportProgress {
-  phase: 'preparing' | 'audio' | 'video' | 'finalizing';
+  phase: 'preparing' | 'original' | 'audio' | 'video' | 'finalizing';
   fraction: number; // overall 0..1
   framesDone?: number;
   framesTotal?: number;
@@ -63,6 +84,8 @@ export interface ExportResult {
   height: number;
   duration: number;
   method: 'webcodecs' | 'mediarecorder';
+  /** what the sound track holds */
+  sound: ExportSound;
 }
 
 export interface ExportJob {
@@ -76,6 +99,39 @@ export interface ExportJob {
   titleCard?: TitleCardJob;
   signal?: AbortSignal;
   onProgress?: (p: ExportProgress) => void;
+  /** loads the song's original recording (default: from storage); a test hook */
+  loadOriginal?: () => Promise<Blob | undefined>;
+}
+
+/** What the exported sound track holds for this job (piano only without WebCodecs or a recording). */
+export function jobSound(job: Pick<ExportJob, 'song' | 'settings'>) {
+  return effectiveSound(job.settings, { hasOriginal: !!job.song.hasAudio, webCodecs: webCodecsAvailable() });
+}
+
+export const NO_ORIGINAL_MESSAGE = 'The original recording for this song is no longer saved. Choose “Piano” to export without it.';
+export const ORIGINAL_DECODE_MESSAGE = 'Couldn’t load the original song on this device. Choose “Piano” to export without it.';
+
+/** Decodes the original recording at the export rate and keeps only the part this export can hear. */
+async function loadOriginalSource(job: ExportJob, range: { start: number; end: number }, tl: ExportTimeline): Promise<OriginalSource> {
+  let blob: Blob | undefined;
+  try {
+    blob = await (job.loadOriginal ?? (() => getAudio(job.song.id)))();
+  } catch {
+    blob = undefined;
+  }
+  if (!blob) throw new Error(NO_ORIGINAL_MESSAGE);
+  let buffer: AudioBuffer | null;
+  try {
+    buffer = await decodeToRate(blob, tl.sr);
+  } catch (e) {
+    throw new Error(ORIGINAL_DECODE_MESSAGE, { cause: e });
+  }
+  blob = undefined;
+  const device = pageDeviceInfo();
+  const mono = shouldDownmix(buffer.duration, buffer.numberOfChannels, !!device && isMemoryConstrained(device));
+  const src = trimOriginal(buffer, neededSpan(range, tl.lead, tl.tail, tl.rate), { mono });
+  buffer = null; // the trimmed copy is all we keep
+  return src;
 }
 
 export function webCodecsAvailable(): boolean {
@@ -247,17 +303,26 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
   const { width, height } = outputSize(s);
   const fps = s.fps;
   const range = exportRange(job);
-  const rate = s.rate;
-  const lead = Math.max(0, s.leadIn);
-  const tail = Math.max(1.5, s.fadeOut);
-  const musicDur = (range.end - range.start) / rate;
-  const duration = lead + musicDur + tail;
+  const sound = jobSound(job);
+  const rate = effectiveRate(s, sound);
+  const sr = EXPORT_SAMPLE_RATE;
+  const tl = exportTimeline(s, range, rate, sr);
+  const { lead, tail, duration } = tl;
   const totalFrames = Math.ceil(duration * fps);
   const bitrate = bitrateFor(width, height, fps, s.quality);
 
   const { videoCodec, audioCodec } = await pickCodecs(s.format, width, height, bitrate);
   if (!videoCodec) throw new Error(`This browser cannot encode ${s.format.toUpperCase()} video at ${width}×${height}. Try WebM or a lower resolution.`);
   if (!audioCodec) throw new Error('This browser cannot encode audio for this format. Try WebM.');
+
+  // the original recording is decoded before the output file exists, so a failure leaves nothing behind
+  let orig: OriginalSource | null = null;
+  if (sound !== 'piano') {
+    progress({ phase: 'original', fraction: 0.005 });
+    orig = await loadOriginalSource(job, range, tl);
+    if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
+  }
+  const origGain = originalGain(s, job.audio.originalVolume);
 
   const ext = s.format;
   const mime = s.format === 'mp4' ? 'video/mp4' : 'video/webm';
@@ -296,44 +361,58 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
     decal = await loadDecalBitmap(visual);
     applyDecal(renderer, decal);
     // ---------- audio ----------
-    const sr = 48000;
     const audioWeight = 0.18;
-    // lead-in silence
-    if (lead > 0) {
-      const frames = Math.round(lead * sr);
-      const data = new Float32Array(frames * 2);
-      const silence = new AudioSample({ data, format: 'f32-planar', numberOfChannels: 2, sampleRate: sr, timestamp: 0 });
-      await audioSource.add(silence);
-      silence.close();
+    // planar stereo block at output frame `outFrame0`, with the original mixed in when used
+    const addBlock = async (data: Float32Array, n: number, outFrame0: number, timestamp: number) => {
+      if (orig) {
+        const chans = [data.subarray(0, n), data.subarray(n, 2 * n)];
+        mixOriginal(chans, outFrame0, n, orig, tl, origGain);
+        for (const c of chans) softClipInPlace(c);
+      }
+      const sample = new AudioSample({ data, format: 'f32-planar', numberOfChannels: 2, sampleRate: sr, timestamp });
+      await audioSource.add(sample);
+      sample.close();
+    };
+    // lead-in: silence, or the original from before range.start
+    if (lead > 0) await addBlock(new Float32Array(tl.leadFrames * 2), tl.leadFrames, 0, 0);
+    if (sound === 'original') {
+      // no piano: the same 45 s pieces, holding only the original
+      const chunk = 45 * sr;
+      for (let f0 = 0; f0 < tl.bodyFrames; f0 += chunk) {
+        if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
+        const n = Math.min(chunk, tl.bodyFrames - f0);
+        await addBlock(new Float32Array(n * 2), n, tl.leadFrames + f0, lead + f0 / sr);
+        progress({ phase: 'audio', fraction: ((f0 + n) / tl.bodyFrames) * audioWeight });
+      }
+    } else {
+      await renderOfflineChunks(
+        {
+          notes: arr.notes,
+          pedal: arr.pedal,
+          settings: job.audio,
+          start: range.start,
+          end: range.end,
+          rate,
+          sampleRate: sr,
+          volume: s.volume,
+          fadeIn: s.fadeIn,
+          fadeOut: s.fadeOut,
+          tail,
+          chunkSeconds: 45,
+          signal,
+          onProgress: (f) => progress({ phase: 'audio', fraction: f * audioWeight }),
+        },
+        async (buf, from, to, offset) => {
+          const n = to - from;
+          const data = new Float32Array(n * 2);
+          data.set(buf.getChannelData(0).subarray(from, to), 0);
+          data.set(buf.getChannelData(1).subarray(from, to), n);
+          await addBlock(data, n, tl.leadFrames + Math.round(offset * sr), lead + offset);
+        },
+      );
     }
-    await renderOfflineChunks(
-      {
-        notes: arr.notes,
-        pedal: arr.pedal,
-        settings: job.audio,
-        start: range.start,
-        end: range.end,
-        rate,
-        sampleRate: sr,
-        volume: s.volume,
-        fadeIn: s.fadeIn,
-        fadeOut: s.fadeOut,
-        tail,
-        chunkSeconds: 45,
-        signal,
-        onProgress: (f) => progress({ phase: 'audio', fraction: f * audioWeight }),
-      },
-      async (buf, from, to, offset) => {
-        const n = to - from;
-        const data = new Float32Array(n * 2);
-        data.set(buf.getChannelData(0).subarray(from, to), 0);
-        data.set(buf.getChannelData(1).subarray(from, to), n);
-        const sample = new AudioSample({ data, format: 'f32-planar', numberOfChannels: 2, sampleRate: sr, timestamp: lead + offset });
-        await audioSource.add(sample);
-        sample.close();
-      },
-    );
     audioSource.close();
+    orig = null; // free the decoded recording before any frame is drawn
 
     // ---------- video ----------
     const songTimeAt = (o: number) => range.start + (o - lead) * rate;
@@ -347,10 +426,10 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
       if (bg.kind) renderer.setBackgroundMedia(await bg.frameAt(o), bg.kind);
       renderer.render({ time: songTimeAt(o) });
       // fade the picture in/out with the audio
-      const fade = Math.min(1, picFadeIn > 0 ? o / picFadeIn : 1, s.fadeOut > 0 ? (duration - o) / s.fadeOut : 1);
+      const fade = fadeGain(o, duration, picFadeIn, s.fadeOut);
       if (fade < 1) {
         const ctx = canvas.getContext('2d')!;
-        ctx.fillStyle = `rgba(0,0,0,${1 - Math.max(0, fade)})`;
+        ctx.fillStyle = `rgba(0,0,0,${1 - fade})`;
         ctx.fillRect(0, 0, width, height);
       }
       await videoSource.add(o, 1 / fps);
@@ -373,12 +452,13 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
     await output.finalize();
     const blob = await getBlob(mime);
     progress({ phase: 'finalizing', fraction: 1 });
-    return { blob, mime, extension: ext, videoCodec, audioCodec, width, height, duration: cards ? cards.total : duration, method: 'webcodecs' };
+    return { blob, mime, extension: ext, videoCodec, audioCodec, width, height, duration: cards ? cards.total : duration, method: 'webcodecs', sound };
   } catch (err) {
     await output.cancel().catch(() => {});
     await cleanup();
     throw err;
   } finally {
+    orig = null;
     bg?.dispose();
     renderer.setDecalImage(null);
     decal?.close();
@@ -493,6 +573,7 @@ async function exportWithMediaRecorder(job: ExportJob): Promise<ExportResult> {
       height,
       duration: total,
       method: 'mediarecorder',
+      sound: 'piano',
     };
   } finally {
     stream?.getTracks().forEach((t) => t.stop());

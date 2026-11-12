@@ -6,6 +6,7 @@ import { useSettings } from '../../state/settingsStore';
 import { currentArrangement, useStudio } from '../../state/studioStore';
 import { formatTime } from '../../lib/music/theory';
 import { IconButton, cn } from '../ui';
+import { seekStepSeconds } from '../../state/studioKeys';
 
 const SPEEDS = [0.25, 0.5, 0.6, 0.75, 0.85, 1, 1.15, 1.25, 1.5, 2];
 
@@ -67,7 +68,12 @@ export function Transport() {
       const f = duration ? Math.min(1, time / duration) : 0;
       if (headRef.current) headRef.current.style.left = `${f * 100}%`;
       if (fillRef.current) fillRef.current.style.width = `${f * 100}%`;
-      if (timeRef.current) timeRef.current.textContent = formatTime(time);
+      const text = formatTime(time);
+      if (timeRef.current && timeRef.current.textContent !== text) {
+        timeRef.current.textContent = text;
+        barRef.current?.setAttribute('aria-valuenow', String(Math.round(time)));
+        barRef.current?.setAttribute('aria-valuetext', text);
+      }
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
@@ -139,10 +145,15 @@ export function Transport() {
           aria-label="Song position (shift-drag to set a loop)"
           aria-valuemin={0}
           aria-valuemax={Math.round(duration)}
+          aria-valuenow={0}
           tabIndex={0}
           onKeyDown={(e) => {
-            if (e.key === 'ArrowRight') player.seek(player.getTime() + 5);
-            if (e.key === 'ArrowLeft') player.seek(player.getTime() - 5);
+            if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+            // handled here only: stop the page-wide shortcut from seeking a second time
+            e.preventDefault();
+            e.stopPropagation();
+            const step = seekStepSeconds(e.shiftKey);
+            player.seek(player.getTime() + (e.key === 'ArrowRight' ? step : -step));
           }}
         >
           <Minimap duration={duration || 1} />
