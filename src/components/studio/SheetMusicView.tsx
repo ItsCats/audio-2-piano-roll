@@ -258,6 +258,9 @@ export function SheetMusicView() {
             {song.artist && <p className="mt-1 font-serif text-[14px] break-words text-neutral-700">{song.artist}</p>}
             <p className="mt-1 text-[11.5px] text-neutral-500 capitalize">{difficulty}</p>
             {song.transcription.estimated && <p className="mt-1 text-[11.5px] text-neutral-500">Written out automatically — may contain mistakes.</p>}
+            {!song.transcription.estimated && song.tempo.source === 'midi' && score?.time.source === 'estimated' && (
+              <p className="mt-1 text-[11.5px] text-neutral-500">The bar lines were guessed from how it was played.</p>
+            )}
           </div>
           {empty ? (
             <p className="py-16 text-center text-[14px] text-neutral-500">No notes to show yet.</p>

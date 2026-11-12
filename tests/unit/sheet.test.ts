@@ -1,7 +1,7 @@
 /** Sheet music: grid, quantization, voices, rhythm spelling, beams, pitch spelling, clefs, MusicXML. */
 import { describe, expect, it } from 'vitest';
 import type { Note, TempoInfo } from '../../src/lib/music/types';
-import { buildGrid } from '../../src/lib/sheet/grid';
+import { buildGrid, gridFit, sheetTempo } from '../../src/lib/sheet/grid';
 import { quantize, type RawNote } from '../../src/lib/sheet/quantize';
 import { assignVoices, trimLegato, type VoiceContext } from '../../src/lib/sheet/voices';
 import { beams, decompose, type RhythmContext } from '../../src/lib/sheet/rhythm';
@@ -99,6 +99,38 @@ describe('sheet grid', () => {
 });
 
 const raw = (midi: number, onQ: number, offQ: number, staff: 1 | 2 = 1): RawNote => ({ midi, on: onQ * DIV, off: offQ * DIV, staff });
+
+describe('sheet tempo for MIDI files', () => {
+  // a 4/4 piece at 84 BPM played freely, saved with a default 120 BPM header (like MAESTRO)
+  const r = rng(21);
+  const played: Note[] = [];
+  let t = 0.3;
+  for (let i = 0; i < 160; i++) {
+    const beat = (60 / 84) * (1 + 0.08 * Math.sin(i / 9));
+    played.push(note(60 + (i % 7), t, beat * 0.45));
+    if (i % 2 === 0) played.push(note(i % 8 === 0 ? 40 : 47, t, beat * 0.9, 'L'));
+    t += beat / 2 + (r() - 0.5) * 0.02;
+  }
+  it('tracks the beats of a performance whose MIDI tempo is a constant default', () => {
+    const header = tempo(120);
+    expect(gridFit(header, played.map((n) => n.start))).toBeLessThan(0.6);
+    const st = sheetTempo(header, played, t + 1);
+    expect(st.source).toBe('estimated');
+    expect(Math.abs(st.bpm - 84) / 84).toBeLessThan(0.12);
+  });
+  it('keeps the tempo map of a written-out MIDI file', () => {
+    const written = Array.from({ length: 64 }, (_, i) => note(60 + (i % 5), i * 0.25, 0.2));
+    const header = tempo(120);
+    expect(gridFit(header, written.map((n) => n.start))).toBe(1);
+    expect(sheetTempo(header, written, 20)).toBe(header);
+    // tempo changes in the file: kept even when the notes don't follow it
+    const changing = tempo(120, { beats: [...regularBeats(120, 0, 5), ...regularBeats(90, 5.5, 30)] });
+    expect(sheetTempo(changing, played, t + 1)).toBe(changing);
+    // audio transcriptions are never touched here
+    const est = tempo(84, { source: 'estimated' });
+    expect(sheetTempo(est, played, t + 1)).toBe(est);
+  });
+});
 
 describe('sheet quantization', () => {
   it('puts Easy on 8ths', () => {
