@@ -539,6 +539,13 @@ export function easyBassLine(left: Note[], tempo: TempoInfo, duration: number, o
   return out;
 }
 
+/** Notes cut at `duration` (s); notes starting at or after it are dropped. */
+export function clampToDuration(notes: Note[], duration: number): Note[] {
+  return notes
+    .filter((n) => n.start < duration)
+    .map((n) => (n.start + n.dur > duration ? { ...n, dur: Math.max(0.03, duration - n.start) } : n));
+}
+
 export function generateArrangement(
   difficulty: Difficulty,
   base: Note[],
@@ -547,8 +554,10 @@ export function generateArrangement(
   duration: number,
   opts: ArrangementOptions = {},
 ): Arrangement {
-  const notes =
+  const generated =
     difficulty === 'hard' ? generateHard(base, opts) : difficulty === 'medium' ? generateMedium(base, tempo) : generateEasy(base, tempo, duration);
+  // no note sounds past the end of the audio (Easy's bass slots and minimum lengths could reach past it)
+  const notes = duration > 0 ? clampToDuration(generated, duration) : generated;
   return {
     notes,
     pedal: difficulty === 'easy' ? [] : basePedal.map((p) => ({ ...p })),

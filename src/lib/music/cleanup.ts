@@ -255,6 +255,60 @@ export function suppressHarmonics(notes: Note[], amplitude: Map<number, number>)
   return notes.filter((n) => !removed.has(n.id));
 }
 
+/**
+ * Ghost notes in near-silence. Basic Pitch level-normalises each 2 s model window internally, so
+ * a window that holds only a reverb tail, a fade or a separated stem's noise floor is scaled up to
+ * full range and the model "hears" notes in it: at the end of a song they start exactly on window
+ * boundaries (k x 1.640 s) while the audio only keeps decaying (band-instrumental-1: C3+C6 at
+ * -46 dB and C4+C6 at -75 dB after the final cut; with separation 10 notes over 6.9 s, a low F
+ * held through digital silence). Velocity cannot catch them: it has a level-independent floor.
+ *
+ * A note is dropped when its onset loudness (the RMS envelope around its start, as for its
+ * velocity) is more than `quietDb` below the song's loudness reference (95th percentile of the
+ * envelope), or more than `flatDb` below it with no level rise at the onset (max over the next
+ * `riseAfter` envelope frames / min over the `riseBefore` frames before < `minRise`: a real
+ * soft entry still raises the level a little; a re-normalised tail does not).
+ *
+ * Measured offline on the round-2 transcriptions (MAESTRO 6 pieces x 2 presets, solo piano
+ * recordings, band songs): every removed MAESTRO note was a false positive (note F1 equal or
+ * +0.0001..0.0005); no MAESTRO reference note starts below -35 dB. It also removes the
+ * end-of-file ghosts of vocal-2, vocal-5, chopin-ballade-1, piano-jazz-1 and heroic. Questionable
+ * removals: a few notes in vocal-1's final fade-out (-32..-52 dB). A plain -40 dB gate misses the
+ * -36 dB ghost pair at 170.57 s of band-instrumental-1.
+ */
+export interface TailGateRule {
+  enabled: boolean;
+  quietDb: number;
+  flatDb: number;
+  minRise: number;
+  /** envelope frames (100 fps) after / before the onset for the rise test */
+  riseAfter: number;
+  riseBefore: number;
+}
+
+export const TAIL_GATE: TailGateRule = { enabled: true, quietDb: -35, flatDb: -30, minRise: 1.1, riseAfter: 6, riseBefore: 8 };
+
+/** Onset loudness (dB re `ref`) and level rise of a note starting at `start` s, from a 100 fps RMS envelope. */
+export function onsetLevel(rms: ArrayLike<number>, ref: number, start: number, rule: TailGateRule = TAIL_GATE): { db: number; rise: number } {
+  const n = rms.length;
+  if (!n || !(ref > 0)) return { db: 0, rise: Infinity };
+  const ri = Math.min(n - 1, Math.round(start * 100) + 3);
+  let loud = 0;
+  for (let i = Math.max(0, ri - 3); i <= Math.min(n - 1, ri + 3); i++) loud = Math.max(loud, rms[i]);
+  const a = Math.min(n - 1, Math.max(0, Math.round(start * 100)));
+  let pre = Infinity;
+  for (let i = Math.max(0, a - rule.riseBefore); i <= a - 2; i++) pre = Math.min(pre, rms[i]);
+  if (!Number.isFinite(pre)) pre = 0;
+  let post = 0;
+  for (let i = a; i < Math.min(n, a + rule.riseAfter); i++) post = Math.max(post, rms[i]);
+  return { db: 20 * Math.log10(Math.max(loud, 1e-12) / ref), rise: post / Math.max(pre, 1e-12) };
+}
+
+/** Whether a note at this onset level is a ghost in near-silence (TailGateRule). */
+export function isTailGhost(level: { db: number; rise: number }, rule: TailGateRule = TAIL_GATE): boolean {
+  return level.db < rule.quietDb || (level.db < rule.flatDb && level.rise < rule.minRise);
+}
+
 export function removeShortQuiet(notes: Note[], minDur = 0.045, minVel = 0.12): Note[] {
   return notes.filter((n) => n.dur >= minDur && n.vel >= minVel);
 }

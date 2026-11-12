@@ -23,7 +23,7 @@ import { BP_FPS, BP_MIDI_OFFSET, BP_N_PITCHES, BP_SAMPLE_RATE, frameToTime, time
 import type { NoteExtractionOptions, RawNoteEvent } from './noteExtraction';
 import type { TranscriptionStage, WorkerRequest, WorkerResponse } from './workerProtocol';
 import { analyzeLevel, decodeToRate, mixToMono } from './decode';
-import { DRUM_HIT_RULE, RESTRIKE, mergeContinuations, mergeFragments, newNoteId, removeShortQuiet, sortNotes, suppressDrumHits, suppressHarmonics } from '../music/cleanup';
+import { DRUM_HIT_RULE, RESTRIKE, TAIL_GATE, isTailGhost, mergeContinuations, mergeFragments, newNoteId, onsetLevel, removeShortQuiet, sortNotes, suppressDrumHits, suppressHarmonics } from '../music/cleanup';
 import { assignHands } from '../music/hands';
 import { estimateTempo } from '../music/beats';
 import { detectKey } from '../music/theory';
@@ -396,8 +396,11 @@ export function cleanNotes(raw: RawNoteEvent[], rms: Float32Array, params: Extra
       ...(ctx.frames && ctx.nFrames ? noteActivation(ctx.frames, ctx.nFrames, n) : {}),
     }));
   }
+  // ghosts in near-silence (reverb tails, fades, a stem's noise floor; music/cleanup.ts TAIL_GATE)
+  if (TAIL_GATE.enabled && params.tailGate !== false && sortedRms.length) notes = notes.filter((n) => !isTailGhost(onsetLevel(rms, ref, n.start)));
   notes = removeShortQuiet(notes, Math.min(0.045, params.minNoteMs / 1000), 0.1);
-  notes = notes.filter((n) => n.start < duration);
+  // nothing sounds past the end of the audio
+  notes = notes.filter((n) => n.start < duration).map((n) => (n.start + n.dur > duration ? { ...n, dur: Math.max(0.03, duration - n.start) } : n));
   return sortNotes(notes);
 }
 
