@@ -6,7 +6,8 @@
  *   → tempo/beat tracking → key detection.
  *
  * With separation the accompaniment stem (bass + other: no drums, no vocals) is transcribed with
- * the user's detection parameters. The drums stem is reduced to an onset envelope
+ * the user's detection parameters; when the vocal stem holds no singing it is added back in
+ * (addVocalsInto: the mix minus the drums). The drums stem is reduced to an onset envelope
  * (separation/dsp.ts) that is stored with the posteriors for a drum-hit false-note filter
  * (music/cleanup.ts suppressDrumHits; measured, currently off: see DrumHitRule).
  * When the vocal stem actually contains singing, the vocal stem is transcribed with
@@ -411,6 +412,20 @@ export function melodyFromRaw(raw: RawNoteEvent[], rms: Float32Array, duration: 
 
 const aborted = () => new DOMException('Transcription cancelled', 'AbortError');
 
+/**
+ * Separation without singing (vocalPresence false: an instrumental, or a song whose vocals fail the
+ * gate): the vocal stem is added back into the accompaniment before transcription, so the model
+ * hears the mix minus the drums. SCNet has 4 stems; a lead instrument that is not bass or "other"
+ * leaks into "vocals": in band-instrumental-1 the vocal stem holds 35-62 % of the closing lead's
+ * energy (the held climax notes, MIDI 84-86, 165-170.7 s) and 14-41 % of the phrase at 143-148 s,
+ * none in the rest of the song; on the accompaniment alone the final notes' posteriors fell to
+ * 0.24-0.30 (0.44-0.63 on the mix). All 5 sung test songs pass the gate and are unchanged.
+ */
+export function addVocalsInto(accomp: Float32Array, vocals: Float32Array): void {
+  const n = Math.min(accomp.length, vocals.length);
+  for (let i = 0; i < n; i++) accomp[i] += vocals[i];
+}
+
 /** Peak-normalise in place so detection thresholds behave the same for quiet and loud input. */
 function normalise(audio: Float32Array): void {
   const level = analyzeLevel(audio);
@@ -523,6 +538,8 @@ async function transcribeAudioOnce(
   if (sep) {
     audio = sep.accomp;
     if (sep.sampleRate !== BP_SAMPLE_RATE) throw new Error(`Separated stems have an unexpected sample rate (${sep.sampleRate} Hz).`);
+    // no singing: the vocal stem holds lead-instrument leakage, so it goes back into what is transcribed
+    if (!withVocals) addVocalsInto(audio, sep.vocals);
   }
   normalise(audio);
 
@@ -563,7 +580,18 @@ async function transcribeAudioOnce(
       params,
       backend: result.backend,
       processingMs: Math.round(performance.now() - t0),
-      ...(sep ? { separated: true, separation: { engine: sep.engine, vocals: melody.length > 0, ms: Math.round(sep.ms), ...(sep.threads ? { threads: sep.threads } : {}) } } : {}),
+      ...(sep
+        ? {
+            separated: true,
+            separation: {
+              engine: sep.engine,
+              vocals: melody.length > 0,
+              ...(withVocals ? {} : { vocalsInAccomp: true }),
+              ms: Math.round(sep.ms),
+              ...(sep.threads ? { threads: sep.threads } : {}),
+            },
+          }
+        : {}),
       warnings,
       confidence: Math.round(meanConf * 100) / 100,
     },

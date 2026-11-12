@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { TAIL_GATE, isTailGhost, onsetLevel } from '../../src/lib/music/cleanup';
 import { clampToDuration, generateAllArrangements } from '../../src/lib/music/difficulty';
-import { EXTRACTION_PRESETS, cleanNotes } from '../../src/lib/transcription/pipeline';
+import { EXTRACTION_PRESETS, addVocalsInto, cleanNotes } from '../../src/lib/transcription/pipeline';
 import { timeToFrame } from '../../src/lib/transcription/constants';
 import type { RawNoteEvent } from '../../src/lib/transcription/noteExtraction';
 import type { Note, TempoInfo } from '../../src/lib/music/types';
@@ -56,3 +56,12 @@ describe('tail gate (ghost notes in near-silence)', () => {
     for (const lv of ['easy', 'medium', 'hard'] as const) for (const n of arr[lv].notes) expect(n.start + n.dur).toBeLessThanOrEqual(4 + 1e-9);
   });
 });
+
+describe('vocal stem added back without singing', () => {
+  it('sums the stems in place over their common length', () => {
+    const a = new Float32Array([0.1, 0.2, 0.3]);
+    addVocalsInto(a, new Float32Array([0.5, 0.5]));
+    expect(Array.from(a).map((x) => +x.toFixed(6))).toEqual([0.6, 0.7, 0.3]);
+  });
+});
+
