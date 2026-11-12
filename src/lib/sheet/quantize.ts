@@ -71,7 +71,7 @@ export function quantize(raw: RawNote[], rules: SheetLevelRules): Quantized {
   let notes: QNote[] = raw.map((r) => {
     const on = Math.max(0, snap(r.on));
     const k = Math.floor(on / DIV);
-    const step = Math.max(rules.minDur, DIV / (gridOf.get(k) ?? emptyGrid));
+    const step = Math.max(rules.minDur, Math.min(rules.maxStep ?? Infinity, DIV / (gridOf.get(k) ?? emptyGrid)));
     const off = Math.max(on + step, snap(r.off));
     return { midi: r.midi, on, off, staff: r.staff };
   });

@@ -385,6 +385,22 @@ describe('sheet spelling', () => {
   });
 });
 
+describe('sheet compound meters', () => {
+  it('6/8: a dotted quarter + dotted-quarter rest, and a lone 8th stays an 8th', () => {
+    const e = 0.25; // an 8th at 240 eighths per minute
+    const notes = [0, 1].flatMap((b) => [note(72, b * 6 * e, 3 * e * 0.9), note(48, b * 6 * e, e * 0.9, 'L')]);
+    const tokens = (level: 'easy' | 'medium' | 'hard') => {
+      const s = buildScore({ notes, tempo: tempo(240, { beatsPerBar: 6, beatUnit: 8 }), duration: 4, level });
+      const m1 = toMusicXml(s, { title: 't' }).match(/<measure number="1"[\s\S]*?<\/measure>/)![0];
+      return [...m1.matchAll(/<note>([\s\S]*?)<\/note>/g)].map(
+        ([, b]) => (b.includes('<rest') ? 'r' : 'n') + /<type>(\w+)/.exec(b)![1] + (b.includes('<dot/>') ? '.' : '') + (b.includes('<tie type="start"') ? '~' : '') + b.match(/<staff>(\d)/)![1],
+      );
+    };
+    expect(tokens('easy')).toEqual(['nquarter.1', 'rquarter.1', 'nquarter.2', 'rquarter.2']);
+    for (const level of ['medium', 'hard'] as const) expect(tokens(level)).toEqual(['nquarter.1', 'rquarter.1', 'neighth2', 'rquarter2', 'rquarter.2']);
+  });
+});
+
 describe('sheet clefs and octave marks', () => {
   it('marks a high run 8va and a low bass run 8vb', () => {
     const notes = [76, 84, 88, 91, 86].map((m, i) => note(m, i * 0.25, 0.25)).concat([28, 31, 33].map((m, i) => note(m, 2 + i * 0.5, 0.5, 'L')));

@@ -25,6 +25,8 @@ export interface SheetLevelRules {
   secondVoice: 'never' | 'limited' | 'always';
   /** Whether clef changes are allowed. */
   clefChanges: boolean;
+  /** Cap on the shortest length a note gets from its quarter's grid (compound meters: an 8th). */
+  maxStep?: number;
 }
 
 export const LEVEL_RULES: Record<Difficulty, SheetLevelRules> = {
