@@ -4,10 +4,11 @@
  * React state), like PianoRollView, so playback causes no re-renders.
  */
 import { useEffect, useRef, useState } from 'react';
-import { Loader2, LocateFixed, Minus, Plus } from 'lucide-react';
+import { Loader2, LocateFixed, Maximize, Minus, Plus } from 'lucide-react';
 import { currentArrangement, useStudio } from '../../state/studioStore';
 import { useSettings } from '../../state/settingsStore';
 import { getPlayer } from '../../state/playback';
+import { toggleStageFullscreen, useStageFullscreen } from '../../state/fullscreenStore';
 import { buildSheet, type Score } from '../../lib/sheet';
 import { loadOsmd, SheetRenderer } from '../../lib/sheet/render';
 import { Button, cn, IconButton } from '../ui';
@@ -26,6 +27,8 @@ export function SheetMusicView() {
   const arr = useStudio(currentArrangement)!;
   const sheet = useSettings((s) => s.sheet);
   const setSheet = useSettings((s) => s.setSheet);
+  // inside the Studio's full-screen stage this toolbar also holds its "Full screen" button
+  const canFullscreen = useStageFullscreen((s) => s.controls !== null && s.mode === 'off');
   const scrollRef = useRef<HTMLDivElement>(null);
   const pageRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
@@ -286,7 +289,9 @@ export function SheetMusicView() {
 
   return (
     <div ref={scrollRef} tabIndex={-1} className="absolute inset-0 overflow-x-hidden overflow-y-auto bg-ink-950 outline-none" data-testid="sheet-scroll">
-      <div className="pointer-events-none sticky top-0 z-20 flex justify-end px-2 pt-2 sm:px-3">
+      {/* in full screen (--fs-top) the toolbar starts below the stage's title / Exit row */}
+      <div aria-hidden style={{ height: 'var(--fs-top, 0px)' }} />
+      <div className="pointer-events-none sticky z-20 flex justify-end px-2 pt-2 sm:px-3" style={{ top: 'var(--fs-top, 0px)' }} data-testid="sheet-toolbar">
         <div className="panel pointer-events-auto flex items-center gap-0.5 p-1 shadow-lg">
           <IconButton size="sm" label="Smaller" onClick={() => setZoom(zoom - 0.1)} disabled={zoom <= ZOOM_MIN}>
             <Minus size={15} />
@@ -313,6 +318,14 @@ export function SheetMusicView() {
           >
             Follow
           </Button>
+          {canFullscreen && (
+            <>
+              <span className="mx-1 h-5 w-px bg-ink-700" />
+              <IconButton size="sm" label="Full screen" title="Full screen (F)" data-fs-enter onClick={toggleStageFullscreen}>
+                <Maximize size={15} />
+              </IconButton>
+            </>
+          )}
         </div>
       </div>
       <div ref={pageRef} className="mx-auto -mt-12 w-full max-w-[1180px] px-0 pb-24 sm:px-4">

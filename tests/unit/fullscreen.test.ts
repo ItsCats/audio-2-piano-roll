@@ -198,13 +198,14 @@ describe('rotate hint', () => {
     expect(rotateHintDismissed(null)).toBe(false);
     expect(() => dismissRotateHint(null)).not.toThrow();
   });
-  it('shows only in full screen, upright, on a phone (not a tablet), until dismissed', () => {
-    const base = { active: true, portrait: true, phone: true, dismissed: false };
+  it('shows only in full screen, upright, on a phone (not a tablet), with keys on screen, until dismissed', () => {
+    const base = { active: true, portrait: true, phone: true, dismissed: false, keys: true };
     expect(shouldShowRotateHint(base)).toBe(true);
     expect(shouldShowRotateHint({ ...base, active: false })).toBe(false);
     expect(shouldShowRotateHint({ ...base, portrait: false })).toBe(false);
     expect(shouldShowRotateHint({ ...base, phone: false })).toBe(false);
     expect(shouldShowRotateHint({ ...base, dismissed: true })).toBe(false);
+    expect(shouldShowRotateHint({ ...base, keys: false })).toBe(false); // sheet music: no keyboard
   });
 });
 

@@ -435,7 +435,8 @@ export default function StudioPage() {
         </header>
         {editMode && <EditToolbar />}
         {/* full screen covers the app and the controls around the view (edit mode is for the normal layout) */}
-        <FullscreenStage onEnter={() => setEditMode(false)}>
+        {/* the sheet music has its own toolbar in the stage's corner: its Full screen button lives there */}
+        <FullscreenStage onEnter={() => setEditMode(false)} enterButton={view !== 'sheet'}>
           {view === 'sheet' ? (
             <Suspense
               fallback={

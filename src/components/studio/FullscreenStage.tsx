@@ -216,6 +216,7 @@ function Controls({ auto, visible, keysHeight, onExit }: { auto: AutoHide; visib
       }}
     >
       <div className={cn('relative flex h-full flex-col justify-between', !visible && '[&_*]:pointer-events-none!')}>
+        {/* pt-3 + the h-11 pill = FS_TOP_INSET: a view's own top toolbar sits just below this row */}
         <div className="flex items-center gap-3 bg-gradient-to-b from-black/70 to-transparent px-3 pt-3 pb-8">
           <p className="min-w-0 flex-1 truncate text-[14px] font-semibold text-white drop-shadow">{title}</p>
           <button type="button" className={pill} onClick={onExit} title="Exit full screen (Esc)" aria-label="Exit full screen">
@@ -284,7 +285,19 @@ function Controls({ auto, visible, keysHeight, onExit }: { auto: AutoHide; visib
   );
 }
 
-export function FullscreenStage({ children, onEnter }: { children: ReactNode; onEnter?: () => void }) {
+/**
+ * Space (CSS px from the view's top) the top overlay row (title, "Exit full screen") takes in full
+ * screen. Exposed to the view as the `--fs-top` CSS variable so a view with its own toolbar at the
+ * top (the sheet music) can sit below it instead of under it; 0 outside full screen.
+ */
+export const FS_TOP_INSET = '3.5rem';
+
+/**
+ * `enterButton`: show the stage's own "Full screen" button in the top-right corner. A view that
+ * has a toolbar there (the sheet music) passes false and puts its own button (marked
+ * `data-fs-enter`, calling `toggleStageFullscreen`) in that toolbar, so neither covers the other.
+ */
+export function FullscreenStage({ children, onEnter, enterButton = true }: { children: ReactNode; onEnter?: () => void; enterButton?: boolean }) {
   const stageRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<HTMLDivElement>(null);
   const enterBtnRef = useRef<HTMLButtonElement>(null);
@@ -381,10 +394,20 @@ export function FullscreenStage({ children, onEnter }: { children: ReactNode; on
     return inertOutside(stageRef.current);
   }, [active]);
 
-  // focus moves into the stage so keys keep working; on exit back to the button
+  // focus moves into the stage so keys keep working; on exit back to the button (also when the
+  // focused control, e.g. "Exit full screen", went away with full screen and focus fell to the page)
+  const wasActive = useRef(false);
   useEffect(() => {
-    if (active) stageRef.current?.focus({ preventScroll: true });
-    else if (stageRef.current?.contains(document.activeElement)) enterBtnRef.current?.focus({ preventScroll: true });
+    const stage = stageRef.current;
+    if (active) stage?.focus({ preventScroll: true });
+    else if (stage && wasActive.current) {
+      const el = document.activeElement;
+      if (!el || el === document.body || stage.contains(el)) {
+        const btn = enterBtnRef.current ?? stage.querySelector<HTMLElement>('[data-fs-enter]');
+        btn?.focus({ preventScroll: true });
+      }
+    }
+    wasActive.current = active;
     auto.poke();
   }, [active, auto]);
 
@@ -415,11 +438,11 @@ export function FullscreenStage({ children, onEnter }: { children: ReactNode; on
 
   // turning the phone sideways is what the hint asks for: it has done its job
   useEffect(() => {
-    if (active && touch && !portrait && !hintDismissed) {
+    if (active && touch && !portrait && !hintDismissed && keysHeight > 0) {
       dismissRotateHint();
       setHintDismissed(true);
     }
-  }, [active, touch, portrait, hintDismissed]);
+  }, [active, touch, portrait, hintDismissed, keysHeight]);
 
   const onPointerDownCapture = (e: React.PointerEvent) => {
     if (!active) return;
@@ -457,7 +480,7 @@ export function FullscreenStage({ children, onEnter }: { children: ReactNode; on
     if (active && e.pointerType === 'mouse') auto.poke();
   };
 
-  const showHint = shouldShowRotateHint({ active, portrait, phone, dismissed: hintDismissed });
+  const showHint = shouldShowRotateHint({ active, portrait, phone, dismissed: hintDismissed, keys: keysHeight > 0 });
 
   return (
     <div
@@ -479,6 +502,7 @@ export function FullscreenStage({ children, onEnter }: { children: ReactNode; on
                 right: 'env(safe-area-inset-right, 0px)',
                 bottom: 'env(safe-area-inset-bottom, 0px)',
                 left: 'env(safe-area-inset-left, 0px)',
+                ['--fs-top' as string]: FS_TOP_INSET,
               }
             : { inset: 0 }
         }
@@ -486,9 +510,10 @@ export function FullscreenStage({ children, onEnter }: { children: ReactNode; on
         {children}
       </div>
 
-      {!active && (
+      {!active && enterButton && (
         <button
           ref={enterBtnRef}
+          data-fs-enter
           type="button"
           onClick={enter}
           title="Full screen (F)"

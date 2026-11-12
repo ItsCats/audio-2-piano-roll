@@ -20,6 +20,11 @@
  * Desktop Chromium: the real Fullscreen API (document.fullscreenElement is the stage), F toggles,
  * Esc exits, the mouse pointer hides with the controls, Tab stays inside, F does nothing while a
  * dialog is open.
+ * Sheet music view (desktop and iPhone): its "Full screen" button sits in the sheet's own toolbar
+ * and can be clicked (nothing covers it, and no second button under the toolbar); in full screen
+ * the toolbar (Smaller / Bigger / Follow) sits below the "Exit full screen" row, not under it; on
+ * exit focus returns to the button. On the overlay's position bar ← seeks once and Alt / Cmd + ←
+ * is left to the browser.
  * With --dist, a production build is served with the netlify.toml headers (tests/e2e/isolation.server.py)
  * and the web app manifest, its icons and the apple-touch-icon load without CSP violations while
  * the page stays cross-origin isolated.
@@ -304,6 +309,90 @@ async function iphone(browser, base) {
   await ctx.close();
 }
 
+/** is the element's centre hit by a pointer there (nothing on top of it)? */
+const hitTest = (sel) => {
+  const out = {};
+  for (const [name, q] of Object.entries(sel)) {
+    const els = [...document.querySelectorAll(q)].filter((e) => e.getBoundingClientRect().width > 0);
+    const el = els[0];
+    if (!el) {
+      out[name] = { count: 0, hit: false };
+      continue;
+    }
+    const b = el.getBoundingClientRect();
+    const hit = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+    out[name] = { count: els.length, hit: !!hit && (el === hit || el.contains(hit)), top: Math.round(b.top), bottom: Math.round(b.bottom) };
+  }
+  return out;
+};
+const SHEET_TARGETS = {
+  enter: 'button[aria-label="Full screen"]',
+  smaller: '[data-testid="sheet-toolbar"] button[aria-label="Smaller"]',
+  bigger: '[data-testid="sheet-toolbar"] button[aria-label="Bigger"]',
+  follow: '[data-testid="sheet-toolbar"] button[aria-pressed]:not([aria-label])',
+  exit: 'button[aria-label="Exit full screen"]',
+};
+
+async function sheetView(browser, base, kind) {
+  const phone = kind === 'iPhone';
+  const ctx = await browser.newContext(phone ? { ...devices['iPhone 14'] } : { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 });
+  if (phone) await ctx.addInitScript(NO_FULLSCREEN_API);
+  const page = await ctx.newPage();
+  page.on('pageerror', (e) => ok(false, `${kind} sheet page error: ${e.message}`));
+  await openDemo(page, base);
+  await page.getByRole('radio', { name: /Sheet music/ }).click();
+  await page.waitForSelector('[data-testid="sheet-music"] .sheet-chunk svg', { timeout: 60000 });
+  await sleep(600);
+  let h = await page.evaluate(hitTest, SHEET_TARGETS);
+  ok(h.enter.count === 1 && h.enter.hit, `${kind} sheet: one Full screen button, and nothing covers it`, h.enter);
+  ok(h.smaller.hit && h.bigger.hit && h.follow.hit, `${kind} sheet: zoom and Follow can be pressed`, { s: h.smaller, b: h.bigger, f: h.follow });
+  await shot(page, `${kind}-sheet-button`);
+
+  await page.getByRole('button', { name: 'Full screen' }).click();
+  await page.waitForSelector(phone ? '[data-fullscreen="pseudo"]' : '[data-fullscreen="native"]', { timeout: 5000 }).catch(() => {});
+  await sleep(600);
+  const mode = await page.evaluate(() => document.querySelector('[data-fullscreen]')?.dataset.fullscreen);
+  ok(mode === (phone ? 'pseudo' : 'native'), `${kind} sheet: the toolbar's button enters full screen`, { mode });
+  h = await page.evaluate(hitTest, SHEET_TARGETS);
+  ok(h.exit.hit && h.smaller.hit && h.bigger.hit && h.follow.hit, `${kind} sheet full screen: Exit, zoom and Follow can all be pressed`, h);
+  ok(h.smaller.top >= h.exit.bottom, `${kind} sheet full screen: the sheet toolbar sits below the Exit row`, { toolbarTop: h.smaller.top, exitBottom: h.exit.bottom });
+  ok(h.enter.count === 0, `${kind} sheet full screen: no Full screen button left`, h.enter);
+  const zoom0 = await page.evaluate(() => document.querySelector('[data-testid="sheet-toolbar"] button[title="Reset size"]').textContent);
+  await page.locator('[data-testid="sheet-toolbar"] button[aria-label="Bigger"]').click();
+  await sleep(300);
+  const zoom1 = await page.evaluate(() => document.querySelector('[data-testid="sheet-toolbar"] button[title="Reset size"]').textContent);
+  ok(zoom1 !== zoom0 && (await page.evaluate(() => document.querySelector('[data-fullscreen]').dataset.fullscreen)) !== 'off', `${kind} sheet full screen: Bigger works and stays in full screen`, { zoom0, zoom1 });
+  await page.locator('[data-testid="sheet-toolbar"] button[title="Reset size"]').click();
+  await shot(page, `${kind}-sheet-fullscreen`);
+
+  // the overlay's position bar: ← seeks once; Alt / Cmd + ← is the browser's Back, left alone
+  await page.evaluate(() => window.__pv.getPlayer().seek(20));
+  await sleep(200);
+  await page.locator('[data-fs-controls] [aria-label="Song position"]').focus();
+  const t = () => page.evaluate(() => window.__pv.getPlayer().getTime());
+  const t0 = await t();
+  await page.keyboard.press('Alt+ArrowLeft');
+  await page.keyboard.press('Meta+ArrowLeft');
+  await sleep(200);
+  const t1 = await t();
+  await page.keyboard.press('ArrowLeft');
+  await sleep(200);
+  const t2 = await t();
+  ok(Math.abs(t1 - t0) < 0.01 && Math.abs(t0 - t2 - 5) < 0.3, `${kind} sheet full screen: ← on the position bar seeks 5 s once, Alt/Cmd + ← does not seek`, { t0, t1, t2 });
+
+  await page.getByRole('button', { name: 'Exit full screen' }).click();
+  await page.waitForSelector('[data-fullscreen="off"]', { timeout: 5000 }).catch(() => {});
+  await sleep(500);
+  const after = await page.evaluate(() => ({
+    mode: document.querySelector('[data-fullscreen]')?.dataset.fullscreen,
+    focus: document.activeElement?.getAttribute('aria-label'),
+    music: !!document.querySelector('[data-testid="sheet-music"] .sheet-chunk svg'),
+  }));
+  ok(after.mode === 'off' && after.music, `${kind} sheet: Exit leaves full screen with the music still drawn`, after);
+  ok(after.focus === 'Full screen', `${kind} sheet: focus goes back to the Full screen button`, after);
+  await ctx.close();
+}
+
 async function desktop(browser, base) {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 });
   const page = await ctx.newPage();
@@ -479,6 +568,8 @@ try {
   await iphone(browser, base);
   await ipad(browser, base);
   await desktop(browser, base);
+  await sheetView(browser, base, 'desktop');
+  await sheetView(browser, base, 'iPhone');
   if (dist) await production(browser);
 } catch (e) {
   ok(false, `crashed: ${e.stack ?? e}`);

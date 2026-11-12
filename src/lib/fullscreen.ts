@@ -234,9 +234,13 @@ export function dismissRotateHint(storage: StorageLike | null = defaultStorage()
   }
 }
 
-/** Show the hint in full screen on a phone held upright (not a tablet), until it was dismissed once. */
-export function shouldShowRotateHint(o: { active: boolean; portrait: boolean; phone: boolean; dismissed: boolean }): boolean {
-  return o.active && o.portrait && o.phone && !o.dismissed;
+/**
+ * Show the hint in full screen on a phone held upright (not a tablet), until it was dismissed once.
+ * Only for a view with on-screen keys (`keys`): the hint is about a bigger keyboard, and the sheet
+ * music has none (there the hint would only cover its toolbar).
+ */
+export function shouldShowRotateHint(o: { active: boolean; portrait: boolean; phone: boolean; dismissed: boolean; keys: boolean }): boolean {
+  return o.active && o.portrait && o.phone && !o.dismissed && o.keys;
 }
 
 /** A phone-sized touch screen (either orientation): fit the keyboard to the song there. */
