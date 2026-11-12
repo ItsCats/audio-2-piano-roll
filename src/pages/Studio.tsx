@@ -22,6 +22,7 @@ import {
   Piano,
   FileMusic,
   FileText,
+  X,
 } from 'lucide-react';
 import { useStudio, currentArrangement } from '../state/studioStore';
 import { useSettings } from '../state/settingsStore';
@@ -456,7 +457,7 @@ export default function StudioPage() {
 
       {panelOpen && (
         <aside className="absolute inset-y-0 right-0 z-30 flex w-[min(340px,92vw)] flex-col border-l border-ink-800 bg-ink-900 shadow-2xl xl:static xl:z-auto xl:shadow-none">
-          <div role="tablist" className="flex shrink-0 border-b border-ink-800 px-1">
+          <div role="tablist" className="flex shrink-0 items-stretch border-b border-ink-800 px-1">
             {tabs.map((t) => (
               <button
                 key={t.id}
@@ -473,6 +474,16 @@ export default function StudioPage() {
                 {t.label}
               </button>
             ))}
+            {/* below xl the panel covers the header's Hide panel button, so it has its own */}
+            <button
+              type="button"
+              onClick={() => setPanelOpen(false)}
+              aria-label="Close panel"
+              title="Close panel"
+              className="focus-ring flex w-11 shrink-0 items-center justify-center text-ink-400 hover:text-ink-100 xl:hidden"
+            >
+              <X size={18} />
+            </button>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto">
             {tab === 'look' && <LookPanel />}
