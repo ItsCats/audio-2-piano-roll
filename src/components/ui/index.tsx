@@ -135,6 +135,7 @@ export function Toggle({
         type="button"
         role="switch"
         aria-checked={checked}
+        aria-label={typeof label === 'string' ? label : undefined}
         onClick={() => onChange(!checked)}
         className={cn(
           'focus-ring relative h-5 w-9 shrink-0 rounded-full transition-colors duration-150',

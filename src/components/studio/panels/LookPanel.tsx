@@ -7,6 +7,7 @@ import { KEYBOARD_THEMES, VISUAL_THEMES, applyTheme, type DecalSource, type Keyb
 import { Button, ColorInput, Section, Segmented, Select, Slider, Toggle, cn } from '../../ui';
 import { deleteMedia, listMedia, newId, saveMedia, type MediaItem } from '../../../lib/storage/db';
 import { toast } from '../../../state/toastStore';
+import { useTitleCard } from '../../../state/titleCardStore';
 
 const MAX_MEDIA = 200 * 1024 * 1024;
 
@@ -96,7 +97,7 @@ function PatternSwatch({ id }: { id: string }) {
  * What an upload was added for. Stored as an extra field on the IndexedDB record (structured clone keeps it);
  * records without one predate decals and count as backgrounds.
  */
-type MediaPurpose = 'background' | 'decal';
+export type MediaPurpose = 'background' | 'decal' | 'title';
 type PickerMedia = MediaItem & { purpose?: MediaPurpose };
 
 // Background and decal pickers share the media store; this lets each list refresh when the other changes it.
@@ -107,12 +108,13 @@ const notifyMedia = () => mediaListeners.forEach((f) => f());
  * Upload button + list of stored images/videos. Used by both the background and the note-decal
  * pickers; each passes its own selection so they stay independent.
  */
-function MediaPicker({
+export function MediaPicker({
   kind,
   purpose,
   selectedId,
   onSelect,
   what,
+  prepare,
 }: {
   kind: 'image' | 'video';
   /** only files uploaded for this purpose are listed (plus the current selection) */
@@ -121,6 +123,8 @@ function MediaPicker({
   onSelect: (id: string | null) => void;
   /** user-facing noun for error messages, e.g. "background" or "decal" */
   what: string;
+  /** turns the chosen file into what is stored (e.g. a downscaled copy); runs on this device only */
+  prepare?: (f: File) => Promise<{ blob: Blob; type: string }>;
 }) {
   const [items, setItems] = useState<PickerMedia[]>([]);
   const input = useRef<HTMLInputElement>(null);
@@ -144,8 +148,9 @@ function MediaPicker({
       toast.error('File too large', `${what[0].toUpperCase()}${what.slice(1)}s are limited to 200 MB.`);
       return;
     }
-    const item: PickerMedia = { id: newId(), name: f.name, type: f.type, kind, blob: f, createdAt: Date.now(), purpose };
     try {
+      const stored = prepare ? await prepare(f) : { blob: f, type: f.type };
+      const item: PickerMedia = { id: newId(), name: f.name, type: stored.type, kind, blob: stored.blob, createdAt: Date.now(), purpose };
       await saveMedia(item);
       onSelect(item.id);
       notifyMedia();
@@ -159,6 +164,7 @@ function MediaPicker({
     const st = useSettings.getState();
     if (st.visual.background.mediaId === m.id) st.setBackground({ mediaId: null });
     if (st.visual.decal.mediaId === m.id) st.setDecal({ mediaId: null });
+    useTitleCard.getState().forgetMedia(m.id);
     notifyMedia();
   };
   const list = items.filter((i) => i.kind === kind && ((i.purpose ?? 'background') === purpose || i.id === selectedId));
