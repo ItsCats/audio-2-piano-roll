@@ -49,11 +49,16 @@ export function isAppleMobile(ua: string, maxTouchPoints = 0): boolean {
   return /iP(hone|ad|od)/.test(ua) || (/Macintosh/.test(ua) && maxTouchPoints > 1);
 }
 
-/** Phones, tablets and devices that report 4 GB of memory or less. */
-export function isMemoryConstrained(env: Pick<BackendEnv, 'ua' | 'maxTouchPoints' | 'deviceMemory' | 'mobile'>): boolean {
+/** Phones and tablets (whatever memory they report): their processors are also much slower than a desktop's. */
+export function isPhoneOrTablet(env: Pick<BackendEnv, 'ua' | 'maxTouchPoints' | 'mobile'>): boolean {
   if (isAppleMobile(env.ua, env.maxTouchPoints)) return true;
   if (env.mobile) return true;
-  if (/Android|Mobile|Silk|Kindle|Tablet/i.test(env.ua)) return true;
+  return /Android|Mobile|Silk|Kindle|Tablet/i.test(env.ua);
+}
+
+/** Phones, tablets and devices that report 4 GB of memory or less. */
+export function isMemoryConstrained(env: Pick<BackendEnv, 'ua' | 'maxTouchPoints' | 'deviceMemory' | 'mobile'>): boolean {
+  if (isPhoneOrTablet(env)) return true;
   return typeof env.deviceMemory === 'number' && env.deviceMemory <= 4;
 }
 

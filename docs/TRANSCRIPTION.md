@@ -9,7 +9,28 @@ file ─► validate (type, ≤300 MB) ─► decode + resample to 22 050 Hz mon
      ─► note extraction (register curve, chopped-note join) ─► cleanup ─► [vocal melody line]
      ─► hand assignment ─► beat tracking ─► key detection
      ─► Easy / Medium / Hard arrangements (tune line, playability pass)
+
+"Piano solo" + "High-accuracy piano model" (opt-in, section 3b):
+file ─► validate ─► decode + resample to 16 000 Hz mono ─► piano specialist (ONNX, WASM worker)
+     ─► regression post-processing (onset / offset / velocity) ─► hands ─► beats ─► key ─► arrangements
 ```
+
+## Two engines
+
+| | **Basic Pitch** (default) | **Piano specialist** ("High-accuracy piano model", opt-in) |
+| --- | --- | --- |
+| Model | Spotify Basic Pitch, a small general-purpose model (any instrument, voice) | ByteDance high-resolution piano transcription (Kong et al. 2021), trained only on solo piano (MAESTRO) |
+| Use for | everything: full songs, bands, singers, and quick piano imports | **solo piano recordings** when accuracy matters more than time |
+| Not for | – | songs with vocals, drums or other instruments (it was never trained on them; use "Full song" with separation) |
+| Notes, solo piano (MAESTRO, exact MIDI, onset F1) | 0.62–0.92 (mean 0.80) | 0.94–0.996, mean 0.976, in the browser on the 5 MAESTRO test-split pieces (the ones it was not trained on; Basic Pitch on the same 5: mean 0.81) |
+| Note ends / velocity | ends weak (onset+offset F1 ≈ 0.29), velocity estimated from loudness | ends and velocities regressed by the model (onset+offset F1 0.74–0.94, mean 0.84; velocity correlation 0.97 vs 0.60) |
+| Download | ≈ 0.9 MB, part of the site | ≈ 41 MB model (`public/models/piano-specialist`), downloaded the first time it is used, then cached by the browser |
+| Time per minute of audio (4-core desktop) | ≈ 7 s | ≈ 38 s with 3 WASM threads (36–41 s on 11 whole piano recordings of 2–10 min, 2026-11-12, decoding and arranging included); up to ≈ 60 s while the shared test machine was busy (load ≈ 5); ≈ 97 s single-threaded (Safari, pages that are not cross-origin isolated; same notes as with 3 threads) |
+| Extra memory | – | ≈ 750 MB while it runs (measured +720 MB RSS for the whole browser through the real app; peak tab 0.78–0.87 GB on 11 recordings, 0.66–0.75 GB above the idle tab) |
+| When it is used | always, unless "High-accuracy piano model" is picked | only when picked (off by default on every device; the choice is remembered). Phones and low-memory devices (`backendChoice.ts isMemoryConstrained`) are told it is not recommended there: ≈ 750 MB more memory and several times slower |
+| Re-tune detection afterwards | yes (stored posteriors) | no Basic Pitch posteriors are stored, so the detection re-tuning does not apply to these notes |
+
+The specialist is offered with the "Piano solo" preset only. Separation ("Separate vocals & drums") is never combined with it.
 
 Everything runs on the user's device. Measured accuracy on real recordings is on the in-app
 **Accuracy** page (`/accuracy`, numbers in `src/lib/accuracyStats.ts`); how it was measured is in
@@ -39,6 +60,20 @@ We run Spotify's Basic Pitch model (`public/models/basic-pitch`, Apache-2.0) wit
 Phones and tablets run the model on WASM (the processor) instead of WebGL, whose texture pool outgrows a phone tab's memory (`transcription/backendChoice.ts`).
 
 Progress reported to the UI is the real fraction of windows processed. Without separation a song takes about 7 s per minute of audio (WASM, no GPU).
+
+## 3b. Piano specialist ("High-accuracy piano model")
+
+`src/lib/pianoSpecialist` runs the **note model** of ByteDance's *High-resolution Piano Transcription with Pedals by Regressing Onset and Offset Times* (Qiuqiang Kong, Bochen Li, Xuchen Song, Yuan Wan, Yuxuan Wang; IEEE/ACM TASLP 2021, arXiv:2010.01815) with ONNX Runtime Web in a module worker (same WASM asset and thread setup as the separation worker: `isolation.ts wasmThreads()`).
+
+* **Model file**: five pieces `public/models/piano-specialist/piano-note.fp16.part1.bin` … `part5.bin` (~8.2 MB each, under Netlify's 10 MB per file); `cat piano-note.fp16.part*.bin > piano-note.fp16.onnx` joins them into the 41 MB model (sha256 and provenance in that folder's README). The worker fetches and joins the pieces itself; `piano-note.fp16.onnx` is only its Cache API key and is not served — checkpoint `CRNN_note_F1=0.9677_pedal_F1=0.9186.pth` (Zenodo record 4034264) → `tests/accuracy/pti_export.py` → ONNX opset 17, input 10 s of 16 kHz audio, outputs frame / regressed onset / regressed offset / velocity, each 1001 × 88 at 100 frames/s. The log-mel front end is inside the graph. Weights are **stored as float16** and cast to float32 in the graph (half the download; outputs unchanged at the thresholds). int8 quantisation broke the GRUs and was slower, so it is not used. The pedal model is not shipped.
+* **Post-processing** (`pianoSpecialist/postprocess.ts`): a line-by-line port of `piano_transcription_inference` 0.0.6's `RegressionPostProcessor` (onset 0.3, offset 0.3, frame 0.1; velocity × 128; notes without a detected offset close after 6 s), checked against the Python package on dumped model outputs. None of the Basic Pitch cleanup runs on its notes (those rules fix Basic Pitch's posteriors and only removed correct notes here); hands, beats, key and the Easy / Medium / Hard arrangements are the same as for Basic Pitch.
+* **Offsets** follow the model's training targets: a note lasts while the key or the sustain pedal holds it, so durations match what you hear.
+* **Cancel** stops the worker; the model stays in the browser's HTTP cache.
+* **Memory and crashes**: ~700 MB extra plus ~0.25 MB per second of audio (`protocol.ts specialistMemoryMB`; ~750 MB for 4 minutes, ~1 GB for 20). On phones, tablets and ≤ 4 GB devices (offered, not recommended) recordings over 6 minutes use Basic Pitch with a warning. While the model runs, a crash marker (`piano2vision-piano-specialist-running` in localStorage plus a Web Lock, like in-browser separation's) is set; a tab that dies mid-run leaves it behind, and the next load selects the normal model again, says so in a toast, and resumes that interrupted import with Basic Pitch (always so on memory-constrained devices). Out-of-memory and download errors are shown in plain words, and the error card offers "Try with the normal model".
+
+Measured 2026-11-12 (the app's real pipeline in Chromium, whole recordings, 3 WASM threads, one at a time), against MAESTRO's exact performance MIDI (onset ±50 ms; onset+offset in brackets): Bach BWV 850 0.996 (0.91), Debussy *Des pas sur la neige* 0.985 (0.74), Mozart K. 280/i 0.993 (0.94), Chopin Nocturne Op. 15/1 0.968 (0.88), Liszt *Waldesrauschen* 0.941 (0.75) — mean 0.976 (0.84), Basic Pitch "Piano solo" on the same five 0.813 (0.29); velocity correlation 0.97 (0.60). The original PyTorch model on the same audio: mean 0.978. Chopin's Ballade No. 1 scores 0.981 but is in MAESTRO's **train** split, which the model learned from, so it is not counted. The browser version must reproduce the Python numbers on every piece: `tests/accuracy/specialist_eval.py` scores the browser runs against the same MIDI and checks parity with the Python package note by note (`tests/accuracy/run_specialist.sh` runs everything); `tests/e2e/specialist.mjs` is the browser regression check. On recordings without exact MIDI the only comparison available is this same model in Python, so for the specialist it measures the port, not accuracy.
+
+Licences: trained weights **CC BY 4.0** (Zenodo record 4034264; changes: converted to ONNX with float16 weights, pedal model removed); inference code `piano_transcription_inference` **MIT** (PyPI metadata; the repository has no LICENSE file); training code `bytedance/piano_transcription` **Apache-2.0** (stated in its README); the STFT / log-mel layers in the graph come from torchlibrosa (MIT). Attribution is on the Credits page (`src/lib/credits.ts`). The model was trained on MAESTRO (CC BY-NC-SA 4.0); the dataset itself is not distributed.
 
 ## 4. Note extraction and cleanup
 
@@ -75,7 +110,7 @@ A typed-array port of Basic Pitch's `output_to_notes_polyphonic` (peak-picked on
 
 | Preset | Use for | Key settings |
 | --- | --- | --- |
-| Piano solo | piano recordings | onset 0.55, frame 0.4, min 60 ms, melodia off, register curve, continuation 0.7 |
+| Piano solo | piano recordings | onset 0.55, frame 0.4, min 60 ms, melodia off, register curve, continuation 0.7; optionally "High-accuracy piano model" instead of Basic Pitch (section 3b: its own thresholds 0.3 / 0.3 / 0.1, not adjustable) |
 | Full song | bands, vocals (with "Separate vocals & drums") | onset 0.5, frame 0.35, min 100 ms, melodia on, inferred onsets, E1–E7 |
 | Sensitive | fast or very soft playing | onset 0.55, frame 0.25, min 50 ms, inferred onsets, register curve |
 
@@ -93,6 +128,7 @@ Measured 2026-11-11 with the real browser pipeline on full recordings (`tests/ac
 | Same songs: Easy left hand on the bass note | 71 % (was 52 %) |
 | Instrumental band track: Easy right hand vs an estimated lead line | 40 % (was 34 %) |
 | Durations (onset + offset F1, MAESTRO) | ≈ 0.29 — the pedal is not detected |
+| "High-accuracy piano model" (browser, `transcribe.mjs --coi --presets specialist`, 5 MAESTRO test-split pieces, scored by `tests/accuracy/specialist_eval.py`) | note F1 Bach 0.996, Debussy 0.985, Mozart 0.993, Nocturne 15/1 0.968, Liszt 0.941 (mean 0.976; Basic Pitch "Piano solo" 0.81); onset + offset 0.84 (0.29); notes found in fast runs 0.94 (0.58), top octave 0.88 (0.36), below C2 0.78 (0.28, 60 notes); 36–41 s per audio minute with 3 threads, 97 s with 1, peak tab 0.78–0.87 GB. Original Python model on the same 5: 0.978; browser vs Python note parity 0.997–1.000 on the 6 MAESTRO WAVs, 0.96–0.99 on 5 MP3 piano recordings. Chopin Ballade No. 1 (train split, not counted): 0.981 (Basic Pitch 0.75) |
 
 Caveats: the piano presets were tuned on five of the six MAESTRO pieces (Liszt is the held-out one: 0.57 → 0.62); the vocal references are AI-made (Demucs stems + CREPE) and the vocal settings were tuned on the same five songs (an independent pYIN reference agrees: 30 % → 70 %); the instrumental track has no answer key (its lead line is pYIN on a Demucs stem, a proxy) and its tune-line, drum and hand-reach rules were tuned on it.
 

@@ -144,7 +144,9 @@ export function ArrangementPanel() {
           {t.backend && (
             <>
               <dt className="text-ink-300">Engine</dt>
-              <dd className="text-right text-ink-100">Basic Pitch · {t.backend.toUpperCase()}</dd>
+              <dd className="text-right text-ink-100">
+                {t.method === 'piano-specialist' ? 'Piano model (Kong et al.)' : 'Basic Pitch'} · {t.backend.toUpperCase()}
+              </dd>
             </>
           )}
           {t.processingMs !== undefined && (

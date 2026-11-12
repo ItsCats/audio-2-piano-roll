@@ -5,7 +5,9 @@ Render evaluate.py output as a Markdown report.
         [--prepend NOTES.md] [--append NOTES.md] [--title TITLE]
 
 A preset named 'sep' is the "Full song" preset with "Separate vocals & drums" (transcribe.mjs
---separate); list it in the manifest like any other preset.
+--separate); list it in the manifest like any other preset. 'specialist' is the High-accuracy piano
+model (transcribe.mjs --presets specialist); its vs-PTI column is parity with the same model in Python,
+not accuracy (specialist_eval.py has the specialist's own report).
 """
 from __future__ import annotations
 
@@ -66,7 +68,7 @@ def main() -> None:
             rows.append([
                 s["song"], pr + (" *" if pr == s["suggestedPreset"] else ""), (lambda k: k + " (circular: verified notes carry PTI timing, unverified ones are mostly misaligned; read vs PTI)" if k.startswith("score-") else k)(s.get("noteRef", {}).get("kind", "–")),
                 o50.get("f1"), f"{f(o50.get('p'))}/{f(o50.get('r'))}" if o50 else "–", o100.get("f1"), oo.get("f1"),
-                r.get("vsPTI", {}).get("onset50", {}).get("f1"), ceil,
+                (lambda v: f"{f(v)} (same model: parity, not accuracy)" if pr == "specialist" and v is not None else v)(r.get("vsPTI", {}).get("onset50", {}).get("f1")), ceil,
                 (n.get("handAgreement") or {}).get("agreement"), r["counts"]["base"], n.get("onset50", {}).get("nRef"),
             ])
     if rows:

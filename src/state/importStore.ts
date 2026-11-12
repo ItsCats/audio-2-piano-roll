@@ -3,7 +3,7 @@
  * while the user navigates around the app.
  */
 import { create } from 'zustand';
-import { transcribeAudio, type ProgressEvent, type TranscribeOptions } from '../lib/transcription/pipeline';
+import { transcribeAudio, type ProgressEvent, type TranscribeOptions, type TranscriptionEngine } from '../lib/transcription/pipeline';
 import type { TranscriptionStage } from '../lib/transcription/workerProtocol';
 import { classifyFile } from '../lib/transcription/decode';
 import { parseMidi } from '../lib/music/midi';
@@ -24,6 +24,8 @@ import {
 // namespace import: fetchStems is read at call time, so this module still loads against an older client
 import * as backendApi from '../lib/backend/client';
 import { separationSupport, type SeparationSupport } from '../lib/separation';
+import { pianoSpecialistSupport } from '../lib/pianoSpecialist';
+import { isMemoryConstrained, pageDeviceInfo } from '../lib/transcription/backendChoice';
 import type { Song, SongSource } from '../lib/music/types';
 import { toast } from './toastStore';
 
@@ -50,6 +52,8 @@ export interface ImportJob {
   plan: ImportStage[];
   /** separation engine chosen for this import, if any */
   separation?: SeparationEngine;
+  /** transcription model of this import (absent: Basic Pitch) */
+  transcriber?: TranscriptionEngine;
   /**
    * Speed measurement for the current phase (same stage and same kind of detail message): where
    * progress was when the phase started, and the time remaining extrapolated from the measured
@@ -64,7 +68,10 @@ export interface ImportJob {
  */
 export interface FailedImport {
   jobId: number;
+  /** the same import again (a failed high-accuracy piano model run follows the model selected now) */
   retry: () => Promise<string | null>;
+  /** a failed high-accuracy piano model run: the same import with the normal model (and that choice selected) */
+  retryFast?: () => Promise<string | null>;
   recording?: { blob: Blob; fileName: string };
 }
 
@@ -74,7 +81,12 @@ export interface ImportRunOptions {
   presetId?: PresetId;
   /** reuse this interrupted-import record instead of writing a new one */
   pendingId?: string;
+  /** transcription model (default: the user's high-accuracy piano model choice, see transcriberChoice) */
+  transcriber?: TranscriptionEngine;
 }
+
+/** An interrupted-import record with the transcription model it was started with (absent in older records: Basic Pitch). */
+export type PendingWithTranscriber = PendingImport & { transcriber?: TranscriptionEngine };
 
 /** Detection preset ids (mirrors settings.detectionPreset). */
 export type PresetId = 'piano' | 'mix' | 'sensitive' | 'custom';
@@ -84,6 +96,8 @@ export interface ImportPrefs {
   separate: Partial<Record<PresetId, boolean>>;
   /** where separation would have run when that choice was made (a "yes" for the server is not a "yes" for a phone's browser) */
   engine?: Partial<Record<PresetId, SeparationEngine>>;
+  /** "High-accuracy piano model" picked (used with the "Piano solo" preset only; off unless ticked) */
+  pianoModel?: boolean;
 }
 
 interface ImportState {
@@ -92,6 +106,8 @@ interface ImportState {
   prefs: ImportPrefs;
   /** remember the user's separation choice for a detection preset (and where it would have run) */
   setSeparatePref: (preset: PresetId, value: boolean, engine?: SeparationEngine | null) => void;
+  /** remember the high-accuracy piano model choice */
+  setPianoModelPref: (value: boolean) => void;
   /** the last failed import's retry and recording (cleared by the next import, Dismiss or Cancel) */
   failed: FailedImport | null;
   /** `separate` defaults to the user's choice for the current detection preset */
@@ -102,7 +118,12 @@ interface ImportState {
   ) => Promise<string | null>;
   /** run an import that a killed tab left behind (see lib/storage/db.ts PendingImport) again */
   resumePending: (rec: PendingImport) => Promise<string | null>;
-  importYouTubeViaServer: (videoUrl: string, videoId: string, separate: boolean, meta?: { title?: string; artist?: string }) => Promise<string | null>;
+  importYouTubeViaServer: (
+    videoUrl: string,
+    videoId: string,
+    separate: boolean,
+    meta?: { title?: string; artist?: string; transcriber?: TranscriptionEngine },
+  ) => Promise<string | null>;
   importDemo: () => Promise<string>;
   cancel: () => void;
   clear: () => void;
@@ -114,7 +135,15 @@ const PREFS_KEY = 'piano2vision-import-prefs';
 
 function loadPrefs(): ImportPrefs {
   try {
-    const raw = localStorage.getItem(PREFS_KEY);
+    return parsePrefs(localStorage.getItem(PREFS_KEY));
+  } catch {
+    return { separate: {} };
+  }
+}
+
+/** The stored prefs (older records lack `engine` and `pianoModel`; anything unexpected is dropped). */
+export function parsePrefs(raw: string | null): ImportPrefs {
+  try {
     if (!raw) return { separate: {} };
     const p = JSON.parse(raw) as Partial<ImportPrefs>;
     const sep: ImportPrefs['separate'] = {};
@@ -124,7 +153,7 @@ function loadPrefs(): ImportPrefs {
       const e = p.engine?.[k];
       if (e === 'server' || e === 'browser') engine[k] = e;
     }
-    return { separate: sep, engine };
+    return { separate: sep, engine, ...(p.pianoModel === true ? { pianoModel: true } : {}) };
   } catch {
     return { separate: {} };
   }
@@ -210,35 +239,68 @@ export function browserFallback(browser: SeparationSupport = separationSupport()
   return { ok: false, why: browser.ok ? `separating in this browser is not recommended on this device: ${browser.reason ?? 'not enough memory'}` : browser.reason };
 }
 
-// ---------------------------------------------------------------- crash marker for in-browser separation
+// ---------------------------------------------------------------- transcription model
 
 /**
- * Set while this browser separates (own key; the settings and prefs keys are untouched), together
- * with a Web Lock held for as long as the separating tab lives. A marker left behind without the
- * lock means that tab died mid-separation (almost always out of memory): the next load says so and
- * turns the option off for that preset. A normal unload (reload, close, navigation) removes it.
+ * The transcription model for an import: the piano specialist only when the user picked
+ * "High-accuracy piano model", the preset is "Piano solo" and this browser can run it; Basic Pitch
+ * otherwise. Off by default everywhere (phones included: there it can still be ticked).
+ */
+export function transcriberChoice(prefs: ImportPrefs, preset: PresetId, available: boolean = pianoSpecialistSupport().available): TranscriptionEngine {
+  return prefs.pianoModel === true && preset === 'piano' && available ? 'piano-specialist' : 'basic-pitch';
+}
+
+/**
+ * The model "Try again" uses for an interrupted-import record: the one it was started with (older
+ * records: Basic Pitch), except that a high-accuracy piano model run falls back to the normal
+ * model when this browser can no longer run it, when its tab was seen dying of it (the crash marker),
+ * and on memory-constrained devices (phones, ≤ 4 GB), where a killed tab almost always means the model
+ * ran out of memory and running it again would crash the same way.
+ */
+export function resumeTranscriber(
+  rec: Pick<PendingWithTranscriber, 'id' | 'transcriber'>,
+  env: { available?: boolean; constrained?: boolean; crashed?: boolean } = {},
+): TranscriptionEngine {
+  if (rec.transcriber !== 'piano-specialist') return 'basic-pitch';
+  const available = env.available ?? pianoSpecialistSupport().available;
+  const device = env.constrained === undefined ? pageDeviceInfo() : undefined;
+  const constrained = env.constrained ?? (!!device && isMemoryConstrained(device));
+  const crashed = env.crashed ?? crashedSpecialistRecords.has(rec.id);
+  return available && !constrained && !crashed ? 'piano-specialist' : 'basic-pitch';
+}
+
+// ---------------------------------------------------------------- crash markers (in-browser separation, piano specialist)
+
+/**
+ * Set while this browser runs one of the memory-hungry models (own keys; the settings and prefs keys
+ * are untouched), together with a Web Lock held for as long as that tab lives. A marker left behind
+ * without its lock means that tab died mid-run (almost always out of memory): the next load says so
+ * and turns the option off. A normal unload (reload, close, navigation) removes it.
  */
 const SEPARATING_KEY = 'piano2vision-separating';
 const SEPARATING_LOCK = 'piano2vision-separating';
-let ownsSeparatingMarker = false;
+/** the piano specialist's marker: { pendingId?, at } */
+export const SPECIALIST_RUNNING_KEY = 'piano2vision-piano-specialist-running';
+const SPECIALIST_RUNNING_LOCK = 'piano2vision-piano-specialist-running';
+/** markers this tab set and has not removed yet (the pagehide handler removes them) */
+const ownedMarkers = new Set<string>();
 
-function markSeparating(preset: PresetId): () => void {
+function setCrashMarker(key: string, lock: string, payload: Record<string, unknown>): () => void {
   const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
   if (!locks) return () => {};
   let release: () => void = () => {};
   const held = new Promise<void>((r) => (release = r));
-  void locks.request(SEPARATING_LOCK, () => held).catch(() => undefined);
+  void locks.request(lock, () => held).catch(() => undefined);
   try {
-    localStorage.setItem(SEPARATING_KEY, JSON.stringify({ preset, at: Date.now() }));
-    ownsSeparatingMarker = true;
+    localStorage.setItem(key, JSON.stringify({ ...payload, at: Date.now() }));
+    ownedMarkers.add(key);
   } catch {
     /* storage blocked: no crash detection */
   }
   return () => {
-    if (ownsSeparatingMarker) {
-      ownsSeparatingMarker = false;
+    if (ownedMarkers.delete(key)) {
       try {
-        localStorage.removeItem(SEPARATING_KEY);
+        localStorage.removeItem(key);
       } catch {
         /* ignore */
       }
@@ -247,44 +309,87 @@ function markSeparating(preset: PresetId): () => void {
   };
 }
 
-async function checkCrashedSeparation(turnOff: (preset: PresetId) => void): Promise<void> {
+/** The payload of a marker a dead tab left behind (removed here), or null. Markers older than 6 h are dropped silently. */
+async function takeCrashMarker(key: string, lock: string): Promise<Record<string, unknown> | null> {
   let raw: string | null = null;
   try {
-    raw = localStorage.getItem(SEPARATING_KEY);
+    raw = localStorage.getItem(key);
   } catch {
-    return;
+    return null;
   }
-  if (!raw || typeof navigator === 'undefined' || !navigator.locks) return;
+  if (!raw || typeof navigator === 'undefined' || !navigator.locks) return null;
   const state = await navigator.locks.query().catch(() => null);
-  // another tab is separating right now
-  if (!state || state.held?.some((l) => l.name === SEPARATING_LOCK)) return;
+  // another tab is running it right now
+  if (!state || state.held?.some((l) => l.name === lock)) return null;
   try {
-    localStorage.removeItem(SEPARATING_KEY);
+    localStorage.removeItem(key);
   } catch {
     /* ignore */
   }
-  let m: { preset?: PresetId; at?: number } = {};
+  let m: Record<string, unknown>;
   try {
-    m = JSON.parse(raw) as typeof m;
+    m = JSON.parse(raw) as Record<string, unknown>;
   } catch {
-    return;
+    return null;
   }
-  if (!m.preset || !['piano', 'mix', 'sensitive', 'custom'].includes(m.preset) || !m.at || Date.now() - m.at > 6 * 3600_000) return;
-  turnOff(m.preset);
+  if (typeof m?.at !== 'number' || Date.now() - m.at > 6 * 3600_000) return null;
+  return m;
+}
+
+function markSeparating(preset: PresetId): () => void {
+  return setCrashMarker(SEPARATING_KEY, SEPARATING_LOCK, { preset });
+}
+
+async function checkCrashedSeparation(turnOff: (preset: PresetId) => void): Promise<void> {
+  const m = await takeCrashMarker(SEPARATING_KEY, SEPARATING_LOCK);
+  const preset = m?.preset as PresetId | undefined;
+  if (!preset || !['piano', 'mix', 'sensitive', 'custom'].includes(preset)) return;
+  turnOff(preset);
   toast.warn(
     'The last import stopped while separating vocals & drums',
     'The page most likely ran out of memory. "Separate vocals & drums" is now off for this detection preset. Close other tabs and tick it again to retry, or use a processing server with separation.',
   );
 }
 
+function markSpecialist(pendingId: string | undefined): () => void {
+  return setCrashMarker(SPECIALIST_RUNNING_KEY, SPECIALIST_RUNNING_LOCK, pendingId ? { pendingId } : {});
+}
+
+/** interrupted-import records whose high-accuracy piano model run took the tab down (resumed with the normal model) */
+const crashedSpecialistRecords = new Set<string>();
+
+/**
+ * A tab that died while the piano specialist ran: the normal model is selected again, the record
+ * it left is resumed with it (resumeTranscriber), and a toast says why.
+ */
+export async function checkCrashedSpecialist(turnOff: () => void): Promise<boolean> {
+  const m = await takeCrashMarker(SPECIALIST_RUNNING_KEY, SPECIALIST_RUNNING_LOCK);
+  if (!m) return false;
+  if (typeof m.pendingId === 'string') crashedSpecialistRecords.add(m.pendingId);
+  turnOff();
+  toast.warn(
+    'The high-accuracy piano model stopped the page',
+    'The page most likely ran out of memory while the high-accuracy piano model was running, so the normal model is selected again. Close other tabs and tick “High-accuracy piano model” again to retry it.',
+  );
+  return true;
+}
+
+let crashChecks: Promise<void> = Promise.resolve();
+/** Resolves once this page load has looked for crash markers (the interrupted-import notice waits for it). */
+export function crashChecksDone(): Promise<void> {
+  return crashChecks;
+}
+
 if (typeof window !== 'undefined') {
   window.addEventListener('pagehide', () => {
-    if (!ownsSeparatingMarker) return;
-    try {
-      localStorage.removeItem(SEPARATING_KEY);
-    } catch {
-      /* ignore */
+    for (const key of ownedMarkers) {
+      try {
+        localStorage.removeItem(key);
+      } catch {
+        /* ignore */
+      }
     }
+    ownedMarkers.clear();
   });
 }
 
@@ -378,6 +483,10 @@ interface Ctx {
   id: number;
   /** detection preset when the import started */
   preset: PresetId;
+  /** transcription model of this import */
+  transcriber: TranscriptionEngine;
+  /** warnings from before transcription (kept in the song's warnings) */
+  early: string[];
   signal: AbortSignal;
   update: (patch: Partial<ImportJob>) => void;
   onProgress: (e: ProgressEvent) => void;
@@ -413,22 +522,46 @@ export const useImport = create<ImportState>((set, get) => {
   /** the running import's handle (to delete its record on Cancel) */
   let current: Ctx | null = null;
 
-  const start = (title: string, kind: SongSource['kind'], plan: ImportStage[], separation?: SeparationEngine, preset?: PresetId): Ctx => {
+  const start = (
+    title: string,
+    kind: SongSource['kind'],
+    plan: ImportStage[],
+    separation?: SeparationEngine,
+    preset?: PresetId,
+    transcriber?: TranscriptionEngine,
+  ): Ctx => {
     get().controller?.abort();
     void current?.unpend?.();
     const controller = new AbortController();
     const id = seq++;
+    const presetId = preset ?? (useSettings.getState().detectionPreset as PresetId);
+    // audio imports only (MIDI and the demo have no model)
+    const model = kind === 'midi' || kind === 'demo' ? 'basic-pitch' : (transcriber ?? transcriberChoice(get().prefs, presetId));
     set({
       failed: null,
       controller,
-      job: { id, title, kind, stage: 'validating', progress: null, warnings: [], startedAt: Date.now(), history: ['validating'], plan, separation },
+      job: {
+        id,
+        title,
+        kind,
+        stage: 'validating',
+        progress: null,
+        warnings: [],
+        startedAt: Date.now(),
+        history: ['validating'],
+        plan,
+        separation,
+        ...(model === 'piano-specialist' ? { transcriber: model } : {}),
+      },
     });
     const update = (patch: Partial<ImportJob>) => {
       if (!controller.signal.aborted) apply(id, patch);
     };
     const ctx: Ctx = {
       id,
-      preset: preset ?? (useSettings.getState().detectionPreset as PresetId),
+      preset: presetId,
+      transcriber: model,
+      early: [],
       signal: controller.signal,
       update,
       onProgress: (e) => update({ stage: e.stage, progress: e.progress, detail: e.detail }),
@@ -437,10 +570,19 @@ export const useImport = create<ImportState>((set, get) => {
     return ctx;
   };
 
+  /** The piano specialist is for solo piano: a ticked "Separate vocals & drums" is not used with it. */
+  const skipSeparation = (ctx: Ctx) => {
+    ctx.early.push('"Separate vocals & drums" is not used with the high-accuracy piano model.');
+    ctx.update({ warnings: [...ctx.early] });
+  };
+
   /** Keep a copy of the audio and the options until this import ends (see persistPending). */
   const pend = async (ctx: Ctx, rec: Omit<PendingImport, 'id' | 'startedAt' | 'presetId'> & { id?: string }) => {
     const id = rec.id ?? newId();
-    const unpend = persistPending({ ...rec, id, startedAt: Date.now(), presetId: ctx.preset });
+    const full: PendingWithTranscriber = { ...rec, id, startedAt: Date.now(), presetId: ctx.preset };
+    // Try again after a killed tab uses the same model (older records have no field: Basic Pitch)
+    if (ctx.transcriber === 'piano-specialist') full.transcriber = ctx.transcriber;
+    const unpend = persistPending(full);
     ctx.unpend = unpend;
     ctx.pendingId = id;
     await (unpend as unknown as { written: Promise<void> }).written;
@@ -478,6 +620,21 @@ export const useImport = create<ImportState>((set, get) => {
     if (again && get().job?.id === ctx.id) set({ failed: { jobId: ctx.id, ...again } });
     return null;
   };
+
+  /**
+   * The model "Try again" on the error card runs: the import's own, except that a failed "Solo piano –
+   * high accuracy" run follows the choice shown on the page now (the user may have switched to fast).
+   */
+  const retryModel = (ctx: Ctx): TranscriptionEngine =>
+    ctx.transcriber === 'piano-specialist' ? transcriberChoice(get().prefs, ctx.preset) : ctx.transcriber;
+  /** "Try with the normal model": select it (so the page shows what runs) and run the import with it */
+  const withFast = (ctx: Ctx, run: () => Promise<string | null>) =>
+    ctx.transcriber === 'piano-specialist'
+      ? () => {
+          get().setPianoModelPref(false);
+          return run();
+        }
+      : undefined;
 
   const isRecording = (kind: SongSource['kind']) => kind === 'capture' || kind === 'youtube';
   const recordingName = (title: string, mime: string) => `${title.replace(/[\\/:*?"<>|]+/g, '-').trim() || 'Recording'}.${extFor(mime)}`;
@@ -540,7 +697,7 @@ export const useImport = create<ImportState>((set, get) => {
   ) => {
     const { update, onProgress, signal } = ctx;
     const params = detectionParams(ctx.preset);
-    const extraWarnings: string[] = [...earlier];
+    const extraWarnings: string[] = [...ctx.early, ...earlier];
     let opts: TranscribeOptions = {};
     let progress = onProgress;
     if (engine === 'server') {
@@ -568,8 +725,10 @@ export const useImport = create<ImportState>((set, get) => {
     } else if (engine === 'browser') {
       opts = { separate: true };
     }
-    // in-browser separation: leave a marker in case the tab dies of it (see markSeparating)
-    const unmark = opts.separate ? markSeparating(ctx.preset) : () => {};
+    if (ctx.transcriber === 'piano-specialist') opts = { ...opts, engine: 'piano-specialist' };
+    // in-browser separation and the piano specialist: leave a marker in case the tab dies of it (setCrashMarker)
+    const unmark =
+      opts.engine === 'piano-specialist' ? markSpecialist(ctx.pendingId) : opts.separate ? markSeparating(ctx.preset) : () => {};
     let result: Awaited<ReturnType<typeof transcribeAudio>>;
     try {
       result = await transcribeAudio(original, params, progress, signal, opts);
@@ -596,10 +755,13 @@ export const useImport = create<ImportState>((set, get) => {
       hasPosteriors: true,
     });
     update({ warnings: result.info.warnings, stage: 'saving', progress: null, detail: 'Saving to your library' });
+    // the piano specialist's outputs are not stored: re-detection works on Basic Pitch posteriors only
+    song.hasPosteriors = !!result.posteriors;
+    const posteriors = result.posteriors;
     const storeOriginal = async () => {
       await saveAudio(song.id, original, meta.source.fileName ?? meta.title);
       // (separated songs: includes the drums stem's onset envelope)
-      await savePosteriors(song.id, result.posteriors);
+      if (posteriors) await savePosteriors(song.id, posteriors);
     };
     try {
       try {
@@ -623,6 +785,13 @@ export const useImport = create<ImportState>((set, get) => {
     controller: null,
     failed: null,
     prefs: loadPrefs(),
+
+    setPianoModelPref: (value) => {
+      const { pianoModel: _old, ...rest } = get().prefs;
+      const prefs: ImportPrefs = value ? { ...rest, pianoModel: true } : rest;
+      set({ prefs });
+      savePrefs(prefs);
+    },
 
     setSeparatePref: (preset, value, engine) => {
       const cur = get().prefs;
@@ -653,10 +822,15 @@ export const useImport = create<ImportState>((set, get) => {
         }
       }
       // start the job right away (the page shows it), then decide where separation runs
-      const ctx = start(title, 'audio', planFor('audio', undefined), undefined, opts.presetId);
+      const ctx = start(title, 'audio', planFor('audio', undefined), undefined, opts.presetId, opts.transcriber);
       let separate = opts.separate;
       try {
         separate ??= await defaultSeparate();
+        // the piano specialist is for solo piano: no separation (the pipeline would ignore it)
+        if (ctx.transcriber === 'piano-specialist' && separate) {
+          skipSeparation(ctx);
+          separate = false;
+        }
         const source: SongSource = { kind: 'audio', fileName: file.name, mimeType: file.type, fileSize: file.size };
         await pend(ctx, {
           id: opts.pendingId,
@@ -673,14 +847,21 @@ export const useImport = create<ImportState>((set, get) => {
         ctx.update({ plan: planFor('audio', engine), separation: engine });
         return await transcribeAndSave(ctx, file, { title, source, fileName: file.name }, engine);
       } catch (err) {
-        return fail(ctx, err, { retry: () => get().importFile(file, { ...opts, separate, presetId: ctx.preset, pendingId: undefined }) });
+        const again = (transcriber: TranscriptionEngine) => () =>
+          get().importFile(file, { ...opts, separate, presetId: ctx.preset, transcriber, pendingId: undefined });
+        return fail(ctx, err, { retry: () => again(retryModel(ctx))(), retryFast: withFast(ctx, again('basic-pitch')) });
       }
     },
 
     importAudioBlob: async (blob, meta) => {
-      const ctx = start(meta.title, meta.source.kind, planFor(meta.source.kind, undefined), undefined, meta.presetId);
+      const ctx = start(meta.title, meta.source.kind, planFor(meta.source.kind, undefined), undefined, meta.presetId, meta.transcriber);
       const fileName = recordingName(meta.title, blob.type);
+      let separate = !!meta.separate;
       try {
+        if (ctx.transcriber === 'piano-specialist' && separate) {
+          skipSeparation(ctx);
+          separate = false;
+        }
         await pend(ctx, {
           id: meta.pendingId,
           title: meta.title,
@@ -690,15 +871,18 @@ export const useImport = create<ImportState>((set, get) => {
           blob,
           mimeType: blob.type,
           fileName,
-          separate: !!meta.separate,
+          separate,
         });
-        const engine = await pickEngine(!!meta.separate);
+        const engine = await pickEngine(separate);
         if (ctx.signal.aborted) return null;
         ctx.update({ plan: planFor(meta.source.kind, engine), separation: engine });
         return await transcribeAndSave(ctx, blob, { ...meta, fileName }, engine);
       } catch (err) {
+        const again = (transcriber: TranscriptionEngine) => () =>
+          get().importAudioBlob(blob, { ...meta, presetId: ctx.preset, transcriber, pendingId: undefined });
         return fail(ctx, err, {
-          retry: () => get().importAudioBlob(blob, { ...meta, presetId: ctx.preset, pendingId: undefined }),
+          retry: () => again(retryModel(ctx))(),
+          retryFast: withFast(ctx, again('basic-pitch')),
           recording: isRecording(meta.source.kind) ? { blob, fileName } : undefined,
         });
       }
@@ -709,19 +893,26 @@ export const useImport = create<ImportState>((set, get) => {
       const presetId = (['piano', 'mix', 'sensitive', 'custom'] as PresetId[]).includes(rec.presetId as PresetId) ? (rec.presetId as PresetId) : undefined;
       // a separation that crashed the tab has already been switched off for this preset (checkCrashedSeparation)
       const separate = rec.separate && (presetId ? get().prefs.separate[presetId] !== false : true);
+      // the model it was started with (older records: Basic Pitch), unless that model took the tab down
+      await crashChecks;
+      const transcriber = resumeTranscriber(rec as PendingWithTranscriber);
       if (rec.kind === 'audio') {
         const file = new File([rec.blob], rec.fileName, { type: rec.mimeType || rec.blob.type });
-        return get().importFile(file, { title: rec.title, separate, presetId, pendingId: rec.id });
+        return get().importFile(file, { title: rec.title, separate, presetId, transcriber, pendingId: rec.id });
       }
-      return get().importAudioBlob(rec.blob, { title: rec.title, artist: rec.artist, source: rec.source, separate, presetId, pendingId: rec.id });
+      return get().importAudioBlob(rec.blob, { title: rec.title, artist: rec.artist, source: rec.source, separate, presetId, transcriber, pendingId: rec.id });
     },
 
     importYouTubeViaServer: async (videoUrl, videoId, separate, meta) => {
-      const ctx = start(meta?.title ?? 'YouTube video', 'youtube', planFor('youtube', undefined, true));
+      const ctx = start(meta?.title ?? 'YouTube video', 'youtube', planFor('youtube', undefined, true), undefined, undefined, meta?.transcriber);
       const { update, signal } = ctx;
       try {
         const backend = backendUrl();
         if (!backend) throw new Error('No processing server is configured (Settings → Processing server).');
+        if (ctx.transcriber === 'piano-specialist' && separate) {
+          skipSeparation(ctx);
+          separate = false;
+        }
         const engine = await pickEngine(separate);
         if (signal.aborted) return null;
         const meta0 = { title: meta?.title ?? 'YouTube video', artist: meta?.artist };
@@ -865,7 +1056,16 @@ if (typeof window !== 'undefined') {
   // keep the screen on while an import runs (a locked phone suspends the page)
   const wake = createScreenWakeLock();
   useImport.subscribe((st) => void wake.hold(importBusy(st.job)));
-  setTimeout(() => void checkCrashedSeparation((preset) => useImport.getState().setSeparatePref(preset, false, 'browser')), 0);
+  crashChecks = new Promise<void>((resolve) =>
+    setTimeout(() => {
+      void Promise.all([
+        checkCrashedSeparation((preset) => useImport.getState().setSeparatePref(preset, false, 'browser')),
+        checkCrashedSpecialist(() => useImport.getState().setPianoModelPref(false)),
+      ])
+        .catch(() => undefined)
+        .then(() => resolve());
+    }, 0),
+  );
 }
 
 export const STAGE_LABELS: Record<ImportStage, string> = {

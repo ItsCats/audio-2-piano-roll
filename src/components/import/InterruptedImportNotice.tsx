@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { importBusy, useImport } from '../../state/importStore';
+import { crashChecksDone, importBusy, resumeTranscriber, useImport, type PendingWithTranscriber } from '../../state/importStore';
 import { discardInterrupted, findInterruptedImport, interruptedNotice, stillInterrupted } from '../../state/interruptedImport';
 import { toast, useToasts, type ToastAction } from '../../state/toastStore';
 import { saveBlobAs } from '../../lib/saveBlob';
@@ -36,9 +36,10 @@ export function InterruptedImportNotice() {
   }, []);
   useEffect(() => {
     let alive = true;
-    void findInterruptedImport().then((rec) => {
+    void Promise.all([findInterruptedImport(), crashChecksDone()]).then(([rec]) => {
       if (!alive || !rec) return;
-      const n = interruptedNotice(rec);
+      // (after the crash checks: a record whose high-accuracy run took the tab down is resumed with the fast model)
+      const n = interruptedNotice(rec, resumeTranscriber(rec as PendingWithTranscriber));
       const actions: ToastAction[] = [];
       if (n.canRetry) {
         actions.push({

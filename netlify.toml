@@ -39,6 +39,12 @@
   for = "/models/scnet/*"
   [headers.values]
     Cache-Control = "public, max-age=31536000, immutable"
+# Piano specialist model (the optional "High-accuracy piano model", 41 MB in 5 pieces, src/lib/pianoSpecialist). Requested
+# with ?v=<sha256 prefix> and sha256-checked like SCNet, so a long cache is safe.
+[[headers]]
+  for = "/models/piano-specialist/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
 # CREPE tiny pitch model (2 MB, src/lib/pitch)
 [[headers]]
   for = "/models/crepe/*"

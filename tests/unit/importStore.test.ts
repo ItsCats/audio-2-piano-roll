@@ -2,7 +2,7 @@
  * Import flows with the processing server, the pipeline and storage mocked: which errors start the
  * separation fallback, where the fallback runs, and the server health cache.
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TranscriptionResult } from '../../src/lib/transcription/pipeline';
 import type { SeparationSupport } from '../../src/lib/separation';
 
@@ -27,6 +27,12 @@ vi.mock('../../src/lib/separation', async (orig) => ({
   ...(await orig<typeof import('../../src/lib/separation')>()),
   separationSupport: () => support.value,
 }));
+// the piano specialist (T1's module): only whether this browser can run it matters here
+const specialist = { available: true };
+vi.mock('../../src/lib/pianoSpecialist', () => ({
+  pianoSpecialistSupport: () => ({ available: specialist.available, recommended: true, downloadMB: 49, estSecondsPerMinute: 30 }),
+  runPianoSpecialist: vi.fn(),
+}));
 vi.mock('../../src/lib/backend/client', async (orig) => ({
   ...(await orig<typeof import('../../src/lib/backend/client')>()),
   health: vi.fn(),
@@ -40,7 +46,9 @@ vi.mock('../../src/lib/backend/client', async (orig) => ({
 const pipeline = await import('../../src/lib/transcription/pipeline');
 const client = await import('../../src/lib/backend/client');
 const db = await import('../../src/lib/storage/db');
-const { useImport, serverHealth, rememberServerHealth, separationChoice, separationAvailability } = await import('../../src/state/importStore');
+const { useImport, serverHealth, rememberServerHealth, separationChoice, separationAvailability, transcriberChoice, parsePrefs, resumeTranscriber, checkCrashedSpecialist, SPECIALIST_RUNNING_KEY } =
+  await import('../../src/state/importStore');
+const { interruptedNotice } = await import('../../src/state/interruptedImport');
 const { useSettings } = await import('../../src/state/settingsStore');
 
 const healthy = { ok: true, version: '2.0.0', features: { youtube: true, separation: true, stems: true } } as unknown as Awaited<ReturnType<typeof client.health>>;
@@ -323,5 +331,259 @@ describe('interrupted-import record (crash recovery)', () => {
     const rec = vi.mocked(db.savePending).mock.calls[0][0];
     expect(rec.blob).toBeUndefined();
     expect(rec.fileName).toBe('film.mp4');
+  });
+});
+
+describe('high-accuracy piano model (piano specialist)', () => {
+  beforeEach(() => {
+    for (const f of [db.savePending, db.saveAudio, db.savePosteriors, db.saveSong]) vi.mocked(f).mockClear();
+    useSettings.setState({ backendUrl: '', detectionPreset: 'piano' });
+    useImport.getState().setPianoModelPref(false);
+    specialist.available = true;
+  });
+  const file = () => new File([new Uint8Array(16)], 'piece.mp3', { type: 'audio/mpeg' });
+  /** what the pipeline returns for the specialist: no posteriors */
+  const specialistResult = (): TranscriptionResult => ({
+    ...result(),
+    posteriors: undefined,
+    info: { method: 'piano-specialist', estimated: true, warnings: [] } as unknown as TranscriptionResult['info'],
+  });
+
+  it('is off unless ticked, and only used with "Piano solo" where the browser can run it', () => {
+    expect(transcriberChoice({ separate: {} }, 'piano', true)).toBe('basic-pitch');
+    expect(transcriberChoice({ separate: {}, pianoModel: true }, 'piano', true)).toBe('piano-specialist');
+    expect(transcriberChoice({ separate: {}, pianoModel: true }, 'mix', true)).toBe('basic-pitch');
+    expect(transcriberChoice({ separate: {}, pianoModel: true }, 'sensitive', true)).toBe('basic-pitch');
+    expect(transcriberChoice({ separate: {}, pianoModel: true }, 'piano', false)).toBe('basic-pitch');
+  });
+
+  it('the choice is kept in the import prefs; older prefs (without it) still load', () => {
+    useImport.getState().setPianoModelPref(true);
+    expect(useImport.getState().prefs.pianoModel).toBe(true);
+    useImport.getState().setPianoModelPref(false);
+    expect(useImport.getState().prefs.pianoModel).toBeUndefined();
+    expect(parsePrefs('{"separate":{"mix":true},"engine":{"mix":"server"}}')).toEqual({ separate: { mix: true }, engine: { mix: 'server' } });
+    expect(parsePrefs('{"separate":{},"pianoModel":true}').pianoModel).toBe(true);
+    expect(parsePrefs('{"separate":{},"pianoModel":"yes"}').pianoModel).toBeUndefined();
+    expect(parsePrefs('not json')).toEqual({ separate: {} });
+  });
+
+  it('a ticked choice runs the specialist (no separation), keeps it in the crash record and saves no posteriors', async () => {
+    useImport.getState().setPianoModelPref(true);
+    vi.mocked(pipeline.transcribeAudio).mockResolvedValue(specialistResult());
+    await useImport.getState().importFile(file(), { separate: true });
+    const job = useImport.getState().job!;
+    expect(job.stage).toBe('done');
+    expect(job.transcriber).toBe('piano-specialist');
+    expect(vi.mocked(pipeline.transcribeAudio).mock.calls[0][4]).toEqual({ engine: 'piano-specialist' });
+    expect(job.warnings.join(' ')).toMatch(/not used with the high-accuracy piano model/);
+    expect(vi.mocked(db.savePending).mock.calls[0][0]).toMatchObject({ transcriber: 'piano-specialist', separate: false, presetId: 'piano' });
+    expect(db.savePosteriors).not.toHaveBeenCalled();
+    expect(vi.mocked(db.saveSong).mock.calls[0][0]).toMatchObject({ hasPosteriors: false, hasAudio: true });
+  });
+
+  it('Basic Pitch imports are unchanged (no engine option, no field in the record)', async () => {
+    vi.mocked(pipeline.transcribeAudio).mockResolvedValue(result());
+    await useImport.getState().importFile(file(), { separate: false });
+    expect(vi.mocked(pipeline.transcribeAudio).mock.calls[0][4]).toEqual({});
+    expect(vi.mocked(db.savePending).mock.calls[0][0]).not.toHaveProperty('transcriber');
+    expect(useImport.getState().job!.transcriber).toBeUndefined();
+    expect(db.savePosteriors).toHaveBeenCalledTimes(1);
+  });
+
+  it('an explicit model wins over the remembered choice (the Record tab passes Basic Pitch)', async () => {
+    useImport.getState().setPianoModelPref(true);
+    vi.mocked(pipeline.transcribeAudio).mockResolvedValue(result());
+    await useImport.getState().importAudioBlob(new Blob([new Uint8Array(4000)], { type: 'audio/mp4' }), {
+      title: 'Recording',
+      source: { kind: 'capture', mimeType: 'audio/mp4', fileSize: 4000 },
+      transcriber: 'basic-pitch',
+    });
+    expect(vi.mocked(pipeline.transcribeAudio).mock.calls[0][4]).toEqual({});
+  });
+
+  it('Try again (open page) follows the model selected now; "Try with the normal model" selects and runs the fast one', async () => {
+    useImport.getState().setPianoModelPref(true);
+    vi.mocked(pipeline.transcribeAudio).mockRejectedValue(new Error('The high-accuracy piano model ran out of memory on this device.'));
+    await useImport.getState().importFile(file(), { separate: false });
+    expect(vi.mocked(pipeline.transcribeAudio).mock.calls[0][4]).toEqual({ engine: 'piano-specialist' });
+    let failed = useImport.getState().failed!;
+    expect(failed.retryFast).toBeTypeOf('function');
+    // still selected: the same model again
+    await failed.retry();
+    expect(vi.mocked(pipeline.transcribeAudio).mock.calls[1][4]).toEqual({ engine: 'piano-specialist' });
+    // the user switched the radio to the normal model: Try again runs what the page shows
+    failed = useImport.getState().failed!;
+    useImport.getState().setPianoModelPref(false);
+    vi.mocked(pipeline.transcribeAudio).mockResolvedValueOnce(result());
+    await failed.retry();
+    expect(vi.mocked(pipeline.transcribeAudio).mock.calls[2][4]).toEqual({});
+    expect(useImport.getState().job!.stage).toBe('done');
+
+    // the error card's second button
+    useImport.getState().setPianoModelPref(true);
+    await useImport.getState().importAudioBlob(new Blob([new Uint8Array(4000)], { type: 'audio/mp4' }), {
+      title: 'Recording',
+      source: { kind: 'capture', mimeType: 'audio/mp4', fileSize: 4000 },
+    });
+    expect(vi.mocked(pipeline.transcribeAudio).mock.calls[3][4]).toEqual({ engine: 'piano-specialist' });
+    vi.mocked(pipeline.transcribeAudio).mockResolvedValueOnce(result());
+    await useImport.getState().failed!.retryFast!();
+    expect(vi.mocked(pipeline.transcribeAudio).mock.calls[4][4]).toEqual({});
+    expect(useImport.getState().prefs.pianoModel).toBeUndefined();
+    expect(useImport.getState().job!.stage).toBe('done');
+
+    // Basic Pitch failures have no fast alternative to offer
+    vi.mocked(pipeline.transcribeAudio).mockRejectedValueOnce(new Error('boom'));
+    await useImport.getState().importFile(file(), { separate: false });
+    expect(useImport.getState().failed!.retryFast).toBeUndefined();
+    vi.mocked(pipeline.transcribeAudio).mockReset();
+  });
+
+  it('a resumed record uses its own model, except where the high-accuracy run took the tab down or memory is tight', async () => {
+    vi.mocked(pipeline.transcribeAudio).mockResolvedValue(specialistResult());
+    const rec = {
+      id: 'old-pti',
+      title: 'Piece',
+      kind: 'audio' as const,
+      source: { kind: 'audio' as const, fileName: 'piece.mp3', mimeType: 'audio/mpeg' },
+      blob: new Blob([new Uint8Array(16)], { type: 'audio/mpeg' }),
+      mimeType: 'audio/mpeg',
+      fileName: 'piece.mp3',
+      startedAt: 1,
+      presetId: 'piano',
+      separate: false,
+    };
+    // a desktop (the test runner) that can run it: the same model, whatever is ticked now
+    await useImport.getState().resumePending({ ...rec, transcriber: 'piano-specialist' } as typeof rec);
+    expect(vi.mocked(pipeline.transcribeAudio).mock.calls.at(-1)![4]).toEqual({ engine: 'piano-specialist' });
+    // an older record (no field) stays on Basic Pitch even with the box ticked now
+    useImport.getState().setPianoModelPref(true);
+    await useImport.getState().resumePending(rec);
+    expect(vi.mocked(pipeline.transcribeAudio).mock.calls.at(-1)![4]).toEqual({});
+    // a browser that can no longer run the specialist resumes with Basic Pitch
+    specialist.available = false;
+    await useImport.getState().resumePending({ ...rec, transcriber: 'piano-specialist' } as typeof rec);
+    expect(vi.mocked(pipeline.transcribeAudio).mock.calls.at(-1)![4]).toEqual({});
+
+    const spec = { id: 'r1', transcriber: 'piano-specialist' as const };
+    expect(resumeTranscriber(spec, { available: true, constrained: false, crashed: false })).toBe('piano-specialist');
+    // phones / ≤ 4 GB: a killed tab almost always means the model ran out of memory
+    expect(resumeTranscriber(spec, { available: true, constrained: true, crashed: false })).toBe('basic-pitch');
+    expect(resumeTranscriber(spec, { available: true, constrained: false, crashed: true })).toBe('basic-pitch');
+    expect(resumeTranscriber({ id: 'r2' }, { available: true, constrained: false, crashed: false })).toBe('basic-pitch');
+  });
+
+  it('the interrupted-import notice says which model Try again uses', () => {
+    const rec = { title: 'Piece', kind: 'audio' as const, blob: new Blob(['x']), transcriber: 'piano-specialist' };
+    expect(interruptedNotice(rec, 'basic-pitch').body).toMatch(/Try again uses the normal model/);
+    expect(interruptedNotice(rec, 'piano-specialist').body).toMatch(/Try again uses the high-accuracy piano model again/);
+    expect(interruptedNotice({ ...rec, transcriber: undefined }, 'basic-pitch').body).not.toMatch(/Solo piano/);
+    expect(interruptedNotice({ ...rec, blob: undefined }, 'basic-pitch').body).not.toMatch(/Try again/);
+  });
+});
+
+describe('crash marker for the high-accuracy piano model', () => {
+  /** Web Locks and localStorage as a browser tab has them */
+  let store: Map<string, string>;
+  let held: Set<string>;
+  beforeEach(() => {
+    store = new Map();
+    held = new Set();
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+    });
+    vi.stubGlobal('navigator', {
+      userAgent: 'Mozilla/5.0 (X11; Linux x86_64) Chrome/140',
+      maxTouchPoints: 0,
+      locks: {
+        request: (name: string, cb: () => Promise<void>) => {
+          held.add(name);
+          return Promise.resolve(cb()).finally(() => held.delete(name));
+        },
+        query: async () => ({ held: [...held].map((name) => ({ name })) }),
+      },
+    });
+    for (const f of [db.savePending, db.saveSong]) vi.mocked(f).mockClear();
+    useSettings.setState({ backendUrl: '', detectionPreset: 'piano' });
+    specialist.available = true;
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    useImport.getState().setPianoModelPref(false);
+  });
+  const file = () => new File([new Uint8Array(16)], 'piece.mp3', { type: 'audio/mpeg' });
+
+  it('is set (with its lock) while the model runs and removed afterwards; Basic Pitch sets none', async () => {
+    useImport.getState().setPianoModelPref(true);
+    let during: { pendingId?: string; at?: number } | null = null;
+    let locked = false;
+    vi.mocked(pipeline.transcribeAudio).mockImplementationOnce(async () => {
+      during = JSON.parse(store.get(SPECIALIST_RUNNING_KEY) ?? 'null');
+      locked = held.has(SPECIALIST_RUNNING_KEY);
+      return { ...result(), posteriors: undefined };
+    });
+    await useImport.getState().importFile(file(), { separate: false });
+    expect(during).toMatchObject({ pendingId: vi.mocked(db.savePending).mock.calls[0][0].id });
+    expect(locked).toBe(true);
+    expect(store.has(SPECIALIST_RUNNING_KEY)).toBe(false);
+    await vi.waitFor(() => expect(held.has(SPECIALIST_RUNNING_KEY)).toBe(false));
+    // a failed run removes it too
+    vi.mocked(pipeline.transcribeAudio).mockRejectedValueOnce(new Error('boom'));
+    await useImport.getState().importFile(file(), { separate: false });
+    expect(store.has(SPECIALIST_RUNNING_KEY)).toBe(false);
+
+    useImport.getState().setPianoModelPref(false);
+    vi.mocked(pipeline.transcribeAudio).mockImplementationOnce(async () => {
+      during = JSON.parse(store.get(SPECIALIST_RUNNING_KEY) ?? 'null');
+      return result();
+    });
+    await useImport.getState().importFile(file(), { separate: false });
+    expect(during).toBeNull();
+  });
+
+  it('a marker left by a dead tab turns the choice off, and its record resumes with the normal model', async () => {
+    useImport.getState().setPianoModelPref(true);
+    store.set(SPECIALIST_RUNNING_KEY, JSON.stringify({ pendingId: 'crashed-1', at: Date.now() - 60_000 }));
+    const turnOff = vi.fn(() => useImport.getState().setPianoModelPref(false));
+    expect(await checkCrashedSpecialist(turnOff)).toBe(true);
+    expect(turnOff).toHaveBeenCalledTimes(1);
+    expect(useImport.getState().prefs.pianoModel).toBeUndefined();
+    expect(store.has(SPECIALIST_RUNNING_KEY)).toBe(false);
+    expect(resumeTranscriber({ id: 'crashed-1', transcriber: 'piano-specialist' }, { available: true, constrained: false })).toBe('basic-pitch');
+    expect(resumeTranscriber({ id: 'other', transcriber: 'piano-specialist' }, { available: true, constrained: false })).toBe('piano-specialist');
+    // Try again on that record
+    vi.mocked(pipeline.transcribeAudio).mockResolvedValueOnce(result());
+    await useImport.getState().resumePending({
+      id: 'crashed-1',
+      title: 'Piece',
+      kind: 'audio',
+      source: { kind: 'audio', fileName: 'piece.mp3', mimeType: 'audio/mpeg' },
+      blob: new Blob([new Uint8Array(16)], { type: 'audio/mpeg' }),
+      mimeType: 'audio/mpeg',
+      fileName: 'piece.mp3',
+      startedAt: 1,
+      presetId: 'piano',
+      separate: false,
+      transcriber: 'piano-specialist',
+    } as Parameters<ReturnType<typeof useImport.getState>['resumePending']>[0]);
+    expect(vi.mocked(pipeline.transcribeAudio).mock.calls.at(-1)![4]).toEqual({});
+    // checked once: a second look finds nothing
+    expect(await checkCrashedSpecialist(turnOff)).toBe(false);
+  });
+
+  it('leaves a marker alone while another tab runs the model, and drops stale ones silently', async () => {
+    store.set(SPECIALIST_RUNNING_KEY, JSON.stringify({ pendingId: 'p', at: Date.now() }));
+    held.add(SPECIALIST_RUNNING_KEY);
+    const turnOff = vi.fn();
+    expect(await checkCrashedSpecialist(turnOff)).toBe(false);
+    expect(store.has(SPECIALIST_RUNNING_KEY)).toBe(true);
+    held.clear();
+    store.set(SPECIALIST_RUNNING_KEY, JSON.stringify({ at: Date.now() - 7 * 3600_000 }));
+    expect(await checkCrashedSpecialist(turnOff)).toBe(false);
+    expect(store.has(SPECIALIST_RUNNING_KEY)).toBe(false);
+    expect(turnOff).not.toHaveBeenCalled();
   });
 });

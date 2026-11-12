@@ -12,6 +12,11 @@
  * When the vocal stem actually contains singing, the vocal stem is transcribed with
  * VOCAL_EXTRACTION and reduced to a single melody line (music/melody.ts) that goes on the right
  * hand (role 'melody').
+ *
+ * Engine 'piano-specialist' (solo piano, opt-in): decode at 16 kHz → the ByteDance piano
+ * transcription model (lib/pianoSpecialist, in its own worker) → its regression post-processor
+ * (pianoSpecialist/postprocess.ts) → hands → tempo/beats → key. No separation and none of the
+ * Basic Pitch cleanup (see specialistNotes).
  */
 import type { ExtractionParams, KeyInfo, Note, TempoInfo, TranscriptionInfo } from '../music/types';
 import { BP_FPS, BP_MIDI_OFFSET, BP_N_PITCHES, BP_SAMPLE_RATE, frameToTime, timeToFrame } from './constants';
@@ -26,6 +31,18 @@ import { extractMelodyLine, mergeMelody } from '../music/melody';
 import type { StoredPosteriors } from './posteriors';
 import { isMemoryConstrained, pageDeviceInfo } from './backendChoice';
 import { DRUM_ENV_FPS, longReason, separateStems, separationSupport, stemsFromBlobs, type SeparationResult } from '../separation';
+import { regressionToNotes, type RegressionOutputs } from '../pianoSpecialist/postprocess';
+// (protocol.ts is pure: the specialist's runtime itself is only loaded when it is used)
+import { PTI_CONSTRAINED_MAX_SECONDS } from '../pianoSpecialist/protocol';
+
+/**
+ * Which model turns the audio into notes: Spotify's Basic Pitch (default, any recording) or the
+ * piano specialist (Kong et al. 2021; solo piano only, slower, downloads its model once).
+ */
+export type TranscriptionEngine = 'basic-pitch' | 'piano-specialist';
+
+/** Sample rate the piano specialist's model takes. */
+export const SPECIALIST_SAMPLE_RATE = 16000;
 
 /**
  * Piano register curve: the top and bottom octaves get lower thresholds (Basic Pitch's posteriors
@@ -128,9 +145,10 @@ export interface TranscriptionResult {
   key?: KeyInfo;
   /**
    * Posteriors of the audio the main notes came from (the accompaniment stem when separated),
-   * plus the drum onset envelope when separated in the browser.
+   * plus the drum onset envelope when separated in the browser. Absent for the piano specialist
+   * (its outputs are not Basic Pitch posteriors, so they cannot be re-detected from).
    */
-  posteriors: StoredPosteriors;
+  posteriors?: StoredPosteriors;
   info: TranscriptionInfo;
   /**
    * Set when separation was asked for but did not run: 'memory' (it ran out of memory, or the
@@ -153,6 +171,11 @@ export interface TranscribeOptions {
    * both. Not consumed: its arrays are copied, so the same result can be passed to several calls.
    */
   separation?: SeparationResult;
+  /**
+   * Transcription model (default 'basic-pitch'). 'piano-specialist' ignores the separation
+   * options (it is for solo piano) and returns no posteriors.
+   */
+  engine?: TranscriptionEngine;
 }
 
 /**
@@ -452,9 +475,10 @@ async function transcribeAudioOnce(
   opts: TranscribeOptions,
 ): Promise<TranscriptionResult> {
   const t0 = performance.now();
+  if (opts.engine === 'piano-specialist') return transcribeWithSpecialist(blob, params, onProgress, signal, opts, t0);
   onProgress({ stage: 'decoding', progress: null, detail: 'Decoding and resampling audio' });
   // (the decoded AudioBuffer is not kept: separation decodes again at 44.1 kHz and memory is tight)
-  let { audio, duration } = await decodeMono(blob);
+  let { audio, duration } = await decodeMono(blob, BP_SAMPLE_RATE);
   if (signal?.aborted) throw aborted();
   const warnings: string[] = [];
   let separationFailure: TranscriptionResult['separationFailure'];
@@ -545,9 +569,142 @@ async function transcribeAudioOnce(
   };
 }
 
-/** Decode at the model rate and mix down; only the mono samples and the duration are kept. */
-async function decodeMono(blob: Blob): Promise<{ audio: Float32Array; duration: number }> {
-  const buffer = await decodeToRate(blob, BP_SAMPLE_RATE);
+// ---------------------------------------------------------------- piano specialist
+
+/** What the pipeline uses of lib/pianoSpecialist's result (see pianoSpecialist/protocol.ts). */
+type SpecialistRun = RegressionOutputs & { ms: number; threads: number };
+
+/**
+ * Specialist notes → the app's notes. None of the Basic Pitch cleanup is applied: its fragment and
+ * continuation merges, harmonic suppression and short-quiet filter are fixes for Basic Pitch's
+ * posteriors. Measured on the first 90 s of 3 MAESTRO pieces (onset F1@50 ms vs the exact MIDI):
+ * none 0.970 / 0.965 / 0.991; the short-quiet filter drops correct soft notes (Mozart 0.991 →
+ * 0.936); harmonic suppression changes nothing beyond ±0.001. Only notes past the end are dropped.
+ */
+export function specialistNotes(run: RegressionOutputs, duration: number): Note[] {
+  return regressionToNotes(run).filter((n) => n.start < duration);
+}
+
+/** Progress text for the piano specialist: real download bytes, then the 10 s parts done. */
+export function specialistDetail(e: { stage: 'loading-model' | 'analyzing'; loaded?: number; total?: number; done?: number; segments?: number }): string {
+  if (e.stage === 'loading-model') {
+    if (e.total && e.loaded !== undefined && e.loaded < e.total) {
+      return `Downloading the piano model, once (${Math.round(e.loaded / 1e6)} of ${Math.round(e.total / 1e6)} MB)`;
+    }
+    return 'Loading the piano model';
+  }
+  return e.segments ? `Listening to the piano (part ${Math.min(e.segments, (e.done ?? 0) + 1)} of ${e.segments})` : 'Listening to the piano';
+}
+
+/**
+ * The error text for a failed piano-specialist run: out-of-memory errors of onnxruntime / Emscripten /
+ * V8 (or a worker that died without a message) get plain advice instead of the engine's text; the
+ * worker's own download / checksum errors are already plain and are kept.
+ */
+export function specialistFailureMessage(err: unknown): string {
+  const e = err as Error | undefined;
+  const msg = e?.message ?? String(err);
+  if (MEMORY_ERROR.test(`${e?.name ?? ''} ${msg}`)) {
+    return 'The high-accuracy piano model ran out of memory on this device. Close other tabs and try again, or use the normal model.';
+  }
+  return msg;
+}
+
+/** The on-demand load of the specialist's code failed (offline, or a tab left open across an app update). */
+export const SPECIALIST_CODE_FAILED =
+  'Could not load the piano model’s code. Check your internet connection, reload the page and try again, or use the normal model.';
+
+/** Whether the piano specialist runs on a recording of `seconds` here (memory-constrained devices: up to PTI_CONSTRAINED_MAX_SECONDS). */
+export function specialistFits(seconds: number, constrained: boolean): boolean {
+  return !constrained || seconds <= PTI_CONSTRAINED_MAX_SECONDS;
+}
+
+async function transcribeWithSpecialist(
+  blob: Blob,
+  params: ExtractionParams,
+  onProgress: (e: ProgressEvent) => void,
+  signal: AbortSignal | undefined,
+  opts: TranscribeOptions,
+  t0: number,
+): Promise<TranscriptionResult> {
+  onProgress({ stage: 'decoding', progress: null, detail: 'Decoding and resampling audio' });
+  // only the mono samples and the duration are kept (the AudioBuffer is not)
+  let audio: Float32Array | null;
+  let duration: number;
+  ({ audio, duration } = await decodeMono(blob, SPECIALIST_SAMPLE_RATE));
+  if (signal?.aborted) throw aborted();
+  const warnings: string[] = [];
+  const level = analyzeLevel(audio);
+  if (level.peak < 0.01) throw new Error('The audio is (nearly) silent — nothing to transcribe.');
+  if (level.rms < 0.01) warnings.push('The recording is very quiet; quiet notes may be missed.');
+  if (opts.separate || opts.stems || opts.separation) warnings.push('"Separate vocals & drums" is not used with the high-accuracy piano model.');
+  // (not normalised: the model was trained on, and the reference runs on, the recording's own level)
+
+  // phones and ≤ 4 GB devices: memory and time grow with the length, so long recordings use Basic Pitch
+  const device = pageDeviceInfo();
+  if (!specialistFits(duration, !!device && isMemoryConstrained(device))) {
+    audio = null;
+    const fast = await transcribeAudioOnce(blob, params, onProgress, signal, { engine: 'basic-pitch' });
+    fast.info.warnings = [
+      ...warnings.filter((w) => !w.startsWith('The recording is very quiet')),
+      `This recording is ${Math.round(duration / 60)} minutes long: on this device the high-accuracy piano model runs on recordings of up to ${PTI_CONSTRAINED_MAX_SECONDS / 60} minutes (it needs more memory and time the longer they are), so the normal model was used.`,
+      ...fast.info.warnings,
+    ];
+    return fast;
+  }
+
+  onProgress({ stage: 'loading-model', progress: null, detail: 'Loading the piano model' });
+  // loaded on demand: the model's runtime is only downloaded when someone asks for it
+  let runPianoSpecialist: typeof import('../pianoSpecialist').runPianoSpecialist;
+  try {
+    ({ runPianoSpecialist } = await import('../pianoSpecialist'));
+  } catch (err) {
+    throw new Error(SPECIALIST_CODE_FAILED, { cause: err });
+  }
+  if (signal?.aborted) throw aborted();
+  let run: SpecialistRun;
+  try {
+    run = await runPianoSpecialist(
+      audio,
+      (e) => onProgress({ stage: e.stage, progress: e.progress, detail: specialistDetail(e) }),
+      signal,
+      // the Studio opens right after: free the model's ~550 MB now instead of keeping the worker warm;
+      // the samples are handed to the worker (the pipeline only needs the duration from here on)
+      { release: true, transfer: true },
+    );
+  } catch (err) {
+    if ((err as Error)?.name === 'AbortError' || signal?.aborted) throw err;
+    console.warn('[transcription] piano model failed', err);
+    throw new Error(specialistFailureMessage(err), { cause: err });
+  }
+  audio = null;
+  if (signal?.aborted) throw aborted();
+
+  onProgress({ stage: 'arranging', progress: null, detail: 'Assigning hands, tracking beats' });
+  const cleaned = specialistNotes(run, duration);
+  const notes = assignHands(cleaned, duration);
+  if (notes.length === 0) warnings.push('No notes were detected. Is this a piano recording? Try again with the normal model.');
+  const tempo = transcriptionTempo(notes, notes, duration);
+  if (tempo.confidence < 0.15) warnings.push('Tempo could not be detected reliably; the beat grid and quantisation may be off.');
+  return {
+    notes,
+    duration,
+    tempo,
+    key: detectKey(notes),
+    info: {
+      method: 'piano-specialist',
+      estimated: true,
+      // (no detection params: Basic Pitch's thresholds do not apply)
+      backend: run.threads > 1 ? `wasm (${run.threads} threads)` : 'wasm',
+      processingMs: Math.round(performance.now() - t0),
+      warnings,
+    },
+  };
+}
+
+/** Decode at a model's rate and mix down; only the mono samples and the duration are kept. */
+async function decodeMono(blob: Blob, sampleRate: number): Promise<{ audio: Float32Array; duration: number }> {
+  const buffer = await decodeToRate(blob, sampleRate);
   return { audio: mixToMono(buffer), duration: buffer.duration };
 }
 

@@ -12,7 +12,8 @@
     "test": "vitest run",
     "copy:model": "node scripts/copy-model.mjs",
     "build:samples": "python3 scripts/build-samples.py",
-    "test:e2e": "node tests/e2e/run.mjs"
+    "test:e2e": "node tests/e2e/run.mjs",
+    "test:e2e:specialist": "node tests/e2e/specialist.mjs"
   },
   "engines": {
     "node": ">=20"
@@ -28,12 +29,15 @@
     "@tensorflow/tfjs-core": "^4.22.0",
     "@tonejs/midi": "^2.0.28",
     "idb": "^8.0.4",
+    "jspdf": "4.2.1",
     "lucide-react": "^1.71.0",
     "mediabunny": "^1.65.2",
     "onnxruntime-web": "1.31.1",
+    "opensheetmusicdisplay": "2.2.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-router-dom": "^7.18.5",
+    "svg2pdf.js": "2.8.1",
     "zustand": "^5.1.0"
   },
   "devDependencies": {

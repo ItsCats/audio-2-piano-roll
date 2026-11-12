@@ -1,0 +1,76 @@
+Piano specialist model (piano-note.fp16.part1.bin ... part5.bin, joined: piano-note.fp16.onnx)
+==========================================================================================
+
+1. Model weights - Creative Commons Attribution 4.0 International (CC BY 4.0)
+-----------------------------------------------------------------------------
+
+The weights in this file are derived from the checkpoint
+
+  "CRNN_note_F1=0.9677_pedal_F1=0.9186.pth"
+  in "High-resolution Piano Transcription with Pedals by Regressing Onsets and Offsets Times"
+  by Qiuqiang Kong (Zenodo, 2020-09-17), https://zenodo.org/records/4034264,
+  DOI 10.5281/zenodo.4034264
+  (the trained model of: Qiuqiang Kong, Bochen Li, Xuchen Song, Yuan Wan, Yuxuan Wang,
+  "High-resolution Piano Transcription with Pedals by Regressing Onset and Offset Times",
+  IEEE/ACM Transactions on Audio, Speech, and Language Processing, 2021; ByteDance)
+
+licensed under CC BY 4.0: https://creativecommons.org/licenses/by/4.0/
+(legal code: https://creativecommons.org/licenses/by/4.0/legalcode)
+
+Changes made by Piano2Vision (tests/accuracy/pti_export.py):
+  - only the note model is kept (the pedal model of the checkpoint is left out);
+  - converted from PyTorch to ONNX (opset 17), input 10 s of 16 kHz audio;
+  - weights stored as float16 (cast back to float32 inside the graph), which rounds every
+    weight to float16 precision;
+  - the STFT's windowed DFT basis is computed inside the graph instead of being stored;
+  - the file is split into five consecutive pieces for hosting.
+The original checkpoint's authors do not endorse Piano2Vision or this conversion. No warranties
+are given; see the licence.
+
+2. Model architecture code - MIT License
+---------------------------------------
+
+The network graph was exported from the model definition of the Python package
+piano_transcription_inference 0.0.6 (PyPI; https://github.com/qiuqiangkong/piano_transcription_inference;
+author Qiuqiang Kong; the package metadata declares "License :: OSI Approved :: MIT License" and the
+wheel carries no separate licence file) and its audio front end from torchlibrosa 0.1.0
+(https://github.com/qiuqiangkong/torchlibrosa, MIT, Qiuqiang Kong). The training code of the
+system is at https://github.com/bytedance/piano_transcription (Apache-2.0 per its README; none of
+it is included here).
+
+The note post-processing that turns the model's outputs into notes, src/lib/pianoSpecialist/postprocess.ts
+(shipped in the app's JavaScript), is a TypeScript port of the RegressionPostProcessor of
+piano_transcription_inference 0.0.6 (utilities.py, piano_vad.py) and is used under the same MIT licence.
+
+Copyright notices: torchlibrosa 0.1.0's LICENSE.md reads "Copyright (c) 2018-2021 Qiuqiang Kong".
+piano_transcription_inference 0.0.6 ships no licence file and states no copyright line (its metadata
+names the author, Qiuqiang Kong, and the MIT License); the notice below names him as its holder.
+
+MIT License
+
+Copyright (c) 2018-2021 Qiuqiang Kong (torchlibrosa)
+Copyright (c) Qiuqiang Kong (piano_transcription_inference)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+3. Training data
+----------------
+
+The checkpoint was trained on the MAESTRO dataset (Hawthorne et al., 2019). No MAESTRO audio or
+MIDI is included here.
