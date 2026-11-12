@@ -1,8 +1,9 @@
 /**
  * Rhythm quantization for notation: each quarter note picks the simplest grid (quarters, 8ths,
- * 16ths, or — Hard only, and only when clearly better — triplet 8ths) that fits the onsets in it,
+ * 16ths, or — Medium and Hard, only when clearly better — triplet 8ths) that fits the onsets in it,
  * from both hands together so the two staves line up.
  */
+import { isClearTriplet } from '../music/quantize';
 import { DIV, type QNote, type SheetLevelRules, type Staff } from './types';
 
 /** A note on the continuous position axis (divisions, not yet rounded). */
@@ -38,17 +39,8 @@ export function chooseGrid(xs: number[], grids: number[]): number {
       best = g;
     }
   }
-  if (grids.includes(3)) {
-    // triplets only when clearly better: ≥ 2 onsets near 1/3 or 2/3, triplet error under half the
-    // 16th error, and the 16th grid really doesn't fit (mean error of off-beat onsets > 0.06)
-    const off = xs.filter((x) => Math.abs(x) > 0.06 && Math.abs(x - 1) > 0.06);
-    const nearThirds = off.filter((x) => Math.abs(x - 1 / 3) < 0.05 || Math.abs(x - 2 / 3) < 0.05).length;
-    if (nearThirds >= 2) {
-      const e3 = off.reduce((s, x) => s + snapErr(x, 3), 0) / off.length;
-      const e4 = off.reduce((s, x) => s + snapErr(x, 4), 0) / off.length;
-      if (e3 < 0.5 * e4 && e4 > 0.06) return 3;
-    }
-  }
+  // triplets only when clearly better (the same rule the Medium arrangement uses)
+  if (grids.includes(3) && isClearTriplet(xs)) return 3;
   return best;
 }
 
