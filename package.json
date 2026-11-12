@@ -20,7 +20,12 @@
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource/cinzel": "5.3.0",
+    "@fontsource/cormorant-garamond": "5.3.0",
+    "@fontsource/eb-garamond": "5.3.0",
+    "@fontsource/great-vibes": "5.3.0",
     "@fontsource/jetbrains-mono": "^5.3.0",
+    "@fontsource/playfair-display": "5.3.0",
     "@mediabunny/aac-encoder": "^1.65.2",
     "@tensorflow/tfjs-backend-cpu": "^4.22.0",
     "@tensorflow/tfjs-backend-wasm": "^4.22.0",

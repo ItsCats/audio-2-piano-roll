@@ -149,7 +149,7 @@ export const SPECIALIST = {
   ] as CompareRow[],
   useWhen: [
     'Solo piano recordings — classical, jazz or pop piano — when you want the notes close to exact: far fewer missed notes in fast runs and high passages, note lengths close to how long each note really sounds (sustain pedal included), and loudness that follows the touch.',
-    'On a computer. It works on phones and tablets too, but is not recommended there: it needs a lot of memory, takes several minutes per song, and recordings over 6 minutes use the normal model on those devices.',
+    'On a computer. It works on phones and tablets too, but is not recommended there: it needs a lot of memory, takes several minutes per song, and songs over 6 minutes might not work on phones with little memory.',
   ],
   skipWhen: [
     'Songs with vocals, drums or a band: it only knows the piano, so it is not offered with “Full song” and separation is not used with it.',

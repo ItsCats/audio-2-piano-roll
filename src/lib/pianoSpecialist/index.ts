@@ -73,8 +73,8 @@ export interface PianoSpecialistSupport {
   downloadMB: number;
   /** extra memory while it runs for a 4-minute piece, MB (more for longer recordings: specialistMemoryMB) */
   memoryMB: number;
-  /** longest recording it runs on here (memory-constrained devices only; longer ones use Basic Pitch) */
-  maxSeconds?: number;
+  /** recordings longer than this might not work here (memory-constrained devices only; they still run) */
+  warnAboveSeconds?: number;
   /** expected wall time per minute of audio on this device */
   estSecondsPerMinute: number;
   /** WASM threads it would use here */
@@ -130,12 +130,12 @@ export function pianoSpecialistSupport(
       ...base,
       available: true,
       recommended: false,
-      maxSeconds: PTI_CONSTRAINED_MAX_SECONDS,
+      warnAboveSeconds: PTI_CONSTRAINED_MAX_SECONDS,
       reason:
         (!phone && typeof mem === 'number' ? `This device reports ${mem} GB of memory. ` : 'Not recommended on phones and tablets. ') +
         `The piano model needs about ${memoryMB} MB of extra memory for a 4-minute piece (more for longer ones)` +
         (phone ? ' and several minutes per song here' : '') +
-        `, and the browser may reload the page if it runs out. Recordings over ${PTI_CONSTRAINED_MAX_SECONDS / 60} minutes use the normal model on this device.`,
+        `, and the browser may reload the page if it runs out. Recordings over ${PTI_CONSTRAINED_MAX_SECONDS / 60} minutes might not work on this device.`,
     };
   }
   return { ...base, available: true, recommended: true };

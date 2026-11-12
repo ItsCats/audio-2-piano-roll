@@ -33,7 +33,6 @@ import { isMemoryConstrained, pageDeviceInfo } from './backendChoice';
 import { DRUM_ENV_FPS, longReason, separateStems, separationSupport, stemsFromBlobs, type SeparationResult } from '../separation';
 import { regressionToNotes, type RegressionOutputs } from '../pianoSpecialist/postprocess';
 // (protocol.ts is pure: the specialist's runtime itself is only loaded when it is used)
-import { PTI_CONSTRAINED_MAX_SECONDS } from '../pianoSpecialist/protocol';
 
 /**
  * Which model turns the audio into notes: Spotify's Basic Pitch (default, any recording) or the
@@ -475,7 +474,7 @@ async function transcribeAudioOnce(
   opts: TranscribeOptions,
 ): Promise<TranscriptionResult> {
   const t0 = performance.now();
-  if (opts.engine === 'piano-specialist') return transcribeWithSpecialist(blob, params, onProgress, signal, opts, t0);
+  if (opts.engine === 'piano-specialist') return transcribeWithSpecialist(blob, onProgress, signal, opts, t0);
   onProgress({ stage: 'decoding', progress: null, detail: 'Decoding and resampling audio' });
   // (the decoded AudioBuffer is not kept: separation decodes again at 44.1 kHz and memory is tight)
   let { audio, duration } = await decodeMono(blob, BP_SAMPLE_RATE);
@@ -614,14 +613,8 @@ export function specialistFailureMessage(err: unknown): string {
 export const SPECIALIST_CODE_FAILED =
   'Could not load the piano model’s code. Check your internet connection, reload the page and try again, or use the normal model.';
 
-/** Whether the piano specialist runs on a recording of `seconds` here (memory-constrained devices: up to PTI_CONSTRAINED_MAX_SECONDS). */
-export function specialistFits(seconds: number, constrained: boolean): boolean {
-  return !constrained || seconds <= PTI_CONSTRAINED_MAX_SECONDS;
-}
-
 async function transcribeWithSpecialist(
   blob: Blob,
-  params: ExtractionParams,
   onProgress: (e: ProgressEvent) => void,
   signal: AbortSignal | undefined,
   opts: TranscribeOptions,
@@ -640,18 +633,9 @@ async function transcribeWithSpecialist(
   if (opts.separate || opts.stems || opts.separation) warnings.push('"Separate vocals & drums" is not used with the high-accuracy piano model.');
   // (not normalised: the model was trained on, and the reference runs on, the recording's own level)
 
-  // phones and ≤ 4 GB devices: memory and time grow with the length, so long recordings use Basic Pitch
-  const device = pageDeviceInfo();
-  if (!specialistFits(duration, !!device && isMemoryConstrained(device))) {
-    audio = null;
-    const fast = await transcribeAudioOnce(blob, params, onProgress, signal, { engine: 'basic-pitch' });
-    fast.info.warnings = [
-      ...warnings.filter((w) => !w.startsWith('The recording is very quiet')),
-      `This recording is ${Math.round(duration / 60)} minutes long: on this device the high-accuracy piano model runs on recordings of up to ${PTI_CONSTRAINED_MAX_SECONDS / 60} minutes (it needs more memory and time the longer they are), so the normal model was used.`,
-      ...fast.info.warnings,
-    ];
-    return fast;
-  }
+  // Any length runs, also on phones: the checkbox warns that long recordings might not work on phones
+  // with little memory (PTI_CONSTRAINED_MAX_SECONDS), and if the tab is killed the interrupted-import
+  // notice offers the normal model.
 
   onProgress({ stage: 'loading-model', progress: null, detail: 'Loading the piano model' });
   // loaded on demand: the model's runtime is only downloaded when someone asks for it

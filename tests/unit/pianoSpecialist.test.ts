@@ -126,11 +126,11 @@ describe('pianoSpecialistSupport', () => {
     expect(l.reason).toMatch(/reports 4 GB/);
     // both say that long recordings use the fast model there
     for (const x of [p, l]) {
-      expect(x.maxSeconds).toBe(PTI_CONSTRAINED_MAX_SECONDS);
-      expect(x.reason).toMatch(/over 6 minutes use the normal model/);
+      expect(x.warnAboveSeconds).toBe(PTI_CONSTRAINED_MAX_SECONDS);
+      expect(x.reason).toMatch(/over 6 minutes might not work on this device/);
       expect(x.reason).toMatch(/for a 4-minute piece \(more for longer ones\)/);
     }
-    expect(pianoSpecialistSupport(desktop, 3, { worker: true, simd: true }).maxSeconds).toBeUndefined();
+    expect(pianoSpecialistSupport(desktop, 3, { worker: true, simd: true }).warnAboveSeconds).toBeUndefined();
   });
 
   it('the phone slow-down applies to phones and tablets, not to desktops that report 4 GB', () => {
