@@ -61,7 +61,7 @@ export interface LeadRecoveryOptions {
   evidence?: (n: Note) => { mean: number; spread: number };
   /** time ranges (s) where nothing is recovered (e.g. sung phrases: the sung line is the tune there) */
   exclude?: [number, number][];
-  /** mark the recovered notes Hard-only (role 'lead': the recording may have singing that was not separated) */
+  /** mark the recovered notes Hard-only (role 'lead': the song is not known to be instrumental) */
   hardOnly?: boolean;
 }
 

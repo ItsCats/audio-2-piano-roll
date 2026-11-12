@@ -68,8 +68,8 @@ const PIANO_REGISTER: NonNullable<ExtractionParams['register']> = { lowMidi: 48,
  * Notes matching no lead note +0.5 / s (Sensitive +1.9 / s). Swept (frame 0.2-0.35, 40-70 ms,
  * register curve on/off, melodia on/off, lowest pitch 55-72, activation floor 0-0.35, density cap
  * 1-100 / s): frame 0.2 recovers less (longer events merge into the main notes), the density cap
- * binds below ~2.5 / s on the solo. Without separation the recovered notes are Hard-only
- * (LeadContext.hardOnly).
+ * binds below ~2.5 / s on the solo. Unless the song is known to be instrumental (separated, no
+ * singing) the recovered notes are Hard-only (LeadContext.hardOnly).
  */
 export const LEAD_PASS: Omit<ExtractionParams, 'leadPass'> = {
   onsetThreshold: 0.5,
@@ -412,12 +412,21 @@ export interface LeadContext {
   /** the sung melody line (separated songs with singing): nothing is recovered inside its phrases */
   melody?: Note[];
   /**
-   * The recording was not separated, so whether anyone sings is unknown: recovered notes are marked
-   * Hard-only (role 'lead'). Measured without separation on the 5 sung test songs, letting Easy
-   * use them raised Easy RH chroma accuracy vs the sung line 0.236 -> 0.275 but filled the
-   * singer's pauses (overall accuracy with voicing 0.533 -> 0.491, Easy LH bass 0.648 -> 0.639).
+   * Recovered notes are marked Hard-only (role 'lead'): set unless the song is known to be
+   * instrumental (separated, no singing found). Without separation whether anyone sings is
+   * unknown; measured on the 5 sung test songs, letting Easy use the notes raised Easy RH chroma
+   * accuracy vs the sung line 0.236 -> 0.275 but filled the singer's pauses (overall accuracy with
+   * voicing 0.533 -> 0.491, Easy LH bass 0.648 -> 0.639). With singing they would only reach the
+   * instrumental stretches; there the gap tune doubled in notes (vocal-1: 62 -> 112) and the
+   * lead-proxy scores were mixed (3 songs: chroma 0.174 -> 0.188, exact pitch 0.109 -> 0.068) while
+   * Easy's voicing-counted accuracy fell (vocal-1 0.518 -> 0.470).
    */
   hardOnly?: boolean;
+}
+
+/** Whether recovered lead notes are Hard-only (LeadContext.hardOnly): unless separated and nobody sings. */
+export function leadHardOnly(separated: boolean, melody: Note[]): boolean {
+  return !separated || melody.length > 0;
 }
 
 /**
@@ -650,7 +659,7 @@ async function transcribeAudioOnce(
   onProgress({ stage: 'arranging', progress: null, detail: vocal ? 'Extracting the vocal melody, assigning hands, tracking beats' : 'Cleaning notes, assigning hands, tracking beats' });
   const drums = sep?.drumOnsets;
   const melody = vocal ? melodyFromRaw(vocal.notes, vocal.rms, duration) : [];
-  const accomp = accompFromRaw(result.notes, result.leadNotes, result.rms, params, duration, { frames: result.frames, nFrames: result.nFrames, drums }, { melody, hardOnly: !sep });
+  const accomp = accompFromRaw(result.notes, result.leadNotes, result.rms, params, duration, { frames: result.frames, nFrames: result.nFrames, drums }, { melody, hardOnly: leadHardOnly(!!sep, melody) });
   const accompNotes = accomp.notes;
   const notes = mergeMelody(accompNotes, melody, duration);
   if (result.backend === 'cpu') {
@@ -847,7 +856,7 @@ async function extractRaw(post: StoredPosteriors, params: ExtractionParams): Pro
 export interface ReextractOptions {
   /** The song's current melody notes (role 'melody'), kept as they are and merged back on the right hand. */
   melody?: Note[];
-  /** The posteriors are of a separated recording (TranscriptionInfo.separated): see LeadContext.hardOnly. */
+  /** The posteriors are of a separated recording (TranscriptionInfo.separated): with no melody, an instrumental (see LeadContext.hardOnly). */
   separated?: boolean;
 }
 
@@ -879,6 +888,6 @@ export async function redetectNotes(
 async function reextract(post: StoredPosteriors, params: ExtractionParams, duration: number, opts: ReextractOptions): Promise<{ main: Note[]; notes: Note[] }> {
   const raw = await extractRaw(post, params);
   const melody = (opts.melody ?? []).filter((n) => n.role === 'melody').map((n) => ({ ...n, hand: 'R' as const }));
-  const accomp = accompFromRaw(raw.notes, raw.leadNotes, post.rms, params, duration, { frames: post.frames, nFrames: post.nFrames, drums: post.drums }, { melody, hardOnly: !opts.separated });
+  const accomp = accompFromRaw(raw.notes, raw.leadNotes, post.rms, params, duration, { frames: post.frames, nFrames: post.nFrames, drums: post.drums }, { melody, hardOnly: leadHardOnly(!!opts.separated, melody) });
   return { main: accomp.main, notes: mergeMelody(accomp.notes, melody, duration) };
 }
