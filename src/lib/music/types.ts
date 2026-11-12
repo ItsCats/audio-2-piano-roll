@@ -13,8 +13,11 @@ export interface Note {
   /**
    * Musical role, when known. 'melody' marks notes of the sung melody line extracted from the
    * separated vocal stem: they always sit in the right hand and Easy/Medium are built around them.
+   * 'lead' marks lead-line notes recovered by the "Full song" preset's sensitive pass
+   * (music/leadRecovery.ts) in a recording that was not separated: they may be the singer, so
+   * they are shown on Hard only (Easy and Medium are built without them).
    */
-  role?: 'melody';
+  role?: 'melody' | 'lead';
 }
 
 /** Sustain pedal held from `start` to `end` (seconds). */
@@ -101,6 +104,12 @@ export interface ExtractionParams {
   joinRepeats?: boolean;
   /** Drop ghost notes in near-silence (music/cleanup.ts TAIL_GATE). false turns it off; omitted = on. */
   tailGate?: boolean;
+  /**
+   * Lead-line recovery (music/leadRecovery.ts): a second, more sensitive extraction of the same
+   * posteriors whose notes are kept only where the instruments' tune line goes through them.
+   * Omitted = off.
+   */
+  leadPass?: Omit<ExtractionParams, 'leadPass'>;
 }
 
 export interface TranscriptionInfo {

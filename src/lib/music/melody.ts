@@ -531,18 +531,30 @@ export function removeMelodyCollisions(accomp: Note[], melody: Note[], tol = 0.0
   return out;
 }
 
+/** An accompaniment note never carries the sung line's role (other roles are kept). */
 function withoutRole(n: Note): Note {
+  if (n.role !== 'melody') return n;
   const c = { ...n };
   delete c.role;
   return c;
 }
 
-/** Accompaniment + melody line → one note list with hands; the melody always stays in the right hand. */
+/**
+ * Accompaniment + melody line → one note list with hands; the melody always stays in the right hand.
+ * Hard-only notes (role 'lead') go to the right hand and do not take part in the hand split, so the
+ * notes Easy and Medium are built from get the same hands with or without them.
+ */
 export function mergeMelody(accomp: Note[], melody: Note[], duration: number): Note[] {
-  const acc = accomp.map(withoutRole);
-  if (!melody.length) return assignHands(sortNotes(acc), duration);
-  const all = assignHands(sortNotes([...removeMelodyCollisions(acc, melody), ...melody]), duration);
-  return all.map((n) => (n.role === 'melody' ? { ...n, hand: 'R' as const } : n));
+  const all = accomp.map(withoutRole);
+  const hardOnly = all.filter((n) => n.role === 'lead').map((n) => ({ ...n, hand: 'R' as const }));
+  const acc = hardOnly.length ? all.filter((n) => n.role !== 'lead') : all;
+  let merged: Note[];
+  if (!melody.length) merged = assignHands(sortNotes(acc), duration);
+  else {
+    merged = assignHands(sortNotes([...removeMelodyCollisions(acc, melody), ...melody]), duration);
+    merged = merged.map((n) => (n.role === 'melody' ? { ...n, hand: 'R' as const } : n));
+  }
+  return hardOnly.length ? sortNotes([...merged, ...(melody.length ? removeMelodyCollisions(hardOnly, melody) : hardOnly)]) : merged;
 }
 
 /**

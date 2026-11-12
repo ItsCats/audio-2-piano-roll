@@ -198,6 +198,7 @@ ctx.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       const { frames, onsets, nFrames } = await runModel(msg.audio, jobId);
       post({ type: 'progress', jobId, stage: 'extracting', progress: 0 });
       const notes = extractNotes(frames, onsets, nFrames, msg.options);
+      const leadNotes = msg.leadOptions ? extractNotes(frames, onsets, nFrames, msg.leadOptions) : undefined;
       const rms = rmsEnvelope(msg.audio);
       const fq = quantize(frames);
       const oq = quantize(onsets);
@@ -206,6 +207,7 @@ ctx.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
           type: 'transcribed',
           jobId,
           notes,
+          ...(leadNotes ? { leadNotes } : {}),
           nFrames,
           frames: fq,
           onsets: oq,
@@ -219,7 +221,8 @@ ctx.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       const frames = dequantize(msg.frames);
       const onsets = dequantize(msg.onsets);
       const notes = extractNotes(frames, onsets, msg.nFrames, msg.options as NoteExtractionOptions);
-      post({ type: 'extracted', jobId, notes });
+      const leadNotes = msg.leadOptions ? extractNotes(frames, onsets, msg.nFrames, msg.leadOptions) : undefined;
+      post({ type: 'extracted', jobId, notes, ...(leadNotes ? { leadNotes } : {}) });
     }
   } catch (err) {
     post({ type: 'error', jobId, message: err instanceof Error ? err.message : String(err) });
