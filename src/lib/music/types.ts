@@ -36,6 +36,11 @@ export interface TempoInfo {
   /** Beat times in seconds (tracked, may drift with the performance). */
   beats: number[];
   beatsPerBar: number;
+  /**
+   * Note value of one beat (the time signature's lower number). Missing in songs saved before
+   * sheet music existed: means 4, except 6, 9 or 12 beats per bar from a MIDI file mean 8.
+   */
+  beatUnit?: 2 | 4 | 8;
   /** Index into `beats` of the first downbeat. */
   downbeatIndex: number;
   /** 0..1 how confident the tempo estimate is. */
