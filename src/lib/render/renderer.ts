@@ -44,6 +44,10 @@ export class PianoRollRenderer {
   private w = 1;
   private h = 1;
   private notes: Note[] = [];
+  /** the same notes in paint order (see noteDrawOrder): newer notes are painted over older ones */
+  private drawNotes: Note[] = [];
+  /** onset of each drawNotes entry's chord group; non-decreasing, so it can be binary searched */
+  private drawGroupStart: Float64Array = new Float64Array(0);
   private maxDur = 0;
   private pedal: PedalRange[] = [];
   private tempo: TempoInfo | null = null;
@@ -98,6 +102,9 @@ export class PianoRollRenderer {
 
   setNotes(notes: Note[], pedal: PedalRange[], tempo: TempoInfo | null, keyTonic?: { tonic: number; mode: 'major' | 'minor' }): void {
     this.notes = [...notes].sort((a, b) => a.start - b.start);
+    const order = noteDrawOrder(this.notes);
+    this.drawNotes = order.notes;
+    this.drawGroupStart = order.groupStart;
     this.maxDur = this.notes.reduce((m, n) => Math.max(m, n.dur), 0);
     this.pedal = pedal;
     this.tempo = tempo;
@@ -171,20 +178,27 @@ export class PianoRollRenderer {
     return { x, y: yt, w, h: Math.max(2, yb - yt) };
   }
   hitTest(x: number, y: number, now: number): { note: Note; edge: 'top' | 'bottom' | 'body' } | null {
-    // iterate topmost (latest drawn) first; black keys drawn after white
+    // the note painted on top wins (later in paint order); a note right under the pointer beats
+    // one only within the few-pixel grab margin
     const t0 = now - this.maxDur - 1;
     const t1 = now + this.s.lookahead + 1;
     let best: { note: Note; edge: 'top' | 'bottom' | 'body' } | null = null;
-    for (const n of this.notes) {
-      if (n.start > t1) break;
+    let bestInside = false;
+    const order = this.drawNotes;
+    for (let i = lowerBound(this.drawGroupStart, t0 - CHORD_WINDOW); i < order.length; i++) {
+      if (this.drawGroupStart[i] > t1) break;
+      const n = order[i];
       if (n.start + n.dur < t0) continue;
       const r = this.noteRect(n, now);
       if (!r) continue;
       const pad = 3;
       if (x >= r.x - pad && x <= r.x + r.w + pad && y >= r.y - pad && y <= r.y + r.h + pad) {
+        const inside = x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+        if (bestInside && !inside) continue;
         const edgeZone = Math.min(8, r.h / 4);
         const edge = y <= r.y + edgeZone ? 'top' : y >= r.y + r.h - edgeZone ? 'bottom' : 'body';
-        if (!best || isBlack(n.midi)) best = { note: n, edge };
+        best = { note: n, edge };
+        bestInside = inside;
       }
     }
     return best;
@@ -369,7 +383,6 @@ export class PianoRollRenderer {
     // visible notes
     const t0 = now - 0.05;
     const t1 = this.yToTime(-10, now);
-    const visible: Note[] = [];
     let lo = 0;
     let hi = this.notes.length;
     const fx = s.effects;
@@ -393,11 +406,22 @@ export class PianoRollRenderer {
         }
       }
       if (n.start + n.dur < t0) continue;
-      visible.push(n);
       if (n.start <= now && n.start + n.dur > now) {
         const prev = active.get(n.midi);
         if (!prev || n.start > prev.start) active.set(n.midi, n);
       }
+    }
+
+    // on-screen notes in paint order (precomputed in setNotes, so no per-frame sort): older
+    // notes first, so a newer note falling onto the same or a neighbouring key covers a long
+    // note that is still held; within one chord, black-key notes go over white-key notes
+    const visible: Note[] = [];
+    const order = this.drawNotes;
+    for (let i = lowerBound(this.drawGroupStart, now - this.maxDur - CHORD_WINDOW - 0.1); i < order.length; i++) {
+      if (this.drawGroupStart[i] > t1) break;
+      const n = order[i];
+      if (n.start > t1 || n.start + n.dur < t0) continue;
+      visible.push(n);
     }
 
     if (s.fallingGlow > 0) this.drawFallingGlow(ctx, visible, now, opts);
@@ -420,15 +444,17 @@ export class PianoRollRenderer {
       }
     }
 
-    // notes: white-key notes first so black-key notes sit on top
-    const order = visible.sort((a, b) => Number(isBlack(a.midi)) - Number(isBlack(b.midi)));
+    // notes (glow, shadow, outline, decal and label travel with their note, so a newer note
+    // covers all of an older note's decoration). Trails and the falling glow sit underneath
+    // every note; sparks, the keyboard, the hit line and the hit effects stay on top: they are
+    // additive light at the key line, so they never hide a note
     const radius = s.cornerRadius * sc;
     const labelSize = s.labels.size * sc;
     const showLabels = s.labels.style !== 'none';
     const flats = s.labels.accidentals === 'flats' || (s.labels.accidentals === 'auto' && this.flats);
     ctx.textAlign = 'center';
     const decal = this.resolveDecal();
-    for (const n of order) {
+    for (const n of visible) {
       const r = this.noteRect(n, now);
       if (!r) continue;
       const muted = opts.mutedHands?.[n.hand];
@@ -843,4 +869,61 @@ export class PianoRollRenderer {
     ctx.fillStyle = sh;
     ctx.fillRect(0, ky, this.w, 10 * sc);
   }
+}
+
+/**
+ * Notes whose onsets lie within this window (s) of the first note of their group count as one
+ * chord when ordering for paint: inside a chord black-key notes are painted over white-key ones.
+ */
+export const CHORD_WINDOW = 0.04;
+
+/**
+ * Paint order for falling notes, computed once per song: chord groups by onset (older groups
+ * first, so newer notes are painted on top of notes that are still held), and within a group
+ * white-key notes before black-key notes, then by onset, pitch and id (stable and deterministic,
+ * so the live view and exported videos agree). `groupStart` holds each note's group onset; it
+ * never decreases along the order, which lets the renderer binary search the visible window.
+ * `notes` must be sorted by start.
+ */
+export function noteDrawOrder(notes: readonly Note[]): { notes: Note[]; groupStart: Float64Array } {
+  const n = notes.length;
+  const group = new Float64Array(n);
+  let g = -Infinity;
+  for (let i = 0; i < n; i++) {
+    const st = notes[i].start;
+    if (!(st - g <= CHORD_WINDOW)) g = st;
+    group[i] = g;
+  }
+  const idx = Array.from({ length: n }, (_, i) => i);
+  idx.sort((a, b) => {
+    const A = notes[a];
+    const B = notes[b];
+    return (
+      group[a] - group[b] ||
+      Number(isBlack(A.midi)) - Number(isBlack(B.midi)) ||
+      A.start - B.start ||
+      A.midi - B.midi ||
+      A.id - B.id ||
+      a - b
+    );
+  });
+  const out: Note[] = new Array(n);
+  const groupStart = new Float64Array(n);
+  for (let k = 0; k < n; k++) {
+    out[k] = notes[idx[k]];
+    groupStart[k] = group[idx[k]];
+  }
+  return { notes: out, groupStart };
+}
+
+/** First index whose value is >= x (values sorted ascending). */
+function lowerBound(values: Float64Array, x: number): number {
+  let lo = 0;
+  let hi = values.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (values[mid] < x) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
 }
