@@ -49,17 +49,19 @@ import { decodeToRate } from '../transcription/decode';
 import { isMemoryConstrained, pageDeviceInfo } from '../transcription/backendChoice';
 import { outputSize, type ExportSettings, type ExportSound } from './types';
 import { prepareTitleCards, type TitleCardJob } from '../render/titleCard/exportHooks';
+import { STEP_TIMEOUT_MS, abortError, finalizeTimeoutMs, guardStep } from './guard';
 import {
   EXPORT_SAMPLE_RATE,
+  createLimiter,
   effectiveRate,
   effectiveSound,
   exportTimeline,
   fadeGain,
+  flushTinyInPlace,
   mixOriginal,
   neededSpan,
   originalGain,
   shouldDownmix,
-  softClipInPlace,
   trimOriginal,
   type ExportTimeline,
   type OriginalSource,
@@ -108,8 +110,27 @@ export function jobSound(job: Pick<ExportJob, 'song' | 'settings'>) {
   return effectiveSound(job.settings, { hasOriginal: !!job.song.hasAudio, webCodecs: webCodecsAvailable() });
 }
 
+export { STALL_MESSAGE } from './guard';
 export const NO_ORIGINAL_MESSAGE = 'The original recording for this song is no longer saved. Choose “Piano” to export without it.';
 export const ORIGINAL_DECODE_MESSAGE = 'Couldn’t load the original song on this device. Choose “Piano” to export without it.';
+/**
+ * Best effort: stops a stuck audio encoder (the WASM AAC encoder runs in a worker that would keep
+ * running until the tab closes). Uses mediabunny internals, so every step is optional.
+ */
+function forceStopAudioEncoder(src: AudioSampleSource): void {
+  try {
+    const enc = (src as unknown as { _encoder?: { customEncoder?: { worker?: { terminate?: () => void } | null } | null; encoder?: { state?: string; close?: () => void } | null } })._encoder;
+    enc?.customEncoder?.worker?.terminate?.();
+    if (enc?.encoder && enc.encoder.state !== 'closed') enc.encoder.close?.();
+  } catch {
+    /* ignore */
+  }
+}
+
+/** output.cancel() waits for encoders to flush; a stuck one never does, so don't wait long */
+async function cancelOutput(output: Output): Promise<void> {
+  await Promise.race([output.cancel().catch(() => {}), new Promise((r) => setTimeout(r, 3000))]);
+}
 
 /** Decodes the original recording at the export rate and keeps only the part this export can hear. */
 async function loadOriginalSource(job: ExportJob, range: { start: number; end: number }, tl: ExportTimeline): Promise<OriginalSource> {
@@ -120,6 +141,7 @@ async function loadOriginalSource(job: ExportJob, range: { start: number; end: n
     blob = undefined;
   }
   if (!blob) throw new Error(NO_ORIGINAL_MESSAGE);
+  if (job.signal?.aborted) throw abortError();
   let buffer: AudioBuffer | null;
   try {
     buffer = await decodeToRate(blob, tl.sr);
@@ -130,7 +152,7 @@ async function loadOriginalSource(job: ExportJob, range: { start: number; end: n
   const device = pageDeviceInfo();
   const mono = shouldDownmix(buffer.duration, buffer.numberOfChannels, !!device && isMemoryConstrained(device));
   const src = trimOriginal(buffer, neededSpan(range, tl.lead, tl.tail, tl.rate), { mono });
-  buffer = null; // the trimmed copy is all we keep
+  buffer = null; // only the part this export hears is kept
   return src;
 }
 
@@ -138,13 +160,18 @@ export function webCodecsAvailable(): boolean {
   return typeof VideoEncoder !== 'undefined' && typeof AudioEncoder !== 'undefined' && typeof OffscreenCanvas !== 'undefined';
 }
 
-export function exportRange(job: Pick<ExportJob, 'song' | 'settings' | 'loop'>): { start: number; end: number } {
+/**
+ * Song-time range shown in the video. `sound` is what the sound track holds: with the original
+ * recording, "Full song" starts at 0 so a long intro before the first note is kept.
+ */
+export function exportRange(job: Pick<ExportJob, 'song' | 'settings' | 'loop'>, sound: ExportSound = 'piano'): { start: number; end: number } {
   const s = job.settings;
   if (s.range === 'loop' && job.loop) return { start: job.loop.start, end: job.loop.end };
   if (s.range === 'custom') {
     const start = Math.max(0, Math.min(s.customStart, job.song.duration));
     return { start, end: Math.max(start + 1, Math.min(s.customEnd, job.song.duration)) };
   }
+  if (sound !== 'piano') return { start: 0, end: job.song.duration };
   // full song: trim leading silence
   const notes = job.song.arrangements.hard.notes;
   const first = notes.length ? Math.min(...notes.slice(0, 50).map((n) => n.start)) : 0;
@@ -302,8 +329,8 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
   progress({ phase: 'preparing', fraction: 0 });
   const { width, height } = outputSize(s);
   const fps = s.fps;
-  const range = exportRange(job);
   const sound = jobSound(job);
+  const range = exportRange(job, sound);
   const rate = effectiveRate(s, sound);
   const sr = EXPORT_SAMPLE_RATE;
   const tl = exportTimeline(s, range, rate, sr);
@@ -320,7 +347,7 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
   if (sound !== 'piano') {
     progress({ phase: 'original', fraction: 0.005 });
     orig = await loadOriginalSource(job, range, tl);
-    if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
+    if (signal?.aborted) throw abortError();
   }
   const origGain = originalGain(s, job.audio.originalVolume);
 
@@ -362,16 +389,22 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
     applyDecal(renderer, decal);
     // ---------- audio ----------
     const audioWeight = 0.18;
+    const limiter = orig ? createLimiter(sr) : null;
     // planar stereo block at output frame `outFrame0`, with the original mixed in when used
     const addBlock = async (data: Float32Array, n: number, outFrame0: number, timestamp: number) => {
+      const chans = [data.subarray(0, n), data.subarray(n, 2 * n)];
       if (orig) {
-        const chans = [data.subarray(0, n), data.subarray(n, 2 * n)];
         mixOriginal(chans, outFrame0, n, orig, tl, origGain);
-        for (const c of chans) softClipInPlace(c);
+        limiter!.process(chans);
       }
+      // the WASM AAC encoder can stall forever on some near-silent content; values this small are inaudible
+      if (audioCodec === 'aac') for (const c of chans) flushTinyInPlace(c);
       const sample = new AudioSample({ data, format: 'f32-planar', numberOfChannels: 2, sampleRate: sr, timestamp });
-      await audioSource.add(sample);
-      sample.close();
+      try {
+        await guardStep(audioSource.add(sample), signal, STEP_TIMEOUT_MS);
+      } finally {
+        sample.close();
+      }
     };
     // lead-in: silence, or the original from before range.start
     if (lead > 0) await addBlock(new Float32Array(tl.leadFrames * 2), tl.leadFrames, 0, 0);
@@ -379,7 +412,7 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
       // no piano: the same 45 s pieces, holding only the original
       const chunk = 45 * sr;
       for (let f0 = 0; f0 < tl.bodyFrames; f0 += chunk) {
-        if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
+        if (signal?.aborted) throw abortError();
         const n = Math.min(chunk, tl.bodyFrames - f0);
         await addBlock(new Float32Array(n * 2), n, tl.leadFrames + f0, lead + f0 / sr);
         progress({ phase: 'audio', fraction: ((f0 + n) / tl.bodyFrames) * audioWeight });
@@ -397,6 +430,8 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
           volume: s.volume,
           fadeIn: s.fadeIn,
           fadeOut: s.fadeOut,
+          // fades follow the picture: measured from the start of the file, not of the piano (after the lead-in)
+          fadeTimeline: { offset: lead, duration },
           tail,
           chunkSeconds: 45,
           signal,
@@ -421,7 +456,7 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
     });
     const t0 = performance.now();
     for (let i = 0; i < totalFrames; i++) {
-      if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
+      if (signal?.aborted) throw abortError();
       const o = i / fps;
       if (bg.kind) renderer.setBackgroundMedia(await bg.frameAt(o), bg.kind);
       renderer.render({ time: songTimeAt(o) });
@@ -432,7 +467,7 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
         ctx.fillStyle = `rgba(0,0,0,${1 - fade})`;
         ctx.fillRect(0, 0, width, height);
       }
-      await videoSource.add(o, 1 / fps);
+      await guardStep(videoSource.add(o, 1 / fps), signal, STEP_TIMEOUT_MS);
       if (i % 15 === 0 || i === totalFrames - 1) {
         const elapsed = (performance.now() - t0 - (cards?.introMs ?? 0)) / 1000; // without the title page frames
         const rfps = (i + 1) / Math.max(0.001, elapsed);
@@ -449,12 +484,13 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
     await cards?.finish(); // end card frames
     videoSource.close();
     progress({ phase: 'finalizing', fraction: 0.99 });
-    await output.finalize();
+    await guardStep(output.finalize(), signal, finalizeTimeoutMs(duration));
     const blob = await getBlob(mime);
     progress({ phase: 'finalizing', fraction: 1 });
     return { blob, mime, extension: ext, videoCodec, audioCodec, width, height, duration: cards ? cards.total : duration, method: 'webcodecs', sound };
   } catch (err) {
-    await output.cancel().catch(() => {});
+    forceStopAudioEncoder(audioSource);
+    await cancelOutput(output);
     await cleanup();
     throw err;
   } finally {

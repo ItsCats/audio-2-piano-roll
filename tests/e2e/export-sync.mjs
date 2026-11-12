@@ -7,8 +7,9 @@
  * The page (export-sync.ts) exports a synthetic song whose "recording" is a click track with a short
  * 6 kHz burst exactly at every note. This script decodes each file's audio with ffmpeg, finds the
  * clicks and checks every expected click is within 10 ms of where the picture shows the note, that
- * there are no extra clicks, and that the audio is as long as the video. In "Both" mode it also
- * checks the piano notes start with the clicks. Synthetic audio only.
+ * there are no extra clicks, that the audio is as long as the video and doesn't clip, and that every
+ * case finishes (a stalled encoder fails the run). In "Both" mode it also checks the piano notes start
+ * with the clicks. EXPORT_SYNC_ONLY=name,name runs some cases. Synthetic audio only.
  *
  * Requires Playwright with Chromium and ffmpeg on the PATH.
  */
@@ -20,6 +21,7 @@ import { join } from 'node:path';
 
 const SR = 48000;
 const TOL_MS = 10;
+const LIMIT_CEILING = 0.89; // LIMIT_CEILING in src/lib/export/originalMix.ts
 // the piano's samples need ~10–18 ms to reach 30 % of their peak (natural attack; the first audible
 // sample is on the note), so the piano is checked against the clicks with a looser tolerance
 const PIANO_TOL_MS = 20;
@@ -45,7 +47,17 @@ const CASES = [
   { name: 'webm-custom', patch: { format: 'webm', range: 'custom', customStart: 4.3, customEnd: 9, leadIn: 2, fadeIn: 0.5, fadeOut: 1, sound: 'original' } },
   { name: 'webm-both', patch: { format: 'webm', range: 'full', leadIn: 2, fadeIn: 0, fadeOut: 2, sound: 'both' } },
   { name: 'mp4-both', patch: { format: 'mp4', range: 'full', leadIn: 2, fadeIn: 0, fadeOut: 2, sound: 'both' } },
-];
+  // longer "Both" MP4s once stalled in the WASM AAC encoder (headless Chromium has no native AAC)
+  { name: 'mp4-both-40s', seconds: 40, patch: { format: 'mp4', range: 'full', leadIn: 2, fadeIn: 0.5, fadeOut: 2, sound: 'both' } },
+  { name: 'mp4-both-mid', seconds: 40, patch: { format: 'mp4', range: 'custom', customStart: 17.2, customEnd: 36, leadIn: 1.5, fadeIn: 0.5, fadeOut: 1, sound: 'both' } },
+  // loud mix (both sliders at 150 %): the limiter holds what goes to the encoder at -1 dB. The decoded
+  // file can still overshoot on these synthetic 6 kHz bursts (a worst case for lossy codecs), so it's
+  // only reported there; at normal levels the decoded file must not clip.
+  { name: 'mp4-both-loud', loud: true, patch: { format: 'mp4', range: 'full', leadIn: 1, fadeIn: 0, fadeOut: 2, sound: 'both', volume: 1.5, originalVolume: 1.5 } },
+  { name: 'webm-both-loud', loud: true, patch: { format: 'webm', range: 'full', leadIn: 1, fadeIn: 0, fadeOut: 2, sound: 'both', volume: 1.5, originalVolume: 1.5 } },
+].filter((c) => !process.env.EXPORT_SYNC_ONLY || process.env.EXPORT_SYNC_ONLY.split(',').includes(c.name));
+// a case that takes longer than this is treated as a stall
+const CASE_TIMEOUT_MS = Number(process.env.EXPORT_SYNC_TIMEOUT_MS ?? 240000);
 
 /** RBJ biquad (high-pass or low-pass), applied in place. */
 function biquad(x, type, f0, q = 0.7071) {
@@ -107,10 +119,19 @@ try {
   await page.exposeFunction('saveChunk', (name, b64) => appendFileSync(join(dir, name), Buffer.from(b64, 'base64')));
   await page.goto('http://localhost:5183/tests/e2e/export-sync.html');
   await page.waitForFunction(() => document.getElementById('log')?.textContent === 'ready', null, { timeout: 120000 });
-  const noteTimes = await page.evaluate(() => window.noteTimes);
   for (const c of CASES) {
     const file = `${c.name}.${c.patch.format}`;
-    const r = await page.evaluate(({ file, patch }) => window.runExport(file, patch), { file, patch: c.patch });
+    let timer;
+    const r = await Promise.race([
+      page.evaluate(({ file, patch, seconds }) => window.runExport(file, patch, seconds), { file, patch: c.patch, seconds: c.seconds ?? 12 }),
+      new Promise((resolve) => (timer = setTimeout(() => resolve(null), CASE_TIMEOUT_MS))),
+    ]).finally(() => clearTimeout(timer));
+    if (!r) {
+      failed = true;
+      console.log(`FAIL ${c.name.padEnd(14)} did not finish within ${CASE_TIMEOUT_MS / 1000} s`);
+      break; // the page is stuck; later cases cannot run in it
+    }
+    const noteTimes = r.noteTimes;
     const pcm = execFileSync('ffmpeg', ['-v', 'error', '-i', join(dir, file), '-f', 'f32le', '-ac', '1', '-ar', String(SR), '-'], { maxBuffer: 1 << 30 });
     const x = new Float32Array(pcm.buffer, pcm.byteOffset, pcm.byteLength / 4);
     const audioDur = x.length / SR;
@@ -148,6 +169,16 @@ try {
     }
     const durOk = Math.abs(audioDur - r.duration) <= 0.05;
     caseOk &&= durOk;
+    let filePeak = 0;
+    for (const v of x) filePeak = Math.max(filePeak, Math.abs(v));
+    if (filePeak > 1 && !c.loud) {
+      caseOk = false;
+      console.log(`  decoded audio peaks at ${filePeak.toFixed(3)} (clips)`);
+    }
+    if (r.sound !== 'piano' && r.encoderPeak > LIMIT_CEILING + 1e-6) {
+      caseOk = false;
+      console.log(`  ${r.encoderPeak.toFixed(4)} went to the encoder, above the limiter's ${LIMIT_CEILING}`);
+    }
     let pianoInfo = '';
     if (r.sound === 'both') {
       const lp = biquad(x, 'lp', 1000);
@@ -168,9 +199,9 @@ try {
     const abs = errs.map(Math.abs);
     failed ||= !caseOk;
     console.log(
-      `${caseOk ? 'PASS' : 'FAIL'} ${c.name.padEnd(11)} ${r.videoCodec}+${r.audioCodec} ${r.sound} · ${errs.length}/${expected.length} clicks matched` +
+      `${caseOk ? 'PASS' : 'FAIL'} ${c.name.padEnd(14)} ${r.videoCodec}+${r.audioCodec} ${r.sound} · ${errs.length}/${expected.length} clicks matched` +
         ` (${expected.filter((e) => e.required).length} required), error ${errs.length ? Math.min(...errs).toFixed(2) : '-'}..${errs.length ? Math.max(...errs).toFixed(2) : '-'} ms` +
-        ` (max |${abs.length ? Math.max(...abs).toFixed(2) : '-'}| ms) · audio ${audioDur.toFixed(3)} s vs video ${r.duration.toFixed(3)} s${pianoInfo} · ${(r.bytes / 1e6).toFixed(1)} MB in ${(r.ms / 1000).toFixed(1)} s`,
+        ` (max |${abs.length ? Math.max(...abs).toFixed(2) : '-'}| ms) · audio ${audioDur.toFixed(3)} s vs video ${r.duration.toFixed(3)} s · peak ${r.encoderPeak.toFixed(3)} in, ${filePeak.toFixed(3)} decoded${pianoInfo} · ${(r.bytes / 1e6).toFixed(1)} MB in ${(r.ms / 1000).toFixed(1)} s`,
     );
   }
 } finally {

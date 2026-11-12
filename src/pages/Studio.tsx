@@ -49,7 +49,7 @@ import { midiInput, QWERTY_MAP } from '../lib/midiInput/webmidi';
 import type { Difficulty } from '../lib/music/types';
 import { toast } from '../state/toastStore';
 import { useImport } from '../state/importStore';
-import { seekStepSeconds, shouldHandleGlobalKey } from '../state/studioKeys';
+import { arrowSeekDelta, shouldHandleGlobalKey } from '../state/studioKeys';
 
 type PanelTab = 'look' | 'labels' | 'sound' | 'practice' | 'arrangement';
 
@@ -184,10 +184,9 @@ function useStudioKeyboard(computerKeys: boolean) {
         player.toggle();
       } else if (e.code === 'Home') {
         player.seek(0);
-      } else if (e.code === 'ArrowLeft' && !st.editMode) {
-        player.seek(player.getTime() - seekStepSeconds(e.shiftKey));
-      } else if (e.code === 'ArrowRight' && !st.editMode) {
-        player.seek(player.getTime() + seekStepSeconds(e.shiftKey));
+      } else if ((e.code === 'ArrowLeft' || e.code === 'ArrowRight') && !st.editMode) {
+        const delta = arrowSeekDelta({ key: e.code, shiftKey: e.shiftKey, altKey: e.altKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey });
+        if (delta !== null) player.seek(player.getTime() + delta);
       } else if (isFullscreenKey(e)) {
         toggleStageFullscreen();
       } else if (e.code === 'KeyE' && !mod && !isStageFullscreen()) {

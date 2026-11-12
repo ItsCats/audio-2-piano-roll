@@ -8,6 +8,25 @@ export function seekStepSeconds(shiftKey: boolean): number {
   return shiftKey ? 1 : 5;
 }
 
+interface ArrowKeyLike {
+  key: string;
+  shiftKey: boolean;
+  altKey: boolean;
+  metaKey: boolean;
+  ctrlKey: boolean;
+}
+
+/**
+ * Seconds a ← / → press seeks by (negative = back), or null when it isn't a seek key. Alt, Cmd and
+ * Ctrl combinations are left to the browser (Alt+← / Cmd+← is Back, Cmd+→ is Forward).
+ */
+export function arrowSeekDelta(e: ArrowKeyLike): number | null {
+  if (e.altKey || e.metaKey || e.ctrlKey) return null;
+  if (e.key === 'ArrowRight') return seekStepSeconds(e.shiftKey);
+  if (e.key === 'ArrowLeft') return -seekStepSeconds(e.shiftKey);
+  return null;
+}
+
 interface KeyLike {
   defaultPrevented: boolean;
   target: EventTarget | null;

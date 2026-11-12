@@ -1,6 +1,7 @@
 /**
  * Studio arrow keys: one ← / → press on the song-position bar seeks once (5 s, Shift 1 s), and the
- * page-wide shortcut still works when the bar isn't focused. Phone and desktop widths.
+ * page-wide shortcut still works when the bar isn't focused; Alt/Cmd + arrows stay with the browser.
+ * Phone and desktop widths.
  *
  *   npm run test:e2e:keys
  */
@@ -48,6 +49,20 @@ try {
     await expectTime('0:11', 'bar focused, Shift+→');
     await page.keyboard.press('ArrowLeft');
     await expectTime('0:06', 'bar focused, ←');
+    // Alt / Cmd + arrows are the browser's Back / Forward: the bar leaves them alone
+    for (const combo of ['Alt+ArrowRight', 'Meta+ArrowRight']) {
+      await page.evaluate(() => {
+        window.__prevented = null;
+        window.addEventListener('keydown', (e) => (window.__prevented = e.defaultPrevented), { once: true });
+      });
+      await page.keyboard.press(combo);
+      await page.waitForTimeout(100);
+      await expectTime('0:06', `bar focused, ${combo} (not a seek)`);
+      const prevented = await page.evaluate(() => window.__prevented);
+      const ok = prevented === false;
+      failed ||= !ok;
+      console.log(`${ok ? 'PASS' : 'FAIL'} ${viewport.width}px  bar focused, ${combo} left to the browser: defaultPrevented=${prevented}`);
+    }
     await page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : undefined));
     await page.keyboard.press('ArrowRight');
     await expectTime('0:11', 'nothing focused, → (page shortcut)');

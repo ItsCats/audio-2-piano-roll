@@ -8,6 +8,7 @@ import type { Hand, Note, PedalRange } from '../music/types';
 import { PianoEngine } from './pianoEngine';
 import { buildEvents } from './events';
 import type { AudioSettings } from './types';
+import { ownFadeGain, timelineFadeGain } from './fade';
 
 export interface OfflineRenderOptions {
   notes: Note[];
@@ -23,6 +24,12 @@ export interface OfflineRenderOptions {
   volume?: number; // extra export gain 0..1.5
   fadeIn?: number; // seconds (output time)
   fadeOut?: number;
+  /**
+   * Measure the fades on a longer timeline that this render is part of (a video with a lead-in):
+   * this render's output time 0 is `offset` seconds into a file `duration` seconds long. The gain then
+   * matches the picture's fade (fadeGain in src/lib/export/originalMix.ts).
+   */
+  fadeTimeline?: { offset: number; duration: number };
   /** extra seconds after `end` for ringing notes / reverb */
   tail?: number;
   chunkSeconds?: number;
@@ -47,8 +54,10 @@ export async function renderOfflineChunks(
   const chunk = opts.chunkSeconds ?? 60;
   const events = buildEvents(opts.notes, opts.pedal, opts.hands ?? { L: true, R: true });
   const total = Math.ceil(outDuration * sr);
-  const fadeIn = Math.min(opts.fadeIn ?? 0, outDuration / 2);
-  const fadeOut = Math.min(opts.fadeOut ?? 0, outDuration / 2);
+  const ftl = opts.fadeTimeline;
+  const fadeIn = ftl ? Math.max(0, opts.fadeIn ?? 0) : Math.min(opts.fadeIn ?? 0, outDuration / 2);
+  const fadeOut = ftl ? Math.max(0, opts.fadeOut ?? 0) : Math.min(opts.fadeOut ?? 0, outDuration / 2);
+  const gainAt = (o: number) => (ftl ? timelineFadeGain(ftl.offset + o, ftl.duration, fadeIn, fadeOut) : ownFadeGain(o, outDuration, fadeIn, fadeOut));
   const vol = opts.volume ?? 1;
 
   for (let c0 = 0; c0 < outDuration; c0 += chunk) {
@@ -83,10 +92,7 @@ export async function renderOfflineChunks(
     for (let ch = 0; ch < rendered.numberOfChannels; ch++) {
       const d = rendered.getChannelData(ch);
       for (let i = preFrames; i < d.length; i++) {
-        const o = c0 + (i - preFrames) / sr;
-        let g = 1;
-        if (fadeIn > 0 && o < fadeIn) g *= o / fadeIn;
-        if (fadeOut > 0 && o > outDuration - fadeOut) g *= Math.max(0, (outDuration - o) / fadeOut);
+        const g = gainAt(c0 + (i - preFrames) / sr);
         if (g !== 1) d[i] *= g;
       }
     }
