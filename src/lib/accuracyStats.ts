@@ -144,12 +144,13 @@ export const SPECIALIST = {
   cost: [
     { what: 'Time per minute of audio, 3 processor threads', before: '≈ 7 s', after: '≈ 38 s', note: '36–41 s on 11 recordings: a 4-minute piece takes about 2½ minutes' },
     { what: 'With one thread (Safari, and pages without cross-origin isolation)', before: '≈ 7 s', after: '≈ 97 s', note: 'Mozart, 3:14 piece: 5¼ minutes, the same notes as with 3 threads' },
+    { what: 'On an iPhone (one test, an 8-minute piece)', before: '—', after: '≈ 9 min', note: 'About 70 s per minute of audio, timed by hand by a user (2026-11-12); it finished without problems. Older phones may be slower' },
     { what: 'Peak memory of the browser tab', before: '0.4–0.7 GB', after: '0.8–0.9 GB', note: 'About 0.7 GB more than the tab uses before an import (0.66–0.75 GB measured), more for very long recordings; freed when it is done' },
     { what: 'Download', before: 'included', after: '41 MB, once', note: 'Kept in the browser’s cache; it also needs the app’s 15 MB WebAssembly engine, shared with vocal separation' },
   ] as CompareRow[],
   useWhen: [
     'Solo piano recordings — classical, jazz or pop piano — when you want the notes close to exact: far fewer missed notes in fast runs and high passages, note lengths close to how long each note really sounds (sustain pedal included), and loudness that follows the touch.',
-    'On a computer. It works on phones and tablets too, but is not recommended there: it needs a lot of memory, takes several minutes per song, and songs over 6 minutes might not work on phones with little memory.',
+    'On a computer, or on a phone if you can wait: on an iPhone an 8-minute piece took about 9 minutes (one test). It needs a lot of memory, so songs over 6 minutes might not work on phones with little memory.',
   ],
   skipWhen: [
     'Songs with vocals, drums or a band: it only knows the piano, so it is not offered with “Full song” and separation is not used with it.',

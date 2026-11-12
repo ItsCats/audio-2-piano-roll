@@ -120,7 +120,7 @@ describe('pianoSpecialistSupport', () => {
     expect(p).toMatchObject({ available: true, recommended: false });
     expect(p.reason).toMatch(/phones/);
     expect(p.reason).toMatch(/750 MB/);
-    expect(p.estSecondsPerMinute).toBe(3 * estimateSecondsPerMinute(1));
+    expect(p.estSecondsPerMinute).toBe(estimateSecondsPerMinute(1));
     const l = pianoSpecialistSupport(low, 3, { worker: true, simd: true });
     expect(l).toMatchObject({ available: true, recommended: false });
     expect(l.reason).toMatch(/reports 4 GB/);
@@ -139,9 +139,9 @@ describe('pianoSpecialistSupport', () => {
     expect(l.estSecondsPerMinute).toBe(estimateSecondsPerMinute(3));
     expect(l.reason).not.toMatch(/several minutes per song/);
     const android = { ua: 'Mozilla/5.0 (Linux; Android 14; Pixel 7) Chrome/140 Mobile Safari/537.36', maxTouchPoints: 5, deviceMemory: 8, mobile: true };
-    expect(pianoSpecialistSupport(android, 3, { worker: true, simd: true }).estSecondsPerMinute).toBe(3 * estimateSecondsPerMinute(3));
+    expect(pianoSpecialistSupport(android, 3, { worker: true, simd: true }).estSecondsPerMinute).toBe(estimateSecondsPerMinute(3));
     const ipad = { ua: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari/605.1.15', maxTouchPoints: 5 };
-    expect(pianoSpecialistSupport(ipad, 1, { worker: true, simd: true }).estSecondsPerMinute).toBe(3 * estimateSecondsPerMinute(1));
+    expect(pianoSpecialistSupport(ipad, 1, { worker: true, simd: true }).estSecondsPerMinute).toBe(estimateSecondsPerMinute(1));
   });
 
   it('memory grows with the recording length (the card shows the 4-minute figure)', () => {

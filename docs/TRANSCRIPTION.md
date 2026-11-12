@@ -27,7 +27,7 @@ file ─► validate ─► decode + resample to 16 000 Hz mono ─► piano spe
 | Download | ≈ 0.9 MB, part of the site | ≈ 41 MB model (`public/models/piano-specialist`), downloaded the first time it is used, then cached by the browser |
 | Time per minute of audio (4-core desktop) | ≈ 7 s | ≈ 38 s with 3 WASM threads (36–41 s on 11 whole piano recordings of 2–10 min, 2026-11-12, decoding and arranging included); up to ≈ 60 s while the shared test machine was busy (load ≈ 5); ≈ 97 s single-threaded (Safari, pages that are not cross-origin isolated; same notes as with 3 threads) |
 | Extra memory | – | ≈ 750 MB while it runs (measured +720 MB RSS for the whole browser through the real app; peak tab 0.78–0.87 GB on 11 recordings, 0.66–0.75 GB above the idle tab) |
-| When it is used | always, unless "High-accuracy piano model" is picked | only when picked (off by default on every device; the choice is remembered). Phones and low-memory devices (`backendChoice.ts isMemoryConstrained`) are told it is not recommended there: ≈ 750 MB more memory and several times slower |
+| When it is used | always, unless "High-accuracy piano model" is picked | only when picked (off by default on every device; the choice is remembered). Phones and low-memory devices (`backendChoice.ts isMemoryConstrained`) are told it is not recommended there: ≈ 750 MB more memory and slower (one iPhone test: an 8-minute piece in ≈ 9 minutes, ≈ 70 s per audio minute, single-threaded) |
 | Re-tune detection afterwards | yes (stored posteriors) | no Basic Pitch posteriors are stored, so the detection re-tuning does not apply to these notes |
 
 The specialist is offered with the "Piano solo" preset only. Separation ("Separate vocals & drums") is never combined with it.
