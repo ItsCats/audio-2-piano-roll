@@ -96,11 +96,7 @@ export function AppShell() {
         <Outlet />
       </main>
       {/* mobile bottom navigation */}
-      <nav
-        className={cn('box-content h-14 shrink-0 items-stretch border-t border-ink-800 bg-ink-900 md:hidden', chromeHidden ? 'hidden' : 'flex')}
-        style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
-        aria-label="Main"
-      >
+      <nav className={cn('h-14 shrink-0 items-stretch border-t border-ink-800 bg-ink-900 md:hidden', chromeHidden ? 'hidden' : 'flex')} aria-label="Main">
         {nav.map(({ to, label, icon: Icon, end }) => (
           <NavLink
             key={label}

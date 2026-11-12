@@ -30,7 +30,7 @@ import { Transport } from '../components/studio/Transport';
 import { EditToolbar } from '../components/studio/EditToolbar';
 import { ExportVideoDialog } from '../components/studio/ExportVideoDialog';
 import { FullscreenStage } from '../components/studio/FullscreenStage';
-import { isStageFullscreen, toggleStageFullscreen } from '../state/fullscreenStore';
+import { isFullscreenKey, isStageFullscreen, toggleStageFullscreen } from '../state/fullscreenStore';
 import { LookPanel } from '../components/studio/panels/LookPanel';
 import { LabelsPanel } from '../components/studio/panels/LabelsPanel';
 import { SoundPanel } from '../components/studio/panels/SoundPanel';
@@ -138,7 +138,7 @@ function useStudioKeyboard(computerKeys: boolean) {
         player.seek(player.getTime() - (e.shiftKey ? 1 : 5));
       } else if (e.code === 'ArrowRight' && !st.editMode) {
         player.seek(player.getTime() + (e.shiftKey ? 1 : 5));
-      } else if (e.code === 'KeyF' && !mod) {
+      } else if (isFullscreenKey(e)) {
         toggleStageFullscreen();
       } else if (e.code === 'KeyE' && !mod && !isStageFullscreen()) {
         st.setEditMode(!st.editMode);

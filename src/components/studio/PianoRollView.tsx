@@ -12,6 +12,7 @@ import { useBackgroundMedia } from './useBackgroundMedia';
 import { useDecalImage } from './useDecalImage';
 import { midiInput } from '../../lib/midiInput/webmidi';
 import { isSmallTouchScreen } from '../../lib/fullscreen';
+import { useStageFullscreen } from '../../state/fullscreenStore';
 
 type Drag =
   | { mode: 'move' | 'resize-end' | 'resize-start'; x0: number; y0: number; anchor: Note; originals: Map<number, Note>; key: string; moved: boolean }
@@ -31,7 +32,11 @@ export function PianoRollView() {
   const ghost = useRef<Note | null>(null);
   const marquee = useRef<EditOverlay['marquee']>(null);
   const storedVisual = useSettings((s) => s.visual);
-  const [narrow, setNarrow] = useState(false);
+  const [narrowBox, setNarrow] = useState(false);
+  // a phone turned sideways in full screen is wider than 700 px but still small
+  const [smallTouch] = useState(isSmallTouchScreen);
+  const fullscreen = useStageFullscreen((s) => s.mode !== 'off');
+  const narrow = narrowBox || (fullscreen && smallTouch);
   // on phones, 88 keys are too small to read: fit the keyboard to the song instead
   const visual = useMemo(
     () => (narrow && storedVisual.range === 'full' ? { ...storedVisual, range: 'auto' as const } : storedVisual),
@@ -96,9 +101,9 @@ export function PianoRollView() {
       const canvas = canvasRef.current;
       if (!canvas) return; // observer fired after the Studio unmounted
       const r = el.getBoundingClientRect();
-      // a phone turned sideways (e.g. in full screen) is wider than 700 px but still small
-      setNarrow(r.width < 700 || isSmallTouchScreen());
-      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      setNarrow(r.width < 700);
+      // full screen draws at the screen's own pixel ratio (3× on most iPhones); the normal layout keeps 2×
+      const dpr = Math.min(fullscreen ? 3 : 2, window.devicePixelRatio || 1);
       canvas.style.width = `${r.width}px`;
       canvas.style.height = `${r.height}px`;
       rendererRef.current?.resize(r.width * dpr, r.height * dpr);
@@ -107,7 +112,7 @@ export function PianoRollView() {
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [fullscreen]); // observing again measures again (real full screen can resize before the mode is set)
 
   // render loop
   useEffect(() => {

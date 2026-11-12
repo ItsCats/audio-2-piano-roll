@@ -234,9 +234,9 @@ export function dismissRotateHint(storage: StorageLike | null = defaultStorage()
   }
 }
 
-/** Show the hint in full screen on a phone held upright, until it was dismissed once. */
-export function shouldShowRotateHint(o: { active: boolean; portrait: boolean; touch: boolean; dismissed: boolean }): boolean {
-  return o.active && o.portrait && o.touch && !o.dismissed;
+/** Show the hint in full screen on a phone held upright (not a tablet), until it was dismissed once. */
+export function shouldShowRotateHint(o: { active: boolean; portrait: boolean; phone: boolean; dismissed: boolean }): boolean {
+  return o.active && o.portrait && o.phone && !o.dismissed;
 }
 
 /** A phone-sized touch screen (either orientation): fit the keyboard to the song there. */
@@ -246,5 +246,125 @@ export function isSmallTouchScreen(): boolean {
     return Math.min(window.screen.width, window.screen.height) < 600;
   } catch {
     return false;
+  }
+}
+
+/* ---------------- taps that reveal the controls ---------------- */
+
+/**
+ * A tap that only brings the hidden controls back must not also press the control that appears
+ * under the finger: browsers pick the click's target after the controls are back, and cancelling
+ * pointerdown does not cancel that click. Call `pointerDown` on every pointerdown (true when that
+ * tap was swallowed) and ask `swallowClick` on the click that follows.
+ */
+export function createTapGuard(windowMs = 1000, now: () => number = () => Date.now()) {
+  let until = 0;
+  return {
+    pointerDown(swallowed: boolean) {
+      until = swallowed ? now() + windowMs : 0;
+    },
+    /** `detail` is the click's count: 0 for clicks from the keyboard (Enter / Space), never swallowed */
+    swallowClick(detail: number): boolean {
+      if (!until || detail === 0) return false;
+      const hit = now() <= until;
+      until = 0;
+      return hit;
+    },
+  };
+}
+
+/* ---------------- the rest of the page while full screen ---------------- */
+
+/**
+ * Makes everything outside `el` inert (no focus, no taps, hidden from screen readers) while `el`
+ * covers the page, so Tab does not move focus behind it. Live regions (toasts) stay as they are.
+ * Returns a function that undoes exactly what it changed.
+ */
+export function inertOutside(el: Element): () => void {
+  const changed: Element[] = [];
+  try {
+    for (let node: Element | null = el; node && node.parentElement; node = node.parentElement) {
+      for (const sib of Array.from(node.parentElement.children)) {
+        if (sib === node || sib.hasAttribute('inert') || sib.hasAttribute('aria-live')) continue;
+        if (sib.tagName === 'SCRIPT' || sib.tagName === 'STYLE') continue;
+        sib.setAttribute('inert', '');
+        changed.push(sib);
+      }
+      if (node.parentElement === document.body) break;
+    }
+  } catch {
+    /* not in a document */
+  }
+  return () => changed.forEach((s) => s.removeAttribute('inert'));
+}
+
+/**
+ * iPhone: while the fixed layer is up, let it reach under the notch and home indicator
+ * (viewport-fit=cover); the stage pads its content with env(safe-area-inset-*). Only for the
+ * full-screen layer, so the rest of the app keeps its normal safe area. Returns the undo.
+ */
+export function coverViewport(doc: Pick<Document, 'querySelector'>): () => void {
+  try {
+    const meta = doc.querySelector<HTMLMetaElement>('meta[name="viewport"]');
+    if (!meta) return () => {};
+    const before = meta.getAttribute('content') ?? '';
+    if (/viewport-fit\s*=\s*cover/.test(before)) return () => {};
+    const parts = before.split(',').map((p) => p.trim()).filter((p) => p && !/^viewport-fit\s*=/.test(p));
+    meta.setAttribute('content', [...parts, 'viewport-fit=cover'].join(', '));
+    return () => meta.setAttribute('content', before);
+  } catch {
+    return () => {};
+  }
+}
+
+/* ---------------- the back gesture ---------------- */
+
+const HISTORY_MARK = 'p2vFullscreen';
+type HistoryWindow = Pick<Window, 'addEventListener' | 'removeEventListener'> & { history: Pick<History, 'state' | 'pushState' | 'back'> };
+const marked = (state: unknown) => !!state && typeof state === 'object' && (state as Record<string, unknown>)[HISTORY_MARK] === true;
+
+/**
+ * iPhone (fixed layer): "back" (the edge swipe) should leave full screen, not the page. Adds a
+ * history entry for the same URL; going back from it calls `onBack`. `release` removes the
+ * listener and, if that entry is still current (left by the button), steps back over it.
+ */
+export function createBackToExit(win: HistoryWindow, onBack: () => void): { release(): void } {
+  try {
+    const prev = win.history.state;
+    win.history.pushState({ ...(prev && typeof prev === 'object' ? prev : {}), [HISTORY_MARK]: true }, '');
+  } catch {
+    return { release() {} };
+  }
+  const onPop = () => {
+    if (!marked(win.history.state)) onBack();
+  };
+  win.addEventListener('popstate', onPop);
+  let released = false;
+  return {
+    release() {
+      if (released) return;
+      released = true;
+      win.removeEventListener('popstate', onPop);
+      try {
+        if (marked(win.history.state)) win.history.back();
+      } catch {
+        /* ignore */
+      }
+    },
+  };
+}
+
+/* ---------------- the F key ---------------- */
+
+/** Should this key press toggle full screen? Not while held down, with a modifier, or over a dialog. */
+export function isFullscreenKey(
+  e: Pick<KeyboardEvent, 'code' | 'repeat' | 'ctrlKey' | 'metaKey' | 'altKey'>,
+  doc: Pick<Document, 'querySelector'> | null = typeof document !== 'undefined' ? document : null,
+): boolean {
+  if (e.code !== 'KeyF' || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return false;
+  try {
+    return !doc?.querySelector('[aria-modal="true"]');
+  } catch {
+    return true;
   }
 }

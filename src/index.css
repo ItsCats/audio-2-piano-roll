@@ -177,19 +177,24 @@ input[type='color']::-moz-color-swatch {
 /* Studio full screen (src/components/studio/FullscreenStage.tsx). On iPhone, where Safari has no
    Fullscreen API for pages, this fixed layer covers the whole visible viewport instead. */
 .fs-stage-on {
+  /* pinned to all four edges rather than a 100vh/dvh height: on every iOS version this is the
+     visible area between Safari's bars, with the keyboard never under the bottom toolbar */
   position: fixed;
   top: 0;
-  left: 0;
   right: 0;
-  width: 100%;
-  height: 100vh;
-  height: 100svh;
-  height: 100dvh;
-  z-index: 70;
+  bottom: 0;
+  left: 0;
+  z-index: 55; /* above dialogs (z-50), below toasts (z-60) */
   background: #000;
   overscroll-behavior: none;
   touch-action: none;
 }
 .fs-stage-on:fullscreen {
+  width: 100%;
   height: 100%;
+}
+/* the controls are hidden: no mouse pointer either (beats the canvas's inline grab/pointer cursor) */
+.fs-stage-on.fs-cursor-hidden,
+.fs-stage-on.fs-cursor-hidden * {
+  cursor: none !important;
 }

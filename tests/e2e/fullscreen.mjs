@@ -11,11 +11,15 @@
  *    scroll; edit mode is switched off;
  *  - the one-time portrait hint shows and stays dismissed (localStorage);
  *  - while playing the controls hide after ~3 s; a tap on the notes brings them back and does not
- *    seek, edit or pause;
+ *    seek, edit or pause, also when it lands where a hidden control (Exit, Pause, speed) sits;
+ *  - the bottom controls sit above the on-screen keys, so a paused user sees and can tap every key;
+ *  - the system back gesture leaves full screen and stays on the song;
  *  - rotating re-lays out the canvas; exiting restores the layout; leaving the page while full
  *    screen restores the shell and the page's overflow.
+ * iPad Pro 11: the real Fullscreen API, and no "turn sideways" hint (that is for phones).
  * Desktop Chromium: the real Fullscreen API (document.fullscreenElement is the stage), F toggles,
- * Esc exits.
+ * Esc exits, the mouse pointer hides with the controls, Tab stays inside, F does nothing while a
+ * dialog is open.
  * With --dist, a production build is served with the netlify.toml headers (tests/e2e/isolation.server.py)
  * and the web app manifest, its icons and the apple-touch-icon load without CSP violations while
  * the page stays cross-origin isolated.
@@ -71,7 +75,10 @@ const measure = () => {
     return !!hit && (el === hit || el.contains(hit));
   };
   const controls = stage?.querySelector(':scope > [data-fs-controls]');
+  const bar = document.querySelector('[data-fs-controls] [aria-label="Song position"]')?.parentElement?.parentElement;
   return {
+    barBottom: bar ? Math.round(bar.getBoundingClientRect().bottom) : null,
+    canvasTop: r.top,
     mode: stage?.dataset.fullscreen,
     fsElementIsStage: document.fullscreenElement === stage && !!stage,
     inner: [innerWidth, innerHeight],
@@ -101,12 +108,12 @@ const measure = () => {
   };
 };
 
-/** canvas fills the viewport with a sharp, unstretched backing store */
+/** canvas fills the viewport with a sharp, unstretched backing store at the screen's pixel ratio */
 function checkFills(m, label) {
   const [w, h] = m.inner;
-  const pr = Math.min(2, m.dpr);
+  const pr = Math.min(3, m.dpr);
   ok(Math.abs(m.css[2] - w) <= 1 && Math.abs(m.css[3] - h) <= 1 && m.css[0] === 0 && m.css[1] === 0, `${label}: canvas fills the viewport`, { css: m.css, inner: m.inner });
-  ok(Math.abs(m.backing[0] - m.css[2] * pr) <= 1 && Math.abs(m.backing[1] - m.css[3] * pr) <= 1, `${label}: backing store = CSS size × ${pr} (device ${m.dpr}×, capped at 2)`, { backing: m.backing });
+  ok(Math.abs(m.backing[0] - m.css[2] * pr) <= 1 && Math.abs(m.backing[1] - m.css[3] * pr) <= 1, `${label}: backing store = CSS size × ${pr} (device ${m.dpr}×)`, { backing: m.backing });
   ok(m.scroll[0] <= w && m.scroll[2] === 0 && m.scroll[3] === 0, `${label}: no page scroll`, { scroll: m.scroll });
   ok(!m.navVisible && !m.headerVisible && !m.transportVisible, `${label}: no app navigation, Studio header or transport visible`, { nav: m.navVisible, header: m.headerVisible, transport: m.transportVisible });
 }
@@ -161,6 +168,8 @@ async function iphone(browser, base) {
     const b = await page.getByRole('button', { name, exact: true }).boundingBox();
     ok(!!b && b.height >= 44 && b.width >= 44, `iPhone: "${name}" target ≥ 44 px`, b && [b.width, b.height]);
   }
+  ok(m.barBottom !== null && m.barBottom <= m.canvasTop + m.keysTop + 1, 'iPhone portrait: bottom controls sit above the piano keys', { barBottom: m.barBottom, keysTop: m.keysTop });
+  ok(await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.tagName === 'CANVAS', [m.inner[0] / 2, m.keysTop + (m.inner[1] - m.keysTop) * 0.5]), 'iPhone portrait (paused): a tap on the keys reaches the keys');
   const sb = await page.getByRole('slider', { name: 'Song position', exact: true }).boundingBox();
   ok(!!sb && sb.height >= 44, 'iPhone: seek bar touch area ≥ 44 px tall', sb && [Math.round(sb.width), sb.height]);
 
@@ -170,10 +179,10 @@ async function iphone(browser, base) {
 
   // speed from the overlay
   await page.getByRole('button', { name: /^Playback speed/ }).tap();
-  await page.getByRole('option', { name: '0.75×' }).tap();
+  await page.getByRole('button', { name: '0.75×', exact: true }).tap();
   ok(await page.getByRole('button', { name: 'Playback speed 0.75×' }).isVisible(), 'iPhone: speed set to 0.75× from full screen');
   await page.getByRole('button', { name: /^Playback speed/ }).tap();
-  await page.getByRole('option', { name: '1×', exact: true }).tap();
+  await page.getByRole('button', { name: '1×', exact: true }).tap();
   await shot(page, 'iphone14-portrait-controls');
 
   // play: controls hide, a tap on the notes shows them again without seeking or editing
@@ -202,6 +211,9 @@ async function iphone(browser, base) {
   m = await page.evaluate(measure);
   ok(!m.controlsShown, 'iPhone: tapping the piano keys plays them without bringing up the controls');
 
+  // a revealing tap where a hidden control sits presses nothing
+  await ghostTaps(page, 'iPhone portrait');
+
   // rotate while playing
   await page.setViewportSize({ width: 844, height: 390 });
   await sleep(700);
@@ -209,6 +221,14 @@ async function iphone(browser, base) {
   ok(m.mode === 'pseudo', 'iPhone landscape: still full screen after rotating');
   checkFills(m, 'iPhone landscape');
   ok(!m.hint, 'iPhone landscape: no rotate hint');
+  await waitControls(page, false);
+  await page.touchscreen.tap(422, 120);
+  await waitControls(page, true, 2000);
+  m = await page.evaluate(measure);
+  ok(m.barBottom !== null && m.barBottom <= m.canvasTop + m.keysTop + 1, 'iPhone landscape: bottom controls sit above the piano keys', { barBottom: m.barBottom, keysTop: m.keysTop });
+  await waitControls(page, false);
+  await ghostTaps(page, 'iPhone landscape');
+  await waitControls(page, false);
   await page.touchscreen.tap(422, 120);
   await waitControls(page, true, 2000);
   await shot(page, 'iphone14-landscape-controls');
@@ -223,6 +243,7 @@ async function iphone(browser, base) {
   await sleep(3800);
   m = await page.evaluate(measure);
   ok(!m.playing && m.controlsShown, 'iPhone: paused → controls stay visible');
+  ok(m.barBottom <= m.canvasTop + m.keysTop + 1 && (await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.tagName === 'CANVAS', [200, m.keysTop + (m.inner[1] - m.keysTop) * 0.5])), 'iPhone landscape (paused): every key visible and tappable', { barBottom: m.barBottom, keysTop: m.keysTop });
 
   // exit restores the layout
   await page.getByRole('button', { name: 'Exit full screen' }).tap();
@@ -232,6 +253,9 @@ async function iphone(browser, base) {
   ok(m.navVisible && m.headerVisible && m.transportVisible && m.htmlOverflow === '' && m.bodyOverflow === '', 'iPhone: exit restores navigation, header, transport and page overflow', m);
   ok(m.css[3] < m.inner[1] - 100 && Math.abs(m.backing[1] - m.css[3] * Math.min(2, m.dpr)) <= 1, 'iPhone: canvas back to the view size', { css: m.css, backing: m.backing });
   ok(m.scroll[0] <= m.inner[0], 'iPhone landscape (normal layout): no horizontal scroll', m.scroll);
+  const small = await page.getByRole('button', { name: 'Full screen' }).boundingBox();
+  ok(!!small && small.width <= 48 && small.height >= 44, 'iPhone landscape (normal layout): the button is icon-only, still 44 px', small);
+  await shot(page, 'iphone14-landscape-studio');
 
   // portrait again: the hint stays dismissed
   await page.setViewportSize({ width: 390, height: 664 });
@@ -242,6 +266,25 @@ async function iphone(browser, base) {
   m = await page.evaluate(measure);
   ok(!m.hint, 'iPhone: dismissed hint does not come back');
   checkFills(m, 'iPhone portrait (again)');
+  ok(await page.evaluate(() => /viewport-fit=cover/.test(document.querySelector('meta[name="viewport"]').content)), 'iPhone: the layer reaches under the notch (viewport-fit=cover)');
+
+  // the system back gesture leaves full screen and stays on the song
+  const url = page.url();
+  await page.goBack();
+  await page.waitForSelector('[data-fullscreen="off"]', { timeout: 5000 }).catch(() => {});
+  await sleep(300);
+  m = await page.evaluate(measure);
+  ok(m.mode === 'off' && page.url() === url && m.htmlOverflow === '' && m.navVisible, 'iPhone: back leaves full screen, same song, shell back', { mode: m.mode, url: page.url() });
+  ok(await page.evaluate(() => !/viewport-fit/.test(document.querySelector('meta[name="viewport"]').content)), 'iPhone: viewport tag restored');
+  await page.getByRole('button', { name: 'Full screen' }).tap();
+  await page.waitForSelector('[data-fullscreen="pseudo"]');
+  await page.getByRole('button', { name: 'Exit full screen' }).tap();
+  await page.waitForSelector('[data-fullscreen="off"]');
+  await sleep(300);
+  ok(page.url() === url, 'iPhone: Exit removes its back entry (no extra history step)', page.url());
+  await page.getByRole('button', { name: 'Full screen' }).tap();
+  await page.waitForSelector('[data-fullscreen="pseudo"]');
+  await sleep(300);
 
   // leaving the page while full screen restores the shell
   await page.evaluate(() => {
@@ -281,16 +324,21 @@ async function desktop(browser, base) {
   await shot(page, 'desktop-fullscreen-controls');
   await waitControls(page, false);
   ok(!(await page.evaluate(measure)).controlsShown, 'desktop: controls hide while playing and the mouse rests');
+  ok((await page.evaluate(() => getComputedStyle(document.querySelector('canvas[aria-label="Piano roll"]')).cursor)) === 'none', 'desktop: the mouse pointer hides over the piano roll');
   await shot(page, 'desktop-fullscreen-hidden');
   await page.mouse.move(600, 300);
   await page.mouse.move(640, 320);
   await waitControls(page, true, 2000);
   ok((await page.evaluate(measure)).controlsShown, 'desktop: moving the mouse shows them');
 
+  for (let i = 0; i < 8; i++) await page.keyboard.press('Tab');
+  ok(await page.evaluate(() => document.querySelector('[data-fullscreen]').contains(document.activeElement)), 'desktop: Tab stays inside full screen');
+
   await page.keyboard.press('Escape');
   await page.waitForSelector('[data-fullscreen="off"]', { timeout: 5000 }).catch(() => {});
   await sleep(500);
   m = await page.evaluate(measure);
+  ok(await page.evaluate(() => !document.querySelector('[inert]:not([data-fs-controls])')), 'desktop: nothing left inert after leaving');
   ok(m.mode === 'off' && !m.fsElementIsStage && (await page.evaluate(() => !document.fullscreenElement)), 'desktop: Esc leaves full screen');
   ok(m.navVisible && m.headerVisible && m.transportVisible, 'desktop: layout restored after Esc');
 
@@ -310,6 +358,58 @@ async function desktop(browser, base) {
   await page.waitForSelector('[data-fullscreen="off"]', { timeout: 5000 }).catch(() => {});
   ok((await page.evaluate(measure)).mode === 'off', 'desktop: leaving full screen through the browser resets the stage');
   await page.evaluate(() => window.__pv.getPlayer().pause());
+
+  // F does nothing while a dialog is open (the dialog would be hidden behind full screen)
+  await page.locator('header').getByRole('button').filter({ has: page.locator('svg.lucide-film') }).click();
+  await page.getByRole('dialog').waitFor();
+  await page.keyboard.press('f');
+  await sleep(500);
+  ok((await page.evaluate(measure)).mode === 'off' && (await page.getByRole('dialog').isVisible()), 'desktop: F with a dialog open stays out of full screen');
+  await page.keyboard.press('Escape');
+  await ctx.close();
+}
+
+/** a tap meant to bring the controls back, on the spot where a hidden control sits, presses nothing */
+async function ghostTaps(page, label) {
+  const spots = await page.evaluate(() => {
+    const box = (sel) => {
+      const b = document.querySelector(sel)?.getBoundingClientRect();
+      return b ? { x: b.left + b.width / 2, top: b.top, y: b.top + b.height / 2 } : null;
+    };
+    return {
+      exit: box('[data-fs-controls] button[aria-label="Exit full screen"]'),
+      pause: box('[data-fs-controls] button[aria-label="Pause"]'),
+      speed: box('[data-fs-controls] button[aria-label^="Playback speed"]'),
+    };
+  });
+  for (const [name, spot] of Object.entries(spots)) {
+    if (!spot) {
+      ok(false, `${label}: ${name} control found`);
+      continue;
+    }
+    await waitControls(page, false);
+    const before = await page.evaluate(measure);
+    ok((await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.tagName, [spot.x, spot.y])) === 'CANVAS', `${label}: hidden ${name} takes no taps`);
+    await page.touchscreen.tap(spot.x, name === 'pause' ? spot.top + 4 : spot.y);
+    await sleep(250);
+    const m = await page.evaluate(measure);
+    const speedOpen = await page.evaluate(() => !!document.querySelector('[data-fs-controls] [role="group"][aria-label="Playback speed"]'));
+    ok(m.controlsShown && m.mode === before.mode && m.playing && !speedOpen, `${label}: a revealing tap on hidden ${name} only shows the controls`, { mode: m.mode, playing: m.playing, speedOpen });
+  }
+}
+
+async function ipad(browser, base) {
+  const ctx = await browser.newContext({ ...devices['iPad Pro 11'] });
+  const page = await ctx.newPage();
+  page.on('pageerror', (e) => ok(false, `iPad page error: ${e.message}`));
+  await openDemo(page, base);
+  await page.getByRole('button', { name: 'Full screen' }).tap();
+  await page.waitForSelector('[data-fullscreen="native"]', { timeout: 5000 }).catch(() => {});
+  await sleep(500);
+  const m = await page.evaluate(measure);
+  ok(m.mode === 'native', 'iPad: real Fullscreen API', m.mode);
+  ok(!m.hint, 'iPad portrait: no "turn sideways" hint (phones only)');
+  await page.getByRole('button', { name: 'Exit full screen' }).tap();
   await ctx.close();
 }
 
@@ -377,6 +477,7 @@ const browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gestur
 try {
   const base = `http://localhost:${port}`;
   await iphone(browser, base);
+  await ipad(browser, base);
   await desktop(browser, base);
   if (dist) await production(browser);
 } catch (e) {

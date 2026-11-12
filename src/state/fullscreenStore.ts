@@ -1,6 +1,7 @@
 /** Whether the Studio's piano roll is full screen (src/components/studio/FullscreenStage.tsx). */
 import { create } from 'zustand';
 import type { FullscreenMode } from '../lib/fullscreen';
+export { isFullscreenKey } from '../lib/fullscreen';
 
 interface StageControls {
   toggle(): void;
