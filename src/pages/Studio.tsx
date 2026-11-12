@@ -35,6 +35,8 @@ import { ExportVideoDialog } from '../components/studio/ExportVideoDialog';
 import { SheetMusicView } from '../components/studio/SheetMusicView';
 import { SheetPdfDialog } from '../components/studio/SheetPdfDialog';
 import { loadOsmd } from '../lib/sheet/render';
+import { FullscreenStage } from '../components/studio/FullscreenStage';
+import { isFullscreenKey, isStageFullscreen, toggleStageFullscreen } from '../state/fullscreenStore';
 import { LookPanel } from '../components/studio/panels/LookPanel';
 import { LabelsPanel } from '../components/studio/panels/LabelsPanel';
 import { SoundPanel } from '../components/studio/panels/SoundPanel';
@@ -186,7 +188,9 @@ function useStudioKeyboard(computerKeys: boolean) {
         player.seek(player.getTime() - seekStepSeconds(e.shiftKey));
       } else if (e.code === 'ArrowRight' && !st.editMode) {
         player.seek(player.getTime() + seekStepSeconds(e.shiftKey));
-      } else if (e.code === 'KeyE' && !mod) {
+      } else if (isFullscreenKey(e)) {
+        toggleStageFullscreen();
+      } else if (e.code === 'KeyE' && !mod && !isStageFullscreen()) {
         st.setEditMode(!st.editMode);
       } else if (st.editMode) {
         if (mod && e.code === 'KeyZ') {
@@ -414,7 +418,10 @@ export default function StudioPage() {
           </IconButton>
         </header>
         {editMode && <EditToolbar />}
-        <div className="relative min-h-0 flex-1">{view === 'sheet' ? <SheetMusicView /> : <PianoRollView />}</div>
+        {/* full screen covers the app and the controls around the view (edit mode is for the normal layout) */}
+        <FullscreenStage onEnter={() => setEditMode(false)}>
+          {view === 'sheet' ? <SheetMusicView /> : <PianoRollView />}
+        </FullscreenStage>
         <Transport />
       </div>
 
