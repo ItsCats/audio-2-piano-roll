@@ -15,6 +15,17 @@ export interface PracticeSettings {
   timingWindowMs: number;
 }
 
+/** Sheet music view and PDF options (added later: old saved settings get these defaults). */
+export interface SheetSettings {
+  view: 'roll' | 'sheet';
+  /** null = automatic (100% on desktop, 75% on phones). */
+  zoom: number | null;
+  paper: 'auto' | 'a4' | 'letter';
+  follow: boolean;
+}
+
+export const DEFAULT_SHEET: SheetSettings = { view: 'roll', zoom: null, paper: 'auto', follow: true };
+
 export interface SavedExportPreset {
   id: string;
   name: string;
@@ -32,6 +43,8 @@ interface SettingsState {
   exportSettings: ExportSettings;
   exportPresets: SavedExportPreset[];
   reducedMotion: boolean;
+  sheet: SheetSettings;
+  setSheet: (patch: Partial<SheetSettings>) => void;
   setVisual: (patch: Partial<VisualSettings>) => void;
   replaceVisual: (v: VisualSettings) => void;
   setLabels: (patch: Partial<VisualSettings['labels']>) => void;
@@ -59,6 +72,8 @@ export const useSettings = create<SettingsState>()(
       exportSettings: DEFAULT_EXPORT,
       exportPresets: [],
       reducedMotion: false,
+      sheet: DEFAULT_SHEET,
+      setSheet: (patch) => set((s) => ({ sheet: { ...s.sheet, ...patch } })),
       setVisual: (patch) => set((s) => ({ visual: { ...s.visual, ...patch } })),
       replaceVisual: (v) => set({ visual: v }),
       setLabels: (patch) => set((s) => ({ visual: { ...s.visual, labels: { ...s.visual.labels, ...patch }, labelsHiddenByTheme: false } })),
@@ -91,6 +106,7 @@ export const useSettings = create<SettingsState>()(
           audio: { ...current.audio, ...(p.audio ?? {}) },
           practice: { ...current.practice, ...(p.practice ?? {}) },
           exportSettings: { ...current.exportSettings, ...(p.exportSettings ?? {}) },
+          sheet: { ...current.sheet, ...(p.sheet ?? {}) },
         };
       },
     },
