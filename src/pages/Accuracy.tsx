@@ -89,6 +89,49 @@ function SpecialistStat({ label, fast, accurate, corr }: { label: string; fast: 
   );
 }
 
+function SpecialistSpotlight() {
+  const fastRuns = SPECIALIST.found.find((r) => r.what.startsWith('Notes in fast runs'));
+  const stats: { value: string; label: string; was: string }[] = [
+    { value: pct(SPECIALIST.mean.f1), label: 'Notes right', was: pct(SPECIALIST.mean.f1Fast) },
+    { value: pct(SPECIALIST.mean.ends), label: 'Notes that also end right', was: pct(SPECIALIST.mean.endsFast) },
+    ...(fastRuns ? [{ value: fastRuns.after, label: 'Notes in fast runs', was: fastRuns.before }] : []),
+  ];
+  return (
+    <section aria-labelledby="spotlight-title" className="relative overflow-hidden rounded-2xl border border-ok/30 bg-gradient-to-br from-ok/[0.12] via-accent-500/[0.06] to-transparent p-5 sm:p-6">
+      <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+        <div className="max-w-xl">
+          <p className="flex items-center gap-1.5 text-[12px] font-semibold tracking-[0.12em] text-ok uppercase">
+            <Piano size={15} /> New · High-accuracy piano model
+          </p>
+          <h2 id="spotlight-title" className="mt-2 text-[22px] leading-tight font-semibold text-ink-50 sm:text-[26px]">
+            {pct(SPECIALIST.mean.f1)} of the notes right on solo piano
+          </h2>
+          <p className="mt-2 text-[13.5px] leading-relaxed text-ink-200">
+            Measured on 5 concert recordings with an exact answer key, whole pieces, through the app. Note lengths and how hard each key was
+            played come out close to the real performance too.
+          </p>
+          <p className="mt-3 text-[13px] text-ink-300">
+            To use it: <b className="text-ink-100">Import</b> → <b className="text-ink-100">Piano solo</b> → tick{' '}
+            <b className="text-ink-100">High-accuracy piano model</b>.{' '}
+            <a href="#high-accuracy" className="text-accent-300 underline-offset-2 hover:underline">
+              Details
+            </a>
+          </p>
+        </div>
+        <div className="grid grid-cols-3 gap-2 sm:gap-3 lg:w-[400px] lg:shrink-0">
+          {stats.map((x) => (
+            <div key={x.label} className="rounded-xl border border-ink-700/70 bg-ink-950/60 p-3">
+              <div className="text-[24px] leading-none font-semibold text-ok tabular-nums sm:text-[28px]">{x.value}</div>
+              <div className="mt-1.5 text-[12px] leading-snug font-medium text-ink-100">{x.label}</div>
+              <div className="mt-1 text-[11px] text-ink-400">normal model: {x.was}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function TrainingTag() {
   return (
     <span className="mt-1 inline-flex rounded-full border border-warn/30 bg-warn/10 px-2 py-0.5 text-[11px] text-warn" title="MAESTRO train split">
@@ -155,6 +198,9 @@ export default function AccuracyPage() {
             score. Below is what we measured on real recordings — concert piano performances with an exact answer key, other piano recordings,
             and full songs with singers, bands and drums — what got better, and where it still goes wrong.
           </p>
+          <div className="mt-5">
+            <SpecialistSpotlight />
+          </div>
           <div className="mt-4 flex gap-2.5 rounded-xl border border-warn/25 bg-warn/10 p-3.5 text-[13px] leading-relaxed text-ink-100">
             <AlertTriangle size={17} className="mt-0.5 shrink-0 text-warn" />
             <p>
@@ -235,7 +281,7 @@ export default function AccuracyPage() {
           </ul>
         </section>
 
-        <section>
+        <section id="high-accuracy" className="scroll-mt-6">
           <SectionTitle title={SPECIALIST.title} sub={SPECIALIST.intro} />
           <div className="mb-3 grid grid-cols-3 gap-2 sm:gap-3">
             <SpecialistStat label="Notes right" fast={SPECIALIST.mean.f1Fast} accurate={SPECIALIST.mean.f1} />
