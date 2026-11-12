@@ -125,16 +125,23 @@ export function Toggle({
   hint?: string;
   disabled?: boolean;
 }) {
+  const hintId = useId();
   return (
     <label className={cn('flex cursor-pointer items-center justify-between gap-3 py-0.5', disabled && 'pointer-events-none opacity-40')}>
       <span className="flex flex-col">
         <span className="text-[13px] text-ink-100">{label}</span>
-        {hint && <span className="text-[11.5px] text-ink-300">{hint}</span>}
+        {hint && (
+          <span id={hintId} className="text-[11.5px] text-ink-300">
+            {hint}
+          </span>
+        )}
       </span>
       <button
         type="button"
         role="switch"
         aria-checked={checked}
+        aria-label={typeof label === 'string' ? label : undefined}
+        aria-describedby={hint ? hintId : undefined}
         onClick={() => onChange(!checked)}
         className={cn(
           'focus-ring relative h-5 w-9 shrink-0 rounded-full transition-colors duration-150',
