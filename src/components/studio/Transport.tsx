@@ -6,7 +6,7 @@ import { useSettings } from '../../state/settingsStore';
 import { currentArrangement, useStudio } from '../../state/studioStore';
 import { formatTime } from '../../lib/music/theory';
 import { IconButton, cn } from '../ui';
-import { seekStepSeconds } from '../../state/studioKeys';
+import { arrowSeekDelta } from '../../state/studioKeys';
 
 const SPEEDS = [0.25, 0.5, 0.6, 0.75, 0.85, 1, 1.15, 1.25, 1.5, 2];
 
@@ -148,12 +148,12 @@ export function Transport() {
           aria-valuenow={0}
           tabIndex={0}
           onKeyDown={(e) => {
-            if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+            const delta = arrowSeekDelta(e);
+            if (delta === null) return;
             // handled here only: stop the page-wide shortcut from seeking a second time
             e.preventDefault();
             e.stopPropagation();
-            const step = seekStepSeconds(e.shiftKey);
-            player.seek(player.getTime() + (e.key === 'ArrowRight' ? step : -step));
+            player.seek(player.getTime() + delta);
           }}
         >
           <Minimap duration={duration || 1} />
