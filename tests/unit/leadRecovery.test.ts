@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { LEAD_RECOVERY, capDensity, freshCandidates, recoverLead } from '../../src/lib/music/leadRecovery';
 import { mergeMelody } from '../../src/lib/music/melody';
 import { generateAllArrangements, withoutHardOnly } from '../../src/lib/music/difficulty';
-import { EXTRACTION_PRESETS, LEAD_PASS, accompFromRaw, leadWorkerOptions, sungRanges } from '../../src/lib/transcription/pipeline';
+import { EXTRACTION_PRESETS, LEAD_PASS, accompFromRaw, leadHardOnly, leadWorkerOptions, sungRanges } from '../../src/lib/transcription/pipeline';
 import { timeToFrame } from '../../src/lib/transcription/constants';
 import type { RawNoteEvent } from '../../src/lib/transcription/noteExtraction';
 import type { Note, TempoInfo } from '../../src/lib/music/types';
@@ -80,6 +80,12 @@ describe('lead recovery', () => {
     expect(r.notes.length).toBeGreaterThanOrEqual(r.main.length);
     for (const n of r.notes.filter((x) => !r.main.includes(x))) expect(n.role).toBe('lead');
     expect(accompFromRaw(raw, undefined, rms, EXTRACTION_PRESETS.mix, 5).notes).toHaveLength(3);
+  });
+
+  it('recovered notes reach Easy / Medium only for songs known to be instrumental', () => {
+    expect(leadHardOnly(false, [])).toBe(true); // not separated: the singer may be the lead
+    expect(leadHardOnly(true, [note(60, 0, 1, 0.7, { role: 'melody' })])).toBe(true); // separated, sung
+    expect(leadHardOnly(true, [])).toBe(false); // separated, no singing: an instrumental
   });
 
   it('sung phrases as merged time ranges', () => {

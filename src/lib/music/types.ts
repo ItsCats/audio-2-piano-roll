@@ -14,8 +14,8 @@ export interface Note {
    * Musical role, when known. 'melody' marks notes of the sung melody line extracted from the
    * separated vocal stem: they always sit in the right hand and Easy/Medium are built around them.
    * 'lead' marks lead-line notes recovered by the "Full song" preset's sensitive pass
-   * (music/leadRecovery.ts) in a recording that was not separated: they may be the singer, so
-   * they are shown on Hard only (Easy and Medium are built without them).
+   * (music/leadRecovery.ts) in a song not known to be instrumental (not separated, or separated
+   * with singing): they are shown on Hard only (Easy and Medium are built without them).
    */
   role?: 'melody' | 'lead';
 }
