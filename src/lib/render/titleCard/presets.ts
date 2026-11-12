@@ -3,6 +3,7 @@
  * layout and the renderer draw. Pure: no DOM, safe in unit tests and workers.
  */
 import type { DividerId, FillPatternId, FillScope, TextRole, TitleFontId, TitleLook, TitlePresetId } from './types';
+import { adaptLook, hexLuminance, type FillTone, type Halo, type Scrim } from './contrast';
 
 /** Font families shipped for the title page (see fonts.ts). */
 export type FontKey = 'cinzel' | 'playfair' | 'cormorant' | 'garamond' | 'vibes' | 'inter';
@@ -19,7 +20,7 @@ export const FAMILY: Record<FontKey, string> = {
   vibes: "'P2V Vibes'",
   inter: "'P2V Inter'",
 };
-const SERIF_FALLBACK = "'Noto Serif JP', 'Hiragino Mincho ProN', 'Yu Mincho', 'Noto Serif', Georgia, serif";
+const SERIF_FALLBACK = "'Noto Serif JP', 'Noto Serif CJK JP', 'Source Han Serif', 'Hiragino Mincho ProN', 'Yu Mincho', 'Songti SC', 'SimSun', 'Noto Serif', Georgia, serif";
 const SANS_FALLBACK = 'system-ui, -apple-system, "Segoe UI", sans-serif';
 
 /** Weights each family ships with (Inter is variable). */
@@ -56,6 +57,8 @@ export interface LineSpec {
    * features, so digits on caps lines are drawn in this family (Cinzel) instead.
    */
   digits?: FontKey;
+  /** extra space between words in em (the script font's own word space is very narrow) */
+  wordSpace?: number;
 }
 
 export function fontCss(spec: Pick<LineSpec, 'font' | 'weight'>, px: number): string {
@@ -182,7 +185,7 @@ export const TITLE_PRESETS: PresetDef[] = [
     name: 'Romance',
     bg: { kind: 'radial', c0: '#1b1220', c1: '#06040a' },
     lines: {
-      title: { font: 'vibes', weight: 400, size: 0.16, track: 0, upper: false, color: '#ffffff' },
+      title: { font: 'vibes', weight: 400, size: 0.16, track: 0, upper: false, color: '#ffffff', wordSpace: 0.2 },
       subtitle: caps('cinzel', 400, 0.034, 0.38, '#e6dcef'),
       composer: caps('cinzel', 700, 0.046, 0.32, '#f1e9f6'),
       ...FLORAL_FOOTER,
@@ -262,7 +265,7 @@ const FONT_CHOICES: Record<TitleFontId, { title: Omit<LineSpec, 'color'>; compos
   cormorant: { title: { font: 'cormorant', weight: 700, size: 0.115, track: 0.32, upper: true }, composer: { font: 'cormorant', weight: 700, size: 0.054, track: 0.32, upper: true } },
   garamond: { title: { font: 'garamond', weight: 500, size: 0.108, track: 0.3, upper: true }, composer: { font: 'garamond', weight: 500, size: 0.05, track: 0.3, upper: true } },
   // the script font is only used for the title; the composer keeps the style's font
-  script: { title: { font: 'vibes', weight: 400, size: 0.16, track: 0, upper: false }, composer: null },
+  script: { title: { font: 'vibes', weight: 400, size: 0.16, track: 0, upper: false, wordSpace: 0.2 }, composer: null },
   modern: { title: { font: 'inter', weight: 250, size: 0.09, track: 0.5, upper: true }, composer: { font: 'inter', weight: 600, size: 0.04, track: 0.35, upper: true } },
 };
 
@@ -300,6 +303,18 @@ export interface ResolvedLook {
   zoom: boolean;
   shine: boolean;
   trackEase: boolean;
+  /** the user picked the text colour / the letter colour (kept on light backgrounds) */
+  userText: boolean;
+  userFill: boolean;
+  /** the style's own background (its vignette is drawn; not over the user's colour or picture) */
+  styleBg: boolean;
+  /** soft edge around the filled letters / around the plain lines (light or busy backgrounds) */
+  halo: Halo | null;
+  textHalo: Halo | null;
+  /** contrast toning of the letter fill */
+  fillTone: FillTone;
+  /** soft patch behind the text on a busy picture */
+  scrim: Scrim | null;
 }
 
 const OLD_STYLE_DIGITS: FontKey[] = ['playfair', 'cormorant', 'garamond'];
@@ -366,7 +381,7 @@ export function resolveLook(look: TitleLook, hint: StudioLookHint = {}): Resolve
 
   // background
   let bg: BgSpec = p.bg;
-  const dim = typeof look.dim === 'number' ? Math.max(0, Math.min(0.8, look.dim)) : 0.4;
+  const dim = typeof look.dim === 'number' ? Math.max(0, Math.min(0.8, look.dim)) : DEFAULT_DIM;
   switch (look.bg) {
     case 'color':
       bg = { kind: 'color', color: isHex(look.bgColor) ? look.bgColor : '#000000' };
@@ -389,7 +404,7 @@ export function resolveLook(look: TitleLook, hint: StudioLookHint = {}): Resolve
     if (fillDividers) dividerColor = fill.color;
   }
 
-  return {
+  const resolved: ResolvedLook = {
     preset: p.id,
     lines,
     bg,
@@ -406,8 +421,22 @@ export function resolveLook(look: TitleLook, hint: StudioLookHint = {}): Resolve
     zoom: look.zoom ?? p.zoom,
     shine: look.shine ?? p.shine,
     trackEase: p.trackEase && !look.font,
+    userText: isHex(look.textColor),
+    userFill: kind === 'solid' && isHex(look.fillColor),
+    styleBg: !look.bg || bg === p.bg,
+    halo: null,
+    textHalo: null,
+    fillTone: fill.kind === 'image' ? 'lift' : 'none',
+    scrim: null,
   };
+  // a light colour / gradient: dark text (a picture is measured when it is drawn, see draw.ts)
+  if (bg.kind === 'color') return adaptLook(resolved, hexLuminance(bg.color));
+  if (bg.kind === 'linear' && !resolved.styleBg) return adaptLook(resolved, (hexLuminance(bg.c0) + hexLuminance(bg.c1)) / 2);
+  return resolved;
 }
+
+/** Darkening over a picture background unless the user sets it. */
+export const DEFAULT_DIM = 0.5;
 
 /** Whether a resolved fill is drawn through the mask layer (anything but a plain colour). */
 export function usesMask(r: ResolvedLook): boolean {

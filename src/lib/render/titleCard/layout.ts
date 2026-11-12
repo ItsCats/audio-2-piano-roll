@@ -101,6 +101,11 @@ const GAPS: Record<string, number> = {
 };
 const DEFAULT_GAP = 0.12;
 
+/** the other lines' capitals at most this much of the title's (hierarchy with long titles) */
+const CAP_LIMIT: Record<TextRole, number> = { title: 1, subtitle: 0.62, composer: 0.75, credit: 0.6, small: 0.45 };
+/** the credit and small line at most this much of the title's width (but always half the safe width) */
+const FOOTER_WIDTH = 0.7;
+
 const MAIN_ROLES: TextRole[] = ['title', 'subtitle', 'composer'];
 const ORDER: TextRole[] = ['title', 'subtitle', 'composer', 'credit', 'small'];
 
@@ -127,14 +132,15 @@ export const TRACK_WHOLE = 0.02;
 
 /**
  * Width of a line drawn one grapheme at a time with `track` em between glyphs (no trailing space),
- * or as one string when the tracking is negligible.
+ * or as one string when the tracking is negligible. `wordSpace` (em) is added at every space.
  */
-export function trackedWidth(m: Measurer, font: string, digitsFont: string | null, s: string, px: number, track: number): number {
-  if (track < TRACK_WHOLE) return m.width(font, s);
+export function trackedWidth(m: Measurer, font: string, digitsFont: string | null, s: string, px: number, track: number, wordSpace = 0): number {
+  const extra = wordSpace ? wordSpace * px * (s.match(/ /g)?.length ?? 0) : 0;
+  if (track < TRACK_WHOLE) return m.width(font, s) + extra;
   const gs = splitGraphemes(s);
   let w = 0;
   for (const g of gs) w += m.width(digitsFont && isDigit(g) ? digitsFont : font, g);
-  return w + track * px * Math.max(0, gs.length - 1);
+  return w + track * px * Math.max(0, gs.length - 1) + extra;
 }
 
 /**
@@ -184,54 +190,78 @@ interface FitResult {
   track: number;
 }
 
-/** Choose line breaks, tracking and size so the text fits `maxW`. */
-function fitLine(m: Measurer, spec: LineSpec, str: string, px0: number, maxW: number, maxLines: number, accept: number): FitResult {
-  const font0 = fontCss(spec, px0);
-  const dig0 = spec.digits ? fontCss({ font: spec.digits, weight: spec.weight }, px0) : null;
-  const tracked = spec.track >= TRACK_WHOLE;
-  const width = (s: string, px: number, track: number) => {
-    const f = px === px0 ? font0 : fontCss(spec, px);
-    const d = spec.digits ? (px === px0 ? dig0 : fontCss({ font: spec.digits, weight: spec.weight }, px)) : null;
-    return trackedWidth(m, f, d, s, px, track);
+export interface FitOptions {
+  maxLines: number;
+  /** wrap onto more lines while the letters would shrink below this (of the design size) */
+  accept: number;
+  /** a single line is kept down to this size (short titles in landscape stay on one line) */
+  oneLine?: number;
+  /** the letter spacing may tighten down to this fraction before the letters shrink */
+  trackFloor?: number;
+}
+
+/** Below this size a single Latin word is split (with a hyphen) as a last resort. */
+const WORD_SPLIT_BELOW = 0.42;
+
+/**
+ * Chooses line breaks, tracking and size so the text fits `maxW`. Latin words are never broken
+ * between letters (a long word is tightened and shrunk instead; only an extremely long one is
+ * hyphenated). Caseless scripts (CJK) break at the user's spaces first, then between characters.
+ */
+export function fitLine(m: Measurer, spec: LineSpec, str: string, px0: number, maxW: number, o: FitOptions): FitResult {
+  const digitsAt = (px: number) => (spec.digits ? fontCss({ font: spec.digits, weight: spec.weight }, px) : null);
+  const width = (s: string, px: number, track: number) => trackedWidth(m, fontCss(spec, px), digitsAt(px), s, px, track, spec.wordSpace);
+  const floor = o.trackFloor ?? 0.6;
+
+  /** tighten the letter spacing first, then shrink, until the widest line fits */
+  const settle = (lines: string[]): FitResult & { eff: number } => {
+    const widest0 = Math.max(...lines.map((x) => width(x, px0, spec.track)));
+    const scale = Math.min(1, maxW / Math.max(1e-6, widest0));
+    let px = px0;
+    let track = spec.track;
+    if (scale < 1) {
+      track = Math.max(spec.track * floor, spec.track * scale);
+      for (let pass = 0; pass < 5; pass++) {
+        const widest = Math.max(...lines.map((x) => width(x, px, track)));
+        if (widest <= maxW) break;
+        px *= (maxW / widest) * (pass ? 0.995 : 1);
+      }
+    }
+    return { lines, px, track, eff: px / px0 };
+  };
+
+  const trackPx = spec.track >= TRACK_WHOLE ? spec.track * px0 : 0;
+  /** balanced breaks of `tokens` into 2..maxLines lines; keeps the best that beats `best` clearly */
+  const tryBreaks = (best: ReturnType<typeof settle>, tokens: string[], joinStr: string, hyphen = false) => {
+    const tokW = tokens.map((t) => width(t, px0, spec.track) + trackPx);
+    const joiner = joinStr ? m.width(fontCss(spec, px0), ' ') + trackPx + (spec.wordSpace ?? 0) * px0 : 0;
+    const hy = hyphen ? width('-', px0, spec.track) + trackPx : 0;
+    const limit = Math.min(o.maxLines, tokens.length);
+    for (let n = 2; n <= limit; n++) {
+      const starts = balancedBreaks(tokW, n, joiner, hy - trackPx);
+      const l = starts.map((st, i) => tokens.slice(st, starts[i + 1] ?? tokens.length).join(joinStr).trim()).filter(Boolean);
+      const lines = hyphen ? l.map((x, i) => (i < l.length - 1 ? x + '-' : x)) : l;
+      const r = settle(lines);
+      if (r.eff > best.eff + 0.04) best = r;
+      if (r.eff >= o.accept) break;
+    }
+    return best;
   };
 
   const words = str.split(/\s+/).filter(Boolean);
-  const one = width(str, px0, spec.track);
-  let lines = [str];
-  let scale = Math.min(1, maxW / Math.max(1e-6, one));
-  if (scale < accept) {
-    // tokens: words, or graphemes for a single long word / text without spaces (CJK)
-    const graphemeTokens = words.length <= 1 || (CASELESS.test(str) && words.length < 3);
-    const tokens = graphemeTokens ? splitGraphemes(str.replace(/\s+/g, ' ')) : words;
-    const joinStr = graphemeTokens ? '' : ' ';
-    const trackPx = tracked ? spec.track * px0 : 0;
-    const tokW = tokens.map((t) => width(t, px0, spec.track) + trackPx);
-    const joiner = graphemeTokens ? 0 : m.width(font0, ' ') + trackPx;
-    const limit = Math.min(maxLines, tokens.length);
-    for (let n = 2; n <= limit; n++) {
-      const starts = balancedBreaks(tokW, n, joiner, -trackPx);
-      const l = starts.map((s, i) => tokens.slice(s, starts[i + 1] ?? tokens.length).join(joinStr).trim()).filter(Boolean);
-      const widest = Math.max(...l.map((x) => width(x, px0, spec.track)));
-      const s = Math.min(1, maxW / Math.max(1e-6, widest));
-      if (s > scale + 0.04) {
-        lines = l;
-        scale = s;
-      }
-      if (s >= accept) break;
-    }
+  const caseless = CASELESS.test(str);
+  let best = settle([str]);
+  if (best.eff >= (o.oneLine ?? o.accept)) return best;
+  if (words.length > 1) best = tryBreaks(best, words, ' ');
+  // the user's spaces win unless breaking there leaves the letters much too small
+  if (caseless && best.eff < (words.length > 1 ? Math.min(o.accept, 0.72) : o.accept)) {
+    // a caseless word longer than a line: between characters (the spaces were tried first)
+    const tokens = splitGraphemes(str.replace(/\s+/g, ' '));
+    best = tryBreaks(best, tokens, '');
+  } else if (best.eff < WORD_SPLIT_BELOW && words.length === 1 && splitGraphemes(str).length >= 12) {
+    best = tryBreaks(best, splitGraphemes(str), '', true);
   }
-  let px = px0;
-  let track = spec.track;
-  if (scale < 1) {
-    // tighten the letter spacing first (down to 60 %), then shrink
-    track = Math.max(spec.track * 0.6, spec.track * scale);
-    for (let pass = 0; pass < 4; pass++) {
-      const widest = Math.max(...lines.map((x) => width(x, px, track)));
-      if (widest <= maxW) break;
-      px *= (maxW / widest) * (pass ? 0.995 : 1);
-    }
-  }
-  return { lines, px, track };
+  return best;
 }
 
 const gapKey = (a: BlockRole, b: BlockRole) => GAPS[`${a}>${b}`] ?? DEFAULT_GAP;
@@ -245,6 +275,7 @@ export function layoutTitleCard(W: number, H: number, look: ResolvedLook, text: 
   const safeH = safe.y1 - safe.y0;
   const B = portrait ? W : Math.min(H, 0.8 * W);
   const gapMul = portrait ? 1.35 : 1;
+  const footerGapMul = portrait ? 1.1 : 1;
   const cx = W / 2;
   const flourish = look.divider === 'vine' || look.divider === 'scroll' ? FLOURISH_BOUNDS[look.divider] : null;
   const fw = flourish ? flourish.maxX - flourish.minX : 0;
@@ -260,13 +291,25 @@ export function layoutTitleCard(W: number, H: number, look: ResolvedLook, text: 
       const spec = look.lines[role];
       const raw = text[role].trim().replace(/\s+/g, ' ');
       const str = spec.upper && !CASELESS.test(raw) ? raw.toLocaleUpperCase() : raw;
-      const px0 = spec.size * B * k * (opts.sizeMul?.[role] ?? 1);
-      const maxLines = role === 'title' ? (portrait ? 4 : 3) : 2;
-      const accept = role === 'title' ? (portrait ? 0.95 : 0.82) : role === 'composer' ? 0.58 : 0.62;
-      const fit = fitLine(m, spec, str, px0, safeW, maxLines, accept);
+      let px0 = spec.size * B * k * (opts.sizeMul?.[role] ?? 1);
+      const titleBlock = blocks.find((b) => b.role === 'title');
+      // hierarchy: no line outgrows the title's capitals
+      if (titleBlock && role !== 'title') {
+        const capRatio = (spec.upper ? m.extent(fontCss(spec, px0), 'H').asc || px0 * 0.7 : px0 * 0.75) / px0;
+        const maxCap = titleBlock.cap * CAP_LIMIT[role];
+        px0 = Math.min(px0, maxCap / Math.max(1e-6, capRatio));
+      }
+      const words = str.split(' ').length;
+      const fitOpts: FitOptions =
+        role === 'title'
+          ? { maxLines: portrait ? 4 : 3, accept: portrait ? 0.95 : 0.82, oneLine: !portrait && words <= 4 ? 0.66 : undefined }
+          : { maxLines: 2, accept: role === 'composer' ? 0.58 : 0.62, trackFloor: role === 'credit' || role === 'small' ? 0.4 : 0.6 };
+      // the credit and the small line stay clearly narrower than the title
+      const maxW = (role === 'credit' || role === 'small') && titleBlock ? Math.min(safeW, Math.max(FOOTER_WIDTH * titleBlock.textW, 0.5 * safeW)) : safeW;
+      const fit = fitLine(m, spec, str, px0, maxW, fitOpts);
       const font = fontCss(spec, fit.px);
       const digitsFont = spec.digits ? fontCss({ font: spec.digits, weight: spec.weight }, fit.px) : null;
-      const lineWidths = fit.lines.map((l) => trackedWidth(m, font, digitsFont, l, fit.px, fit.track));
+      const lineWidths = fit.lines.map((l) => trackedWidth(m, font, digitsFont, l, fit.px, fit.track, spec.wordSpace));
       const textW = Math.max(...lineWidths);
       const capH = spec.upper ? m.extent(font, 'H').asc || fit.px * 0.7 : fit.px * 0.75;
       const lineGap = spec.upper ? capH * 0.72 : fit.px * 0.42;
@@ -319,7 +362,7 @@ export function layoutTitleCard(W: number, H: number, look: ResolvedLook, text: 
               boxes: [-1, 1].map((s) => sideBox(cx, s, inner - flourish.maxX * fem, inner - flourish.minX * fem, cy + flourish.minY * fem, cy + flourish.maxY * fem)),
             };
           } else {
-            block.divider = belowFlourish(cx, lastBase + capH * 0.9, Math.min(safeW * 0.36, natural), flourish, look.divider, thick);
+            block.divider = belowFlourish(cx, lastBase + capH * 1.05, Math.min(safeW * 0.36, natural), flourish, look.divider, thick);
           }
         } else {
           const minSide = em * 1.5;
@@ -374,7 +417,9 @@ export function layoutTitleCard(W: number, H: number, look: ResolvedLook, text: 
     // stack: block boxes start at y = 0 locally; place them with the gaps
     let y = 0;
     blocks.forEach((b, i) => {
-      if (i) y += gapKey(blocks[i - 1].role, b.role) * B * k * gapMul;
+      // in portrait the main group breathes more; the footer stays closer to it
+      const footer = b.role === 'credit' || b.role === 'small';
+      if (i) y += gapKey(blocks[i - 1].role, b.role) * B * k * (footer ? footerGapMul : gapMul);
       shiftBlock(b, y - b.box.y0);
       y = b.box.y1;
     });
@@ -411,9 +456,12 @@ function sideBox(cx: number, s: number, near: number, far: number, y0: number, y
   return { x0: Math.min(a, b), x1: Math.max(a, b), y0, y1 };
 }
 
+/** gap (em) between the inner ends of a centred flourish pair */
+export const BELOW_GAP = 0.12;
+
 function belowFlourish(cx: number, top: number, half: number, f: { minX: number; maxX: number; minY: number; maxY: number }, kind: DividerId, thick: number): DividerLayout {
   const fw = f.maxX - f.minX;
-  const em = half / fw;
+  const em = half / (fw + BELOW_GAP);
   const h = (f.maxY - f.minY) * em;
   const cy = top + h / 2;
   return { kind, mode: 'below', em, len: half, inner: 0, cy, thick, boxes: [{ x0: cx - half, x1: cx + half, y0: top, y1: top + h }] };

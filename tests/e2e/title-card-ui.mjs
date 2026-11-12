@@ -237,6 +237,20 @@ try {
       await page.screenshot({ path: path.join(out, `phone-dialog-${++i}.png`) });
     }
     void box;
+    // typing in a lower field: the (pinned) title preview stays on screen
+    for (const label of ['Composer or artist', 'Small line']) {
+      const field = sec.getByLabel(label, { exact: true });
+      await field.scrollIntoViewIfNeeded();
+      await field.focus();
+      await page.waitForTimeout(250);
+      const seen = await sec.getByRole('img', { name: 'Title page preview' }).evaluate((c) => {
+        const r = c.getBoundingClientRect();
+        const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        return { top: Math.round(r.top), bottom: Math.round(r.bottom), h: window.innerHeight, visible: hit === c };
+      });
+      check(`phone: the preview stays in view while typing in ${label}`, seen.visible && seen.top >= 0 && seen.bottom <= seen.h, JSON.stringify(seen));
+    }
+    await page.screenshot({ path: path.join(out, 'phone-dialog-typing.png') });
     check('no console errors (phone)', errors.length === 0, errors.slice(0, 3).join(' | '));
     await ctx.close();
   }

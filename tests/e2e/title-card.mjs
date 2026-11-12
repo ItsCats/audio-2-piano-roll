@@ -38,6 +38,11 @@ try {
   page.on('pageerror', (e) => console.error('[pageerror]', e.message));
   await page.goto(`http://localhost:${port}/tests/e2e/title-card.html`);
   await page.waitForFunction(() => document.getElementById('log')?.textContent === 'ready', null, { timeout: 120000 });
+  for (const f of await page.evaluate(() => window.flourishInk())) {
+    const { ink, bounds } = f;
+    const ok = ['minX', 'minY'].every((k) => bounds[k] <= ink[k] + 0.01 && bounds[k] >= ink[k] - 0.06) && ['maxX', 'maxY'].every((k) => bounds[k] >= ink[k] - 0.01 && bounds[k] <= ink[k] + 0.06);
+    if (!ok) fail(`flourish ${f.id}: FLOURISH_BOUNDS ${JSON.stringify(bounds)} do not match the drawn ink ${JSON.stringify(ink)}`);
+  }
   const presets = (await page.evaluate(() => window.presets)).filter((p) => !only || only.split(',').includes(p));
   const sizes = [
     [1920, 1080],
@@ -69,6 +74,8 @@ try {
         if (!c.borderClear) fail(`${name}: ink in the outer 1 % border ${JSON.stringify(c.ink)}`);
         const m = 0.035 * Math.min(W, H);
         if (c.ink && !inside(c.ink, { x0: safe.x0 - m, y0: safe.y0 - m, x1: safe.x1 + m, y1: safe.y1 + m })) fail(`${name}: ink ${JSON.stringify(c.ink)} outside the safe area`);
+        for (const d of c.dividers)
+          if (d.ink === null || Math.abs(d.ink - d.boxW) / d.boxW > 0.04) fail(`${name}: ${d.kind} divider below the ${d.role} drawn ${d.ink} px wide, box ${d.boxW.toFixed(1)} px`);
         if (text !== 'cjk')
           for (const w of c.widths) {
             if (w.ink === null || w.lines !== 1) continue;

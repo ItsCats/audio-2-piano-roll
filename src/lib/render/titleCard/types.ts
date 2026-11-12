@@ -125,4 +125,4 @@ export const MIN_DURATION = 2;
 export const MAX_DURATION = 10;
 export const MAX_SONGS = 30;
 /** the export crossfades from the title page into the piano roll over this many seconds */
-export const CROSSFADE_SECONDS = 0.8;
+export const CROSSFADE_SECONDS = 1;

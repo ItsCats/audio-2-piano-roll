@@ -126,6 +126,15 @@ function faceFor(font: FontKey, weight: number, ext: boolean): FontFace | null {
   return face;
 }
 
+function forget(face: FontFace) {
+  try {
+    (fontSet() as unknown as { delete?(f: FontFace): boolean })?.delete?.(face);
+  } catch {
+    /* not in the set */
+  }
+  for (const [k, v] of faces) if (v === face) faces.delete(k);
+}
+
 export interface FontResult {
   ok: boolean;
   /** families that did not load (the fallback font is used for them) */
@@ -145,14 +154,20 @@ export async function ensureTitleFonts(look: ResolvedLook, texts: TitleText[], t
       if (!face) continue;
       if (face.status === 'loaded') continue;
       fresh = true;
+      const f = face;
       jobs.push(
         Promise.race([
-          face.load().then(
+          f.load().then(
             () => true,
             () => false,
           ),
           new Promise<boolean>((r) => setTimeout(() => r(false), timeoutMs)),
-        ]),
+        ]).then((ok) => {
+          // too slow or broken: take the face out again, so it can't arrive in the middle of an
+          // export and change the letters after the layout was measured with the fallback font
+          if (!ok && f.status !== 'loaded') forget(f);
+          return ok;
+        }),
       );
     }
   }

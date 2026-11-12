@@ -57,7 +57,7 @@ const FLOWER_PAL: Pal[] = [
   { deep: '#7a1e6e', mid: '#c04ba8', light: '#f3cdea', ctr: '#4a0f42' }, // fuchsia-plum
 ];
 const LEAF_PAL = ['#8b87a6', '#a49cc2', '#7f8fa0', '#9aa7a0', '#b4a8c9'];
-const WASH = ['#ead6f3', '#f7d3e3', '#dcd8f5', '#f3e0ec'];
+const WASH = ['#e2c4ef', '#f3c1d8', '#cfc8f2', '#eec9e0'];
 
 function petalPath(ctx: Ctx2D, r: number, w: number, notch: boolean) {
   ctx.beginPath();
@@ -228,16 +228,17 @@ function drawLeaf(ctx: Ctx2D, len: number, wid: number, col: string) {
 /** Seamless S×S floral print. Deterministic: the same pixels on every run and device. */
 export function drawBouquet(ctx: Ctx2D, S: number, seed = 11): void {
   const R = rng(seed);
-  ctx.fillStyle = '#fcf8fa';
+  // a light lilac ground (never plain white inside the letters), covered by washes and flowers
+  ctx.fillStyle = '#efdcef';
   ctx.fillRect(0, 0, S, S);
-  for (let i = 0; i < 16; i++) {
+  for (let i = 0; i < 22; i++) {
     const x = R() * S;
     const y = R() * S;
     const r = (0.1 + R() * 0.2) * S;
     const col = WASH[Math.floor(R() * WASH.length)];
     wrap(S, x, y, r, (xx, yy) => {
       const g = ctx.createRadialGradient(xx, yy, 0, xx, yy, r);
-      g.addColorStop(0, rgba(col, 0.75));
+      g.addColorStop(0, rgba(col, 0.85));
       g.addColorStop(1, rgba(col, 0));
       ctx.fillStyle = g;
       ctx.beginPath();
@@ -256,8 +257,8 @@ export function drawBouquet(ctx: Ctx2D, S: number, seed = 11): void {
   };
   const tiers = [
     { count: 16, r0: 0.06, r1: 0.085 },
-    { count: 30, r0: 0.036, r1: 0.055 },
-    { count: 48, r0: 0.018, r1: 0.03 },
+    { count: 34, r0: 0.036, r1: 0.055 },
+    { count: 110, r0: 0.014, r1: 0.028 },
   ];
   for (const t of tiers) {
     let placed = 0;
@@ -288,7 +289,7 @@ export function drawBouquet(ctx: Ctx2D, S: number, seed = 11): void {
       });
     }
   }
-  for (let i = 0; i < 70; i++) {
+  for (let i = 0; i < 160; i++) {
     const x = R() * S;
     const y = R() * S;
     const rr = S * (0.004 + R() * 0.006);
@@ -353,18 +354,24 @@ export interface PatternInfo {
   stops?: [number, string][];
   /** pattern id in decals.ts */
   decal?: string;
+  /**
+   * Tone changes for letters (the note-decal tiles are made for small, bright notes): `lift`
+   * raises the darkest tones (screen with white), `lo` / `hi` stretch the lightness range to
+   * lo..hi, `sat` boosts the colour.
+   */
+  tone?: { lift?: number; lo?: number; hi?: number; sat?: number };
 }
 
 export const FILL_PATTERNS: PatternInfo[] = [
   { id: 'bouquet', name: 'Flowers' },
   { id: 'gold', name: 'Gold', stops: GOLD_STOPS },
   { id: 'silver', name: 'Silver', stops: SILVER_STOPS },
-  { id: 'marble', name: 'Marble', decal: 'marble' },
-  { id: 'galaxy', name: 'Galaxy', decal: 'galaxy' },
-  { id: 'watercolor', name: 'Watercolour', decal: 'watercolor' },
-  { id: 'aurora', name: 'Aurora', decal: 'aurora' },
-  { id: 'sakura', name: 'Sakura', decal: 'sakura' },
-  { id: 'stained-glass', name: 'Stained glass', decal: 'stained-glass' },
+  { id: 'marble', name: 'Marble', decal: 'marble', tone: { lo: 0.22, hi: 1, sat: 1.5 } },
+  { id: 'galaxy', name: 'Galaxy', decal: 'galaxy', tone: { lift: 0.34, sat: 1.15 } },
+  { id: 'watercolor', name: 'Watercolour', decal: 'watercolor', tone: { lo: 0.3, hi: 1, sat: 1.9 } },
+  { id: 'aurora', name: 'Aurora', decal: 'aurora', tone: { lift: 0.4, sat: 1.2 } },
+  { id: 'sakura', name: 'Sakura', decal: 'sakura', tone: { lo: 0.32, hi: 1, sat: 2 } },
+  { id: 'stained-glass', name: 'Stained glass', decal: 'stained-glass', tone: { lift: 0.12 } },
 ];
 
 export function patternInfo(id: FillPatternId): PatternInfo {
@@ -373,18 +380,77 @@ export function patternInfo(id: FillPatternId): PatternInfo {
 
 const tiles = new Map<string, AnyCanvas>();
 
-/** Seamless tile for a pattern fill (null for the gradient fills). Cached. */
+/** Tile sizes made for letters: the next power of two of the size on screen, 128..1024. */
+export function tileSizeFor(px: number): number {
+  let s = 128;
+  while (s < px && s < 1024) s *= 2;
+  return s;
+}
+
+/** Applies a pattern's tone changes in place (see PatternInfo.tone). */
+export function toneTile(ctx: Ctx2D, S: number, tone: NonNullable<PatternInfo['tone']>): void {
+  const img = ctx.getImageData(0, 0, S, S);
+  const d = img.data;
+  const lift = tone.lift ?? 0;
+  const sat = tone.sat ?? 1;
+  let lo = 0;
+  let hi = 1;
+  if (tone.lo !== undefined || tone.hi !== undefined) {
+    // stretch the tile's own lightness range (2nd..98th percentile) to lo..hi
+    const hist = new Uint32Array(256);
+    for (let i = 0; i < d.length; i += 4) hist[(d[i] * 54 + d[i + 1] * 183 + d[i + 2] * 19) >> 8]++;
+    const n = d.length / 4;
+    let acc = 0;
+    let p2 = 0;
+    let p98 = 255;
+    for (let v = 0; v < 256; v++) {
+      acc += hist[v];
+      if (acc < n * 0.02) p2 = v;
+      if (acc <= n * 0.98) p98 = v;
+    }
+    lo = p2 / 255;
+    hi = Math.max(lo + 0.05, p98 / 255);
+  }
+  const tlo = tone.lo ?? lo;
+  const thi = tone.hi ?? hi;
+  for (let i = 0; i < d.length; i += 4) {
+    let r = d[i] / 255;
+    let g = d[i + 1] / 255;
+    let b = d[i + 2] / 255;
+    const l = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    // lightness stretch (the colour offsets are kept), then saturation around the new lightness
+    const l2 = tlo + ((Math.min(hi, Math.max(lo, l)) - lo) / (hi - lo)) * (thi - tlo);
+    r = l2 + (r - l) * sat;
+    g = l2 + (g - l) * sat;
+    b = l2 + (b - l) * sat;
+    if (lift) {
+      r = 1 - (1 - r) * (1 - lift);
+      g = 1 - (1 - g) * (1 - lift);
+      b = 1 - (1 - b) * (1 - lift);
+    }
+    d[i] = Math.round(Math.min(1, Math.max(0, r)) * 255);
+    d[i + 1] = Math.round(Math.min(1, Math.max(0, g)) * 255);
+    d[i + 2] = Math.round(Math.min(1, Math.max(0, b)) * 255);
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+/** Seamless tile for a pattern fill (null for the gradient fills), toned for letters. Cached. */
 export function getFillTile(id: FillPatternId, size = 1024): AnyCanvas | null {
   const info = patternInfo(id);
   if (info.stops) return null;
-  if (info.decal) return getPatternTile(info.decal, size);
   const key = `${id}@${size}`;
   let t = tiles.get(key);
   if (!t) {
+    const src = info.decal ? getPatternTile(info.decal, size) : null;
+    if (info.decal && !src) return null;
     t = makeCanvas(size, size);
     const ctx = t.getContext('2d') as Ctx2D | null;
     if (!ctx) return null;
-    drawBouquet(ctx, size);
+    if (src) {
+      ctx.drawImage(src as CanvasImageSource, 0, 0);
+      if (info.tone) toneTile(ctx, size, info.tone);
+    } else drawBouquet(ctx, size);
     tiles.set(key, t);
   }
   return t;

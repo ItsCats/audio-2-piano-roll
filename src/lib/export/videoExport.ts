@@ -284,7 +284,7 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
   const audioTrack = new AudioSampleSource({ codec: audioCodec, bitrate: 192e3 });
   output.addAudioTrack(audioTrack);
   // ---- title page / end card: wrap the tracks (null when off, then nothing changes) ----
-  const cards = await prepareTitleCards(job.titleCard, { width, height, fps, visual, canvas, renderer, rollFrames: totalFrames, signal, onFrame: (done, total) => progress({ phase: 'video', fraction: 0.18, framesDone: done, framesTotal: total }) });
+  const cards = await prepareTitleCards(job.titleCard, { width, height, fps, visual, canvas, renderer, rollFrames: totalFrames, signal, sampleRate: 48000, onFrame: (done, total, part) => progress({ phase: 'video', fraction: part === 'end' ? 0.98 : 0.18, framesDone: done, framesTotal: total }) });
   const videoSource = cards ? cards.video(videoTrack) : videoTrack;
   const audioSource = cards ? cards.audio(audioTrack) : audioTrack;
   const picFadeIn = cards?.timeline.intro ? 0 : s.fadeIn; // the title page crossfades into the roll instead
@@ -355,7 +355,7 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
       }
       await videoSource.add(o, 1 / fps);
       if (i % 15 === 0 || i === totalFrames - 1) {
-        const elapsed = (performance.now() - t0) / 1000;
+        const elapsed = (performance.now() - t0 - (cards?.introMs ?? 0)) / 1000; // without the title page frames
         const rfps = (i + 1) / Math.max(0.001, elapsed);
         progress({
           phase: 'video',
@@ -412,7 +412,7 @@ async function exportWithMediaRecorder(job: ExportJob): Promise<ExportResult> {
   const decal = await loadDecalBitmap(visual);
   applyDecal(renderer, decal);
   // title page / end card, drawn in real time around the roll (null when off)
-  const cards = await prepareTitleCards(job.titleCard, { width, height, fps: s.fps, visual, canvas, renderer, rollFrames: Math.ceil(duration * s.fps) });
+  const cards = await prepareTitleCards(job.titleCard, { width, height, fps: s.fps, visual, canvas, renderer, rollFrames: Math.ceil(duration * s.fps), signal });
   const intro = cards?.timeline.intro ?? 0;
   const rollEnd = intro + duration;
   const total = rollEnd + (cards?.timeline.outro ?? 0);
@@ -453,6 +453,11 @@ async function exportWithMediaRecorder(job: ExportJob): Promise<ExportResult> {
     if (cards && intro > 0) {
       renderer.render({ time: range.start - lead * rate });
       cards.captureRollFirst();
+    }
+    // the end card is silent: cut the sound (notes and pedal tails) where the roll ends
+    if (cards && cards.timeline.outro > 0) {
+      gain.gain.setValueAtTime(s.volume, startCtx + rollEnd - 0.05);
+      gain.gain.linearRampToValueAtTime(0, startCtx + rollEnd);
     }
     rec.start(1000);
     await new Promise<void>((resolve, reject) => {

@@ -64,14 +64,19 @@ export interface PrepareOptions {
   renderer: Renderable;
   /** number of piano-roll frames */
   rollFrames: number;
+  /** sample rate of the export's audio track (the silence is made at the same rate) */
+  sampleRate?: number;
   signal?: AbortSignal;
-  onFrame?: (done: number, total: number) => void;
+  /** told after each title page / end card frame */
+  onFrame?: (done: number, total: number, part: 'title' | 'end') => void;
 }
 
 export interface TitleCardHooks {
   timeline: CardTimeline;
   /** whole file length */
   total: number;
+  /** milliseconds spent drawing the title page frames (not part of the roll's render speed) */
+  readonly introMs: number;
   /** wraps the audio track: silence first, samples moved by the title length, silence at the end */
   audio<T extends { add(s: AudioSample): Promise<void>; close(): void }>(track: T): { add(s: AudioSample): Promise<void>; close(): void };
   /** wraps the video track: title page frames before the first roll frame, roll frames moved */
@@ -135,21 +140,27 @@ async function prepare(tc: TitleCardJob | undefined, o: PrepareOptions): Promise
     card.backdrop = backdrop as CanvasImageSource;
   };
 
+  // crossfade: the text fades into the title's own background first, then the roll comes in
+  // under it (no double exposure of the letters and the keyboard)
   const drawIntro = (ctx: Ctx2D, t: number) => {
     const op = titleOpacity(t, tl.intro);
     if (op >= 1 || !rollFirst) {
       drawTitleCard(ctx, W, H, look, tc.text, card, t, cache!, { duration: tl.intro });
       return;
     }
+    if (op >= 0.5) {
+      drawTitleCard(ctx, W, H, look, tc.text, card, t, cache!, { duration: tl.intro, content: (op - 0.5) * 2 });
+      return;
+    }
     layer ??= makeCanvas(W, H);
     const lc = layer.getContext('2d') as Ctx2D;
-    drawTitleCard(lc, W, H, look, tc.text, card, t, cache!, { duration: tl.intro });
+    drawTitleCard(lc, W, H, look, tc.text, card, t, cache!, { duration: tl.intro, content: 0 });
     ctx.save();
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'copy';
     ctx.drawImage(rollFirst as CanvasImageSource, 0, 0);
     ctx.globalCompositeOperation = 'source-over';
-    ctx.globalAlpha = op;
+    ctx.globalAlpha = op * 2;
     ctx.drawImage(layer as CanvasImageSource, 0, 0);
     ctx.restore();
   };
@@ -188,13 +199,19 @@ async function prepare(tc: TitleCardJob | undefined, o: PrepareOptions): Promise
   let audioDone: Promise<void> | null = null;
   let audioError: unknown = null;
 
+  let introMs = 0;
+
   return {
     timeline: tl,
     total,
+    get introMs() {
+      return introMs;
+    },
     audio(track) {
+      const sr = o.sampleRate ?? 48000;
       const w = shiftAudio(track, tl.intro, (timestamp, seconds) => {
-        const frames = Math.round(seconds * 48000);
-        return new AudioSample({ data: new Float32Array(frames * 2), format: 'f32-planar', numberOfChannels: 2, sampleRate: 48000, timestamp });
+        const frames = Math.round(seconds * sr);
+        return new AudioSample({ data: new Float32Array(frames * 2), format: 'f32-planar', numberOfChannels: 2, sampleRate: sr, timestamp });
       });
       return {
         add: (s) => w.add(s),
@@ -220,6 +237,7 @@ async function prepare(tc: TitleCardJob | undefined, o: PrepareOptions): Promise
       const w = shiftVideo(track, tl.intro, async () => {
         ensureBackdrop();
         if (!tl.introFrames) return;
+        const t0 = performance.now();
         // the canvas holds the first roll frame now: keep it for the crossfade, render the title
         captureRollFirst();
         const ctx = mainCtx();
@@ -227,8 +245,9 @@ async function prepare(tc: TitleCardJob | undefined, o: PrepareOptions): Promise
           aborted(o.signal);
           drawIntro(ctx, i / fps);
           await track.add(i / fps, 1 / fps);
-          o.onFrame?.(i + 1, tl.introFrames);
+          o.onFrame?.(i + 1, tl.introFrames, 'title');
         }
+        introMs = performance.now() - t0;
         ctx.save();
         ctx.globalCompositeOperation = 'copy';
         ctx.drawImage(rollFirst as CanvasImageSource, 0, 0);
@@ -247,7 +266,7 @@ async function prepare(tc: TitleCardJob | undefined, o: PrepareOptions): Promise
         aborted(o.signal);
         drawOutro(ctx, i / fps);
         await videoTrack?.add(rollEnd + i / fps, 1 / fps);
-        o.onFrame?.(i + 1, tl.outroFrames);
+        o.onFrame?.(i + 1, tl.outroFrames, 'end');
       }
     },
     captureRollFirst() {

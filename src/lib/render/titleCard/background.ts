@@ -82,13 +82,17 @@ function paintBase(ctx: Ctx2D, W: number, H: number, bg: BgSpec, img: CardImages
 export interface BgExtras {
   streaks: boolean;
   stars: boolean;
+  /** darken the corners (only over the style's own background, never over the user's colour or picture) */
+  vignette?: boolean;
+  /** keep the star field out of these boxes (the text) */
+  avoid?: { x0: number; y0: number; x1: number; y1: number }[];
 }
 
 export function drawCardBackground(ctx: Ctx2D, W: number, H: number, bg: BgSpec, img: CardImages, extras: BgExtras, t: number): void {
   paintBase(ctx, W, H, bg, img);
-  if (extras.stars) drawStars(ctx, W, H, t);
+  if (extras.stars) drawStars(ctx, W, H, t, extras.avoid);
   if (extras.streaks) drawStreaks(ctx, W, H, t);
-  if (extras.streaks || extras.stars) drawVignette(ctx, W, H);
+  if ((extras.streaks || extras.stars) && extras.vignette !== false) drawVignette(ctx, W, H);
 }
 
 export function drawVignette(ctx: Ctx2D, W: number, H: number): void {
@@ -159,12 +163,14 @@ export function drawStar(ctx: Ctx2D, x: number, y: number, r: number, alpha: num
 }
 
 /** Procedural star field: many faint dots plus a few twinkling four-point stars. */
-export function drawStars(ctx: Ctx2D, W: number, H: number, t: number): void {
+export function drawStars(ctx: Ctx2D, W: number, H: number, t: number, avoid: BgExtras['avoid'] = []): void {
   const n = Math.round(160 * Math.sqrt((W * H) / (1920 * 1080)));
+  const clear = (x: number, y: number, r: number) => !avoid.some((b) => x + r > b.x0 && x - r < b.x1 && y + r > b.y0 && y - r < b.y1);
   ctx.save();
   for (let i = 0; i < n; i++) {
     const x = hash(7001, i) * W;
     const y = hash(7002, i) * H;
+    if (!clear(x, y, 0)) continue;
     const r = H * (0.0006 + hash(7003, i) ** 3 * 0.0022);
     const a = (0.25 + 0.6 * hash(7004, i)) * (0.75 + 0.25 * Math.sin(t * (0.5 + hash(7005, i)) + hash(7006, i) * TAU));
     ctx.fillStyle = `rgba(230,236,255,${a})`;
@@ -175,8 +181,10 @@ export function drawStars(ctx: Ctx2D, W: number, H: number, t: number): void {
   for (let i = 0; i < 9; i++) {
     const x = hash(7101, i) * W;
     const y = hash(7102, i) * H;
+    const r = H * (0.006 + hash(7104, i) * 0.006);
+    if (!clear(x, y, r)) continue;
     const tw = Math.max(0, Math.sin(t * 0.9 + hash(7103, i) * TAU)) ** 2;
-    drawStar(ctx, x, y, H * (0.006 + hash(7104, i) * 0.006), 0.35 + 0.5 * tw, '230,236,255');
+    drawStar(ctx, x, y, r, 0.35 + 0.5 * tw, '230,236,255');
   }
   ctx.restore();
 }

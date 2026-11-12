@@ -10,9 +10,48 @@ import type { ResolvedLook } from './presets';
 export const MAX_BG_EDGE = 2048;
 export const MAX_FILL_EDGE = 1600;
 
+/** Pixel size of an image file without decoding all its pixels (null where that can't be done). */
+async function imageSize(blob: Blob): Promise<{ w: number; h: number } | null> {
+  if (typeof Image === 'undefined' || typeof URL === 'undefined' || !URL.createObjectURL) return null;
+  const url = URL.createObjectURL(blob);
+  try {
+    const img = new Image();
+    img.decoding = 'async';
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error('not an image'));
+      img.src = url;
+    });
+    return img.naturalWidth && img.naturalHeight ? { w: img.naturalWidth, h: img.naturalHeight } : null;
+  } catch {
+    return null;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+/**
+ * Decodes an image file straight to at most `maxEdge` px where the browser can (a 48 MP phone
+ * photo would otherwise take ~190 MB while it is decoded at full size), else decodes and resizes.
+ */
+export async function decodeSmall(blob: Blob, maxEdge: number): Promise<ImageBitmap> {
+  const size = await imageSize(blob);
+  if (size) {
+    const s = maxEdge / Math.max(size.w, size.h);
+    if (s < 1) {
+      try {
+        return await createImageBitmap(blob, { resizeWidth: Math.max(1, Math.round(size.w * s)), resizeHeight: Math.max(1, Math.round(size.h * s)), resizeQuality: 'high' });
+      } catch {
+        /* resize options not supported: decode first */
+      }
+    }
+  }
+  return createImageBitmap(blob);
+}
+
 async function bitmapFromBlob(blob: Blob, maxEdge: number): Promise<ImageBitmap | null> {
   try {
-    const bmp = await createImageBitmap(blob);
+    const bmp = await decodeSmall(blob, maxEdge);
     const s = maxEdge / Math.max(bmp.width, bmp.height);
     if (s >= 1) return bmp;
     try {
@@ -66,10 +105,10 @@ export async function loadTitleImages(look: ResolvedLook, getMedia: GetMedia): P
  * before it is stored. Small images are kept as they are.
  */
 export async function downscaleUpload(file: Blob, maxEdge = MAX_BG_EDGE): Promise<{ blob: Blob; type: string }> {
-  const bmp = await createImageBitmap(file);
+  const bmp = await decodeSmall(file, maxEdge);
   try {
     const s = Math.min(1, maxEdge / Math.max(bmp.width, bmp.height));
-    if (s >= 1 && file.size < 3 * 1024 * 1024) return { blob: file, type: file.type };
+    if (s >= 1 && bmp.width < maxEdge && bmp.height < maxEdge && file.size < 3 * 1024 * 1024) return { blob: file, type: file.type };
     const w = Math.max(1, Math.round(bmp.width * s));
     const h = Math.max(1, Math.round(bmp.height * s));
     const c = makeCanvas(w, h);

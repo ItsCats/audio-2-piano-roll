@@ -6,6 +6,7 @@ import { TitleCardCache, drawTitleCard } from '../../src/lib/render/titleCard/dr
 import { ensureTitleFonts, neededFonts } from '../../src/lib/render/titleCard/fonts';
 import { FAMILY } from '../../src/lib/render/titleCard/presets';
 import { END_LAYOUT } from '../../src/lib/render/titleCard/exportHooks';
+import { FLOURISH_BOUNDS, getFlourishPath } from '../../src/lib/render/titleCard/flourishes';
 
 export const TEXTS: Record<string, TitleText> = {
   clair: { title: 'Clair de Lune', subtitle: 'Suite Bergamasque', composer: 'Debussy', credit: 'Piano2Vision', small: 'For you' },
@@ -121,9 +122,37 @@ function inkBox(ctx: CanvasRenderingContext2D, W: number, H: number, rect?: { x0
         const box = b.lines.length === 1 && b.spec?.upper ? inkBox(ctx, job.W, job.H, rows) : null;
         return { role: b.role, lines: b.lines.length, textW: b.lineWidths[0], ink: box ? box.x1 - box.x0 : null };
       });
-    checks = { ink, borderClear, widths, layout: { safe: L2.safe, content: L2.content, blocks: L2.blocks.map((b) => ({ role: b.role, lines: b.lines, px: b.px, box: b.box, divider: b.divider ? { mode: b.divider.mode, boxes: b.divider.boxes } : null })) } };
+    // a centred ornament / rule must be drawn across its whole box (catches clipped flourishes)
+    const dividers = L2.blocks
+      .filter((b) => b.divider && b.divider.mode === 'below')
+      .map((b) => {
+        const r = b.divider!.boxes[0];
+        const box = inkBox(ctx, job.W, job.H, { x0: 0, x1: job.W, y0: r.y0 - 2, y1: r.y1 + 2 });
+        return { role: b.role, kind: b.divider!.kind, boxW: r.x1 - r.x0, ink: box ? box.x1 - box.x0 : null };
+      });
+    checks = { ink, borderClear, widths, dividers, layout: { safe: L2.safe, content: L2.content, blocks: L2.blocks.map((b) => ({ role: b.role, lines: b.lines, px: b.px, box: b.box, divider: b.divider ? { mode: b.divider.mode, boxes: b.divider.boxes } : null })) } };
   }
   return { png, ms1, ms2, fontRes, fontChecks, k: L.k, blocks: L.blocks.map((b) => ({ role: b.role, lines: b.lines, px: Math.round(b.px), mode: b.divider?.mode ?? null })), checks };
+};
+
+/** Ink bounds of each flourish path (em), to compare with FLOURISH_BOUNDS. */
+(window as unknown as Record<string, unknown>).flourishInk = () => {
+  const S = 200;
+  const W = 1400;
+  const H = 600;
+  const ox = 1000;
+  const oy = 300;
+  return (['vine', 'scroll'] as const).map((id) => {
+    const c = document.createElement('canvas');
+    c.width = W;
+    c.height = H;
+    const g = c.getContext('2d', { willReadFrequently: true })!;
+    g.translate(ox, oy);
+    g.scale(S, S);
+    g.fill(getFlourishPath(id));
+    const b = inkBox(g, W, H)!;
+    return { id, ink: { minX: (b.x0 - ox) / S, maxX: (b.x1 - ox) / S, minY: (b.y0 - oy) / S, maxY: (b.y1 - oy) / S }, bounds: FLOURISH_BOUNDS[id] };
+  });
 };
 
 (window as unknown as Record<string, unknown>).presets = TITLE_PRESETS.map((p) => p.id);

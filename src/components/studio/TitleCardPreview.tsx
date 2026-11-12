@@ -26,6 +26,7 @@ export function TitleCardPreview({
   layout,
   end,
   label,
+  compact,
   className,
 }: {
   look: ResolvedLook;
@@ -39,6 +40,8 @@ export function TitleCardPreview({
   /** end card: fades in and out of black */
   end?: boolean;
   label: string;
+  /** smaller on phones (the title page preview stays pinned above the fields there) */
+  compact?: boolean;
   className?: string;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
@@ -102,7 +105,7 @@ export function TitleCardPreview({
           ref={ref}
           role="img"
           aria-label={label}
-          className="block max-h-[260px] max-w-full rounded-md shadow-xl ring-1 ring-white/10 lg:max-h-[220px]"
+          className={cn('block max-w-full rounded-md shadow-xl ring-1 ring-white/10 lg:max-h-[220px]', compact ? 'max-h-[150px] sm:max-h-[240px]' : 'max-h-[260px]')}
           style={{ aspectRatio: `${width} / ${height}` }}
         />
       </div>
@@ -119,7 +122,7 @@ export function TitleCardPreview({
           type="range"
           min={0}
           max={duration}
-          step={0.01}
+          step={0.1}
           value={t ?? Math.max(0, duration - 1)}
           aria-label="Preview time"
           className="min-w-0 flex-1"

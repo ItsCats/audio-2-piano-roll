@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { ResolvedLook } from '../../lib/render/titleCard/presets';
 import type { CardImages } from '../../lib/render/titleCard/background';
 import { loadTitleImages } from '../../lib/render/titleCard/assets';
-import { onFontEpoch } from '../../lib/render/titleCard/fontEpoch';
+import { fontEpoch, onFontEpoch } from '../../lib/render/titleCard/fontEpoch';
 import type { TitleText } from '../../lib/render/titleCard/types';
 import { getMedia } from '../../lib/storage/db';
 import { PianoRollRenderer } from '../../lib/render/renderer';
@@ -53,7 +53,12 @@ export function useStudioBackdrop(want: boolean, visual: VisualSettings, width: 
       } catch {
         /* media not ready */
       }
-      setBackdrop(c);
+      // a new canvas each time, so the previews redraw (and measure its brightness again)
+      const copy = document.createElement('canvas');
+      copy.width = c.width;
+      copy.height = c.height;
+      copy.getContext('2d')?.drawImage(c, 0, 0);
+      setBackdrop(copy);
     };
     draw();
     // a video's first frame may arrive a little later
@@ -63,18 +68,19 @@ export function useStudioBackdrop(want: boolean, visual: VisualSettings, width: 
   return backdrop;
 }
 
-/** Loads the title fonts a card needs (lazily) and returns a counter that changes when they arrive. */
-export function useTitleFonts(look: ResolvedLook, texts: TitleText[]): number {
-  const [n, setN] = useState(0);
-  useEffect(() => onFontEpoch(() => setN((x) => x + 1)), []);
+/** Loads the title fonts a card needs (lazily). Redraws come from `useFontEpoch`. */
+export function useTitleFonts(look: ResolvedLook, texts: TitleText[]): void {
   const key = JSON.stringify([look.lines, texts]);
   useEffect(() => {
-    let alive = true;
-    void import('../../lib/render/titleCard/fonts').then(({ ensureTitleFonts }) => ensureTitleFonts(look, texts)).then(() => alive && setN((x) => x + 1));
-    return () => {
-      alive = false;
-    };
+    if (!texts.length) return;
+    void import('../../lib/render/titleCard/fonts').then(({ ensureTitleFonts }) => ensureTitleFonts(look, texts));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
+}
+
+/** A counter that changes when title fonts arrive (or fail), so canvases redraw with them. */
+export function useFontEpoch(): number {
+  const [n, setN] = useState(fontEpoch);
+  useEffect(() => onFontEpoch(() => setN(fontEpoch())), []);
   return n;
 }

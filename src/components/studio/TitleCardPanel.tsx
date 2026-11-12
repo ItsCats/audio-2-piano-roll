@@ -3,18 +3,18 @@
  * here (and in src/lib/render/titleCard); the dialog only places this panel, adds the cards' length
  * to the shown video length and passes `titleCardJob()` to the export.
  */
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { RotateCcw } from 'lucide-react';
 import { create } from 'zustand';
 import { ColorInput, Segmented, Select, Slider, Toggle, cn } from '../ui';
 import { MediaPicker } from './panels/LookPanel';
 import { TitleCardPreview } from './TitleCardPreview';
-import { useStudioBackdrop, useTitleFonts, useTitleImages } from './useTitleAssets';
+import { useFontEpoch, useStudioBackdrop, useTitleFonts, useTitleImages } from './useTitleAssets';
 import { useTitleCard, titleCardSettings } from '../../state/titleCardStore';
 import { outputSize, type ExportSettings } from '../../lib/export/types';
 import type { VisualSettings } from '../../lib/render/settings';
 import { TitleCardCache, drawTitleCard } from '../../lib/render/titleCard/draw';
-import { FONT_LABELS, TITLE_PRESETS, getPreset, presetFontId, resolveLook, type ResolvedLook } from '../../lib/render/titleCard/presets';
+import { DEFAULT_DIM, FONT_LABELS, TITLE_PRESETS, getPreset, presetFontId, resolveLook, type ResolvedLook } from '../../lib/render/titleCard/presets';
 import { FILL_PATTERNS, getFillTile, patternInfo } from '../../lib/render/titleCard/patterns';
 import { downscaleUpload, MAX_FILL_EDGE } from '../../lib/render/titleCard/assets';
 import { endCardText, textForSong } from '../../lib/render/titleCard/settings';
@@ -45,9 +45,8 @@ export function titleCardJob(song: SongLike, visual: VisualSettings): TitleCardJ
 
 /** Seconds the title page and end card add to the video (re-renders when they change). */
 export function useTitleCardSeconds(song: SongLike | null, fps: number): number {
-  const s = useTitleCard();
-  if (!song || (!s.enabled && !s.end.enabled)) return 0;
-  return titleCardsSeconds({ settings: s, text: textForSong(song, s) }, fps);
+  // a number, so the dialog re-renders only when the length really changes (not on every key)
+  return useTitleCard((s) => (!song || (!s.enabled && !s.end.enabled) ? 0 : titleCardsSeconds({ settings: s, text: textForSong(song, s) }, fps)));
 }
 
 const inputCls = 'focus-ring h-9 w-full min-w-0 rounded-[10px] border border-ink-600 bg-ink-800 px-2.5 text-[13px] text-ink-50 placeholder:text-ink-500';
@@ -247,10 +246,10 @@ function Customize({ look, resolved, setLook }: { look: TitleLook; resolved: Res
         </>
       )}
       {bg === 'image' && <MediaPicker kind="image" purpose="title" what="image" selectedId={look.bgImageId} onSelect={(bgImageId) => setLook({ bgImageId })} prepare={(f) => downscaleUpload(f)} />}
-      {(bg === 'image' || bg === 'video') && <Slider label="Dim" min={0} max={0.8} step={0.05} value={look.dim ?? 0.4} onChange={(dim) => setLook({ dim })} format={(x) => `${Math.round(x * 100)}%`} />}
+      {(bg === 'image' || bg === 'video') && <Slider label="Dim" min={0} max={0.8} step={0.05} value={look.dim ?? DEFAULT_DIM} onChange={(dim) => setLook({ dim })} format={(x) => `${Math.round(x * 100)}%`} />}
       {/* only for lines that are not filled with the letters' pattern / image */}
       {(resolved.fill.kind === 'solid' || resolved.fillRoles.length < 3) && (
-        <ColorInput label="Text colour" value={hexOr(look.textColor, solidHex(preset.lines.subtitle.color))} onChange={(textColor) => setLook({ textColor })} />
+        <ColorInput label="Text colour" value={hexOr(look.textColor, solidHex(resolved.lines.subtitle.color))} onChange={(textColor) => setLook({ textColor })} />
       )}
       <Toggle label="Light streaks" checked={resolved.streaks} onChange={(streaks) => setLook({ streaks })} />
       <Toggle label="Sparkles" checked={resolved.sparkles} onChange={(sparkles) => setLook({ sparkles })} />
@@ -266,17 +265,24 @@ export function TitleCardPanel({ song, exportSettings, visual }: { song: SongLik
   const { width, height } = outputSize(exportSettings);
   const hint = useMemo(() => ({ accent: visual.rightColor }), [visual.rightColor]);
   const resolved = useMemo(() => resolveLook(s.look, hint), [s.look, hint]);
-  const text = textForSong(song, s);
-  const endText = endCardText(s.end, text);
+  const text0 = textForSong(song, s);
+  const endText0 = endCardText(s.end, text0);
+  // stable objects while the words stay the same (they key the previews and the font loading)
+  const textKey = JSON.stringify([text0, endText0]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const [text, endText] = useMemo(() => [text0, endText0], [textKey]);
   const anyOn = s.enabled || s.end.enabled;
   const images = useTitleImages(resolved);
   const backdrop = useStudioBackdrop(anyOn && resolved.bg.kind === 'video', visual, Math.round(width / 3), Math.round(height / 3));
   const cardImages = useMemo(() => ({ ...images, backdrop }), [images, backdrop]);
   const chipTexts = useMemo(() => [{ title: text.title || 'Title', subtitle: '', composer: text.composer, credit: '', small: '' }], [text.title, text.composer]);
   const texts = useMemo(() => [text, endText], [text, endText]);
-  const fonts = useTitleFonts(resolved, anyOn ? texts : []);
-  const chipFonts = useAllStyleFonts(s.enabled, chipTexts, hint);
+  useTitleFonts(resolved, anyOn ? texts : []);
+  useAllStyleFonts(s.enabled, chipTexts, hint);
+  const fonts = useFontEpoch();
+  const chipFonts = fonts;
   const [open, setOpen] = useState(false);
+  const customizeId = useId();
   const setText = (patch: Partial<TitleText>) => s.setSongText(song.id, patch);
 
   return (
@@ -286,7 +292,8 @@ export function TitleCardPanel({ song, exportSettings, visual }: { song: SongLik
         <Toggle label="Add a title page" hint="Shown at the start, without sound" checked={s.enabled} onChange={s.setEnabled} />
         {s.enabled && (
           <>
-            <TitleCardPreview look={resolved} text={text} width={width} height={height} duration={s.duration} images={cardImages} fontsVersion={fonts} label="Title page preview" className="lg:sticky lg:top-0 lg:z-10 lg:-mx-4 lg:bg-ink-850 lg:px-4 lg:pt-1 lg:pb-2" />
+            {/* stays in view while you type and scroll the settings (smaller on phones) */}
+            <TitleCardPreview look={resolved} text={text} width={width} height={height} duration={s.duration} images={cardImages} fontsVersion={fonts} label="Title page preview" compact className="sticky top-0 z-10 -mx-4 bg-ink-850 px-4 pt-1 pb-2" />
             <div className="flex flex-col gap-1.5">
               <span className="text-[12.5px] text-ink-200">Style</span>
               <div className="grid grid-cols-3 gap-1.5" role="group" aria-label="Style">
@@ -299,7 +306,7 @@ export function TitleCardPanel({ song, exportSettings, visual }: { song: SongLik
             <Field label="Subtitle" value={text.subtitle} placeholder="e.g. Suite Bergamasque or No. 1" onChange={(subtitle) => setText({ subtitle })} />
             <Field label="Composer or artist" value={text.composer} onChange={(composer) => setText({ composer })} />
             <Field label="Credit" value={text.credit} placeholder="e.g. Arranged by … or your channel name" onChange={(credit) => setText({ credit })} />
-            <Field label="Small line" value={text.small} placeholder="e.g. Dedicated to you" onChange={(small) => setText({ small })} />
+            <Field label="Small line" value={text.small} placeholder="e.g. For my teacher" onChange={(small) => setText({ small })} />
             <div className="flex flex-wrap items-center justify-between gap-2 text-[11.5px]">
               <span className="text-ink-400">Leave a line empty to hide it.</span>
               <button type="button" className="focus-ring inline-flex items-center gap-1 rounded text-accent-300 hover:text-accent-200" onClick={() => s.resetSongText(song.id)}>
@@ -310,13 +317,17 @@ export function TitleCardPanel({ song, exportSettings, visual }: { song: SongLik
               <button
                 type="button"
                 aria-expanded={open}
+                aria-controls={customizeId}
                 onClick={() => setOpen((o) => !o)}
                 className="focus-ring flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-[13px] text-ink-100 hover:bg-ink-800"
               >
-                Customize <span className="text-ink-400">{open ? '−' : '+'}</span>
+                Customize
+                <span className="text-ink-400" aria-hidden>
+                  {open ? '−' : '+'}
+                </span>
               </button>
               {open && (
-                <div className="flex flex-col gap-3 border-t border-ink-700 p-3">
+                <div id={customizeId} className="flex flex-col gap-3 border-t border-ink-700 p-3">
                   <Customize look={s.look} resolved={resolved} setLook={s.setLook} />
                   <button type="button" className="focus-ring inline-flex items-center gap-1 self-start rounded text-[11.5px] text-accent-300 hover:text-accent-200" onClick={() => s.applyPreset(s.look.preset)}>
                     <RotateCcw size={12} /> Reset style
@@ -327,7 +338,9 @@ export function TitleCardPanel({ song, exportSettings, visual }: { song: SongLik
             <Slider label="Length" min={2} max={10} step={0.5} value={s.duration} onChange={s.setDuration} format={(x) => `${x} s`} />
           </>
         )}
-        {warning && <p className="text-[12px] text-warn">{warning}</p>}
+        <p className="text-[12px] text-warn empty:hidden" aria-live="polite">
+          {warning}
+        </p>
       </div>
       <div className="flex flex-col gap-3 border-t border-ink-700 p-4">
         <Heading>End card</Heading>
@@ -336,7 +349,7 @@ export function TitleCardPanel({ song, exportSettings, visual }: { song: SongLik
           <>
             <TitleCardPreview look={resolved} text={endText} width={width} height={height} duration={s.end.duration} images={cardImages} fontsVersion={fonts} layout={END_LAYOUT} end label="End card preview" />
             <Field label="Main line" value={s.end.main} onChange={(main) => s.setEnd({ main })} />
-            <Field label="Credit" value={s.end.credit ?? text.credit} placeholder="Same as the title page" onChange={(credit) => s.setEnd({ credit })} />
+            <Field label="Credit" value={s.end.credit ?? ''} placeholder={text.credit ? `Same as the title page (${text.credit})` : 'Same as the title page'} onChange={(credit) => s.setEnd({ credit: credit.trim() ? credit : null })} />
             <Field label="Small line" value={s.end.small} placeholder="e.g. See you next time" onChange={(small) => s.setEnd({ small })} />
             <Slider label="Length" min={2} max={10} step={0.5} value={s.end.duration} onChange={(duration) => s.setEnd({ duration })} format={(x) => `${x} s`} />
             {!s.enabled && <p className="text-[11.5px] text-ink-400">It uses the title page style. Turn on the title page to change it.</p>}
@@ -348,20 +361,12 @@ export function TitleCardPanel({ song, exportSettings, visual }: { song: SongLik
 }
 
 /** Loads the title fonts of every style for the style chips (only while the title page is on). */
-function useAllStyleFonts(on: boolean, texts: TitleText[], hint: { accent?: string }): number {
-  const [n, setN] = useState(0);
+function useAllStyleFonts(on: boolean, texts: TitleText[], hint: { accent?: string }): void {
   const key = JSON.stringify(texts);
   useEffect(() => {
     if (!on) return;
-    let alive = true;
-    void import('../../lib/render/titleCard/fonts').then(async ({ ensureTitleFonts }) => {
-      await Promise.all(TITLE_PRESETS.map((p) => ensureTitleFonts(resolveLook({ ...DEFAULT_CHIP_LOOK, preset: p.id }, hint), texts)));
-      if (alive) setN((x) => x + 1);
-    });
-    return () => {
-      alive = false;
-    };
+    // a font that arrives bumps the font epoch (useFontEpoch), which redraws the chips
+    void import('../../lib/render/titleCard/fonts').then(({ ensureTitleFonts }) => Promise.all(TITLE_PRESETS.map((p) => ensureTitleFonts(resolveLook({ ...DEFAULT_CHIP_LOOK, preset: p.id }, hint), texts))));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [on, key]);
-  return n;
 }

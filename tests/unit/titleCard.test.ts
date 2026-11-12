@@ -1,6 +1,8 @@
 /** Title page: layout geometry, line breaking, timeline / track wrappers and saved settings. */
 import { describe, expect, it } from 'vitest';
-import { balancedBreaks, layoutTitleCard, splitGraphemes, type Measurer, type Rect, type TitleLayout } from '../../src/lib/render/titleCard/layout';
+import { BELOW_GAP, balancedBreaks, layoutTitleCard, splitGraphemes, type Measurer, type Rect, type TitleLayout } from '../../src/lib/render/titleCard/layout';
+import { FLOURISH_BOUNDS } from '../../src/lib/render/titleCard/flourishBounds';
+import { adaptLook, hexLuminance } from '../../src/lib/render/titleCard/contrast';
 import { TITLE_PRESETS, resolveLook } from '../../src/lib/render/titleCard/presets';
 import { DEFAULT_LOOK, DEFAULT_TITLE_CARD, type TitleLook, type TitleText } from '../../src/lib/render/titleCard/types';
 import { cardTimeline, endOpacity, shiftAudio, shiftVideo, titleOpacity, totalSeconds } from '../../src/lib/render/titleCard/timeline';
@@ -133,6 +135,81 @@ describe('title page layout', () => {
     expect(layoutTitleCard(1920, 1080, resolveLook({ ...DEFAULT_LOOK, preset: 'classic' }), TEXTS.short, fake).blocks[0].lines[0]).toBe('CLAIR DE LUNE');
   });
 
+  it('a Latin word is never broken between letters; only an extremely long one is hyphenated', () => {
+    for (const p of TITLE_PRESETS)
+      for (const [W, H] of SIZES)
+        for (const word of ['Nocturne', 'Arabesque', 'Gymnopédie', 'Hallelujah', 'Interstellar', 'Liebestraum', 'Rachmaninoff']) {
+          const L = layoutTitleCard(W, H, resolveLook({ ...DEFAULT_LOOK, preset: p.id }), { ...TEXTS.short, title: word, composer: word }, fake);
+          for (const b of L.blocks.filter((x) => x.role === 'title' || x.role === 'composer')) expect(b.lines, `${p.id} ${W}x${H} ${word} ${b.role}`).toHaveLength(1);
+        }
+    const L = layoutTitleCard(1080, 1920, resolveLook({ ...DEFAULT_LOOK, preset: 'classic' }), TEXTS.word, fake);
+    const t = L.blocks[0];
+    if (t.lines.length > 1) {
+      t.lines.slice(0, -1).forEach((l) => expect(l.endsWith('-')).toBe(true));
+      expect(t.lines.map((l) => l.replace(/-$/, '')).join('')).toBe(TEXTS.word.title.toUpperCase());
+    }
+  });
+
+  it('a short title stays on one line in landscape (Waltz of the Flowers)', () => {
+    for (const p of TITLE_PRESETS.filter((x) => x.lines.title.upper)) {
+      const L = layoutTitleCard(1920, 1080, resolveLook({ ...DEFAULT_LOOK, preset: p.id }), { ...TEXTS.short, title: 'Waltz of the Flowers' }, fake);
+      expect(L.blocks[0].lines, p.id).toEqual(['WALTZ OF THE FLOWERS']);
+    }
+  });
+
+  it('hierarchy: the credit stays narrower than the title, the other lines smaller than its capitals', () => {
+    const text = { title: 'Nocturne', subtitle: 'Op. 9 No. 2', composer: 'Sergei Rachmaninoff', credit: 'Arranged by Lumen Keys', small: 'Dedicated to everyone' };
+    for (const p of TITLE_PRESETS)
+      for (const [W, H] of SIZES)
+        for (const t of [text, TEXTS.long]) {
+          const L = layoutTitleCard(W, H, resolveLook({ ...DEFAULT_LOOK, preset: p.id }), t, fake);
+          const title = L.blocks.find((b) => b.role === 'title')!;
+          const safeW = L.safe.x1 - L.safe.x0;
+          for (const b of L.blocks) {
+            if (b.role === 'credit' || b.role === 'small') expect(b.textW, `${p.id} ${W}x${H} ${b.role} width`).toBeLessThanOrEqual(Math.max(0.7 * title.textW, 0.5 * safeW) + 0.5);
+            if (b.role === 'composer') expect(b.cap, `${p.id} ${W}x${H} composer cap`).toBeLessThanOrEqual(0.75 * title.cap + 1e-6);
+            if (b.role === 'credit' || b.role === 'small' || b.role === 'subtitle') expect(b.cap).toBeLessThan(title.cap);
+          }
+        }
+  });
+
+  it('caseless text with a space breaks at the space', () => {
+    const L = layoutTitleCard(1080, 1920, resolveLook({ ...DEFAULT_LOOK, preset: 'floral' }), { ...TEXTS.short, title: '千と千尋の神隠し いつも何度でも' }, fake);
+    expect(L.blocks[0].lines).toEqual(['千と千尋の神隠し', 'いつも何度でも']);
+  });
+
+  it('a centred flourish pair spans its box exactly (nothing is clipped)', () => {
+    for (const divider of ['vine', 'scroll'] as const) {
+      const L = layoutTitleCard(1080, 1920, resolveLook({ ...DEFAULT_LOOK, preset: 'ornate', divider }), TEXTS.long, fake);
+      const d = L.blocks.find((b) => b.role === 'composer')!.divider!;
+      expect(d.mode).toBe('below');
+      const box = d.boxes[0];
+      expect(box.x1 - box.x0).toBeCloseTo(2 * d.len, 6);
+      // the drawn pair: inner ends BELOW_GAP em from the centre, each ornament as wide as its bounds
+      const f = FLOURISH_BOUNDS[divider];
+      expect(d.len).toBeCloseTo((BELOW_GAP + f.maxX - f.minX) * d.em, 6);
+    }
+  });
+
+  it('light backgrounds get dark text (unless the user picked a colour), no vignette over the user colour', () => {
+    const light = resolveLook({ ...DEFAULT_LOOK, preset: 'classic', bg: 'color', bgColor: '#f3eee4' });
+    expect(hexLuminance(light.lines.title.color)).toBeLessThan(0.05);
+    expect(hexLuminance(light.lines.credit.color)).toBeLessThan(0.1);
+    expect(light.styleBg).toBe(false);
+    const own = resolveLook({ ...DEFAULT_LOOK, preset: 'classic', bg: 'color', bgColor: '#f3eee4', textColor: '#aa0000' });
+    expect(own.lines.title.color).toBe('#aa0000');
+    const dark = resolveLook({ ...DEFAULT_LOOK, preset: 'classic', bg: 'color', bgColor: '#101018' });
+    expect(dark.lines.title.color).toBe(resolveLook({ ...DEFAULT_LOOK, preset: 'classic' }).lines.title.color);
+    expect(resolveLook({ ...DEFAULT_LOOK, preset: 'floral' }).styleBg).toBe(true);
+    // a busy picture: light text with a dark scrim when it is mostly dark, dark text when mostly light
+    const base = resolveLook({ ...DEFAULT_LOOK, preset: 'classic' });
+    const onDark = adaptLook(base, 0, { median: 0.05, lo: 0.01, hi: 0.6 });
+    expect(onDark.lines.title.color).toBe(base.lines.title.color);
+    expect(onDark.scrim?.rgb).toBe('0,0,0');
+    expect(onDark.textHalo).not.toBeNull();
+    expect(hexLuminance(adaptLook(base, 0, { median: 0.6, lo: 0.1, hi: 0.9 }).lines.title.color)).toBeLessThan(0.05);
+  });
+
   it('the script title keeps its case', () => {
     const L = layoutTitleCard(1920, 1080, resolveLook({ ...DEFAULT_LOOK, preset: 'script' }), TEXTS.short, fake);
     expect(L.blocks[0].lines[0]).toBe('Clair de Lune');
@@ -189,8 +266,8 @@ describe('title page timeline', () => {
 
   it('crossfade and end card fades', () => {
     expect(titleOpacity(0, 4)).toBe(1);
-    expect(titleOpacity(3.2, 4)).toBeCloseTo(1, 9);
-    expect(titleOpacity(3.6, 4)).toBeCloseTo(0.5, 9);
+    expect(titleOpacity(3.0, 4)).toBeCloseTo(1, 9);
+    expect(titleOpacity(3.5, 4)).toBeCloseTo(0.5, 9);
     expect(titleOpacity(4, 4)).toBe(0);
     expect(endOpacity(0, 4)).toBe(0);
     expect(endOpacity(0.3, 4)).toBeCloseTo(0.5, 9);
@@ -346,13 +423,16 @@ describe('saved settings stay compatible', () => {
     };
     Object.assign(globalThis, { window: { localStorage }, localStorage });
     const { useSettings } = await import('../../src/state/settingsStore');
-    const { useTitleCard, TITLE_CARD_STORAGE_KEY } = await import('../../src/state/titleCardStore');
+    const { useTitleCard, TITLE_CARD_STORAGE_KEY, flushTitleCardStorage } = await import('../../src/state/titleCardStore');
     expect(useSettings.getState().exportSettings).toMatchObject(oldExport);
     expect(useSettings.getState().exportPresets[0].name).toBe('mine');
     expect(useTitleCard.getState().enabled).toBe(false);
     expect(useTitleCard.getState().look).toEqual(DEFAULT_LOOK);
     useTitleCard.getState().setEnabled(true);
     useTitleCard.getState().setSongText('song1', { credit: 'My Channel' });
+    // writes are batched (not on every key press), then flushed
+    expect(store.get(TITLE_CARD_STORAGE_KEY)).toBeUndefined();
+    flushTitleCardStorage();
     const saved = JSON.parse(store.get(TITLE_CARD_STORAGE_KEY)!);
     expect(saved.state.enabled).toBe(true);
     expect(saved.state.remembered.credit).toBe('My Channel');

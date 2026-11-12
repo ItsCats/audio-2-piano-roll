@@ -198,7 +198,8 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
                   <ProgressBar value={progress.fraction} />
                   {progress.framesDone !== undefined && (
                     <p className="font-mono text-[11.5px] text-ink-300">
-                      frame {progress.framesDone}/{progress.framesTotal} · {progress.renderFps?.toFixed(0)} fps · ~{formatTime(progress.etaSeconds ?? 0)} left
+                      frame {progress.framesDone}/{progress.framesTotal}
+                      {progress.renderFps !== undefined && ` · ${progress.renderFps.toFixed(0)} fps · ~${formatTime(progress.etaSeconds ?? 0)} left`}
                     </p>
                   )}
                   <Button size="sm" variant="ghost" onClick={cancel} className="self-start">
