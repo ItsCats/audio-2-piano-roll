@@ -208,8 +208,16 @@ export const CREDITS: CreditGroup[] = [
         note: 'With svgpath, cssesc, specificity and font-family-papandreou (MIT).',
       },
       {
+        name: 'fflate',
+        use: 'Opens compressed sheet-music files (.mxl, MuseScore .mscz) when you import them.',
+        author: 'Arjun Barrett',
+        license: 'MIT',
+        licenseUrl: LIC.mit,
+        url: 'https://github.com/101arrowz/fflate',
+      },
+      {
         name: 'MusicXML 4.0',
-        use: 'The open sheet-music file format of the MusicXML download.',
+        use: 'The open sheet-music file format of the MusicXML download and of sheet-music imports.',
         author: 'W3C Music Notation Community Group',
         license: 'W3C Community Final Specification Agreement',
         licenseUrl: 'https://www.w3.org/community/about/agreements/final/',

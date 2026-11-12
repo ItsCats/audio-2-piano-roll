@@ -4,6 +4,7 @@ import { detectKey } from './music/theory';
 import { songDuration } from './music/cleanup';
 import { newId } from './storage/db';
 import type { ParsedMidi } from './music/midi';
+import type { ParsedScore } from './score';
 import { bachPreludeDemo } from './music/demo';
 
 /** A compact piano-roll overview image used as the song's thumbnail. */
@@ -95,6 +96,26 @@ export function songFromMidi(parsed: ParsedMidi, fileName: string, fileSize: num
     tempo: parsed.tempo,
     duration: parsed.duration,
     transcription: { method: 'midi-file', estimated: false, warnings: parsed.warnings, handsFromScore: parsed.handsKnown },
+    hasAudio: false,
+    hasPosteriors: false,
+  });
+}
+
+/**
+ * A Song from sheet music (lib/score: a score file, or MusicXML from PDF / photo recognition).
+ * Hard is the piece exactly as written; Easy and Medium are generated like for MIDI files.
+ */
+export function songFromScore(parsed: ParsedScore, source: SongSource & { kind: 'score' }): Song {
+  return buildSong({
+    title: parsed.title || (source.fileName ? titleFromFileName(source.fileName) : 'Sheet music'),
+    artist: parsed.composer,
+    source,
+    notes: parsed.notes,
+    pedal: parsed.pedal,
+    tempo: parsed.tempo,
+    duration: parsed.duration,
+    key: parsed.key,
+    transcription: { method: 'score-file', estimated: false, warnings: parsed.warnings, handsFromScore: parsed.handsKnown },
     hasAudio: false,
     hasPosteriors: false,
   });
