@@ -142,7 +142,7 @@ export const CREDITS: CreditGroup[] = [
         license: 'BSD-3-Clause',
         licenseUrl: LIC.bsd3,
         url: 'https://opensheetmusicdisplay.org',
-        note: 'Includes VexFlow (MIT, Mohit Muthanna Cheppudira), JSZip (MIT), loglevel and typescript-collections (MIT).',
+        note: 'Includes VexFlow (MIT, Mohit Muthanna Cheppudira), JSZip (MIT or GPL-3.0; used under MIT), loglevel and typescript-collections (MIT).',
       },
       {
         name: 'jsPDF',
@@ -151,7 +151,7 @@ export const CREDITS: CreditGroup[] = [
         license: 'MIT',
         licenseUrl: LIC.mit,
         url: 'https://github.com/parallax/jsPDF',
-        note: 'With fflate, fast-png and pako (MIT / Zlib).',
+        note: 'With @babel/runtime, fflate, fast-png and iobuffer (MIT), and pako (MIT and Zlib).',
       },
       {
         name: 'svg2pdf.js',

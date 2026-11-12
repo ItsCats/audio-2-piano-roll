@@ -55,6 +55,10 @@ export default defineConfig({
       '@tonejs/midi',
       // UMD bundle; loaded lazily by the sheet-music view (src/lib/sheet/render.ts)
       'opensheetmusicdisplay',
+      // loaded lazily for the sheet-music PDF (src/lib/sheet/pdf.ts); found late otherwise, and the
+      // dev server then fails the import with 504 "Outdated Optimize Dep"
+      'jspdf',
+      'svg2pdf.js',
     ],
     // onnxruntime-web (SCNet separation worker) ships ready ESM; pre-bundling it breaks its WASM loader.
     // Its .wasm is imported with ?url (src/lib/separation/scnet.worker.ts), so it is served from our
