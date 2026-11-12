@@ -398,6 +398,15 @@ describe('sheet clefs and octave marks', () => {
     expect(xml).toContain('<octave-shift type="up" size="8"/>');
     expect(xml.match(/<octave-shift type="stop"/g)).toHaveLength(2);
   });
+  it('keeps the 8vb when a long low note joins the end of the run', () => {
+    // A0…E1 run, then a held C2 (also low) that sounds across later left-hand notes
+    const notes = [21, 23, 24, 26, 28].map((m, i) => note(m, i * 0.5, 0.5, 'L'));
+    notes.push(note(36, 3, 8, 'L'), ...[43, 45, 47, 48].map((m, i) => note(m, 5 + i, 0.5, 'L')));
+    const score = buildScore({ notes, tempo: tempo(120), duration: 12, level: 'hard' });
+    const o = score.ottavas.filter((x) => x.staff === 2);
+    expect(o).toHaveLength(1);
+    expect(o[0]).toEqual(expect.objectContaining({ shift: -8, start: 0, stop: 60 }));
+  });
   it('leaves single high notes alone', () => {
     const score = buildScore({ notes: [note(72, 0, 0.5), note(90, 0.5, 0.5), note(72, 1, 0.5)], tempo: tempo(120), duration: 2, level: 'hard' });
     expect(score.ottavas).toHaveLength(0);
