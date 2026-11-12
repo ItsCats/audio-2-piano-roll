@@ -6,6 +6,7 @@ import { adaptLook, hexLuminance } from '../../src/lib/render/titleCard/contrast
 import { TITLE_PRESETS, resolveLook } from '../../src/lib/render/titleCard/presets';
 import { DEFAULT_LOOK, DEFAULT_TITLE_CARD, type TitleLook, type TitleText } from '../../src/lib/render/titleCard/types';
 import { cardTimeline, endOpacity, shiftAudio, shiftVideo, titleOpacity, totalSeconds } from '../../src/lib/render/titleCard/timeline';
+import { guardStep, STALL_MESSAGE } from '../../src/lib/export/guard';
 import { clampDuration, defaultTextForSong, endCardText, sanitizeTitleCard, splitTitle, textForSong, trimSongs } from '../../src/lib/render/titleCard/settings';
 
 // ---------------------------------------------------------------------------------------
@@ -321,6 +322,37 @@ describe('title page timeline', () => {
     }
     expect(t).toBeCloseTo(55.75, 9);
     expect(Math.max(...silence.map((s) => s.duration))).toBeLessThanOrEqual(1);
+  });
+
+  it('every piece of silence goes through the export guard: a stuck encoder ends the export', async () => {
+    type S = { timestamp: number; duration: number; setTimestamp(t: number): void };
+    const mk = (t: number, d: number): S => ({
+      timestamp: t,
+      duration: d,
+      setTimestamp(x) {
+        this.timestamp = x;
+      },
+    });
+    // each silence step is guarded (the caller guards its own samples)
+    let guarded = 0;
+    const counting = <T,>(p: Promise<T>) => (guarded++, p);
+    const ok = shiftAudio<S>({ add: async () => {} }, 2, mk, counting);
+    await ok.add(mk(0, 1));
+    await ok.finish(2 + 1 + 3);
+    expect(guarded).toBe(2 + 3);
+    // an encoder that never answers while the end card's silence is added: stopped, not waited on forever
+    let calls = 0;
+    const stuck = { add: (s: S) => (++calls > 1 && s.timestamp >= 3 ? new Promise<void>(() => {}) : Promise.resolve()) };
+    const a = shiftAudio<S>(stuck, 2, mk, (p) => guardStep(p, undefined, 20));
+    await a.add(mk(0, 1));
+    await expect(a.finish(6)).rejects.toThrow(STALL_MESSAGE);
+    // and Cancel works there too
+    const ctl = new AbortController();
+    const b = shiftAudio<S>({ add: (s) => (s.timestamp >= 3 ? new Promise<void>(() => {}) : Promise.resolve()) }, 2, mk, (p) => guardStep(p, ctl.signal, 60_000));
+    await b.add(mk(0, 1));
+    const done = b.finish(6);
+    ctl.abort();
+    await expect(done).rejects.toMatchObject({ name: 'AbortError' });
   });
 
   it('without a title the audio is untouched', async () => {

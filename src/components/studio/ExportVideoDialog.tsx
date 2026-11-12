@@ -15,6 +15,7 @@ import { getMedia, hasStoredAudio } from '../../lib/storage/db';
 import { newId } from '../../lib/storage/db';
 import { useDecalImage } from './useDecalImage';
 import { TitleCardPanel, titleCardJob, useTitleCardSeconds } from './TitleCardPanel';
+import type { TitleCardJob } from '../../lib/render/titleCard/exportHooks';
 
 const presetIcons: Record<string, typeof SquarePlay> = { youtube: SquarePlay, shorts: Smartphone, square: Square, quick: Zap };
 
@@ -105,6 +106,13 @@ function CompositionPreview({ settings, previewTime }: { settings: ExportSetting
   );
 }
 
+/** A title page warning from a run that was cancelled or replaced must not show for the new one. */
+function gateWarnings(tc: TitleCardJob | undefined, current: () => boolean): TitleCardJob | undefined {
+  if (!tc?.onWarning) return tc;
+  const warn = tc.onWarning;
+  return { ...tc, onWarning: (message) => current() && warn(message) };
+}
+
 export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const song = useStudio((s) => s.song);
   const difficulty = useStudio((s) => s.difficulty);
@@ -147,7 +155,7 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
   const previewTime = range.start + previewFrac * (range.end - range.start);
   const rendering = progress !== null && !result && !error;
   const busy = rendering || stopping;
-  const longExport = outDur > 600;
+  const longExport = outDur + titleSeconds > 600;
 
   const start = async () => {
     if (running.current) return;
@@ -171,7 +179,7 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
           loop,
           signal: ac.signal,
           onProgress: (p) => current() && setProgress(p),
-          titleCard: titleCardJob(song, visual),
+          titleCard: gateWarnings(titleCardJob(song, visual), current),
         });
         if (!current()) return;
         setResult(r);

@@ -16,7 +16,7 @@ import type { CardImages } from './background';
 import { TitleCardCache, drawTitleCard } from './draw';
 import { resolveLook, type ResolvedLook, type StudioLookHint } from './presets';
 import { endCardText } from './settings';
-import { cardTimeline, endOpacity, shiftAudio, shiftVideo, titleOpacity, totalSeconds, type CardTimeline, type VideoTrackLike } from './timeline';
+import { cardTimeline, endOpacity, shiftAudio, shiftVideo, titleOpacity, totalSeconds, type CardTimeline, type StepGuard, type VideoTrackLike } from './timeline';
 import type { TitleCardSettings, TitleText } from './types';
 
 export interface TitleCardJob {
@@ -67,6 +67,11 @@ export interface PrepareOptions {
   /** sample rate of the export's audio track (the silence is made at the same rate) */
   sampleRate?: number;
   signal?: AbortSignal;
+  /**
+   * wraps every encoder step the cards add (each title page / end card frame, each piece of
+   * silence) with the export's time limit and cancel; without it they are awaited as they are
+   */
+  guard?: StepGuard;
   /** told after each title page / end card frame */
   onFrame?: (done: number, total: number, part: 'title' | 'end') => void;
 }
@@ -79,6 +84,12 @@ export interface TitleCardHooks {
   readonly introMs: number;
   /** wraps the audio track: silence first, samples moved by the title length, silence at the end */
   audio<T extends { add(s: AudioSample): Promise<void>; close(): void }>(track: T): { add(s: AudioSample): Promise<void>; close(): void };
+  /**
+   * renders and adds the title page frames (once; the canvas must hold the first roll frame).
+   * The wrapped video track does this itself before its first frame; calling it first lets that
+   * frame be guarded on its own, not together with the whole title page.
+   */
+  intro(): Promise<void>;
   /** wraps the video track: title page frames before the first roll frame, roll frames moved */
   video<T extends VideoTrackLike & { close(): void }>(track: T): { add(timestamp: number, duration?: number, opts?: VideoEncoderEncodeOptions): Promise<void>; close(): void };
   /** adds the end card frames; call after the last roll frame, before closing the video track */
@@ -200,6 +211,32 @@ async function prepare(tc: TitleCardJob | undefined, o: PrepareOptions): Promise
   let audioError: unknown = null;
 
   let introMs = 0;
+  const guard: StepGuard = o.guard ?? ((p) => p);
+  let introDone: Promise<void> | null = null;
+
+  /** the title page frames, added before the first roll frame (which the canvas holds now) */
+  const renderIntro = async () => {
+    ensureBackdrop();
+    if (!tl.introFrames) return;
+    if (!videoTrack) throw new Error('title page: video track not wrapped');
+    const track = videoTrack;
+    const t0 = performance.now();
+    // keep the first roll frame for the crossfade, render the title
+    captureRollFirst();
+    const ctx = mainCtx();
+    for (let i = 0; i < tl.introFrames; i++) {
+      aborted(o.signal);
+      drawIntro(ctx, i / fps);
+      await guard(track.add(i / fps, 1 / fps));
+      o.onFrame?.(i + 1, tl.introFrames, 'title');
+    }
+    introMs = performance.now() - t0;
+    ctx.save();
+    ctx.globalCompositeOperation = 'copy';
+    ctx.drawImage(rollFirst as CanvasImageSource, 0, 0);
+    ctx.restore();
+    freeTitle();
+  };
 
   return {
     timeline: tl,
@@ -209,10 +246,15 @@ async function prepare(tc: TitleCardJob | undefined, o: PrepareOptions): Promise
     },
     audio(track) {
       const sr = o.sampleRate ?? 48000;
-      const w = shiftAudio(track, tl.intro, (timestamp, seconds) => {
-        const frames = Math.round(seconds * sr);
-        return new AudioSample({ data: new Float32Array(frames * 2), format: 'f32-planar', numberOfChannels: 2, sampleRate: sr, timestamp });
-      });
+      const w = shiftAudio(
+        track,
+        tl.intro,
+        (timestamp, seconds) => {
+          const frames = Math.round(seconds * sr);
+          return new AudioSample({ data: new Float32Array(frames * 2), format: 'f32-planar', numberOfChannels: 2, sampleRate: sr, timestamp });
+        },
+        guard,
+      );
       return {
         add: (s) => w.add(s),
         // the end card's silence is added right away, then the real track is closed (so the muxer
@@ -232,28 +274,10 @@ async function prepare(tc: TitleCardJob | undefined, o: PrepareOptions): Promise
         },
       };
     },
+    intro: () => (introDone ??= renderIntro()),
     video(track) {
       videoTrack = track;
-      const w = shiftVideo(track, tl.intro, async () => {
-        ensureBackdrop();
-        if (!tl.introFrames) return;
-        const t0 = performance.now();
-        // the canvas holds the first roll frame now: keep it for the crossfade, render the title
-        captureRollFirst();
-        const ctx = mainCtx();
-        for (let i = 0; i < tl.introFrames; i++) {
-          aborted(o.signal);
-          drawIntro(ctx, i / fps);
-          await track.add(i / fps, 1 / fps);
-          o.onFrame?.(i + 1, tl.introFrames, 'title');
-        }
-        introMs = performance.now() - t0;
-        ctx.save();
-        ctx.globalCompositeOperation = 'copy';
-        ctx.drawImage(rollFirst as CanvasImageSource, 0, 0);
-        ctx.restore();
-        freeTitle();
-      });
+      const w = shiftVideo(track, tl.intro, () => (introDone ??= renderIntro()));
       return { add: (t, d, opts) => w.add(t, d, opts), close: () => track.close() };
     },
     async finish() {
@@ -265,7 +289,7 @@ async function prepare(tc: TitleCardJob | undefined, o: PrepareOptions): Promise
       for (let i = 0; i < tl.outroFrames; i++) {
         aborted(o.signal);
         drawOutro(ctx, i / fps);
-        await videoTrack?.add(rollEnd + i / fps, 1 / fps);
+        if (videoTrack) await guard(videoTrack.add(rollEnd + i / fps, 1 / fps));
         o.onFrame?.(i + 1, tl.outroFrames, 'end');
       }
     },

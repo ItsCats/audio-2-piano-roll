@@ -376,7 +376,7 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
   const audioTrack = new AudioSampleSource({ codec: audioCodec, bitrate: 192e3 });
   output.addAudioTrack(audioTrack);
   // ---- title page / end card: wrap the tracks (null when off, then nothing changes) ----
-  const cards = await prepareTitleCards(job.titleCard, { width, height, fps, visual, canvas, renderer, rollFrames: totalFrames, signal, sampleRate: 48000, onFrame: (done, total, part) => progress({ phase: 'video', fraction: part === 'end' ? 0.98 : 0.18, framesDone: done, framesTotal: total }) });
+  const cards = await prepareTitleCards(job.titleCard, { width, height, fps, visual, canvas, renderer, rollFrames: totalFrames, signal, guard: (step) => guardStep(step, signal, STEP_TIMEOUT_MS), sampleRate: 48000, onFrame: (done, total, part) => progress({ phase: 'video', fraction: part === 'end' ? 0.98 : 0.18, framesDone: done, framesTotal: total }) });
   const videoSource = cards ? cards.video(videoTrack) : videoTrack;
   const audioSource = cards ? cards.audio(audioTrack) : audioTrack;
   const picFadeIn = cards?.timeline.intro ? 0 : s.fadeIn; // the title page crossfades into the roll instead
@@ -467,6 +467,8 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
         ctx.fillStyle = `rgba(0,0,0,${1 - fade})`;
         ctx.fillRect(0, 0, width, height);
       }
+      // the title page goes first, each of its frames under its own time limit (not all of them under this frame's)
+      if (i === 0) await cards?.intro();
       await guardStep(videoSource.add(o, 1 / fps), signal, STEP_TIMEOUT_MS);
       if (i % 15 === 0 || i === totalFrames - 1) {
         const elapsed = (performance.now() - t0 - (cards?.introMs ?? 0)) / 1000; // without the title page frames
@@ -481,15 +483,16 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
         });
       }
     }
-    await cards?.finish(); // end card frames
+    await cards?.finish(); // end card frames (each encoder step guarded inside)
     videoSource.close();
     progress({ phase: 'finalizing', fraction: 0.99 });
-    await guardStep(output.finalize(), signal, finalizeTimeoutMs(duration));
+    await guardStep(output.finalize(), signal, finalizeTimeoutMs(cards ? cards.total : duration));
     const blob = await getBlob(mime);
     progress({ phase: 'finalizing', fraction: 1 });
     return { blob, mime, extension: ext, videoCodec, audioCodec, width, height, duration: cards ? cards.total : duration, method: 'webcodecs', sound };
   } catch (err) {
-    forceStopAudioEncoder(audioSource);
+    // the real track, not the title-card wrapper (which has no encoder of its own)
+    forceStopAudioEncoder(audioTrack);
     await cancelOutput(output);
     await cleanup();
     throw err;

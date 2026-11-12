@@ -53,19 +53,32 @@ export interface AudioSampleLike {
   setTimestamp(t: number): void;
 }
 
+/** Waits for one encoder step with a time limit and cancel (the export's `guardStep`). */
+export type StepGuard = <T>(step: Promise<T>) => Promise<T>;
+const unguarded: StepGuard = (p) => p;
+
 /**
  * Audio track wrapper: before the first sample it adds `intro` seconds of silence, and it moves
- * every sample by `intro`. `finish()` pads with silence until `end` seconds.
+ * every sample by `intro`. `finish()` pads with silence until `end` seconds. Each piece of silence
+ * it adds goes through `guard` (the samples passed to `add` are the caller's to guard).
  */
-export function shiftAudio<S extends AudioSampleLike>(track: AudioTrackLike<S>, intro: number, silence: (timestamp: number, seconds: number) => S) {
+export function shiftAudio<S extends AudioSampleLike>(
+  track: AudioTrackLike<S>,
+  intro: number,
+  silence: (timestamp: number, seconds: number) => S,
+  guard: StepGuard = unguarded,
+) {
   let started = false;
   let end = 0;
   const addSilence = async (from: number, to: number) => {
     // pieces of at most 1 s keep memory small
     for (let t = from; t < to - 1e-9; t += 1) {
       const s = silence(t, Math.min(1, to - t));
-      await track.add(s);
-      (s as unknown as { close?: () => void }).close?.();
+      try {
+        await guard(track.add(s));
+      } finally {
+        (s as unknown as { close?: () => void }).close?.();
+      }
     }
   };
   return {
@@ -98,7 +111,7 @@ export interface VideoTrackLike {
 
 /**
  * Video track wrapper: before the first roll frame it calls `beforeFirst` (which renders and adds
- * the title page frames), and it moves every roll frame by `intro`.
+ * the title page frames, unless the caller already did), and it moves every roll frame by `intro`.
  */
 export function shiftVideo(track: VideoTrackLike, intro: number, beforeFirst: () => Promise<void>) {
   let started = false;
