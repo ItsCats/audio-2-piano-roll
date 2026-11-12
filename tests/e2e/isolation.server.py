@@ -54,7 +54,7 @@ def headers_for(path: str):
 
 
 class H(http.server.SimpleHTTPRequestHandler):
-    extensions_map = {**http.server.SimpleHTTPRequestHandler.extensions_map, '.mjs': 'text/javascript', '.wasm': 'application/wasm', '.onnx': 'application/octet-stream'}
+    extensions_map = {**http.server.SimpleHTTPRequestHandler.extensions_map, '.mjs': 'text/javascript', '.wasm': 'application/wasm', '.onnx': 'application/octet-stream', '.webmanifest': 'application/manifest+json'}
 
     def __init__(self, *a, **k):
         super().__init__(*a, directory=root, **k)
