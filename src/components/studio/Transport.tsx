@@ -7,6 +7,7 @@ import { currentArrangement, useStudio } from '../../state/studioStore';
 import { formatTime } from '../../lib/music/theory';
 import { IconButton, cn } from '../ui';
 import { arrowSeekDelta } from '../../state/studioKeys';
+import { useCanvasRestored } from './useCanvasRestored';
 
 const SPEEDS = [0.25, 0.5, 0.6, 0.75, 0.85, 1, 1.15, 1.25, 1.5, 2];
 
@@ -14,6 +15,7 @@ function Minimap({ duration }: { duration: number }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const arr = useStudio(currentArrangement);
   const visual = useSettings((s) => s.visual);
+  const restored = useCanvasRestored(ref);
   useEffect(() => {
     const c = ref.current;
     if (!c || !arr) return;
@@ -39,7 +41,7 @@ function Minimap({ duration }: { duration: number }) {
       ctx.globalAlpha = 0.55;
       ctx.fillRect(x, y - dpr, w, 2 * dpr);
     }
-  }, [arr, duration, visual.leftColor, visual.rightColor]);
+  }, [arr, duration, visual.leftColor, visual.rightColor, restored]);
   return <canvas ref={ref} className="pointer-events-none absolute inset-0 h-full w-full" />;
 }
 

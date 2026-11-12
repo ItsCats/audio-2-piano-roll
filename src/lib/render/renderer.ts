@@ -83,6 +83,12 @@ export class PianoRollRenderer {
     this.bgCacheKey = '';
   }
 
+  /** The canvas lost its 2D context and got it back: cached layers are blank, paint them again. */
+  invalidateCaches(): void {
+    this.bgCache = null;
+    this.bgCacheKey = '';
+  }
+
   get width() {
     return this.w;
   }

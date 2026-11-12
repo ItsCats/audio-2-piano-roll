@@ -8,11 +8,13 @@ import { Button, ColorInput, Section, Segmented, Select, Slider, Toggle, cn } fr
 import { deleteMedia, listMedia, newId, saveMedia, type MediaItem } from '../../../lib/storage/db';
 import { toast } from '../../../state/toastStore';
 import { useTitleCard } from '../../../state/titleCardStore';
+import { useCanvasRestored } from '../useCanvasRestored';
 
 const MAX_MEDIA = 200 * 1024 * 1024;
 
 function PresetThumb({ id, active, onClick, name }: { id: string; active: boolean; onClick: () => void; name: string }) {
   const ref = useRef<HTMLCanvasElement>(null);
+  const restored = useCanvasRestored(ref);
   useEffect(() => {
     const c = ref.current;
     if (!c) return;
@@ -20,7 +22,7 @@ function PresetThumb({ id, active, onClick, name }: { id: string; active: boolea
     c.height = 54;
     const p = BACKGROUND_PRESETS.find((b) => b.id === id);
     if (p) p.draw(c.getContext('2d')!, 96, 54);
-  }, [id]);
+  }, [id, restored]);
   return (
     <button
       onClick={onClick}
@@ -40,6 +42,7 @@ const THUMB_TILE = 256;
 /** Draws a pattern tile into a small canvas, clipped like a note with a glowing outline. */
 function PatternThumb({ id, name, active, onClick }: { id: string; name: string; active: boolean; onClick: () => void }) {
   const ref = useRef<HTMLCanvasElement>(null);
+  const restored = useCanvasRestored(ref);
   useEffect(() => {
     const c = ref.current;
     if (!c) return;
@@ -60,7 +63,7 @@ function PatternThumb({ id, name, active, onClick }: { id: string; name: string;
       ctx.fillStyle = '#1b1b22';
       ctx.fillRect(0, 0, S, S);
     }
-  }, [id]);
+  }, [id, restored]);
   return (
     <button
       type="button"
@@ -82,6 +85,7 @@ function PatternThumb({ id, name, active, onClick }: { id: string; name: string;
 /** Tiny inline swatch of a pattern (used on theme buttons). */
 function PatternSwatch({ id }: { id: string }) {
   const ref = useRef<HTMLCanvasElement>(null);
+  const restored = useCanvasRestored(ref);
   useEffect(() => {
     const c = ref.current;
     if (!c) return;
@@ -89,7 +93,7 @@ function PatternSwatch({ id }: { id: string }) {
     c.height = 32;
     const tile = getPatternTile(id, 128);
     if (tile) c.getContext('2d')?.drawImage(tile as CanvasImageSource, 0, 0, 128, 128, 0, 0, 32, 32);
-  }, [id]);
+  }, [id, restored]);
   return <canvas ref={ref} className="h-4 w-4 rounded-[4px] ring-1 ring-white/40" aria-hidden />;
 }
 

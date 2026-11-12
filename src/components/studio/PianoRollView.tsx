@@ -114,6 +114,18 @@ export function PianoRollView() {
     return () => ro.disconnect();
   }, [fullscreen]); // observing again measures again (real full screen can resize before the mode is set)
 
+  // a lost and restored 2D context comes back blank: draw again even while paused
+  useEffect(() => {
+    const c = canvasRef.current;
+    if (!c) return;
+    const redraw = () => {
+      rendererRef.current?.invalidateCaches();
+      dirty.current = true;
+    };
+    c.addEventListener('contextrestored', redraw);
+    return () => c.removeEventListener('contextrestored', redraw);
+  }, []);
+
   // render loop
   useEffect(() => {
     let raf = 0;

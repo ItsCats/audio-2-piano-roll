@@ -9,6 +9,7 @@ import { create } from 'zustand';
 import { ColorInput, Segmented, Select, Slider, Toggle, cn } from '../ui';
 import { MediaPicker } from './panels/LookPanel';
 import { TitleCardPreview } from './TitleCardPreview';
+import { useCanvasRestored } from './useCanvasRestored';
 import { useFontEpoch, useStudioBackdrop, useTitleFonts, useTitleImages } from './useTitleAssets';
 import { useTitleCard, titleCardSettings } from '../../state/titleCardStore';
 import { outputSize, type ExportSettings } from '../../lib/export/types';
@@ -67,6 +68,7 @@ function Heading({ children }: { children: ReactNode }) {
 /** Small preview of each style with the song's own title. */
 function StyleChip({ id, active, text, onClick, fontsVersion, hint }: { id: TitleLook['preset']; active: boolean; text: TitleText; onClick: () => void; fontsVersion: number; hint: { accent?: string } }) {
   const ref = useRef<HTMLCanvasElement>(null);
+  const restored = useCanvasRestored(ref);
   const cache = useMemo(() => new TitleCardCache(), []);
   const look = useMemo(() => resolveLook({ ...DEFAULT_CHIP_LOOK, preset: id }, hint), [id, hint]);
   useEffect(() => {
@@ -78,7 +80,7 @@ function StyleChip({ id, active, text, onClick, fontsVersion, hint }: { id: Titl
       drawTitleCard(c.getContext('2d')!, 192, 108, look, { title: text.title || 'Title', subtitle: '', composer: text.composer, credit: '', small: '' }, {}, 3, cache, { duration: 4, reveal: true });
     });
     return () => cancelAnimationFrame(raf);
-  }, [look, text.title, text.composer, fontsVersion, cache]);
+  }, [look, text.title, text.composer, fontsVersion, cache, restored]);
   useEffect(() => () => cache.dispose(), [cache]);
   const name = getPreset(id).name;
   return (
@@ -120,6 +122,7 @@ const DEFAULT_CHIP_LOOK: TitleLook = {
 
 function PatternSwatch({ id, active, onClick }: { id: FillPatternId; active: boolean; onClick: () => void }) {
   const ref = useRef<HTMLCanvasElement>(null);
+  const restored = useCanvasRestored(ref);
   const info = patternInfo(id);
   useEffect(() => {
     const c = ref.current;
@@ -135,7 +138,7 @@ function PatternSwatch({ id, active, onClick }: { id: FillPatternId; active: boo
       const tile = getFillTile(id, 1024);
       if (tile) ctx.drawImage(tile as CanvasImageSource, 0, 0, 512, 512, 0, 0, 64, 64);
     }
-  }, [id, info]);
+  }, [id, info, restored]);
   return (
     <button
       type="button"

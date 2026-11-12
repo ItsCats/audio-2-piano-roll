@@ -14,6 +14,7 @@ import { formatTime } from '../../lib/music/theory';
 import { getMedia, hasStoredAudio } from '../../lib/storage/db';
 import { newId } from '../../lib/storage/db';
 import { useDecalImage } from './useDecalImage';
+import { useCanvasRestored } from './useCanvasRestored';
 import { TitleCardPanel, titleCardJob, useTitleCardSeconds } from './TitleCardPanel';
 import type { TitleCardJob } from '../../lib/render/titleCard/exportHooks';
 
@@ -82,6 +83,7 @@ function CompositionPreview({ settings, previewTime }: { settings: ExportSetting
     };
   }, [visual.background]);
   const decalImg = useDecalImage(visual.decal);
+  const restored = useCanvasRestored(ref);
   useEffect(() => {
     const c = ref.current;
     if (!c) return;
@@ -93,7 +95,7 @@ function CompositionPreview({ settings, previewTime }: { settings: ExportSetting
     if (bgSource) r.setBackgroundMedia(bgSource, visual.background.kind === 'video' ? 'video' : 'image');
     if (decalImg) r.setDecalImage(decalImg.source, decalImg.width, decalImg.height);
     r.render({ time: previewTime });
-  }, [settings, visual, song, difficulty, previewTime, width, height, bgSource, decalImg]);
+  }, [settings, visual, song, difficulty, previewTime, width, height, bgSource, decalImg, restored]);
   return (
     <div className="flex h-full min-h-[220px] items-center justify-center rounded-xl bg-[repeating-conic-gradient(#15151b_0_25%,#101014_0_50%)] bg-[length:20px_20px] p-3">
       <canvas

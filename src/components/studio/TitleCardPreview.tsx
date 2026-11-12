@@ -7,6 +7,7 @@ import type { ResolvedLook } from '../../lib/render/titleCard/presets';
 import { endOpacity } from '../../lib/render/titleCard/timeline';
 import type { TitleText } from '../../lib/render/titleCard/types';
 import { cn } from '../ui';
+import { useCanvasRestored } from './useCanvasRestored';
 
 /** Longest preview edge in canvas pixels (the export draws the same layout at full size). */
 const PREVIEW_EDGE = 640;
@@ -45,6 +46,7 @@ export function TitleCardPreview({
   className?: string;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
+  const restored = useCanvasRestored(ref);
   const cache = useMemo(() => new TitleCardCache(), []);
   useEffect(() => () => cache.dispose(), [cache]);
   const s = Math.min(1, PREVIEW_EDGE / Math.max(width, height));
@@ -74,7 +76,7 @@ export function TitleCardPreview({
       }
     });
     return () => cancelAnimationFrame(id);
-  }, [look, text, images, W, H, t, duration, cache, fontsVersion, layout, end]);
+  }, [look, text, images, W, H, t, duration, cache, fontsVersion, layout, end, restored]);
 
   const stop = () => {
     playing.current = false;
