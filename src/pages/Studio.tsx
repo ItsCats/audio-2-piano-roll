@@ -41,6 +41,7 @@ import { midiInput, QWERTY_MAP } from '../lib/midiInput/webmidi';
 import type { Difficulty } from '../lib/music/types';
 import { toast } from '../state/toastStore';
 import { useImport } from '../state/importStore';
+import { seekStepSeconds, shouldHandleGlobalKey } from '../state/studioKeys';
 
 type PanelTab = 'look' | 'labels' | 'sound' | 'practice' | 'arrangement';
 
@@ -111,8 +112,7 @@ function useStudioKeyboard(computerKeys: boolean) {
   useEffect(() => {
     const down = new Set<string>();
     const onKey = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement;
-      if (target.closest('input, textarea, select, [contenteditable="true"]')) return;
+      if (!shouldHandleGlobalKey(e)) return;
       const st = useStudio.getState();
       const player = getPlayer();
       const mod = e.ctrlKey || e.metaKey;
@@ -133,9 +133,9 @@ function useStudioKeyboard(computerKeys: boolean) {
       } else if (e.code === 'Home') {
         player.seek(0);
       } else if (e.code === 'ArrowLeft' && !st.editMode) {
-        player.seek(player.getTime() - (e.shiftKey ? 1 : 5));
+        player.seek(player.getTime() - seekStepSeconds(e.shiftKey));
       } else if (e.code === 'ArrowRight' && !st.editMode) {
-        player.seek(player.getTime() + (e.shiftKey ? 1 : 5));
+        player.seek(player.getTime() + seekStepSeconds(e.shiftKey));
       } else if (e.code === 'KeyE' && !mod) {
         st.setEditMode(!st.editMode);
       } else if (st.editMode) {
