@@ -1,6 +1,6 @@
 # Piano2Vision
 
-Turn songs, recordings, YouTube videos and MIDI files into an interactive **falling-note piano roll** — with a real sampled grand piano, Easy / Medium / Hard arrangements, note editing, practice tools with MIDI-keyboard scoring, and **1080p60 video export**.
+Turn songs, recordings, YouTube videos, MIDI files and sheet music into an interactive **falling-note piano roll** — with a real sampled grand piano, Easy / Medium / Hard arrangements, note editing, practice tools with MIDI-keyboard scoring, and **1080p60 video export**.
 
 Everything runs in the browser. Audio is transcribed on the user's device by a neural network; songs are stored locally. An optional self-hosted processing server adds YouTube fetching and faster source separation (separation also runs in the browser).
 
@@ -10,7 +10,7 @@ Everything runs in the browser. Audio is transcribed on the user's device by a n
 
 | Area | What you get |
 | --- | --- |
-| **Import** | MP3, WAV, M4A/AAC, MP4/MOV/WebM/MKV (audio track), FLAC, OGG/Opus, MIDI; microphone recording; YouTube (via your processing server, or by recording the official embedded player's tab audio) |
+| **Import** | MP3, WAV, M4A/AAC, MP4/MOV/WebM/MKV (audio track), FLAC, OGG/Opus, MIDI; sheet music (MusicXML `.musicxml`/`.xml`/`.mxl`, MuseScore 3–5 `.mscz`/`.mscx`, repeats played out in order); microphone recording; YouTube (via your processing server, or by recording the official embedded player's tab audio) |
 | **Transcription** | Spotify's Basic Pitch model (polyphonic) running in a Web Worker on WebGL/WASM, with a piano-tuned note-extraction pipeline (register curve for the top/bottom octaves, chopped-note join), beat tracking, key detection and hand assignment. **Separate vocals & drums** (SCNet, in the browser, on by default for "Full song") puts the singer's melody on the right hand and transcribes the accompaniment without drums. Re-tune detection afterwards without re-running the model. For solo piano, an optional second model, **Solo piano – high accuracy (slower)** (ByteDance's piano transcription model, ONNX in the browser): far more accurate notes, note lengths and velocities on piano recordings, but a ≈ 41 MB one-time download, about 5× slower (≈ 38 s per audio minute with 3 threads, ≈ 97 s single-threaded) and ≈ 0.7 GB more memory, and no help for songs with vocals or drums. Measured accuracy: in-app **Accuracy** page. |
 | **Arrangements** | Easy (the sung melody — or one smooth instrument tune — on 8th notes + sustained bass), Medium (tune + chord tones, simplified left hand, never more than an octave per hand), Hard (full transcription, hands rebalanced for reach) — switch instantly, edit each independently |
 | **Piano roll** | Smooth canvas renderer locked to the audio clock, 49–88 keys or fit-to-song, note speed/zoom, hand colours, glow, trails, sparks, guides, pedal lane, loop markers |
@@ -138,6 +138,7 @@ src/
     render/          piano-roll renderer, keyboard layout, themes, backgrounds
     export/          video export (WebCodecs/mediabunny), downloads, presets
     sheet/           sheet music: notes → measures/voices/spelling → MusicXML; OSMD view, PDF
+    score/           sheet-music import: MusicXML / .mxl / MuseScore → repeats unrolled → notes, pedal, beats (importMusicXml is the entry point for PDF/photo recognition)
     midiInput/       Web MIDI input and practice scoring
     storage/         IndexedDB persistence
     youtube/         URL parsing, oEmbed, IFrame player, tab-audio capture
