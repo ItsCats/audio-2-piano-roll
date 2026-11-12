@@ -12,7 +12,8 @@
     "test": "vitest run",
     "copy:model": "node scripts/copy-model.mjs",
     "build:samples": "python3 scripts/build-samples.py",
-    "test:e2e": "node tests/e2e/run.mjs"
+    "test:e2e": "node tests/e2e/run.mjs",
+    "test:e2e:keys": "node tests/e2e/studio-keys.mjs"
   },
   "engines": {
     "node": ">=20"
