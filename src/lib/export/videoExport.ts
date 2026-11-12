@@ -11,6 +11,9 @@
  *      long exports don't have to fit in RAM.
  *
  * Fallback (no WebCodecs): real-time capture with MediaRecorder (WebM).
+ *
+ * Optional title page / end card (src/lib/render/titleCard/exportHooks.ts): the roll export is
+ * unchanged; the cards wrap its audio and video tracks (everything moves by the title's length).
  */
 import {
   ALL_FORMATS,
@@ -39,6 +42,7 @@ import { PianoEngine } from '../audio/pianoEngine';
 import { buildEvents } from '../audio/events';
 import { getMedia } from '../storage/db';
 import { outputSize, type ExportSettings } from './types';
+import { prepareTitleCards, type TitleCardJob } from '../render/titleCard/exportHooks';
 
 export interface ExportProgress {
   phase: 'preparing' | 'audio' | 'video' | 'finalizing';
@@ -68,6 +72,8 @@ export interface ExportJob {
   audio: AudioSettings;
   settings: ExportSettings;
   loop: { start: number; end: number } | null;
+  /** optional title page / end card; absent = no change */
+  titleCard?: TitleCardJob;
   signal?: AbortSignal;
   onProgress?: (p: ExportProgress) => void;
 }
@@ -268,15 +274,20 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
   const arr = song.arrangements[job.difficulty];
   renderer.setNotes(arr.notes, arr.pedal, song.tempo, song.key);
 
-  const videoSource = new CanvasSource(canvas, {
+  const videoTrack = new CanvasSource(canvas, {
     codec: videoCodec,
     bitrate,
     keyFrameInterval: 2,
     latencyMode: 'quality',
   });
-  output.addVideoTrack(videoSource, { frameRate: fps });
-  const audioSource = new AudioSampleSource({ codec: audioCodec, bitrate: 192e3 });
-  output.addAudioTrack(audioSource);
+  output.addVideoTrack(videoTrack, { frameRate: fps });
+  const audioTrack = new AudioSampleSource({ codec: audioCodec, bitrate: 192e3 });
+  output.addAudioTrack(audioTrack);
+  // ---- title page / end card: wrap the tracks (null when off, then nothing changes) ----
+  const cards = await prepareTitleCards(job.titleCard, { width, height, fps, visual, canvas, renderer, rollFrames: totalFrames, signal, onFrame: (done, total) => progress({ phase: 'video', fraction: 0.18, framesDone: done, framesTotal: total }) });
+  const videoSource = cards ? cards.video(videoTrack) : videoTrack;
+  const audioSource = cards ? cards.audio(audioTrack) : audioTrack;
+  const picFadeIn = cards?.timeline.intro ? 0 : s.fadeIn; // the title page crossfades into the roll instead
   await output.start();
 
   let bg: BackgroundProvider | null = null;
@@ -336,7 +347,7 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
       if (bg.kind) renderer.setBackgroundMedia(await bg.frameAt(o), bg.kind);
       renderer.render({ time: songTimeAt(o) });
       // fade the picture in/out with the audio
-      const fade = Math.min(1, s.fadeIn > 0 ? o / s.fadeIn : 1, s.fadeOut > 0 ? (duration - o) / s.fadeOut : 1);
+      const fade = Math.min(1, picFadeIn > 0 ? o / picFadeIn : 1, s.fadeOut > 0 ? (duration - o) / s.fadeOut : 1);
       if (fade < 1) {
         const ctx = canvas.getContext('2d')!;
         ctx.fillStyle = `rgba(0,0,0,${1 - Math.max(0, fade)})`;
@@ -356,12 +367,13 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
         });
       }
     }
+    await cards?.finish(); // end card frames
     videoSource.close();
     progress({ phase: 'finalizing', fraction: 0.99 });
     await output.finalize();
     const blob = await getBlob(mime);
     progress({ phase: 'finalizing', fraction: 1 });
-    return { blob, mime, extension: ext, videoCodec, audioCodec, width, height, duration, method: 'webcodecs' };
+    return { blob, mime, extension: ext, videoCodec, audioCodec, width, height, duration: cards ? cards.total : duration, method: 'webcodecs' };
   } catch (err) {
     await output.cancel().catch(() => {});
     await cleanup();
@@ -370,6 +382,7 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
     bg?.dispose();
     renderer.setDecalImage(null);
     decal?.close();
+    cards?.dispose();
   }
 }
 
@@ -398,10 +411,16 @@ async function exportWithMediaRecorder(job: ExportJob): Promise<ExportResult> {
   if (bg.kind === 'image') renderer.setBackgroundMedia(await bg.frameAt(0), 'image');
   const decal = await loadDecalBitmap(visual);
   applyDecal(renderer, decal);
+  // title page / end card, drawn in real time around the roll (null when off)
+  const cards = await prepareTitleCards(job.titleCard, { width, height, fps: s.fps, visual, canvas, renderer, rollFrames: Math.ceil(duration * s.fps) });
+  const intro = cards?.timeline.intro ?? 0;
+  const rollEnd = intro + duration;
+  const total = rollEnd + (cards?.timeline.outro ?? 0);
   const disposeVisuals = () => {
     bg.dispose();
     renderer.setDecalImage(null);
     decal?.close();
+    cards?.dispose();
   };
 
   // audio graph + capture stream: released in `finally` so a cancelled or failed export doesn't leak a running AudioContext
@@ -426,10 +445,14 @@ async function exportWithMediaRecorder(job: ExportJob): Promise<ExportResult> {
     const startCtx = ac.currentTime + 0.3;
     for (const e of buildEvents(arr.notes, arr.pedal, { L: true, R: true })) {
       if (e.t < range.start || e.t > range.end + 10) continue;
-      const when = startCtx + lead + (e.t - range.start) / rate;
+      const when = startCtx + intro + lead + (e.t - range.start) / rate;
       if (e.kind === 'on') engine.noteOn(e.midi, e.vel, when, e.tag);
       else if (e.kind === 'off') engine.noteOff(e.midi, when, e.tag);
       else engine.setPedal(e.down, when);
+    }
+    if (cards && intro > 0) {
+      renderer.render({ time: range.start - lead * rate });
+      cards.captureRollFirst();
     }
     rec.start(1000);
     await new Promise<void>((resolve, reject) => {
@@ -440,9 +463,12 @@ async function exportWithMediaRecorder(job: ExportJob): Promise<ExportResult> {
           return;
         }
         const o = ac.currentTime - startCtx;
-        renderer.render({ time: range.start + (o - lead) * rate });
-        job.onProgress?.({ phase: 'video', fraction: Math.max(0, Math.min(1, o / duration)) });
-        if (o >= duration) resolve();
+        const c2d = canvas.getContext('2d')!;
+        if (cards && o < intro) cards.drawIntro(c2d, Math.max(0, o));
+        else if (cards && o >= rollEnd) cards.drawOutro(c2d, o - rollEnd);
+        else renderer.render({ time: range.start + (o - intro - lead) * rate });
+        job.onProgress?.({ phase: 'video', fraction: Math.max(0, Math.min(1, o / total)) });
+        if (o >= total) resolve();
         else requestAnimationFrame(frame);
       };
       requestAnimationFrame(frame);
@@ -460,7 +486,7 @@ async function exportWithMediaRecorder(job: ExportJob): Promise<ExportResult> {
       audioCodec: 'opus',
       width,
       height,
-      duration,
+      duration: total,
       method: 'mediarecorder',
     };
   } finally {

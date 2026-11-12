@@ -13,6 +13,7 @@ import { formatTime } from '../../lib/music/theory';
 import { getMedia } from '../../lib/storage/db';
 import { newId } from '../../lib/storage/db';
 import { useDecalImage } from './useDecalImage';
+import { TitleCardPanel, titleCardJob, useTitleCardSeconds } from './TitleCardPanel';
 
 const presetIcons: Record<string, typeof SquarePlay> = { youtube: SquarePlay, shorts: Smartphone, square: Square, quick: Zap };
 
@@ -87,6 +88,7 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
   const replaceVisual = useSettings((s) => s.replaceVisual);
   const setLabels = useSettings((s) => s.setLabels);
   const audio = useSettings((s) => s.audio);
+  const titleSeconds = useTitleCardSeconds(song, settings.fps); // title page + end card
   const [progress, setProgress] = useState<ExportProgress | null>(null);
   const [result, setResult] = useState<ExportResult | null>(null);
   const [resultUrl, setResultUrl] = useState<string | null>(null);
@@ -115,7 +117,7 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
     abort.current = ac;
     setProgress({ phase: 'preparing', fraction: 0 });
     try {
-      const r = await exportVideo({ song, difficulty, visual, audio, settings, loop, signal: ac.signal, onProgress: setProgress });
+      const r = await exportVideo({ song, difficulty, visual, audio, settings, loop, signal: ac.signal, onProgress: setProgress, titleCard: titleCardJob(song, visual) });
       setResult(r);
       setResultUrl(URL.createObjectURL(r.blob));
     } catch (e) {
@@ -312,7 +314,7 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
               />
             </div>
             <p className="font-mono text-[11px] text-ink-400">
-              {width}×{height} · {formatTime(outDur)} · {Math.ceil(outDur * settings.fps).toLocaleString()} frames
+              {width}×{height} · {formatTime(outDur + titleSeconds)} · {(Math.ceil(outDur * settings.fps) + Math.round(titleSeconds * settings.fps)).toLocaleString()} frames
             </p>
             {!webCodecsAvailable() && <p className="text-[12px] text-warn">WebCodecs isn’t available in this browser: the video will be recorded in real time as WebM.</p>}
             {longExport && <p className="text-[12px] text-warn">Long export — rendering can take several minutes. Keep this tab open.</p>}
@@ -365,6 +367,7 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
             <Toggle label="Note labels" checked={visual.labels.style !== 'none'} onChange={(on) => setLabels({ style: on ? 'letter' : 'none' })} />
             <p className="text-[11.5px] leading-relaxed text-ink-400">Colours, effects, labels and backgrounds come from the Studio’s Look and Labels tabs.</p>
           </div>
+          <TitleCardPanel song={song} exportSettings={settings} visual={visual} />
         </div>
       </div>
       {!result && (

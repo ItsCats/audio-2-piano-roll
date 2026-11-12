@@ -286,7 +286,7 @@ export function TitleCardPanel({ song, exportSettings, visual }: { song: SongLik
         <Toggle label="Add a title page" hint="Shown at the start, without sound" checked={s.enabled} onChange={s.setEnabled} />
         {s.enabled && (
           <>
-            <TitleCardPreview look={resolved} text={text} width={width} height={height} duration={s.duration} images={cardImages} fontsVersion={fonts} label="Title page preview" />
+            <TitleCardPreview look={resolved} text={text} width={width} height={height} duration={s.duration} images={cardImages} fontsVersion={fonts} label="Title page preview" className="lg:sticky lg:top-0 lg:z-10 lg:-mx-4 lg:bg-ink-850 lg:px-4 lg:pt-1 lg:pb-2" />
             <div className="flex flex-col gap-1.5">
               <span className="text-[12.5px] text-ink-200">Style</span>
               <div className="grid grid-cols-3 gap-1.5" role="group" aria-label="Style">
