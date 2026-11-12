@@ -99,6 +99,8 @@ export interface ExtractionParams {
    * (transcription/noteExtraction.ts REPEAT_JOIN). false turns it off; omitted = on (default).
    */
   joinRepeats?: boolean;
+  /** Drop ghost notes in near-silence (music/cleanup.ts TAIL_GATE). false turns it off; omitted = on. */
+  tailGate?: boolean;
 }
 
 export interface TranscriptionInfo {
