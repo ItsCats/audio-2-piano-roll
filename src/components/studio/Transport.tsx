@@ -146,6 +146,7 @@ export function Transport() {
           aria-valuemin={0}
           aria-valuemax={Math.round(duration)}
           aria-valuenow={0}
+          aria-valuetext="0:00"
           tabIndex={0}
           onKeyDown={(e) => {
             const delta = arrowSeekDelta(e);

@@ -27,6 +27,24 @@ export function arrowSeekDelta(e: ArrowKeyLike): number | null {
   return null;
 }
 
+/**
+ * Where a song-position slider's key press moves the playhead (seconds, clamped to the song), or
+ * null when the key isn't one it handles: ← / → (and ↓ / ↑) by the seek step, Home / End to the
+ * ends. Alt, Cmd and Ctrl combinations are left to the browser, as with `arrowSeekDelta`.
+ */
+export function sliderSeekTarget(e: ArrowKeyLike, time: number, duration: number): number | null {
+  if (e.altKey || e.metaKey || e.ctrlKey) return null;
+  const key = e.key === 'ArrowDown' ? 'ArrowLeft' : e.key === 'ArrowUp' ? 'ArrowRight' : e.key;
+  let to: number | null;
+  if (key === 'Home') to = 0;
+  else if (key === 'End') to = duration;
+  else {
+    const delta = arrowSeekDelta({ key, shiftKey: e.shiftKey, altKey: false, metaKey: false, ctrlKey: false });
+    to = delta === null ? null : time + delta;
+  }
+  return to === null ? null : Math.max(0, Math.min(duration, to));
+}
+
 interface KeyLike {
   defaultPrevented: boolean;
   target: EventTarget | null;

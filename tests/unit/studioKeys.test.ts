@@ -1,6 +1,6 @@
 /** Studio keyboard rules: one ← / → press seeks once, by the documented step. */
 import { describe, expect, it } from 'vitest';
-import { arrowSeekDelta, seekStepSeconds, shouldHandleGlobalKey } from '../../src/state/studioKeys';
+import { arrowSeekDelta, seekStepSeconds, shouldHandleGlobalKey, sliderSeekTarget } from '../../src/state/studioKeys';
 
 const el = (matches: boolean) => ({ closest: () => (matches ? {} : null) }) as unknown as EventTarget;
 
@@ -32,5 +32,23 @@ describe('studio keys', () => {
     expect(k('ArrowLeft', { metaKey: true })).toBeNull(); // Back on Mac
     expect(k('ArrowRight', { ctrlKey: true })).toBeNull();
     expect(k('ArrowUp')).toBeNull();
+  });
+
+  it('the full-screen position bar: arrows, Home / End, clamped; Alt, Cmd and Ctrl left to the browser', () => {
+    const k = (key: string, mods: Partial<{ shiftKey: boolean; altKey: boolean; metaKey: boolean; ctrlKey: boolean }> = {}, time = 30) =>
+      sliderSeekTarget({ key, shiftKey: false, altKey: false, metaKey: false, ctrlKey: false, ...mods }, time, 100);
+    expect(k('ArrowRight')).toBe(35);
+    expect(k('ArrowUp')).toBe(35);
+    expect(k('ArrowLeft')).toBe(25);
+    expect(k('ArrowDown', { shiftKey: true })).toBe(29);
+    expect(k('Home')).toBe(0);
+    expect(k('End')).toBe(100);
+    expect(k('ArrowLeft', {}, 2)).toBe(0);
+    expect(k('ArrowRight', {}, 98)).toBe(100);
+    expect(k('ArrowLeft', { altKey: true })).toBeNull(); // Back
+    expect(k('ArrowLeft', { metaKey: true })).toBeNull(); // Back on Mac
+    expect(k('ArrowRight', { ctrlKey: true })).toBeNull();
+    expect(k('Home', { metaKey: true })).toBeNull();
+    expect(k('KeyF')).toBeNull();
   });
 });

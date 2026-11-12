@@ -18,6 +18,7 @@ import { useTransport } from '../../state/transportStore';
 import { useStudio } from '../../state/studioStore';
 import { useStageFullscreen } from '../../state/fullscreenStore';
 import { formatTime } from '../../lib/music/theory';
+import { sliderSeekTarget } from '../../state/studioKeys';
 import { createScreenWakeLock, isTouchDevice } from '../../lib/wakeLock';
 import {
   coverViewport,
@@ -142,16 +143,12 @@ function SeekBar({ duration, visible, onHold }: { duration: number; visible: boo
     onHold(false);
   };
   const onKeyDown = (e: React.KeyboardEvent) => {
-    const t = player.getTime();
-    let to: number | null = null;
-    if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') to = t - (e.shiftKey ? 1 : 5);
-    else if (e.key === 'ArrowRight' || e.key === 'ArrowUp') to = t + (e.shiftKey ? 1 : 5);
-    else if (e.key === 'Home') to = 0;
-    else if (e.key === 'End') to = duration;
+    // Alt / Cmd + ← is the browser's Back: left alone, like the Studio's own position bar
+    const to = sliderSeekTarget(e, player.getTime(), duration);
     if (to === null) return;
     e.preventDefault();
     e.stopPropagation(); // the Studio's own arrow-key seek would move a second time
-    player.seek(Math.max(0, Math.min(duration, to)));
+    player.seek(to);
   };
 
   return (
