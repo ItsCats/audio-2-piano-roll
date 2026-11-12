@@ -1,7 +1,7 @@
 {
  "_doc": "Per-song evaluation config for tests/accuracy/evaluate.py. Keys are audio basenames (without extension). Audio files are passed on the command line and never stored in the repo. 'suggested' is the preset the UI would suggest; 'presets' are all presets run. noteRef: 'exact' (sibling .midi = exact performance MIDI), 'snapped' (refs/snapped/<id>.json: score aligned + snapped to a strong piano transcriber), 'aligned' (refs/aligned/<id>.json: score DTW-aligned only), or null. vocalRef/bassRef: use refs/vocal/<id>.<stem>.f0.npz. stems: refs from stems/<id>/ (drums onsets).",
  "songs": {
-  "color-your-night": {
+  "vocal-1": {
    "kind": "vocal",
    "suggested": "mix",
    "presets": [
@@ -12,7 +12,7 @@
    "bassRef": true,
    "stems": true
   },
-  "stay-at-your-house": {
+  "vocal-2": {
    "kind": "vocal",
    "suggested": "mix",
    "presets": [
@@ -23,7 +23,7 @@
    "bassRef": true,
    "stems": true
   },
-  "edgerunners-ii": {
+  "vocal-3": {
    "kind": "vocal",
    "suggested": "mix",
    "presets": [
@@ -34,7 +34,7 @@
    "bassRef": true,
    "stems": true
   },
-  "kroi-spin": {
+  "vocal-4": {
    "kind": "vocal",
    "suggested": "mix",
    "presets": [
@@ -45,7 +45,7 @@
    "bassRef": true,
    "stems": true
   },
-  "steel-ball-run": {
+  "vocal-5": {
    "kind": "vocal",
    "suggested": "mix",
    "presets": [
@@ -56,7 +56,7 @@
    "bassRef": true,
    "stems": true
   },
-  "dress-up-darling": {
+  "band-instrumental-1": {
    "kind": "instrumental",
    "suggested": "mix",
    "presets": [
@@ -77,7 +77,7 @@
    "ptiRef": true,
    "note": "Chopin, Polonaise in A-flat major Op. 53 ('Heroic') — solo piano (earlier mislabelled as an instrumental band track)"
   },
-  "bigger-than-us-jazz": {
+  "piano-jazz-1": {
    "kind": "piano-jazz",
    "suggested": "piano",
    "presets": [

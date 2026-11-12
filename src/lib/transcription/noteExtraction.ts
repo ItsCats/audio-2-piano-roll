@@ -88,7 +88,7 @@ export interface NoteExtractionOptions {
  *   mix       0.7511 -> 0.7575 / 0.560 -> 0.564 / 0.842 -> 0.870
  * onset+offset F1 (pedal-extended reference) 0.3124 -> 0.3131 / 0.3256 -> 0.3307 / 0.2889 -> 0.2916;
  * C2-B2 recall unchanged. Same-pitch restarts within 40 ms of the previous note ("mix", Demucs
- * drum-less accompaniment of Dress-Up Darling): 17.6 % -> 12.4 % of the notes; on the isolated bass
+ * drum-less accompaniment of band-instrumental-1): 17.6 % -> 12.4 % of the notes; on the isolated bass
  * stem the joined bass pairs show no more attack than the middle of a note, the kept ones as much as a
  * fresh note. Larger `flatRise` values (0.08-0.1) remove more but start to join real re-plucks.
  */

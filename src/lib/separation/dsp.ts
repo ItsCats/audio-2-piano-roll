@@ -509,8 +509,8 @@ export const PRESENCE = {
   /**
    * a frame is "sung" when the vocal stem is within this many dB of the mixture … Calibrated on 10 songs
    * (tests/e2e/separation_compare.py --gate): at −30 dB the leakage of a lead instrument into the vocal
-   * stem of an instrumental (dress-up-darling, 13% of frames) is indistinguishable from a sparse vocal
-   * (edgerunners-ii, 13%); at −10 dB they separate (4.0% vs 7.0%; sung songs 16–64%, piano/orchestral 0–0.3%).
+   * stem of an instrumental (band-instrumental-1, 13% of frames) is indistinguishable from a sparse vocal
+   * (vocal-3, 13%); at −10 dB they separate (4.0% vs 7.0%; sung songs 16–64%, piano/orchestral 0–0.3%).
    */
   relThresholdDb: -10,
   /** … and above this absolute RMS (≈ −50 dBFS) */

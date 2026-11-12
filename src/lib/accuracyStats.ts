@@ -158,7 +158,7 @@ export const INSTRUMENTAL = {
   intro:
     'An anime soundtrack theme (about 3 minutes: bass, drums, piano and lead instruments, nobody singing). Separation correctly finds no vocals, so the Easy right hand plays the instruments’ tune — now one smooth lead line instead of hopping between the piano’s chord tops and the lead instrument. There is no written answer key for this track: the “tune” here is an estimate, the pitch of the lead instruments traced by an AI pitch tracker (pYIN) on a track separated with Demucs. Read these numbers as a rough guide.',
   rows: [
-    { what: 'Easy right hand plays the lead tune’s note (any octave)', before: '34%', after: '40%', note: 'Best possible from the notes the app hears: 50%. On clearly audible lead moments: 42% → 51%.' },
+    { what: 'Easy right hand plays the lead tune’s note (any octave)', before: '34%', after: '40%', note: 'Best possible from the notes the app hears: 51%. On clearly audible lead moments: 42% → 51%.' },
     { what: 'Easy right hand steps that jump more than an octave', before: '8.4%', after: '0.8%' },
     { what: 'Easy left hand on the bass note', before: '30%', after: '49%' },
     { what: 'Drum hits turned into Easy left-hand notes', before: '2.4/min', after: '6.8/min', note: 'More than before: the left hand now follows the lowest notes closely and some of them are drum hits. A drum filter exists but stays off because it lowered bass accuracy.' },
@@ -175,7 +175,7 @@ export const SEPARATION_EFFECT: CompareRow[] = [
   { what: 'Medium right hand plays the singer’s note', before: '22%', after: '53%' },
   { what: 'Independent check (pYIN pitch tracker), Easy', before: '37%', after: '70%', note: 'clearly sung moments only' },
   { what: 'Easy left hand on the bass note', before: '62%', after: '68%', note: '6 band songs' },
-  { what: 'Full transcription’s lowest note on the bass note (Hard)', before: '67%', after: '79%', note: '6 band songs' },
+  { what: 'Hard left hand’s lowest note on the bass note', before: '67%', after: '79%', note: '6 band songs' },
   { what: 'Drum hits mistaken for low notes (full transcription)', before: '15/min', after: '13/min', note: 'About the same: up on 3 songs, down on 3' },
   { what: 'Time per minute of audio', before: '7 s', after: '≈ 1 min' },
   { what: 'Peak memory of the browser tab', before: '0.4–0.6 GB', after: '1.9–2.2 GB' },
@@ -234,7 +234,7 @@ export const EXPECTATIONS: Expectation[] = [
     examples: 'Chopin, Liszt, Debussy, concert-hall recordings',
     rating: 3,
     measured: true,
-    summary: '62–78% of notes right on concert performances: fast runs, soft inner voices and the top octave are often missed, but what is written is usually right.',
+    summary: '62–75% of notes right on concert performances with “Piano solo” (71–78% with “Sensitive”): fast runs, soft inner voices and the top octave are often missed, but what is written is usually right.',
     tips: 'Try “Sensitive” — it finds more notes in fast or soft music (Liszt 62% → 71%).',
   },
   {
@@ -294,7 +294,7 @@ export interface Dataset {
 export const DATASETS: Dataset[] = [
   { name: 'MAESTRO v3 (Google Magenta)', use: '6 concert performances with the exact keys pressed — the answer key for solo piano', license: 'CC BY-NC-SA 4.0', url: 'https://magenta.tensorflow.org/datasets/maestro' },
   { name: 'Musopen', use: 'Recording of Chopin’s Nocturne Op. 55 No. 1', license: 'Public domain (CC0)', url: 'https://musopen.org' },
-  { name: 'High-resolution Piano Transcription (ByteDance)', use: 'Piano-specialist model: second opinion for piano recordings without an answer key', license: 'MIT (code); CC BY 4.0 (weights)', url: 'https://github.com/bytedance/piano_transcription' },
+  { name: 'High-resolution Piano Transcription (ByteDance)', use: 'Piano-specialist model: second opinion for piano recordings without an answer key', license: 'MIT (code); CC BY 4.0 (weights)', url: 'https://github.com/qiuqiangkong/piano_transcription_inference' },
   { name: 'Demucs (Meta AI)', use: 'Separated vocal, bass, drum and lead tracks for the references (not used by the app)', license: 'MIT (code); weights for research use', url: 'https://github.com/facebookresearch/demucs' },
   { name: 'CREPE / torchcrepe', use: 'Pitch of the singer and the bass on those tracks', license: 'MIT', url: 'https://github.com/maxrmorrison/torchcrepe' },
   { name: 'librosa (pYIN) & mir_eval', use: 'Independent second pitch tracker; standard accuracy metrics', license: 'ISC; MIT', url: 'https://github.com/mir-evaluation/mir_eval' },

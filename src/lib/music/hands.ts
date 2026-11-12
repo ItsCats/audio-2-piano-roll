@@ -13,7 +13,7 @@
  * Running that reassign-only pass here as well (on the base transcription) was measured and not
  * kept: it moved the inputs of Easy / Medium (tune candidates, left-hand bass) and gave mixed
  * results (MAESTRO Easy RH +0.009 chroma, but Easy LH vs the bass reference −0.010 on a vocal
- * song, Dress-Up Darling confident-frame Easy RH −0.015), while Hard and Medium get the same
+ * song, band-instrumental-1 confident-frame Easy RH −0.015), while Hard and Medium get the same
  * reach either way.
  */
 import type { Note } from './types';

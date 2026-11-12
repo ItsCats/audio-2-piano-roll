@@ -100,7 +100,7 @@ export const VOCAL_EXTRACTION: ExtractionParams = {
   inferOnsets: true,
   continuationOnset: 0.5,
   // the chopped-note join costs the sung line a little (5 songs: line raw pitch accuracy
-  // 0.561 → 0.559, steel-ball-run 0.462 → 0.454); it runs on the accompaniment only
+  // 0.561 → 0.559, vocal-5 0.462 → 0.454); it runs on the accompaniment only
   joinRepeats: false,
 };
 

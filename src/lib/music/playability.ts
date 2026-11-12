@@ -4,7 +4,7 @@
  * Checked at every onset moment against everything that hand has SOUNDING then (notes struck
  * together plus notes still held from before), not only against the notes struck together: in
  * the transcriptions most over-stretched moments were a held note plus a new note more than an
- * octave away (Dress-Up Darling, Hard: 29 % of left-hand onsets spanned more than an octave,
+ * octave away (band-instrumental-1, Hard: 29 % of left-hand onsets spanned more than an octave,
  * more than 4 in 5 of those because of a held note).
  *
  * Per moment and hand, while the span is too wide, the cheapest fix at either end of the hand:
@@ -32,18 +32,18 @@
  * octave: any adult hand), Hard 14 (a major ninth: most adult hands; tenths need large hands and
  * are usually rolled). Those are also the default `maxSpan`s.
  *
- * Measured (offline regeneration from saved base transcriptions: Dress-Up Darling, 4 vocal songs,
+ * Measured (offline regeneration from saved base transcriptions: band-instrumental-1, 4 vocal songs,
  * 4 solo piano recordings, 6 MAESTRO pieces), left-hand / right-hand onsets spanning more than an
  * octave, before → after:
- *   Medium  every piece → 0 / 0 % (e.g. Dress-Up 8.5/2.3, Chopin Ballade 1 recording 15.8/6.7,
+ *   Medium  every piece → 0 / 0 % (e.g. band-instrumental-1 8.5/2.3, Chopin Ballade 1 recording 15.8/6.7,
  *           MAESTRO Ballade 13.0/4.8); notes dropped 0–1.1 % (0.2 % typical), melody notes
  *           never. Dropped notes that are the lowest left-hand note struck at their onset (a new
  *           note over a held bass): before the bass could be released, 34 of 45 drops on the
  *           MAESTRO Ballade, 38 of 45 on the Ballade recording, 12 of 15 on Clair de lune; now
  *           6 of 7, 2 of 4, 1 of 1. Medium LH bottom line vs the bass stem (raw chroma) about
- *           unchanged (vocal songs + Dress-Up + Heroic mean 0.628 → 0.626; releasing every held
- *           bass at once cost 0.619).
- *   Hard    Dress-Up 22.9/16.0 → 18.7/14.5, Color Your Night 19.1/16.4 → 14.2/15.2, MAESTRO Ballade
+ *           unchanged (vocal songs + band-instrumental-1 + Heroic, solo piano, mean 0.628 → 0.626; releasing
+ *           every held bass at once cost 0.619).
+ *   Hard    band-instrumental-1 22.9/16.0 → 18.7/14.5, vocal-1 19.1/16.4 → 14.2/15.2, MAESTRO Ballade
  *           16.9/21.7 → 12.7/10.9, Mozart K280 7.9/10.1 → 3.0/3.7; no note dropped or shortened
  *           (what is left is mostly held notes a pianist would release under the pedal, and band
  *           chords too wide for both hands). Scores whose hands come from the file are not

@@ -21,4 +21,13 @@ describe('Accuracy page figures', () => {
     const e = EXPECTATIONS.find((x) => x.kind === 'Clean solo piano')!;
     expect(e.summary).toContain(`${Math.min(...clean)}–${Math.max(...clean)}%`);
   });
+
+  it('the virtuoso expectation spans the Chopin and Liszt scores, per preset', () => {
+    const hard = MAESTRO_ROWS.filter((r) => /Chopin|Liszt/.test(r.piece));
+    const piano = hard.map((r) => pct(r.f1));
+    const sensitive = hard.map((r) => pct(r.f1Sensitive));
+    const e = EXPECTATIONS.find((x) => x.kind === 'Virtuoso or heavily pedalled piano')!;
+    expect(e.summary).toContain(`${Math.min(...piano)}–${Math.max(...piano)}% of notes right on concert performances with “Piano solo”`);
+    expect(e.summary).toContain(`(${Math.min(...sensitive)}–${Math.max(...sensitive)}% with “Sensitive”)`);
+  });
 });

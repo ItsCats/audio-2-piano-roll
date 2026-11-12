@@ -163,7 +163,7 @@ export const CREDITS: CreditGroup[] = [
         author: 'Qiuqiang Kong et al., ByteDance',
         license: 'MIT (code); CC BY 4.0 (weights)',
         licenseUrl: LIC.ccby4,
-        url: 'https://github.com/bytedance/piano_transcription',
+        url: 'https://github.com/qiuqiangkong/piano_transcription_inference',
       },
       {
         name: 'Demucs',

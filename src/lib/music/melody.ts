@@ -359,7 +359,7 @@ export function speechSections(line: Note[], vocal: Note[] = line, opts: Partial
 /**
  * Drops isolated very long notes: a note held longer than `maxHold` s with no other line note
  * within `isolation` s before or after it. On the vocal stems these are sustained instrument
- * bleed or reverb tails (a 6.8 s C6 in Steel Ball Run while nobody sings), not sung notes — every
+ * bleed or reverb tails (a 6.8 s C6 in vocal-5 while nobody sings), not sung notes — every
  * such note in the 5 test songs (4 of them, 3–7 s) sat on unvoiced reference frames.
  */
 export function dropIsolatedHolds(line: Note[], maxHold = 3, isolation = 1): Note[] {
@@ -559,7 +559,7 @@ export function mergeMelody(accomp: Note[], melody: Note[], duration: number): N
  * a higher one enters while it sounds: its credited length ends there, so a held pad or chord tone
  * on top at its own onset does not outweigh the melody entering above it.
  * Because jumps cost, the line no longer hops between a band's piano chord tops and the lead
- * instrument below them (the per-cluster skyline did: C5↔D6 on every chord in Dress-Up Darling).
+ * instrument below them (the per-cluster skyline did: C5↔D6 on every chord in band-instrumental-1).
  * Same-pitch repeats are kept (instruments re-strike notes; sung lines are merged instead).
  */
 export interface TuneOptions {
@@ -585,7 +585,7 @@ export interface TuneOptions {
 
 /**
  * Tuned on onset-level, duration-independent measures (tests/accuracy/inst_eval.py onsetPC and
- * legatoRCA; 6 MAESTRO pieces, 4 solo piano recordings, Dress-Up Darling; 200+ settings): the
+ * legatoRCA; 6 MAESTRO pieces, 4 solo piano recordings, band-instrumental-1; 200+ settings): the
  * landscape is flat (the best settings differ by < 0.01), a stronger penalty for voices above
  * (0.15 → 0.3) is the one consistent gain (MAESTRO Easy onsetPC +0.01).
  */

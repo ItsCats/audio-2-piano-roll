@@ -38,12 +38,12 @@
  *   MAESTRO top voice (6 pieces)          0.600 / 0.546 → 0.636 / 0.563
  *   4 solo piano recordings (PTI top)     0.353 / 0.382 → 0.380 / 0.408 (jazz piece 0.206 / 0.188
  *                                         → 0.198 / 0.172: still slightly worse; Medium 0.124 → 0.108)
- *   band track (Dress-Up Darling, lead)   0.584 / 0.479 → 0.580 / 0.477 (flat; confident lead
+ *   band track (band-instrumental-1, lead)   0.584 / 0.479 → 0.580 / 0.477 (flat; confident lead
  *                                         frames legatoRCA 0.553 → 0.551)
  *   instrumental gaps of 4 sung songs     0.470 / 0.314 → 0.426 / 0.273 (114 → 104 scored onsets:
  *                                         flat to slightly worse, not shown better)
  * Smoothness is the clear gain: Easy leaps over an octave 3.3 → 1.4 % (MAESTRO), 6.0 → 0.8 %
- * (Dress-Up). Sung sections of vocal songs and Easy LH are unchanged.
+ * (band-instrumental-1). Sung sections of vocal songs and Easy LH are unchanged.
  */
 import type { Arrangement, Difficulty, Note, PedalRange, TempoInfo } from './types';
 import { clusterOnsets } from './hands';
@@ -90,8 +90,8 @@ function quantStrength(tempo: TempoInfo): number {
 
 /**
  * Grid refinement for a slow, unreliable tempo estimate: below 84 BPM with confidence < 0.5 the
- * tracker has almost always locked onto every other beat of a faster song (Steel Ball Run:
- * 65 BPM at 0.12 for a ~130 BPM song, Kroi "Spin" 73 vs ~145), so Easy's "8ths" would really be
+ * tracker has almost always locked onto every other beat of a faster song (vocal-5:
+ * 65 BPM at 0.12 for a ~130 BPM song, vocal-4 73 vs ~145), so Easy's "8ths" would really be
  * quarter notes. Then the grids are taken twice as fine (Easy 16ths of the estimate = 8ths of the
  * song). Confident slow tempos are left alone. Only used for songs with a sung line (piano and
  * instrumental arrangements keep their grids).
