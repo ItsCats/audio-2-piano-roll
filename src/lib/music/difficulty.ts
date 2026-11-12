@@ -191,7 +191,13 @@ function chordTones(top: Note, below: Note[], count: number): Note[] {
  */
 export const MEDIUM_TUNE = { keepAbove: 9, reach: 0.5 };
 
-export function generateMedium(base: Note[], tempo: TempoInfo): Note[] {
+/** Easy and Medium are built without Hard-only notes (role 'lead', see Note.role). */
+export function withoutHardOnly(notes: Note[]): Note[] {
+  return notes.some((n) => n.role === 'lead') ? notes.filter((n) => n.role !== 'lead') : notes;
+}
+
+export function generateMedium(allNotes: Note[], tempo: TempoInfo): Note[] {
+  const base = withoutHardOnly(allNotes);
   const melody = base.filter((n) => n.role === 'melody');
   const fine = melody.length ? gridFactor(tempo) : 1;
   const accomp = melody.length ? base.filter((n) => n.role !== 'melody') : base;
@@ -397,7 +403,8 @@ export function easySungLine(sung: Note[], tempo: TempoInfo, div = 2): Note[] {
 /** Easy tune notes this many semitones or more from the local median move by an octave (fixOctaveOutliers). */
 export const EASY_TUNE = { octaveFix: 9 };
 
-export function generateEasy(base: Note[], tempo: TempoInfo, duration: number): Note[] {
+export function generateEasy(allNotes: Note[], tempo: TempoInfo, duration: number): Note[] {
+  const base = withoutHardOnly(allNotes);
   if (!base.length) return [];
   const sung = base.filter((n) => n.role === 'melody');
   const div = 2 * (sung.length ? gridFactor(tempo) : 1);
@@ -539,6 +546,13 @@ export function easyBassLine(left: Note[], tempo: TempoInfo, duration: number, o
   return out;
 }
 
+/** Notes cut at `duration` (s); notes starting at or after it are dropped. */
+export function clampToDuration(notes: Note[], duration: number): Note[] {
+  return notes
+    .filter((n) => n.start < duration)
+    .map((n) => (n.start + n.dur > duration ? { ...n, dur: Math.max(0.03, duration - n.start) } : n));
+}
+
 export function generateArrangement(
   difficulty: Difficulty,
   base: Note[],
@@ -547,8 +561,10 @@ export function generateArrangement(
   duration: number,
   opts: ArrangementOptions = {},
 ): Arrangement {
-  const notes =
+  const generated =
     difficulty === 'hard' ? generateHard(base, opts) : difficulty === 'medium' ? generateMedium(base, tempo) : generateEasy(base, tempo, duration);
+  // no note sounds past the end of the audio (Easy's bass slots and minimum lengths could reach past it)
+  const notes = duration > 0 ? clampToDuration(generated, duration) : generated;
   return {
     notes,
     pedal: difficulty === 'easy' ? [] : basePedal.map((p) => ({ ...p })),

@@ -72,7 +72,7 @@ export function ArrangementPanel() {
       if (!post) throw new Error('The analysis data for this song is no longer stored. Re-import the audio to re-detect.');
       // keep the sung melody line (role 'melody') of separated songs: only the accompaniment is
       // re-detected, and the beats come from it alone, as on import
-      const det = await redetectNotes(post, params, song.duration, { melody: song.base.filter((n) => n.role === 'melody') });
+      const det = await redetectNotes(post, params, song.duration, { melody: song.base.filter((n) => n.role === 'melody'), separated: !!t.separated });
       const notes = det.notes;
       const tempo = song.tempo.source === 'manual' ? song.tempo : det.tempo;
       replaceSong({
