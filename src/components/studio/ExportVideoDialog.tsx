@@ -122,17 +122,21 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
   const [error, setError] = useState<string | null>(null);
   const [previewFrac, setPreviewFrac] = useState(0.15);
   const abort = useRef<AbortController | null>(null);
+  // a cancelled export can still be finishing (decoding the original can't be stopped part-way);
+  // Render stays off until it has, so two exports never run at once
+  const [stopping, setStopping] = useState(false);
+  const running = useRef<Promise<void> | null>(null);
   const stored = useStoredOriginal(song?.id, song?.hasAudio, open);
 
   useEffect(() => () => {
     if (resultUrl) URL.revokeObjectURL(resultUrl);
   }, [resultUrl]);
 
-  const range = useMemo(() => (song ? exportRange({ song, settings, loop }) : { start: 0, end: 0 }), [song, settings, loop]);
-  if (!song) return null;
-  const { width, height } = outputSize(settings);
   const webCodecs = webCodecsAvailable();
   const sound = effectiveSound(settings, { hasOriginal: stored === 'yes', webCodecs });
+  const range = useMemo(() => (song ? exportRange({ song, settings, loop }, sound) : { start: 0, end: 0 }), [song, settings, loop, sound]);
+  if (!song) return null;
+  const { width, height } = outputSize(settings);
   const usesOriginal = sound !== 'piano';
   const rate = effectiveRate(settings, sound);
   const outDur = exportTimeline(settings, range, rate).duration;
@@ -140,37 +144,65 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
   const waitingForCheck = stored === 'checking' && settings.sound !== 'piano';
   const previewTime = range.start + previewFrac * (range.end - range.start);
   const rendering = progress !== null && !result && !error;
+  const busy = rendering || stopping;
   const longExport = outDur > 600;
 
   const start = async () => {
+    if (running.current) return;
     setError(null);
     setResult(null);
     if (resultUrl) URL.revokeObjectURL(resultUrl);
     setResultUrl(null);
     const ac = new AbortController();
     abort.current = ac;
+    // only the current run may update the dialog
+    const current = () => abort.current === ac && !ac.signal.aborted;
     setProgress({ phase: 'preparing', fraction: 0 });
-    try {
-      const r = await exportVideo({ song, difficulty, visual, audio, settings: { ...settings, sound }, loop, signal: ac.signal, onProgress: setProgress });
-      setResult(r);
-      setResultUrl(URL.createObjectURL(r.blob));
-    } catch (e) {
-      if ((e as Error).name === 'AbortError') {
-        setProgress(null);
-        return;
+    const run = (async () => {
+      try {
+        const r = await exportVideo({
+          song,
+          difficulty,
+          visual,
+          audio,
+          settings: { ...settings, sound },
+          loop,
+          signal: ac.signal,
+          onProgress: (p) => current() && setProgress(p),
+        });
+        if (!current()) return;
+        setResult(r);
+        setResultUrl(URL.createObjectURL(r.blob));
+      } catch (e) {
+        if (!current()) return;
+        if ((e as Error).name === 'AbortError') {
+          setProgress(null);
+          return;
+        }
+        setError((e as Error).message);
       }
-      setError((e as Error).message);
-    }
+    })();
+    running.current = run;
+    await run;
+    running.current = null;
+    setStopping(false);
+  };
+
+  /** stops the current export; Render comes back once it has really stopped */
+  const stop = () => {
+    abort.current?.abort();
+    abort.current = null;
+    if (running.current) setStopping(true);
   };
 
   const cancel = () => {
-    abort.current?.abort();
+    stop();
     setProgress(null);
   };
 
   const close = () => {
     if (rendering && !confirm('Stop the export in progress?')) return;
-    abort.current?.abort();
+    stop();
     setProgress(null);
     setResult(null);
     setError(null);
@@ -440,8 +472,8 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
           <span className="text-[12px] text-ink-300">
             {song.title} · <span className="capitalize">{difficulty}</span>
           </span>
-          <Button variant="primary" disabled={rendering || waitingForCheck || (settings.range === 'loop' && !loop)} onClick={() => void start()} icon={rendering ? <Loader2 size={16} className="animate-spin" /> : <Film size={16} />}>
-            {rendering ? 'Rendering…' : 'Render video'}
+          <Button variant="primary" disabled={busy || waitingForCheck || (settings.range === 'loop' && !loop)} onClick={() => void start()} icon={busy ? <Loader2 size={16} className="animate-spin" /> : <Film size={16} />}>
+            {rendering ? 'Rendering…' : stopping ? 'Stopping…' : 'Render video'}
           </Button>
         </footer>
       )}

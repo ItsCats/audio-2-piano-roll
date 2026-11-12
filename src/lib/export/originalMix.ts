@@ -10,6 +10,7 @@
  * Everything here is pure so it can be unit-tested without a browser.
  */
 import type { ExportSettings, ExportSound } from './types';
+import { timelineFadeGain } from '../audio/fade';
 
 export const EXPORT_SAMPLE_RATE = 48000;
 /** short ramp to silence at the very end of the file, so a cut-off recording doesn't end in a click */
@@ -84,7 +85,7 @@ export function originalGain(s: Pick<ExportSettings, 'originalVolume'>, studioOr
 
 /** Picture fade (and the original's fade) at output time `o`: 0 at the start and the end of the file. */
 export function fadeGain(o: number, duration: number, fadeIn: number, fadeOut: number): number {
-  return Math.max(0, Math.min(1, fadeIn > 0 ? o / fadeIn : 1, fadeOut > 0 ? (duration - o) / fadeOut : 1));
+  return timelineFadeGain(o, duration, fadeIn, fadeOut);
 }
 
 /** Gain envelope applied to the original at output time `o` (picture fade plus the end ramp). */
@@ -116,30 +117,53 @@ interface BufferLike {
   getChannelData(c: number): Float32Array;
 }
 
+/** A span up to this long is copied out of the decoded recording (so the rest can be freed). */
+export const COPY_SPAN_UP_TO_SECONDS = 60;
+
 /**
- * Copies only the needed span of a decoded recording (so the full AudioBuffer can be dropped),
- * downmixing to mono when asked or when the file has more than two channels.
+ * The part of a decoded recording this export can hear.
+ *
+ * Memory: the decoded song is already in memory when this runs, so copying a long span would double
+ * the peak. A short span (up to COPY_SPAN_UP_TO_SECONDS, about the size of one piano render chunk) is
+ * copied so the full decode can be freed; a longer one is kept as views into the decoded channels, so
+ * nothing is copied. Mono (when asked, or for files with more than two channels) is mixed in place into
+ * channel 0, so dropping the AudioBuffer frees the other channels.
  */
-export function trimOriginal(buf: BufferLike, span: { start: number; end: number }, opts: { mono?: boolean } = {}): OriginalSource {
+export function trimOriginal(
+  buf: BufferLike,
+  span: { start: number; end: number },
+  opts: { mono?: boolean; copyUpToSeconds?: number } = {},
+): OriginalSource {
   const sr = buf.sampleRate;
   const from = Math.max(0, Math.min(buf.length, Math.floor(span.start * sr)));
   const to = Math.max(from, Math.min(buf.length, Math.ceil(span.end * sr) + 1));
   const n = to - from;
   const chs = buf.numberOfChannels;
-  if (opts.mono || chs > 2) {
-    const out = new Float32Array(n);
-    for (let c = 0; c < chs; c++) {
-      const d = buf.getChannelData(c);
-      for (let i = 0; i < n; i++) out[i] += d[from + i];
-    }
-    if (chs > 1) {
-      const k = 1 / chs;
+  const copy = n <= (opts.copyUpToSeconds ?? COPY_SPAN_UP_TO_SECONDS) * sr;
+  if ((opts.mono || chs > 2) && chs > 1) {
+    const k = 1 / chs;
+    if (copy) {
+      const out = new Float32Array(n);
+      for (let c = 0; c < chs; c++) {
+        const d = buf.getChannelData(c);
+        for (let i = 0; i < n; i++) out[i] += d[from + i];
+      }
       for (let i = 0; i < n; i++) out[i] *= k;
+      return { channels: [out], offsetFrame: from };
     }
-    return { channels: [out], offsetFrame: from };
+    const out = buf.getChannelData(0);
+    for (let c = 1; c < chs; c++) {
+      const d = buf.getChannelData(c);
+      for (let i = from; i < to; i++) out[i] += d[i];
+    }
+    for (let i = from; i < to; i++) out[i] *= k;
+    return { channels: [out.subarray(from, to)], offsetFrame: from };
   }
   const channels: Float32Array[] = [];
-  for (let c = 0; c < chs; c++) channels.push(buf.getChannelData(c).slice(from, to));
+  for (let c = 0; c < chs; c++) {
+    const d = buf.getChannelData(c);
+    channels.push(copy ? d.slice(from, to) : d.subarray(from, to));
+  }
   return { channels, offsetFrame: from };
 }
 
@@ -171,14 +195,59 @@ export function mixOriginal(dst: Float32Array[], dstOutFrame0: number, n: number
   }
 }
 
-/** Soft limiter: identity below the knee, smoothly approaching ±1 above it. Adds no delay. */
-export function softClipInPlace(ch: Float32Array, knee = 0.85): void {
-  const room = 1 - knee;
+/** Peak level the mix is limited to when the original is included (about -1 dB, room for the encoder). */
+export const LIMIT_CEILING = 0.89;
+/** how far ahead the limiter looks, so it turns down before a peak instead of on it */
+export const LIMIT_LOOKAHEAD_SECONDS = 0.005;
+export const LIMIT_RELEASE_SECONDS = 0.15;
+
+/**
+ * Peak limiter for the mixed sound track. Offline and look-ahead without delaying the audio: the gain
+ * needed to keep every sample at or below the ceiling is known in advance for each block, so the gain
+ * ramps down over the look-ahead window before a peak and recovers smoothly afterwards. Both channels
+ * get the same gain (the stereo image doesn't move). The gain carries over from block to block.
+ * Below the ceiling with no recent peak, the audio is untouched.
+ */
+export function createLimiter(sr: number, ceiling = LIMIT_CEILING, lookaheadSeconds = LIMIT_LOOKAHEAD_SECONDS, releaseSeconds = LIMIT_RELEASE_SECONDS) {
+  const look = Math.max(1, Math.round(lookaheadSeconds * sr));
+  const attackStep = 1 / look;
+  const rc = 1 - Math.exp(-1 / Math.max(1, releaseSeconds * sr));
+  let gain = 1;
+  return {
+    process(chans: Float32Array[]): void {
+      const n = chans[0]?.length ?? 0;
+      if (!n) return;
+      // gain needed at each sample, then a backward pass so the gain falls ahead of each peak
+      const target = new Float32Array(n);
+      let next = 1;
+      for (let i = n - 1; i >= 0; i--) {
+        let a = 0;
+        for (const ch of chans) {
+          const v = ch[i] < 0 ? -ch[i] : ch[i];
+          if (v > a) a = v;
+        }
+        const need = a > ceiling ? ceiling / a : 1;
+        next = Math.min(need, next + attackStep);
+        target[i] = next;
+      }
+      // forward pass: fall as needed, rise slowly
+      let g = gain;
+      for (let i = 0; i < n; i++) {
+        const t = target[i];
+        g = t < g ? t : g + (t - g) * rc;
+        if (g < 1) for (const ch of chans) ch[i] *= g;
+      }
+      gain = g > 0.999999 ? 1 : g;
+    },
+  };
+}
+
+/** Below this the WASM AAC encoder can stall on some content, so such values are set to 0 (about -120 dB, inaudible). */
+export const TINY_SAMPLE = 1e-6;
+
+export function flushTinyInPlace(ch: Float32Array, threshold = TINY_SAMPLE): void {
   for (let i = 0; i < ch.length; i++) {
     const x = ch[i];
-    const a = x < 0 ? -x : x;
-    if (a <= knee) continue;
-    const y = knee + room * Math.tanh((a - knee) / room);
-    ch[i] = x < 0 ? -y : y;
+    if (x !== 0 && x < threshold && x > -threshold) ch[i] = 0;
   }
 }

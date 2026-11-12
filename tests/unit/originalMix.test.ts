@@ -1,25 +1,32 @@
 /**
  * Original-recording mixing for video export: where each recording sample lands in the output file
- * (lead-in, ranges, chunking), fades, volume, soft clipping and the sound/speed rules.
+ * (lead-in, ranges, chunking), fades, volume, the limiter, memory use and the sound/speed rules.
  */
 import { describe, expect, it } from 'vitest';
 import {
+  COPY_SPAN_UP_TO_SECONDS,
+  LIMIT_CEILING,
+  createLimiter,
   defaultOriginalVolume,
   effectiveRate,
   effectiveSound,
   exportTimeline,
   fadeGain,
+  flushTinyInPlace,
   mixOriginal,
   neededSpan,
   originalEnvelope,
   originalGain,
   shouldDownmix,
-  softClipInPlace,
   songFrameAt,
   trimOriginal,
   type OriginalSource,
 } from '../../src/lib/export/originalMix';
 import { DEFAULT_EXPORT, type ExportSettings } from '../../src/lib/export/types';
+import { ownFadeGain, timelineFadeGain } from '../../src/lib/audio/fade';
+import { exportRange } from '../../src/lib/export/videoExport';
+import { STALL_MESSAGE, finalizeTimeoutMs, guardStep } from '../../src/lib/export/guard';
+import type { Song } from '../../src/lib/music/types';
 
 const SR = 48000;
 const base: ExportSettings = { ...DEFAULT_EXPORT, fadeIn: 0, fadeOut: 0, leadIn: 2 };
@@ -209,15 +216,166 @@ describe('fades', () => {
   });
 });
 
-describe('soft clip', () => {
-  it('leaves quiet samples alone and keeps loud ones within ±1', () => {
-    const d = Float32Array.from([0, 0.5, -0.84, 0.85, 0.9, -1.2, 2, -5]);
-    softClipInPlace(d);
-    expect(Array.from(d.subarray(0, 4))).toEqual(Array.from(Float32Array.from([0, 0.5, -0.84, 0.85])));
-    expect(d[4]).toBeGreaterThan(0.85);
-    expect(d[4]).toBeLessThan(0.9);
-    for (const v of d) expect(Math.abs(v)).toBeLessThanOrEqual(1);
-    expect(d[5]).toBeLessThan(-0.85);
+describe('limiter', () => {
+  const peak = (d: Float32Array) => d.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
+
+  it('leaves a mix below the ceiling untouched', () => {
+    const d = Float32Array.from({ length: SR }, (_, i) => 0.85 * Math.sin(i * 0.05));
+    const before = d.slice();
+    createLimiter(SR).process([d, d.slice()]);
+    expect(d).toEqual(before);
+  });
+
+  it('keeps every sample at or below about -1 dB, on both channels with the same gain', () => {
+    const n = SR;
+    const l = Float32Array.from({ length: n }, (_, i) => 1.4 * Math.sin(i * 0.05) * (i > SR / 2 ? 1 : 0.3));
+    const r = l.map((v) => v * 0.5);
+    const l0 = l.slice();
+    const r0 = r.slice();
+    createLimiter(SR).process([l, r]);
+    expect(LIMIT_CEILING).toBeLessThanOrEqual(0.9);
+    expect(peak(l)).toBeLessThanOrEqual(LIMIT_CEILING + 1e-6);
+    // same gain on both channels: the stereo balance doesn't move
+    for (let i = 0; i < n; i += 997) if (Math.abs(l0[i]) > 0.01) expect(l[i] / l0[i]).toBeCloseTo(r[i] / r0[i], 5);
+    // quiet part before the loud one is untouched (outside the look-ahead window)
+    expect(l[1000]).toBe(l0[1000]);
+  });
+
+  it('turns down smoothly ahead of a peak, with no delay, and recovers after it', () => {
+    const n = SR;
+    const d = new Float32Array(n).fill(0.5);
+    d[SR / 2] = 1.5; // one spike
+    const g = d.slice();
+    createLimiter(SR).process([g]);
+    expect(Math.abs(g[SR / 2])).toBeLessThanOrEqual(LIMIT_CEILING + 1e-6);
+    // gain falls gradually over the 5 ms before the spike (no step)
+    let maxStep = 0;
+    for (let i = SR / 2 - 400; i < SR / 2 + 400; i++) maxStep = Math.max(maxStep, Math.abs(g[i + 1] / d[i + 1] - g[i] / d[i]));
+    expect(maxStep).toBeLessThan(0.01);
+    expect(g[SR / 2 - 300]).toBe(0.5);
+    // and is back to (almost) full volume half a second later
+    expect(g[n - 1]).toBeGreaterThan(0.49);
+  });
+
+  it('carries its gain from one block to the next', () => {
+    const make = () => Float32Array.from({ length: 2 * SR }, (_, i) => (i < SR ? 1.3 : 0.6) * Math.sin(i * 0.02));
+    const whole = make();
+    createLimiter(SR).process([whole]);
+    const split = make();
+    const lim = createLimiter(SR);
+    lim.process([split.subarray(0, SR)]);
+    lim.process([split.subarray(SR)]);
+    // the release after the loud first second continues in the second block
+    for (let i = SR; i < SR + 2000; i += 50) expect(split[i]).toBeCloseTo(whole[i], 5);
+    expect(peak(split)).toBeLessThanOrEqual(LIMIT_CEILING + 1e-6);
+  });
+
+  it('sets inaudibly small values to zero (the WASM AAC encoder can stall on them)', () => {
+    const d = Float32Array.from([1e-38, -5e-26, 3e-9, -9e-7, 1.1e-6, -0.5, 0]);
+    flushTinyInPlace(d);
+    expect(Array.from(d)).toEqual(Array.from(Float32Array.from([0, 0, 0, 0, 1.1e-6, -0.5, 0])));
+  });
+});
+
+describe('memory', () => {
+  it('a long span is kept as views into the decoded buffer (no second copy)', () => {
+    const rec = impulses(COPY_SPAN_UP_TO_SECONDS + 10, [5, 2 * SR]);
+    const src = trimOriginal(rec, { start: 1, end: COPY_SPAN_UP_TO_SECONDS + 5 });
+    expect(src.channels[0].buffer).toBe(rec.getChannelData(0).buffer);
+    expect(src.channels[1].buffer).toBe(rec.getChannelData(1).buffer);
+    expect(src.offsetFrame).toBe(SR);
+    expect(src.channels[0][SR]).toBe(0.5); // song frame 2 s
+  });
+
+  it('a short span is copied so the full decode can be freed', () => {
+    const rec = impulses(COPY_SPAN_UP_TO_SECONDS + 10, [2 * SR]);
+    const src = trimOriginal(rec, { start: 1, end: 20 });
+    expect(src.channels[0].buffer).not.toBe(rec.getChannelData(0).buffer);
+    expect(src.channels[0].length).toBe(19 * SR + 1);
+  });
+
+  it('a long mono downmix is done in place in channel 0', () => {
+    const rec = impulses(COPY_SPAN_UP_TO_SECONDS + 10, [3 * SR]);
+    rec.getChannelData(1)[3 * SR] = 0.1;
+    const src = trimOriginal(rec, { start: 0, end: COPY_SPAN_UP_TO_SECONDS + 10 }, { mono: true });
+    expect(src.channels.length).toBe(1);
+    expect(src.channels[0].buffer).toBe(rec.getChannelData(0).buffer);
+    expect(src.channels[0][3 * SR]).toBeCloseTo(0.3);
+  });
+
+  it('views and copies mix to the same output', () => {
+    const rec = impulses(COPY_SPAN_UP_TO_SECONDS + 10, [Math.round(20.3 * SR), Math.round(41 * SR)]);
+    const range = { start: 20, end: 45 };
+    const a = render(trimOriginal(rec, neededSpan(range, 2, 1.5), { copyUpToSeconds: 0 }), base, range);
+    const b = render(trimOriginal(rec, neededSpan(range, 2, 1.5), { copyUpToSeconds: 1e9 }), base, range);
+    expect(nonZero(a[0])).toEqual(nonZero(b[0]));
+    expect(nonZero(a[0]).length).toBe(2);
+  });
+});
+
+describe('piano fade on the video timeline', () => {
+  it('with a lead-in the piano fades in with the picture, not after the lead-in', () => {
+    const lead = 2;
+    const tl = exportTimeline({ leadIn: lead, fadeIn: 0.5, fadeOut: 2 }, { start: 1, end: 11 }, 1);
+    // piano output time p is file time lead + p
+    const piano = (p: number) => timelineFadeGain(lead + p, tl.duration, tl.fadeIn, tl.fadeOut);
+    // first piano note at range.start + 0.25 (file time 2.25 s) is at full volume, like the original
+    expect(piano(0.25)).toBe(1);
+    expect(piano(0.25)).toBe(originalEnvelope(lead + 0.25, tl));
+    // the old curve measured from the start of the piano: half volume there
+    expect(ownFadeGain(0.25, tl.duration - lead, 0.5, 2)).toBeCloseTo(0.5);
+    // fade-out: piano, original and picture all reach 0 at the end of the file
+    for (const o of [tl.duration - 1.5, tl.duration - 0.5]) expect(piano(o - lead)).toBeCloseTo(fadeGain(o, tl.duration, 0.5, 2));
+    expect(piano(tl.duration - lead)).toBe(0);
+  });
+});
+
+describe('export range', () => {
+  const song = {
+    duration: 100,
+    arrangements: { hard: { notes: [{ start: 12, dur: 1 }, { start: 14, dur: 1 }] } },
+  } as unknown as Song;
+  const settings = { ...DEFAULT_EXPORT, range: 'full' } as ExportSettings;
+
+  it('full song with piano only starts just before the first note', () => {
+    expect(exportRange({ song, settings, loop: null })).toEqual({ start: 11.75, end: 100 });
+  });
+
+  it('full song with the original starts at 0, so a long intro is kept', () => {
+    expect(exportRange({ song, settings, loop: null }, 'original')).toEqual({ start: 0, end: 100 });
+    expect(exportRange({ song, settings, loop: null }, 'both')).toEqual({ start: 0, end: 100 });
+  });
+
+  it('custom and loop ranges are the same whatever the sound', () => {
+    const custom = { ...settings, range: 'custom', customStart: 20, customEnd: 30 } as ExportSettings;
+    expect(exportRange({ song, settings: custom, loop: null }, 'both')).toEqual({ start: 20, end: 30 });
+    const loop = { ...settings, range: 'loop' } as ExportSettings;
+    expect(exportRange({ song, settings: loop, loop: { start: 5, end: 9 } }, 'original')).toEqual({ start: 5, end: 9 });
+  });
+});
+
+describe('stall guard', () => {
+  it('passes results and errors through', async () => {
+    await expect(guardStep(Promise.resolve(3), undefined, 1000)).resolves.toBe(3);
+    await expect(guardStep(Promise.reject(new Error('x')), undefined, 1000)).rejects.toThrow('x');
+  });
+
+  it('gives up with a plain message when a step never finishes', async () => {
+    const never = new Promise<void>(() => {});
+    await expect(guardStep(never, undefined, 20)).rejects.toThrow(STALL_MESSAGE);
+  });
+
+  it('stops at once when the export is cancelled', async () => {
+    const ac = new AbortController();
+    const p = guardStep(new Promise<void>(() => {}), ac.signal, 60_000);
+    ac.abort();
+    await expect(p).rejects.toMatchObject({ name: 'AbortError' });
+    await expect(guardStep(Promise.resolve(1), ac.signal, 60_000)).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('allows longer files more time to finish', () => {
+    expect(finalizeTimeoutMs(10)).toBeGreaterThanOrEqual(60_000);
+    expect(finalizeTimeoutMs(1200)).toBeGreaterThan(finalizeTimeoutMs(10));
   });
 });
 
