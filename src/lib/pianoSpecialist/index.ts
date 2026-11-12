@@ -97,12 +97,14 @@ function hasSimd(): boolean {
 }
 
 /**
- * Expected seconds per audio minute with `threads` WASM threads; x3 on phones and tablets (their
- * processors, not their memory: a desktop that reports 4 GB runs at desktop speed).
+ * Expected seconds per audio minute with `threads` WASM threads. Phones and tablets get the
+ * single-thread desktop figure: one real iPhone test (an 8-minute piece in about 9 minutes, ~70 s per
+ * minute, 2026-11-12) was a bit faster than that, and older phones are slower.
  */
+export const PHONE_SPEED_FACTOR = 1;
 export function estimateSecondsPerMinute(threads: number, phone = false): number {
   const base = SECONDS_PER_MINUTE[Math.max(1, Math.min(SECONDS_PER_MINUTE.length - 1, Math.round(threads)))];
-  return phone ? base * 3 : base;
+  return phone ? base * PHONE_SPEED_FACTOR : base;
 }
 
 /**
@@ -134,7 +136,7 @@ export function pianoSpecialistSupport(
       reason:
         (!phone && typeof mem === 'number' ? `This device reports ${mem} GB of memory. ` : 'Not recommended on phones and tablets. ') +
         `The piano model needs about ${memoryMB} MB of extra memory for a 4-minute piece (more for longer ones)` +
-        (phone ? ' and several minutes per song here' : '') +
+        (phone ? ' and about a minute per minute of audio here' : '') +
         `, and the browser may reload the page if it runs out. Recordings over ${PTI_CONSTRAINED_MAX_SECONDS / 60} minutes might not work on this device.`,
     };
   }

@@ -73,11 +73,26 @@ IndexedDB stores: `songs`, `summaries` (fast library listing), `audio` (original
 * The renderer binary-searches the first visible note and only draws what is on screen; React never re-renders during playback.
 * Long WAV/video renders are chunked (45–60 s chunks with an 18 s pre-roll so ringing notes and reverb carry across chunk boundaries) and video is streamed to the Origin Private File System, keeping memory bounded.
 
+## Sheet music
+
+`src/lib/sheet/` turns an arrangement into notation in pure TypeScript (unit-tested, no DOM), with our own **MusicXML 4.0** writer as the single source of truth for the screen, the PDF and the MusicXML download:
+
+1. **Grid** (`grid.ts`): measures and a time map from the song's beats (MIDI tempo map or tracked beats; a regular grid when there are none). A MIDI file with one constant tempo that its notes don't follow (a recorded performance with a default 120 BPM header, e.g. MAESTRO) has its beats tracked from the notes instead. Estimated tempos ≥ 180 BPM use every second beat, < 45 BPM add midpoints. Music before the first downbeat becomes an implicit pickup bar.
+2. **Quantize** (`quantize.ts`): each quarter picks the simplest grid that fits its onsets (Easy 8ths, Medium and Hard 16ths, or triplets only when clearly better — the same rule keeps triplets in the Medium arrangement itself), from both hands together. A quickly re-struck note moves to the next grid point instead of being dropped.
+3. **Voices** (`voices.ts`): right hand → treble staff, left hand → bass staff; legato overlaps trimmed; chords; at most two voices per staff (Easy one), a held note keeping its own voice under or over moving notes; when something must stop early, the choice that cuts the least held music; small gaps closed so there are no tiny rests, never across the other voice.
+4. **Rhythm, spelling, clefs** (`rhythm.ts`, `spelling.ts`, `clefs.ts`): note values with at most one dot split at beats and bar lines with ties, beams per beat, spelling on the line of fifths for the key (minor leading tone; never a double sharp or flat, E♯/B♯/F♭/C♭ only when the key has them, no two notes of a chord on one letter), accidentals per bar, clef changes only when they clearly save ledger lines, 8va / 8vb per run of extreme notes.
+
+The Studio draws it with **OpenSheetMusicDisplay** (lazy chunk, ~360 KB gzip): in chunks of whole lines (our own line breaks), the chunk at the playback position first, yielding between chunks — a dense 3-minute Hard song shows its first line in ~40 ms and has no task over ~60 ms once the library is loaded (the first open starts the library: one ~250 ms task). Measure boxes and note positions read from OSMD drive our own cursor and tap-to-seek. Redraws of the same level (new width, zoom, edits) keep the old music on screen until the new one is complete. The **PDF** is drawn one line at a time by OSMD (our line breaks) and packed onto A4/Letter pages by svg2pdf.js into jsPDF (vector, standard fonts; titles outside Windows-1252 are drawn as an image), yielding between lines with a progress bar: a dense 3-minute Hard song takes ~3 s with no task over ~0.35 s. All of this runs under the site's CSP (no `eval`).
+
+## Full screen
+
+The Studio's view (piano roll or sheet music) goes full screen with **F** or its **Full screen** button (`src/components/studio/FullscreenStage.tsx`, rules in `src/lib/fullscreen.ts`): the real Fullscreen API where the browser has it, and on iPhone (no element full screen) a fixed layer over the whole viewport. Only the view and a few overlay controls show (title, Exit, play/pause, position bar, speed); while playing they fade out after 3 s and a tap brings them back. **Esc** (or F again) leaves, and edit mode (**E**) is off in full screen. The piano roll's button sits in its top-right corner; the sheet music has its own toolbar there, so its button is in that toolbar, and in full screen the toolbar moves below the overlay's top row (`--fs-top`). The overlay's position bar seeks like the Studio's (←/→ 5 s, Shift 1 s; Alt/Cmd + arrows are left to the browser). Checked by `node tests/e2e/fullscreen.mjs [--dist DIR]` (iPhone, iPad and desktop; both views).
+
 ## Known limitations
 
 * **Transcription is an estimate.** On solo piano it is good (note-onset F1 ≈ 0.94 on our rendered benchmark); on dense full mixes it is noticeably worse — use the *Full song* preset with "Separate vocals & drums" (in the browser or on the processing server), or edit the result. The UI labels every audio transcription as AI-estimated.
 * Sustain pedal is not transcribed from audio (Basic Pitch doesn't predict it); note durations already include the ringing. MIDI imports keep their pedal.
-* Hand assignment and the Easy/Medium arrangements are heuristics — good starting points, not engraved editions.
+* Hand assignment and the Easy/Medium arrangements are heuristics — good starting points, not engraved editions. The same goes for sheet music written from audio: bar lines depend on the estimated beat and meter, and Hard keeps the performance's timing.
 * YouTube: browsers cannot legally/technically download YouTube media. Use the processing server (your responsibility to use it for content you have rights to) or record the embedded player's tab audio (Chrome/Edge desktop, real time).
 * Video export needs WebCodecs for the fast path; older browsers fall back to real-time WebM recording.
 * Web MIDI is unavailable in Safari; the computer keyboard and on-screen keys work everywhere.

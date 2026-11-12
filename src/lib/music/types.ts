@@ -13,8 +13,10 @@ export interface Note {
   /**
    * Musical role, when known. 'melody' marks notes of the sung melody line extracted from the
    * separated vocal stem: they always sit in the right hand and Easy/Medium are built around them.
+   * 'lead' marks lead-line notes recovered by the "Full song" preset's sensitive pass
+   * (music/leadRecovery.ts): they are shown on Hard only (Easy and Medium are built without them).
    */
-  role?: 'melody';
+  role?: 'melody' | 'lead';
 }
 
 /** Sustain pedal held from `start` to `end` (seconds). */
@@ -36,6 +38,11 @@ export interface TempoInfo {
   /** Beat times in seconds (tracked, may drift with the performance). */
   beats: number[];
   beatsPerBar: number;
+  /**
+   * Note value of one beat (the time signature's lower number). Missing in songs saved before
+   * sheet music existed: means 4, except 6, 9 or 12 beats per bar from a MIDI file mean 8.
+   */
+  beatUnit?: 2 | 4 | 8;
   /** Index into `beats` of the first downbeat. */
   downbeatIndex: number;
   /** 0..1 how confident the tempo estimate is. */
@@ -99,6 +106,14 @@ export interface ExtractionParams {
    * (transcription/noteExtraction.ts REPEAT_JOIN). false turns it off; omitted = on (default).
    */
   joinRepeats?: boolean;
+  /** Drop ghost notes in near-silence (music/cleanup.ts TAIL_GATE). false turns it off; omitted = on. */
+  tailGate?: boolean;
+  /**
+   * Lead-line recovery (music/leadRecovery.ts): a second, more sensitive extraction of the same
+   * posteriors (transcription/pipeline.ts LEAD_PASS, read at run time) whose notes are kept only
+   * where the instruments' tune line goes through them; Hard-only. Omitted / false = off.
+   */
+  leadPass?: boolean;
 }
 
 export interface TranscriptionInfo {
@@ -116,7 +131,14 @@ export interface TranscriptionInfo {
   processingMs?: number;
   separated?: boolean;
   /** Source separation that ran before transcription (SCNet, in the browser or on the server). */
-  separation?: { engine: 'scnet-browser' | 'scnet-server'; vocals: boolean; ms: number; threads?: number };
+  separation?: {
+    engine: 'scnet-browser' | 'scnet-server';
+    vocals: boolean;
+    /** no singing, or no melody line from it: the vocal stem was transcribed together with the accompaniment (pipeline.ts vocalsIntoAccomp) */
+    vocalsInAccomp?: boolean;
+    ms: number;
+    threads?: number;
+  };
   warnings: string[];
   /** Rough 0..1 indicator of how clean the model output was (mean peak note confidence). */
   confidence?: number;

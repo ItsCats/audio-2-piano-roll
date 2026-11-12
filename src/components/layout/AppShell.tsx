@@ -5,6 +5,7 @@ import { Toaster } from './Toaster';
 import { useStudio } from '../../state/studioStore';
 import { ImportStatusPill } from '../import/ImportStatusPill';
 import { InterruptedImportNotice } from '../import/InterruptedImportNotice';
+import { useStageFullscreen } from '../../state/fullscreenStore';
 
 export function Logo({ compact }: { compact?: boolean }) {
   return (
@@ -23,6 +24,8 @@ export function AppShell() {
   const songId = useStudio((s) => s.song?.id);
   const location = useLocation();
   const inStudio = location.pathname.startsWith('/studio');
+  // the Studio's full screen: hide the app's navigation (sidebar, bottom tabs)
+  const chromeHidden = useStageFullscreen((s) => s.mode !== 'off');
   const nav = [
     { to: '/', label: 'Home', icon: Home, end: true },
     { to: '/import', label: 'Import Music', icon: Upload },
@@ -34,7 +37,8 @@ export function AppShell() {
     <div className="flex h-dvh w-full flex-col md:flex-row">
       <aside
         className={cn(
-          'hidden shrink-0 flex-col border-r border-ink-800 bg-ink-900/80 md:flex',
+          'hidden shrink-0 flex-col border-r border-ink-800 bg-ink-900/80',
+          !chromeHidden && 'md:flex',
           inStudio ? 'w-[68px] items-center' : 'w-[232px]',
         )}
       >
@@ -92,7 +96,7 @@ export function AppShell() {
         <Outlet />
       </main>
       {/* mobile bottom navigation */}
-      <nav className="flex h-14 shrink-0 items-stretch border-t border-ink-800 bg-ink-900 md:hidden" aria-label="Main">
+      <nav className={cn('h-14 shrink-0 items-stretch border-t border-ink-800 bg-ink-900 md:hidden', chromeHidden ? 'hidden' : 'flex')} aria-label="Main">
         {nav.map(({ to, label, icon: Icon, end }) => (
           <NavLink
             key={label}

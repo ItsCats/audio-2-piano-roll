@@ -10,7 +10,14 @@
  *   3. The muxed file is streamed to the Origin Private File System when available, so
  *      long exports don't have to fit in RAM.
  *
- * Fallback (no WebCodecs): real-time capture with MediaRecorder (WebM).
+ * Optional original recording (songs imported from audio): decoded once at 48 kHz and added
+ * sample by sample at the song time the picture shows (src/lib/export/originalMix.ts). Only at
+ * 100 % speed; it is dropped before the video frames are drawn.
+ *
+ * Optional title page / end card (src/lib/render/titleCard/exportHooks.ts): the roll export is
+ * unchanged; the cards wrap its audio and video tracks (everything moves by the title's length).
+ *
+ * Fallback (no WebCodecs): real-time capture with MediaRecorder (WebM), piano only.
  */
 import {
   ALL_FORMATS,
@@ -37,11 +44,31 @@ import { PianoRollRenderer } from '../render/renderer';
 import { renderOfflineChunks } from '../audio/offlineRender';
 import { PianoEngine } from '../audio/pianoEngine';
 import { buildEvents } from '../audio/events';
-import { getMedia } from '../storage/db';
-import { outputSize, type ExportSettings } from './types';
+import { getAudio, getMedia } from '../storage/db';
+import { decodeToRate } from '../transcription/decode';
+import { isMemoryConstrained, pageDeviceInfo } from '../transcription/backendChoice';
+import { outputSize, type ExportSettings, type ExportSound } from './types';
+import { prepareTitleCards, type TitleCardJob } from '../render/titleCard/exportHooks';
+import { STEP_TIMEOUT_MS, abortError, finalizeTimeoutMs, guardStep } from './guard';
+import {
+  EXPORT_SAMPLE_RATE,
+  createLimiter,
+  effectiveRate,
+  effectiveSound,
+  exportTimeline,
+  fadeGain,
+  flushTinyInPlace,
+  mixOriginal,
+  neededSpan,
+  originalGain,
+  shouldDownmix,
+  trimOriginal,
+  type ExportTimeline,
+  type OriginalSource,
+} from './originalMix';
 
 export interface ExportProgress {
-  phase: 'preparing' | 'audio' | 'video' | 'finalizing';
+  phase: 'preparing' | 'original' | 'audio' | 'video' | 'finalizing';
   fraction: number; // overall 0..1
   framesDone?: number;
   framesTotal?: number;
@@ -59,6 +86,8 @@ export interface ExportResult {
   height: number;
   duration: number;
   method: 'webcodecs' | 'mediarecorder';
+  /** what the sound track holds */
+  sound: ExportSound;
 }
 
 export interface ExportJob {
@@ -68,21 +97,81 @@ export interface ExportJob {
   audio: AudioSettings;
   settings: ExportSettings;
   loop: { start: number; end: number } | null;
+  /** optional title page / end card; absent = no change */
+  titleCard?: TitleCardJob;
   signal?: AbortSignal;
   onProgress?: (p: ExportProgress) => void;
+  /** loads the song's original recording (default: from storage); a test hook */
+  loadOriginal?: () => Promise<Blob | undefined>;
+}
+
+/** What the exported sound track holds for this job (piano only without WebCodecs or a recording). */
+export function jobSound(job: Pick<ExportJob, 'song' | 'settings'>) {
+  return effectiveSound(job.settings, { hasOriginal: !!job.song.hasAudio, webCodecs: webCodecsAvailable() });
+}
+
+export { STALL_MESSAGE } from './guard';
+export const NO_ORIGINAL_MESSAGE = 'The original recording for this song is no longer saved. Choose “Piano” to export without it.';
+export const ORIGINAL_DECODE_MESSAGE = 'Couldn’t load the original song on this device. Choose “Piano” to export without it.';
+/**
+ * Best effort: stops a stuck audio encoder (the WASM AAC encoder runs in a worker that would keep
+ * running until the tab closes). Uses mediabunny internals, so every step is optional.
+ */
+function forceStopAudioEncoder(src: AudioSampleSource): void {
+  try {
+    const enc = (src as unknown as { _encoder?: { customEncoder?: { worker?: { terminate?: () => void } | null } | null; encoder?: { state?: string; close?: () => void } | null } })._encoder;
+    enc?.customEncoder?.worker?.terminate?.();
+    if (enc?.encoder && enc.encoder.state !== 'closed') enc.encoder.close?.();
+  } catch {
+    /* ignore */
+  }
+}
+
+/** output.cancel() waits for encoders to flush; a stuck one never does, so don't wait long */
+async function cancelOutput(output: Output): Promise<void> {
+  await Promise.race([output.cancel().catch(() => {}), new Promise((r) => setTimeout(r, 3000))]);
+}
+
+/** Decodes the original recording at the export rate and keeps only the part this export can hear. */
+async function loadOriginalSource(job: ExportJob, range: { start: number; end: number }, tl: ExportTimeline): Promise<OriginalSource> {
+  let blob: Blob | undefined;
+  try {
+    blob = await (job.loadOriginal ?? (() => getAudio(job.song.id)))();
+  } catch {
+    blob = undefined;
+  }
+  if (!blob) throw new Error(NO_ORIGINAL_MESSAGE);
+  if (job.signal?.aborted) throw abortError();
+  let buffer: AudioBuffer | null;
+  try {
+    buffer = await decodeToRate(blob, tl.sr);
+  } catch (e) {
+    throw new Error(ORIGINAL_DECODE_MESSAGE, { cause: e });
+  }
+  blob = undefined;
+  const device = pageDeviceInfo();
+  const mono = shouldDownmix(buffer.duration, buffer.numberOfChannels, !!device && isMemoryConstrained(device));
+  const src = trimOriginal(buffer, neededSpan(range, tl.lead, tl.tail, tl.rate), { mono });
+  buffer = null; // only the part this export hears is kept
+  return src;
 }
 
 export function webCodecsAvailable(): boolean {
   return typeof VideoEncoder !== 'undefined' && typeof AudioEncoder !== 'undefined' && typeof OffscreenCanvas !== 'undefined';
 }
 
-export function exportRange(job: Pick<ExportJob, 'song' | 'settings' | 'loop'>): { start: number; end: number } {
+/**
+ * Song-time range shown in the video. `sound` is what the sound track holds: with the original
+ * recording, "Full song" starts at 0 so a long intro before the first note is kept.
+ */
+export function exportRange(job: Pick<ExportJob, 'song' | 'settings' | 'loop'>, sound: ExportSound = 'piano'): { start: number; end: number } {
   const s = job.settings;
   if (s.range === 'loop' && job.loop) return { start: job.loop.start, end: job.loop.end };
   if (s.range === 'custom') {
     const start = Math.max(0, Math.min(s.customStart, job.song.duration));
     return { start, end: Math.max(start + 1, Math.min(s.customEnd, job.song.duration)) };
   }
+  if (sound !== 'piano') return { start: 0, end: job.song.duration };
   // full song: trim leading silence
   const notes = job.song.arrangements.hard.notes;
   const first = notes.length ? Math.min(...notes.slice(0, 50).map((n) => n.start)) : 0;
@@ -240,18 +329,27 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
   progress({ phase: 'preparing', fraction: 0 });
   const { width, height } = outputSize(s);
   const fps = s.fps;
-  const range = exportRange(job);
-  const rate = s.rate;
-  const lead = Math.max(0, s.leadIn);
-  const tail = Math.max(1.5, s.fadeOut);
-  const musicDur = (range.end - range.start) / rate;
-  const duration = lead + musicDur + tail;
+  const sound = jobSound(job);
+  const range = exportRange(job, sound);
+  const rate = effectiveRate(s, sound);
+  const sr = EXPORT_SAMPLE_RATE;
+  const tl = exportTimeline(s, range, rate, sr);
+  const { lead, tail, duration } = tl;
   const totalFrames = Math.ceil(duration * fps);
   const bitrate = bitrateFor(width, height, fps, s.quality);
 
   const { videoCodec, audioCodec } = await pickCodecs(s.format, width, height, bitrate);
   if (!videoCodec) throw new Error(`This browser cannot encode ${s.format.toUpperCase()} video at ${width}×${height}. Try WebM or a lower resolution.`);
   if (!audioCodec) throw new Error('This browser cannot encode audio for this format. Try WebM.');
+
+  // the original recording is decoded before the output file exists, so a failure leaves nothing behind
+  let orig: OriginalSource | null = null;
+  if (sound !== 'piano') {
+    progress({ phase: 'original', fraction: 0.005 });
+    orig = await loadOriginalSource(job, range, tl);
+    if (signal?.aborted) throw abortError();
+  }
+  const origGain = originalGain(s, job.audio.originalVolume);
 
   const ext = s.format;
   const mime = s.format === 'mp4' ? 'video/mp4' : 'video/webm';
@@ -268,15 +366,20 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
   const arr = song.arrangements[job.difficulty];
   renderer.setNotes(arr.notes, arr.pedal, song.tempo, song.key);
 
-  const videoSource = new CanvasSource(canvas, {
+  const videoTrack = new CanvasSource(canvas, {
     codec: videoCodec,
     bitrate,
     keyFrameInterval: 2,
     latencyMode: 'quality',
   });
-  output.addVideoTrack(videoSource, { frameRate: fps });
-  const audioSource = new AudioSampleSource({ codec: audioCodec, bitrate: 192e3 });
-  output.addAudioTrack(audioSource);
+  output.addVideoTrack(videoTrack, { frameRate: fps });
+  const audioTrack = new AudioSampleSource({ codec: audioCodec, bitrate: 192e3 });
+  output.addAudioTrack(audioTrack);
+  // ---- title page / end card: wrap the tracks (null when off, then nothing changes) ----
+  const cards = await prepareTitleCards(job.titleCard, { width, height, fps, visual, canvas, renderer, rollFrames: totalFrames, signal, guard: (step) => guardStep(step, signal, STEP_TIMEOUT_MS), sampleRate: 48000, onFrame: (done, total, part) => progress({ phase: 'video', fraction: part === 'end' ? 0.98 : 0.18, framesDone: done, framesTotal: total }) });
+  const videoSource = cards ? cards.video(videoTrack) : videoTrack;
+  const audioSource = cards ? cards.audio(audioTrack) : audioTrack;
+  const picFadeIn = cards?.timeline.intro ? 0 : s.fadeIn; // the title page crossfades into the roll instead
   await output.start();
 
   let bg: BackgroundProvider | null = null;
@@ -285,44 +388,66 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
     decal = await loadDecalBitmap(visual);
     applyDecal(renderer, decal);
     // ---------- audio ----------
-    const sr = 48000;
     const audioWeight = 0.18;
-    // lead-in silence
-    if (lead > 0) {
-      const frames = Math.round(lead * sr);
-      const data = new Float32Array(frames * 2);
-      const silence = new AudioSample({ data, format: 'f32-planar', numberOfChannels: 2, sampleRate: sr, timestamp: 0 });
-      await audioSource.add(silence);
-      silence.close();
-    }
-    await renderOfflineChunks(
-      {
-        notes: arr.notes,
-        pedal: arr.pedal,
-        settings: job.audio,
-        start: range.start,
-        end: range.end,
-        rate,
-        sampleRate: sr,
-        volume: s.volume,
-        fadeIn: s.fadeIn,
-        fadeOut: s.fadeOut,
-        tail,
-        chunkSeconds: 45,
-        signal,
-        onProgress: (f) => progress({ phase: 'audio', fraction: f * audioWeight }),
-      },
-      async (buf, from, to, offset) => {
-        const n = to - from;
-        const data = new Float32Array(n * 2);
-        data.set(buf.getChannelData(0).subarray(from, to), 0);
-        data.set(buf.getChannelData(1).subarray(from, to), n);
-        const sample = new AudioSample({ data, format: 'f32-planar', numberOfChannels: 2, sampleRate: sr, timestamp: lead + offset });
-        await audioSource.add(sample);
+    const limiter = orig ? createLimiter(sr) : null;
+    // planar stereo block at output frame `outFrame0`, with the original mixed in when used
+    const addBlock = async (data: Float32Array, n: number, outFrame0: number, timestamp: number) => {
+      const chans = [data.subarray(0, n), data.subarray(n, 2 * n)];
+      if (orig) {
+        mixOriginal(chans, outFrame0, n, orig, tl, origGain);
+        limiter!.process(chans);
+      }
+      // the WASM AAC encoder can stall forever on some near-silent content; values this small are inaudible
+      if (audioCodec === 'aac') for (const c of chans) flushTinyInPlace(c);
+      const sample = new AudioSample({ data, format: 'f32-planar', numberOfChannels: 2, sampleRate: sr, timestamp });
+      try {
+        await guardStep(audioSource.add(sample), signal, STEP_TIMEOUT_MS);
+      } finally {
         sample.close();
-      },
-    );
+      }
+    };
+    // lead-in: silence, or the original from before range.start
+    if (lead > 0) await addBlock(new Float32Array(tl.leadFrames * 2), tl.leadFrames, 0, 0);
+    if (sound === 'original') {
+      // no piano: the same 45 s pieces, holding only the original
+      const chunk = 45 * sr;
+      for (let f0 = 0; f0 < tl.bodyFrames; f0 += chunk) {
+        if (signal?.aborted) throw abortError();
+        const n = Math.min(chunk, tl.bodyFrames - f0);
+        await addBlock(new Float32Array(n * 2), n, tl.leadFrames + f0, lead + f0 / sr);
+        progress({ phase: 'audio', fraction: ((f0 + n) / tl.bodyFrames) * audioWeight });
+      }
+    } else {
+      await renderOfflineChunks(
+        {
+          notes: arr.notes,
+          pedal: arr.pedal,
+          settings: job.audio,
+          start: range.start,
+          end: range.end,
+          rate,
+          sampleRate: sr,
+          volume: s.volume,
+          fadeIn: s.fadeIn,
+          fadeOut: s.fadeOut,
+          // fades follow the picture: measured from the start of the file, not of the piano (after the lead-in)
+          fadeTimeline: { offset: lead, duration },
+          tail,
+          chunkSeconds: 45,
+          signal,
+          onProgress: (f) => progress({ phase: 'audio', fraction: f * audioWeight }),
+        },
+        async (buf, from, to, offset) => {
+          const n = to - from;
+          const data = new Float32Array(n * 2);
+          data.set(buf.getChannelData(0).subarray(from, to), 0);
+          data.set(buf.getChannelData(1).subarray(from, to), n);
+          await addBlock(data, n, tl.leadFrames + Math.round(offset * sr), lead + offset);
+        },
+      );
+    }
     audioSource.close();
+    orig = null; // free the decoded recording before any frame is drawn
 
     // ---------- video ----------
     const songTimeAt = (o: number) => range.start + (o - lead) * rate;
@@ -331,20 +456,22 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
     });
     const t0 = performance.now();
     for (let i = 0; i < totalFrames; i++) {
-      if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
+      if (signal?.aborted) throw abortError();
       const o = i / fps;
       if (bg.kind) renderer.setBackgroundMedia(await bg.frameAt(o), bg.kind);
       renderer.render({ time: songTimeAt(o) });
       // fade the picture in/out with the audio
-      const fade = Math.min(1, s.fadeIn > 0 ? o / s.fadeIn : 1, s.fadeOut > 0 ? (duration - o) / s.fadeOut : 1);
+      const fade = fadeGain(o, duration, picFadeIn, s.fadeOut);
       if (fade < 1) {
         const ctx = canvas.getContext('2d')!;
-        ctx.fillStyle = `rgba(0,0,0,${1 - Math.max(0, fade)})`;
+        ctx.fillStyle = `rgba(0,0,0,${1 - fade})`;
         ctx.fillRect(0, 0, width, height);
       }
-      await videoSource.add(o, 1 / fps);
+      // the title page goes first, each of its frames under its own time limit (not all of them under this frame's)
+      if (i === 0) await cards?.intro();
+      await guardStep(videoSource.add(o, 1 / fps), signal, STEP_TIMEOUT_MS);
       if (i % 15 === 0 || i === totalFrames - 1) {
-        const elapsed = (performance.now() - t0) / 1000;
+        const elapsed = (performance.now() - t0 - (cards?.introMs ?? 0)) / 1000; // without the title page frames
         const rfps = (i + 1) / Math.max(0.001, elapsed);
         progress({
           phase: 'video',
@@ -356,20 +483,25 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
         });
       }
     }
+    await cards?.finish(); // end card frames (each encoder step guarded inside)
     videoSource.close();
     progress({ phase: 'finalizing', fraction: 0.99 });
-    await output.finalize();
+    await guardStep(output.finalize(), signal, finalizeTimeoutMs(cards ? cards.total : duration));
     const blob = await getBlob(mime);
     progress({ phase: 'finalizing', fraction: 1 });
-    return { blob, mime, extension: ext, videoCodec, audioCodec, width, height, duration, method: 'webcodecs' };
+    return { blob, mime, extension: ext, videoCodec, audioCodec, width, height, duration: cards ? cards.total : duration, method: 'webcodecs', sound };
   } catch (err) {
-    await output.cancel().catch(() => {});
+    // the real track, not the title-card wrapper (which has no encoder of its own)
+    forceStopAudioEncoder(audioTrack);
+    await cancelOutput(output);
     await cleanup();
     throw err;
   } finally {
+    orig = null;
     bg?.dispose();
     renderer.setDecalImage(null);
     decal?.close();
+    cards?.dispose();
   }
 }
 
@@ -398,10 +530,16 @@ async function exportWithMediaRecorder(job: ExportJob): Promise<ExportResult> {
   if (bg.kind === 'image') renderer.setBackgroundMedia(await bg.frameAt(0), 'image');
   const decal = await loadDecalBitmap(visual);
   applyDecal(renderer, decal);
+  // title page / end card, drawn in real time around the roll (null when off)
+  const cards = await prepareTitleCards(job.titleCard, { width, height, fps: s.fps, visual, canvas, renderer, rollFrames: Math.ceil(duration * s.fps), signal });
+  const intro = cards?.timeline.intro ?? 0;
+  const rollEnd = intro + duration;
+  const total = rollEnd + (cards?.timeline.outro ?? 0);
   const disposeVisuals = () => {
     bg.dispose();
     renderer.setDecalImage(null);
     decal?.close();
+    cards?.dispose();
   };
 
   // audio graph + capture stream: released in `finally` so a cancelled or failed export doesn't leak a running AudioContext
@@ -426,10 +564,19 @@ async function exportWithMediaRecorder(job: ExportJob): Promise<ExportResult> {
     const startCtx = ac.currentTime + 0.3;
     for (const e of buildEvents(arr.notes, arr.pedal, { L: true, R: true })) {
       if (e.t < range.start || e.t > range.end + 10) continue;
-      const when = startCtx + lead + (e.t - range.start) / rate;
+      const when = startCtx + intro + lead + (e.t - range.start) / rate;
       if (e.kind === 'on') engine.noteOn(e.midi, e.vel, when, e.tag);
       else if (e.kind === 'off') engine.noteOff(e.midi, when, e.tag);
       else engine.setPedal(e.down, when);
+    }
+    if (cards && intro > 0) {
+      renderer.render({ time: range.start - lead * rate });
+      cards.captureRollFirst();
+    }
+    // the end card is silent: cut the sound (notes and pedal tails) where the roll ends
+    if (cards && cards.timeline.outro > 0) {
+      gain.gain.setValueAtTime(s.volume, startCtx + rollEnd - 0.05);
+      gain.gain.linearRampToValueAtTime(0, startCtx + rollEnd);
     }
     rec.start(1000);
     await new Promise<void>((resolve, reject) => {
@@ -440,9 +587,12 @@ async function exportWithMediaRecorder(job: ExportJob): Promise<ExportResult> {
           return;
         }
         const o = ac.currentTime - startCtx;
-        renderer.render({ time: range.start + (o - lead) * rate });
-        job.onProgress?.({ phase: 'video', fraction: Math.max(0, Math.min(1, o / duration)) });
-        if (o >= duration) resolve();
+        const c2d = canvas.getContext('2d')!;
+        if (cards && o < intro) cards.drawIntro(c2d, Math.max(0, o));
+        else if (cards && o >= rollEnd) cards.drawOutro(c2d, o - rollEnd);
+        else renderer.render({ time: range.start + (o - intro - lead) * rate });
+        job.onProgress?.({ phase: 'video', fraction: Math.max(0, Math.min(1, o / total)) });
+        if (o >= total) resolve();
         else requestAnimationFrame(frame);
       };
       requestAnimationFrame(frame);
@@ -460,8 +610,9 @@ async function exportWithMediaRecorder(job: ExportJob): Promise<ExportResult> {
       audioCodec: 'opus',
       width,
       height,
-      duration,
+      duration: total,
       method: 'mediarecorder',
+      sound: 'piano',
     };
   } finally {
     stream?.getTracks().forEach((t) => t.stop());

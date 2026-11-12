@@ -7,11 +7,14 @@ import { KEYBOARD_THEMES, VISUAL_THEMES, applyTheme, type DecalSource, type Keyb
 import { Button, ColorInput, Section, Segmented, Select, Slider, Toggle, cn } from '../../ui';
 import { deleteMedia, listMedia, newId, saveMedia, type MediaItem } from '../../../lib/storage/db';
 import { toast } from '../../../state/toastStore';
+import { useTitleCard } from '../../../state/titleCardStore';
+import { useCanvasRestored } from '../useCanvasRestored';
 
 const MAX_MEDIA = 200 * 1024 * 1024;
 
 function PresetThumb({ id, active, onClick, name }: { id: string; active: boolean; onClick: () => void; name: string }) {
   const ref = useRef<HTMLCanvasElement>(null);
+  const restored = useCanvasRestored(ref);
   useEffect(() => {
     const c = ref.current;
     if (!c) return;
@@ -19,7 +22,7 @@ function PresetThumb({ id, active, onClick, name }: { id: string; active: boolea
     c.height = 54;
     const p = BACKGROUND_PRESETS.find((b) => b.id === id);
     if (p) p.draw(c.getContext('2d')!, 96, 54);
-  }, [id]);
+  }, [id, restored]);
   return (
     <button
       onClick={onClick}
@@ -39,6 +42,7 @@ const THUMB_TILE = 256;
 /** Draws a pattern tile into a small canvas, clipped like a note with a glowing outline. */
 function PatternThumb({ id, name, active, onClick }: { id: string; name: string; active: boolean; onClick: () => void }) {
   const ref = useRef<HTMLCanvasElement>(null);
+  const restored = useCanvasRestored(ref);
   useEffect(() => {
     const c = ref.current;
     if (!c) return;
@@ -59,7 +63,7 @@ function PatternThumb({ id, name, active, onClick }: { id: string; name: string;
       ctx.fillStyle = '#1b1b22';
       ctx.fillRect(0, 0, S, S);
     }
-  }, [id]);
+  }, [id, restored]);
   return (
     <button
       type="button"
@@ -81,6 +85,7 @@ function PatternThumb({ id, name, active, onClick }: { id: string; name: string;
 /** Tiny inline swatch of a pattern (used on theme buttons). */
 function PatternSwatch({ id }: { id: string }) {
   const ref = useRef<HTMLCanvasElement>(null);
+  const restored = useCanvasRestored(ref);
   useEffect(() => {
     const c = ref.current;
     if (!c) return;
@@ -88,7 +93,7 @@ function PatternSwatch({ id }: { id: string }) {
     c.height = 32;
     const tile = getPatternTile(id, 128);
     if (tile) c.getContext('2d')?.drawImage(tile as CanvasImageSource, 0, 0, 128, 128, 0, 0, 32, 32);
-  }, [id]);
+  }, [id, restored]);
   return <canvas ref={ref} className="h-4 w-4 rounded-[4px] ring-1 ring-white/40" aria-hidden />;
 }
 
@@ -96,7 +101,7 @@ function PatternSwatch({ id }: { id: string }) {
  * What an upload was added for. Stored as an extra field on the IndexedDB record (structured clone keeps it);
  * records without one predate decals and count as backgrounds.
  */
-type MediaPurpose = 'background' | 'decal';
+export type MediaPurpose = 'background' | 'decal' | 'title';
 type PickerMedia = MediaItem & { purpose?: MediaPurpose };
 
 // Background and decal pickers share the media store; this lets each list refresh when the other changes it.
@@ -107,12 +112,13 @@ const notifyMedia = () => mediaListeners.forEach((f) => f());
  * Upload button + list of stored images/videos. Used by both the background and the note-decal
  * pickers; each passes its own selection so they stay independent.
  */
-function MediaPicker({
+export function MediaPicker({
   kind,
   purpose,
   selectedId,
   onSelect,
   what,
+  prepare,
 }: {
   kind: 'image' | 'video';
   /** only files uploaded for this purpose are listed (plus the current selection) */
@@ -121,6 +127,8 @@ function MediaPicker({
   onSelect: (id: string | null) => void;
   /** user-facing noun for error messages, e.g. "background" or "decal" */
   what: string;
+  /** turns the chosen file into what is stored (e.g. a downscaled copy); runs on this device only */
+  prepare?: (f: File) => Promise<{ blob: Blob; type: string }>;
 }) {
   const [items, setItems] = useState<PickerMedia[]>([]);
   const input = useRef<HTMLInputElement>(null);
@@ -144,8 +152,9 @@ function MediaPicker({
       toast.error('File too large', `${what[0].toUpperCase()}${what.slice(1)}s are limited to 200 MB.`);
       return;
     }
-    const item: PickerMedia = { id: newId(), name: f.name, type: f.type, kind, blob: f, createdAt: Date.now(), purpose };
     try {
+      const stored = prepare ? await prepare(f) : { blob: f, type: f.type };
+      const item: PickerMedia = { id: newId(), name: f.name, type: stored.type, kind, blob: stored.blob, createdAt: Date.now(), purpose };
       await saveMedia(item);
       onSelect(item.id);
       notifyMedia();
@@ -159,6 +168,7 @@ function MediaPicker({
     const st = useSettings.getState();
     if (st.visual.background.mediaId === m.id) st.setBackground({ mediaId: null });
     if (st.visual.decal.mediaId === m.id) st.setDecal({ mediaId: null });
+    useTitleCard.getState().forgetMedia(m.id);
     notifyMedia();
   };
   const list = items.filter((i) => i.kind === kind && ((i.purpose ?? 'background') === purpose || i.id === selectedId));

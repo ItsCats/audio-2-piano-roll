@@ -18,7 +18,13 @@ export interface ExportSettings {
   leadIn: number;
   quality: 'standard' | 'high';
   keyboardRange: 'match' | 'auto' | 'full';
+  /** what the video's sound track holds: the app's piano, the song's original recording, or both */
+  sound: ExportSound;
+  /** volume of the original recording (undefined = follow the Studio's "Original" setting) */
+  originalVolume?: number;
 }
+
+export type ExportSound = 'piano' | 'original' | 'both';
 
 export const DEFAULT_EXPORT: ExportSettings = {
   resolution: 1080,
@@ -36,6 +42,7 @@ export const DEFAULT_EXPORT: ExportSettings = {
   leadIn: 2,
   quality: 'high',
   keyboardRange: 'match',
+  sound: 'piano',
 };
 
 export function outputSize(s: Pick<ExportSettings, 'resolution' | 'orientation'>): { width: number; height: number } {

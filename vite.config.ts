@@ -3,6 +3,10 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import type { Plugin } from 'vite';
+import { fileURLToPath } from 'node:url';
+
+// jsPDF's optional helpers, only used by features we never call (doc.html, addSvgAsImage)
+const jspdfStub = fileURLToPath(new URL('./src/lib/sheet/stub.ts', import.meta.url));
 
 /**
  * Cross-origin isolation for the dev and preview servers, mirroring netlify.toml: the app routes'
@@ -39,6 +43,7 @@ function crossOriginIsolation(): Plugin {
 export default defineConfig({
   plugins: [react(), tailwindcss(), crossOriginIsolation()],
   worker: { format: 'es' },
+  resolve: { alias: { html2canvas: jspdfStub, dompurify: jspdfStub, canvg: jspdfStub } },
   optimizeDeps: {
     include: [
       '@tensorflow/tfjs-core',
@@ -48,6 +53,12 @@ export default defineConfig({
       '@tensorflow/tfjs-backend-wasm',
       'mediabunny',
       '@tonejs/midi',
+      // UMD bundle; loaded lazily by the sheet-music view (src/lib/sheet/render.ts)
+      'opensheetmusicdisplay',
+      // loaded lazily for the sheet-music PDF (src/lib/sheet/pdf.ts); found late otherwise, and the
+      // dev server then fails the import with 504 "Outdated Optimize Dep"
+      'jspdf',
+      'svg2pdf.js',
     ],
     // onnxruntime-web (SCNet separation worker) ships ready ESM; pre-bundling it breaks its WASM loader.
     // Its .wasm is imported with ?url (src/lib/separation/scnet.worker.ts), so it is served from our

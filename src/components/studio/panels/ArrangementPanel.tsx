@@ -4,7 +4,7 @@ import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, Wand2 } from 'lucide-r
 import { useStudio } from '../../../state/studioStore';
 import { detectionParams } from '../../../state/settingsStore';
 import { getPosteriors } from '../../../lib/storage/db';
-import { redetectNotes, EXTRACTION_PRESETS } from '../../../lib/transcription/pipeline';
+import { redetectNotes, withLeadPass, EXTRACTION_PRESETS } from '../../../lib/transcription/pipeline';
 import { regularBeats } from '../../../lib/music/beats';
 import { detectKey } from '../../../lib/music/theory';
 import { generateAllArrangements } from '../../../lib/music/difficulty';
@@ -57,7 +57,7 @@ export function ArrangementPanel() {
   const replaceSong = useStudio((s) => s.replaceSong);
   const regenerateLevels = useStudio((s) => s.regenerateLevels);
   const difficulty = useStudio((s) => s.difficulty);
-  const [params, setParams] = useState<ExtractionParams>(() => song.transcription.params ?? detectionParams());
+  const [params, setParams] = useState<ExtractionParams>(() => withLeadPass(song.transcription.params ?? detectionParams()));
   const [busy, setBusy] = useState(false);
   const [bpm, setBpm] = useState(String(song.tempo.bpm));
   const t = song.transcription;

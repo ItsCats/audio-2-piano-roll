@@ -6,6 +6,8 @@ import { useSettings } from '../../state/settingsStore';
 import { currentArrangement, useStudio } from '../../state/studioStore';
 import { formatTime } from '../../lib/music/theory';
 import { IconButton, cn } from '../ui';
+import { arrowSeekDelta } from '../../state/studioKeys';
+import { useCanvasRestored } from './useCanvasRestored';
 
 const SPEEDS = [0.25, 0.5, 0.6, 0.75, 0.85, 1, 1.15, 1.25, 1.5, 2];
 
@@ -13,6 +15,7 @@ function Minimap({ duration }: { duration: number }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const arr = useStudio(currentArrangement);
   const visual = useSettings((s) => s.visual);
+  const restored = useCanvasRestored(ref);
   useEffect(() => {
     const c = ref.current;
     if (!c || !arr) return;
@@ -38,7 +41,7 @@ function Minimap({ duration }: { duration: number }) {
       ctx.globalAlpha = 0.55;
       ctx.fillRect(x, y - dpr, w, 2 * dpr);
     }
-  }, [arr, duration, visual.leftColor, visual.rightColor]);
+  }, [arr, duration, visual.leftColor, visual.rightColor, restored]);
   return <canvas ref={ref} className="pointer-events-none absolute inset-0 h-full w-full" />;
 }
 
@@ -67,7 +70,12 @@ export function Transport() {
       const f = duration ? Math.min(1, time / duration) : 0;
       if (headRef.current) headRef.current.style.left = `${f * 100}%`;
       if (fillRef.current) fillRef.current.style.width = `${f * 100}%`;
-      if (timeRef.current) timeRef.current.textContent = formatTime(time);
+      const text = formatTime(time);
+      if (timeRef.current && timeRef.current.textContent !== text) {
+        timeRef.current.textContent = text;
+        barRef.current?.setAttribute('aria-valuenow', String(Math.round(time)));
+        barRef.current?.setAttribute('aria-valuetext', text);
+      }
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
@@ -139,10 +147,16 @@ export function Transport() {
           aria-label="Song position (shift-drag to set a loop)"
           aria-valuemin={0}
           aria-valuemax={Math.round(duration)}
+          aria-valuenow={0}
+          aria-valuetext="0:00"
           tabIndex={0}
           onKeyDown={(e) => {
-            if (e.key === 'ArrowRight') player.seek(player.getTime() + 5);
-            if (e.key === 'ArrowLeft') player.seek(player.getTime() - 5);
+            const delta = arrowSeekDelta(e);
+            if (delta === null) return;
+            // handled here only: stop the page-wide shortcut from seeking a second time
+            e.preventDefault();
+            e.stopPropagation();
+            player.seek(player.getTime() + delta);
           }}
         >
           <Minimap duration={duration || 1} />

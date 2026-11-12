@@ -4,17 +4,49 @@ import { Button, Modal, ProgressBar, Segmented, Select, Slider, Toggle, Badge, c
 import { useSettings } from '../../state/settingsStore';
 import { useStudio } from '../../state/studioStore';
 import { useTransport } from '../../state/transportStore';
-import { EXPORT_PRESETS, outputSize, type ExportSettings } from '../../lib/export/types';
+import { EXPORT_PRESETS, outputSize, type ExportSettings, type ExportSound } from '../../lib/export/types';
 import { exportRange, exportVideo, exportVisual, webCodecsAvailable, type ExportProgress, type ExportResult } from '../../lib/export/videoExport';
+import { effectiveRate, effectiveSound, exportTimeline, originalGain } from '../../lib/export/originalMix';
 import { PianoRollRenderer } from '../../lib/render/renderer';
 import { VISUAL_THEMES, applyTheme } from '../../lib/render/settings';
 import { downloadBlob, safeFileName } from '../../lib/export/downloads';
 import { formatTime } from '../../lib/music/theory';
-import { getMedia } from '../../lib/storage/db';
+import { getMedia, hasStoredAudio } from '../../lib/storage/db';
 import { newId } from '../../lib/storage/db';
 import { useDecalImage } from './useDecalImage';
+import { useCanvasRestored } from './useCanvasRestored';
+import { TitleCardPanel, titleCardJob, useTitleCardSeconds } from './TitleCardPanel';
+import type { TitleCardJob } from '../../lib/render/titleCard/exportHooks';
 
 const presetIcons: Record<string, typeof SquarePlay> = { youtube: SquarePlay, shorts: Smartphone, square: Square, quick: Zap };
+
+const PHASE_LABEL: Record<ExportProgress['phase'], string> = {
+  preparing: 'Preparing encoders',
+  original: 'Loading the original song',
+  audio: 'Rendering the sound',
+  video: 'Rendering frames',
+  finalizing: 'Finalising file',
+};
+
+const SOUND_LABEL: Record<ExportSound, string> = { piano: 'piano', original: 'original song', both: 'piano + original song' };
+
+/** Whether the open song's original recording is still stored ('checking' while we look). */
+function useStoredOriginal(songId: string | undefined, hasAudio: boolean | undefined, open: boolean): 'checking' | 'yes' | 'no' {
+  const [state, setState] = useState<{ id: string; has: boolean } | null>(null);
+  useEffect(() => {
+    if (!open || !songId || !hasAudio) return;
+    let alive = true;
+    void hasStoredAudio(songId)
+      .catch(() => false)
+      .then((has) => alive && setState({ id: songId, has }));
+    return () => {
+      alive = false;
+    };
+  }, [songId, hasAudio, open]);
+  if (!songId || !hasAudio) return 'no';
+  if (!state || state.id !== songId) return 'checking';
+  return state.has ? 'yes' : 'no';
+}
 
 function CompositionPreview({ settings, previewTime }: { settings: ExportSettings; previewTime: number }) {
   const ref = useRef<HTMLCanvasElement>(null);
@@ -51,6 +83,7 @@ function CompositionPreview({ settings, previewTime }: { settings: ExportSetting
     };
   }, [visual.background]);
   const decalImg = useDecalImage(visual.decal);
+  const restored = useCanvasRestored(ref);
   useEffect(() => {
     const c = ref.current;
     if (!c) return;
@@ -62,7 +95,7 @@ function CompositionPreview({ settings, previewTime }: { settings: ExportSetting
     if (bgSource) r.setBackgroundMedia(bgSource, visual.background.kind === 'video' ? 'video' : 'image');
     if (decalImg) r.setDecalImage(decalImg.source, decalImg.width, decalImg.height);
     r.render({ time: previewTime });
-  }, [settings, visual, song, difficulty, previewTime, width, height, bgSource, decalImg]);
+  }, [settings, visual, song, difficulty, previewTime, width, height, bgSource, decalImg, restored]);
   return (
     <div className="flex h-full min-h-[220px] items-center justify-center rounded-xl bg-[repeating-conic-gradient(#15151b_0_25%,#101014_0_50%)] bg-[length:20px_20px] p-3">
       <canvas
@@ -73,6 +106,13 @@ function CompositionPreview({ settings, previewTime }: { settings: ExportSetting
       />
     </div>
   );
+}
+
+/** A title page warning from a run that was cancelled or replaced must not show for the new one. */
+function gateWarnings(tc: TitleCardJob | undefined, current: () => boolean): TitleCardJob | undefined {
+  if (!tc?.onWarning) return tc;
+  const warn = tc.onWarning;
+  return { ...tc, onWarning: (message) => current() && warn(message) };
 }
 
 export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -87,54 +127,95 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
   const replaceVisual = useSettings((s) => s.replaceVisual);
   const setLabels = useSettings((s) => s.setLabels);
   const audio = useSettings((s) => s.audio);
+  const titleSeconds = useTitleCardSeconds(song, settings.fps); // title page + end card
   const [progress, setProgress] = useState<ExportProgress | null>(null);
   const [result, setResult] = useState<ExportResult | null>(null);
   const [resultUrl, setResultUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [previewFrac, setPreviewFrac] = useState(0.15);
   const abort = useRef<AbortController | null>(null);
+  // a cancelled export can still be finishing (decoding the original can't be stopped part-way);
+  // Render stays off until it has, so two exports never run at once
+  const [stopping, setStopping] = useState(false);
+  const running = useRef<Promise<void> | null>(null);
+  const stored = useStoredOriginal(song?.id, song?.hasAudio, open);
 
   useEffect(() => () => {
     if (resultUrl) URL.revokeObjectURL(resultUrl);
   }, [resultUrl]);
 
-  const range = useMemo(() => (song ? exportRange({ song, settings, loop }) : { start: 0, end: 0 }), [song, settings, loop]);
+  const webCodecs = webCodecsAvailable();
+  const sound = effectiveSound(settings, { hasOriginal: stored === 'yes', webCodecs });
+  const range = useMemo(() => (song ? exportRange({ song, settings, loop }, sound) : { start: 0, end: 0 }), [song, settings, loop, sound]);
   if (!song) return null;
   const { width, height } = outputSize(settings);
-  const outDur = settings.leadIn + (range.end - range.start) / settings.rate + Math.max(1.5, settings.fadeOut);
+  const usesOriginal = sound !== 'piano';
+  const rate = effectiveRate(settings, sound);
+  const outDur = exportTimeline(settings, range, rate).duration;
+  const origVolume = originalGain(settings, audio.originalVolume);
+  const waitingForCheck = stored === 'checking' && settings.sound !== 'piano';
   const previewTime = range.start + previewFrac * (range.end - range.start);
   const rendering = progress !== null && !result && !error;
-  const longExport = outDur > 600;
+  const busy = rendering || stopping;
+  const longExport = outDur + titleSeconds > 600;
 
   const start = async () => {
+    if (running.current) return;
     setError(null);
     setResult(null);
     if (resultUrl) URL.revokeObjectURL(resultUrl);
     setResultUrl(null);
     const ac = new AbortController();
     abort.current = ac;
+    // only the current run may update the dialog
+    const current = () => abort.current === ac && !ac.signal.aborted;
     setProgress({ phase: 'preparing', fraction: 0 });
-    try {
-      const r = await exportVideo({ song, difficulty, visual, audio, settings, loop, signal: ac.signal, onProgress: setProgress });
-      setResult(r);
-      setResultUrl(URL.createObjectURL(r.blob));
-    } catch (e) {
-      if ((e as Error).name === 'AbortError') {
-        setProgress(null);
-        return;
+    const run = (async () => {
+      try {
+        const r = await exportVideo({
+          song,
+          difficulty,
+          visual,
+          audio,
+          settings: { ...settings, sound },
+          loop,
+          signal: ac.signal,
+          onProgress: (p) => current() && setProgress(p),
+          titleCard: gateWarnings(titleCardJob(song, visual), current),
+        });
+        if (!current()) return;
+        setResult(r);
+        setResultUrl(URL.createObjectURL(r.blob));
+      } catch (e) {
+        if (!current()) return;
+        if ((e as Error).name === 'AbortError') {
+          setProgress(null);
+          return;
+        }
+        setError((e as Error).message);
       }
-      setError((e as Error).message);
-    }
+    })();
+    running.current = run;
+    await run;
+    running.current = null;
+    setStopping(false);
+  };
+
+  /** stops the current export; Render comes back once it has really stopped */
+  const stop = () => {
+    abort.current?.abort();
+    abort.current = null;
+    if (running.current) setStopping(true);
   };
 
   const cancel = () => {
-    abort.current?.abort();
+    stop();
     setProgress(null);
   };
 
   const close = () => {
     if (rendering && !confirm('Stop the export in progress?')) return;
-    abort.current?.abort();
+    stop();
     setProgress(null);
     setResult(null);
     setError(null);
@@ -153,7 +234,7 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
               <div className="flex flex-wrap items-center gap-2 text-[12px] text-ink-300">
                 <Badge tone="ok">Done</Badge>
                 <span>
-                  {result.width}×{result.height} · {formatTime(result.duration)} · {(result.blob.size / 1024 / 1024).toFixed(1)} MB · {result.videoCodec.toUpperCase()} + {result.audioCodec.toUpperCase()}
+                  {result.width}×{result.height} · {formatTime(result.duration)} · {(result.blob.size / 1024 / 1024).toFixed(1)} MB · {result.videoCodec.toUpperCase()} + {result.audioCodec.toUpperCase()} · {SOUND_LABEL[result.sound]}
                 </span>
               </div>
               {result.extension === 'mp4' && result.videoCodec !== 'avc' && (
@@ -189,14 +270,15 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
                   <div className="flex items-center justify-between text-[12.5px]">
                     <span className="flex items-center gap-2 text-ink-100">
                       <Loader2 size={14} className="animate-spin text-accent-400" />
-                      {progress.phase === 'preparing' ? 'Preparing encoders' : progress.phase === 'audio' ? 'Rendering piano audio' : progress.phase === 'video' ? 'Rendering frames' : 'Finalising file'}
+                      {PHASE_LABEL[progress.phase]}
                     </span>
                     <span className="font-mono text-ink-300">{Math.round(progress.fraction * 100)}%</span>
                   </div>
                   <ProgressBar value={progress.fraction} />
                   {progress.framesDone !== undefined && (
                     <p className="font-mono text-[11.5px] text-ink-300">
-                      frame {progress.framesDone}/{progress.framesTotal} · {progress.renderFps?.toFixed(0)} fps · ~{formatTime(progress.etaSeconds ?? 0)} left
+                      frame {progress.framesDone}/{progress.framesTotal}
+                      {progress.renderFps !== undefined && ` · ${progress.renderFps.toFixed(0)} fps · ~${formatTime(progress.etaSeconds ?? 0)} left`}
                     </p>
                   )}
                   <Button size="sm" variant="ghost" onClick={cancel} className="self-start">
@@ -312,14 +394,41 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
               />
             </div>
             <p className="font-mono text-[11px] text-ink-400">
-              {width}×{height} · {formatTime(outDur)} · {Math.ceil(outDur * settings.fps).toLocaleString()} frames
+              {width}×{height} · {formatTime(outDur + titleSeconds)} · {(Math.ceil(outDur * settings.fps) + Math.round(titleSeconds * settings.fps)).toLocaleString()} frames
             </p>
-            {!webCodecsAvailable() && <p className="text-[12px] text-warn">WebCodecs isn’t available in this browser: the video will be recorded in real time as WebM.</p>}
+            {!webCodecs && <p className="text-[12px] text-warn">WebCodecs isn’t available in this browser: the video will be recorded in real time as WebM.</p>}
             {longExport && <p className="text-[12px] text-warn">Long export — rendering can take several minutes. Keep this tab open.</p>}
           </div>
 
           <div className="flex flex-col gap-3 border-b border-ink-700 p-4">
             <span className="text-[11px] font-semibold tracking-[0.08em] text-ink-300 uppercase">Content</span>
+            <div className="flex flex-col gap-2">
+              <span className="text-[12.5px] text-ink-200">Sound</span>
+              {!webCodecs ? (
+                <p className="text-[12px] text-ink-400">This browser can only add the piano sound.</p>
+              ) : stored === 'no' ? (
+                <p className="text-[12px] text-ink-400">This song has no saved recording, so the video uses the piano sound.</p>
+              ) : (
+                <Segmented<ExportSound>
+                  size="sm"
+                  className="w-full"
+                  ariaLabel="Sound"
+                  value={stored === 'checking' ? settings.sound : sound}
+                  onChange={(next) => setExport({ sound: next })}
+                  options={[
+                    { value: 'piano', label: 'Piano' },
+                    { value: 'original', label: 'Original song' },
+                    { value: 'both', label: 'Both' },
+                  ]}
+                />
+              )}
+              {usesOriginal && (
+                <>
+                  <Slider label="Original song volume" min={0.05} max={1.5} value={origVolume} onChange={(originalVolume) => setExport({ originalVolume })} format={(x) => `${Math.round(x * 100)}%`} />
+                  <p className="text-[12px] text-warn">Includes the original recording — only share it if you have the rights.</p>
+                </>
+              )}
+            </div>
             <Segmented<ExportSettings['range']>
               size="sm"
               value={settings.range}
@@ -336,8 +445,13 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
                 <Slider label="End" min={0} max={song.duration} step={0.1} value={Math.min(settings.customEnd, song.duration)} onChange={(customEnd) => setExport({ customEnd })} format={formatTime} />
               </div>
             )}
-            <Slider label="Playback speed" min={0.5} max={1.5} step={0.05} value={settings.rate} onChange={(rate) => setExport({ rate })} format={(x) => `${x.toFixed(2)}×`} />
-            <Slider label="Volume" min={0.2} max={1.5} value={settings.volume} onChange={(volume) => setExport({ volume })} format={(x) => `${Math.round(x * 100)}%`} />
+            <div className="flex flex-col gap-1">
+              <Slider label="Playback speed" min={0.5} max={1.5} step={0.05} value={rate} disabled={usesOriginal} onChange={(rate) => setExport({ rate })} format={(x) => `${x.toFixed(2)}×`} />
+              {usesOriginal && <p className="text-[11.5px] text-ink-400">Speed stays at 100% when the original song is included.</p>}
+            </div>
+            {sound !== 'original' && (
+              <Slider label={sound === 'both' ? 'Piano volume' : 'Volume'} min={0.2} max={1.5} value={settings.volume} onChange={(volume) => setExport({ volume })} format={(x) => `${Math.round(x * 100)}%`} />
+            )}
             <Slider label="Lead-in" min={0} max={6} step={0.5} value={settings.leadIn} onChange={(leadIn) => setExport({ leadIn })} format={(x) => `${x}s`} />
             <Slider label="Fade in" min={0} max={4} step={0.25} value={settings.fadeIn} onChange={(fadeIn) => setExport({ fadeIn })} format={(x) => `${x}s`} />
             <Slider label="Fade out" min={0} max={6} step={0.25} value={settings.fadeOut} onChange={(fadeOut) => setExport({ fadeOut })} format={(x) => `${x}s`} />
@@ -365,6 +479,7 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
             <Toggle label="Note labels" checked={visual.labels.style !== 'none'} onChange={(on) => setLabels({ style: on ? 'letter' : 'none' })} />
             <p className="text-[11.5px] leading-relaxed text-ink-400">Colours, effects, labels and backgrounds come from the Studio’s Look and Labels tabs.</p>
           </div>
+          <TitleCardPanel song={song} exportSettings={settings} visual={visual} />
         </div>
       </div>
       {!result && (
@@ -372,8 +487,8 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
           <span className="text-[12px] text-ink-300">
             {song.title} · <span className="capitalize">{difficulty}</span>
           </span>
-          <Button variant="primary" disabled={rendering || (settings.range === 'loop' && !loop)} onClick={() => void start()} icon={rendering ? <Loader2 size={16} className="animate-spin" /> : <Film size={16} />}>
-            {rendering ? 'Rendering…' : 'Render video'}
+          <Button variant="primary" disabled={busy || waitingForCheck || (settings.range === 'loop' && !loop)} onClick={() => void start()} icon={busy ? <Loader2 size={16} className="animate-spin" /> : <Film size={16} />}>
+            {rendering ? 'Rendering…' : stopping ? 'Stopping…' : 'Render video'}
           </Button>
         </footer>
       )}

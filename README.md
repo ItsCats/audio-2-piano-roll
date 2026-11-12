@@ -14,6 +14,7 @@ Everything runs in the browser. Audio is transcribed on the user's device by a n
 | **Transcription** | Spotify's Basic Pitch model (polyphonic) running in a Web Worker on WebGL/WASM, with a piano-tuned note-extraction pipeline (register curve for the top/bottom octaves, chopped-note join), beat tracking, key detection and hand assignment. **Separate vocals & drums** (SCNet, in the browser, on by default for "Full song") puts the singer's melody on the right hand and transcribes the accompaniment without drums. Re-tune detection afterwards without re-running the model. For solo piano, an optional second model, **Solo piano – high accuracy (slower)** (ByteDance's piano transcription model, ONNX in the browser): far more accurate notes, note lengths and velocities on piano recordings, but a ≈ 41 MB one-time download, about 5× slower (≈ 38 s per audio minute with 3 threads, ≈ 97 s single-threaded) and ≈ 0.7 GB more memory, and no help for songs with vocals or drums. Measured accuracy: in-app **Accuracy** page. |
 | **Arrangements** | Easy (the sung melody — or one smooth instrument tune — on 8th notes + sustained bass), Medium (tune + chord tones, simplified left hand, never more than an octave per hand), Hard (full transcription, hands rebalanced for reach) — switch instantly, edit each independently |
 | **Piano roll** | Smooth canvas renderer locked to the audio clock, 49–88 keys or fit-to-song, note speed/zoom, hand colours, glow, trails, sparks, guides, pedal lane, loop markers |
+| **Sheet music** | Switch the Studio between *Piano roll* and *Sheet music*: the current level (with your edits) written out on a grand staff — readable rhythms for the level, chords, two voices, ties, key signature and accidentals, clef changes and 8va/8vb. A cursor follows playback and turns the page; tap a note or bar to jump there; zoom for phones |
 | **Labels** | Letters, letters+octave, solfège, MIDI numbers or custom; sharps/flats/auto-by-key; font, size, colour, position, opacity, size threshold |
 | **Look** | Themes (incl. Blossom), gradients, opacity, corners, borders, shadows, falling-note glow, note brightness, keyboard themes/colours/height, flat or realistic keyboard, scene/colour/image/video backgrounds with blur, brightness, contrast, overlay, fit, zoom, position |
 | **Note decals** | 13 original procedural patterns (meadow, sakura, lavender, watercolor, marble, galaxy, aurora, holographic, glitter, stained glass, geometric, wood, confetti) or your own uploaded image inside every note; size, strength, colour tint, moves-with-note or fixed-to-screen |
@@ -21,7 +22,7 @@ Everything runs in the browser. Audio is transcribed on the user's device by a n
 | **Sound** | Salamander Grand (5 real velocity layers, damper & pedal noises) and Upright Piano KW samples; Concert Grand / Bright Grand / Upright / Soft presets; true sustain-pedal model; convolution reverb (studio → church), chorus, tone, dynamics; limiter |
 | **Practice** | Speed 0.25×–2×, A–B looping, left/right/both hands, metronome, count-in, Web MIDI + computer-keyboard input, correct / wrong / missed scoring with timing, wait-for-me mode |
 | **Editing** | Select, marquee, move (time + pitch), resize, add, delete, hand assignment, velocity, transpose, quantize, snap grid, undo/redo, regenerate levels |
-| **Export** | Video MP4 (H.264/AAC) or WebM (VP9/Opus), 720p/1080p/1440p, 30/60 fps, 16:9 / 9:16 / 1:1, YouTube Ready & social presets, saved presets, section/full song, speed, volume, fades; MIDI; WAV; project file |
+| **Export** | Video MP4 (H.264/AAC) or WebM (VP9/Opus), 720p/1080p/1440p, 30/60 fps, 16:9 / 9:16 / 1:1, YouTube Ready & social presets, saved presets, section/full song, speed, volume, fades; MIDI; WAV; sheet music PDF (A4 / Letter, vector); MusicXML 4.0 (MuseScore, Sibelius, Finale); project file |
 | **Library** | Local library with thumbnails, search, filters, sorting, favourites, project import/export |
 
 ## Quick start
@@ -61,6 +62,8 @@ npm test             # unit tests (vitest): note extraction, timing, beats, hand
 ```bash
 npm run test:e2e     # browser benchmark: renders known pieces with the real piano engine, transcribes them, fails on F1 regression
 ```
+
+Sheet music: `node tests/e2e/sheet.mjs --dist <build>` checks the sheet view, cursor, tap-to-seek, PDF/MusicXML downloads and drawing speed in Chromium under the production headers; `tests/sheet/export.mjs` + `tests/sheet/validate_musicxml.py` check the MusicXML against the official 4.0 schema and music21 (see the files for setup).
 
 The E2E benchmark needs Chromium for Playwright (`npx playwright install chromium`). It is the regression gate on synthetic pieces (Bach BWV 846 F1 ≈ 0.94, chord/melody study ≈ 0.88, mean onset error ≈ 8–12 ms).
 
@@ -134,6 +137,7 @@ src/
     audio/           sample library, piano engine, effects, live player, offline render, WAV
     render/          piano-roll renderer, keyboard layout, themes, backgrounds
     export/          video export (WebCodecs/mediabunny), downloads, presets
+    sheet/           sheet music: notes → measures/voices/spelling → MusicXML; OSMD view, PDF
     midiInput/       Web MIDI input and practice scoring
     storage/         IndexedDB persistence
     youtube/         URL parsing, oEmbed, IFrame player, tab-audio capture
@@ -160,6 +164,6 @@ The full list (models, sounds, fonts, libraries, server components and the data 
 - [CREPE](https://github.com/marl/crepe) "tiny" pitch model by Jong Wook Kim et al. — MIT; PyTorch weights from [torchcrepe](https://github.com/maxrmorrison/torchcrepe) by Max Morrison (MIT), converted to ONNX for this project. Shipped in `public/models/crepe/` (not yet run by the import); see [public/models/crepe/README.md](public/models/crepe/README.md)
 - [High-resolution Piano Transcription](https://github.com/bytedance/piano_transcription) by Qiuqiang Kong, Bochen Li, Xuchen Song, Yuan Wan and Yuxuan Wang (ByteDance; IEEE/ACM TASLP 2021) — trained weights CC BY 4.0 ([Zenodo record 4034264](https://zenodo.org/records/4034264)), converted by us to ONNX with float16 weights (pedal model left out); inference code [piano_transcription_inference](https://github.com/qiuqiangkong/piano_transcription_inference) MIT, training code Apache-2.0. The optional "High-accuracy piano model" model; see [docs/TRANSCRIPTION.md](docs/TRANSCRIPTION.md#3b-piano-specialist-solo-piano--high-accuracy-slower)
 - [ONNX Runtime](https://github.com/microsoft/onnxruntime) (onnxruntime-web in the browser, onnxruntime on the server) — MIT
-- TensorFlow.js (Apache-2.0), mediabunny (MPL-2.0), @tonejs/midi (MIT), React (MIT); server only: yt-dlp (Unlicense), FastAPI (MIT), Uvicorn (BSD-3), python-multipart (Apache-2.0), NumPy (BSD-3), FFmpeg (LGPL)
+- TensorFlow.js (Apache-2.0), mediabunny (MPL-2.0), @tonejs/midi (MIT), React (MIT), OpenSheetMusicDisplay (BSD-3-Clause, with VexFlow MIT), jsPDF and svg2pdf.js (MIT); server only: yt-dlp (Unlicense), FastAPI (MIT), Uvicorn (BSD-3), python-multipart (Apache-2.0), NumPy (BSD-3), FFmpeg (LGPL)
 
 Users are responsible for having the rights to the music they import, and for complying with YouTube's Terms of Service.

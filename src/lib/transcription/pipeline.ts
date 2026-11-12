@@ -6,7 +6,8 @@
  *   → tempo/beat tracking → key detection.
  *
  * With separation the accompaniment stem (bass + other: no drums, no vocals) is transcribed with
- * the user's detection parameters. The drums stem is reduced to an onset envelope
+ * the user's detection parameters; when the vocal stem holds no singing it is added back in
+ * (addVocalsInto: the mix minus the drums). The drums stem is reduced to an onset envelope
  * (separation/dsp.ts) that is stored with the posteriors for a drum-hit false-note filter
  * (music/cleanup.ts suppressDrumHits; measured, currently off: see DrumHitRule).
  * When the vocal stem actually contains singing, the vocal stem is transcribed with
@@ -23,11 +24,12 @@ import { BP_FPS, BP_MIDI_OFFSET, BP_N_PITCHES, BP_SAMPLE_RATE, frameToTime, time
 import type { NoteExtractionOptions, RawNoteEvent } from './noteExtraction';
 import type { TranscriptionStage, WorkerRequest, WorkerResponse } from './workerProtocol';
 import { analyzeLevel, decodeToRate, mixToMono } from './decode';
-import { DRUM_HIT_RULE, RESTRIKE, mergeContinuations, mergeFragments, newNoteId, removeShortQuiet, sortNotes, suppressDrumHits, suppressHarmonics } from '../music/cleanup';
+import { DRUM_HIT_RULE, RESTRIKE, TAIL_GATE, mergeContinuations, mergeFragments, newNoteId, removeShortQuiet, removeTailGhosts, sortNotes, suppressDrumHits, suppressHarmonics } from '../music/cleanup';
 import { assignHands } from '../music/hands';
 import { estimateTempo } from '../music/beats';
 import { detectKey } from '../music/theory';
 import { extractMelodyLine, mergeMelody } from '../music/melody';
+import { recoverLead } from '../music/leadRecovery';
 import type { StoredPosteriors } from './posteriors';
 import { isMemoryConstrained, pageDeviceInfo } from './backendChoice';
 import { DRUM_ENV_FPS, longReason, separateStems, separationSupport, stemsFromBlobs, type SeparationResult } from '../separation';
@@ -49,6 +51,46 @@ export const SPECIALIST_SAMPLE_RATE = 16000;
  * .06 -> .24 on MAESTRO at unchanged precision.
  */
 const PIANO_REGISTER: NonNullable<ExtractionParams['register']> = { lowMidi: 48, lowFrame: 0.5, lowOnset: 0.6, highMidi: 76, highFrame: 0.3, highMinFrames: 0.4 };
+
+/**
+ * The "Full song" preset's lead-line recovery pass (music/leadRecovery.ts): Sensitive-like
+ * thresholds in the lead's register, on the same posteriors; its notes are only candidates, kept
+ * where the instruments' tune line goes through them. The melodia trick stays on (a held lead note
+ * whose onset is soft never starts an event without it: Sensitive's largest loss on the solo).
+ *
+ * Measured on band-instrumental-1 against an estimated lead reference (a vote of Melodia, pYIN,
+ * CREPE and a multi-instrument transcriber; no human transcription exists), Hard, lead-note onset
+ * recall at the exact pitch (±80 ms), offline on the stored posteriors, without → with the pass:
+ *   full mix        solo 20 → 71 %, ending 49 → 71 %, whole song 42 → 63 %; 1556 → 1801 notes
+ *   separated       solo 39 → 80 %, ending 60 → 69 %, whole song 47 → 63 %; 1676 → 1887 notes
+ *   ("Sensitive" for comparison: solo 64 / 82 %, whole song 57 / 64 %, 2122 / 2172 notes)
+ * Notes matching no lead note +0.5 / s (Sensitive +1.9 / s). Swept (frame 0.2-0.35, 40-70 ms,
+ * register curve on/off, melodia on/off, lowest pitch 55-72, activation floor 0-0.35, density cap
+ * 1-100 / s): frame 0.2 recovers less (longer events merge into the main notes), the density cap
+ * binds below ~2.5 / s on the solo. The recovered notes are Hard-only (role 'lead'; see
+ * accompFromRaw).
+ *
+ * Caveat: these settings were chosen on the same song and the same estimated reference they are
+ * scored against (no second instrumental with a lead reference was available). Against references
+ * that share nothing with the tuning (pYIN on a Demucs 'other' stem alone; the top line of a
+ * multi-instrument transcriber) the whole-song gain is about half as large (+10..+14 points); the
+ * solo gain holds (pYIN 38 -> 74 %); the 0:30-0:38 gain is not confirmed.
+ *
+ * The pass is read at run time (leadPassParams), not stored with a song, so re-detection always
+ * uses the current settings.
+ */
+export const LEAD_PASS: Omit<ExtractionParams, 'leadPass'> = {
+  onsetThreshold: 0.5,
+  frameThreshold: 0.3,
+  minNoteMs: 50,
+  minMidi: 60,
+  maxMidi: 100,
+  melodiaTrick: true,
+  suppressHarmonics: false,
+  inferOnsets: true,
+  continuationOnset: 0.5,
+  register: { lowMidi: 21, highMidi: 76, highFrame: 0.3, highMinFrames: 0.4 },
+};
 
 /**
  * Detection presets. "piano" and "sensitive" were tuned on 5 MAESTRO pieces with exact MIDI
@@ -81,6 +123,7 @@ export const EXTRACTION_PRESETS: Record<'piano' | 'mix' | 'sensitive', Extractio
     suppressHarmonics: true,
     inferOnsets: true,
     continuationOnset: 0.6,
+    leadPass: true,
   },
   sensitive: {
     onsetThreshold: 0.55,
@@ -118,6 +161,11 @@ export const VOCAL_EXTRACTION: ExtractionParams = {
   // the chopped-note join costs the sung line a little (5 songs: line raw pitch accuracy
   // 0.561 → 0.559, vocal-5 0.462 → 0.454); it runs on the accompaniment only
   joinRepeats: false,
+  // the ghost-note gate (music/cleanup.ts TAIL_GATE) also removed quiet bleed notes from the vocal
+  // stem while nobody sings (vocal-1: 8 of 327 line notes, the line's voicing-counted accuracy
+  // 0.686 → 0.709), but those stretches then became instrumental gaps that Easy fills with the
+  // instruments' tune (Easy voicing-counted accuracy vs the singer 0.518 → 0.474): off here
+  tailGate: false,
 };
 
 /** Fewer melody notes than this over a whole song: treat the vocal stem as noise, not a melody. */
@@ -179,7 +227,8 @@ export interface TranscribeOptions {
 
 /**
  * Tempo of a transcription: beats from the cleaned accompaniment notes (before the melody is merged
- * in), because vocal onsets are rhythmically loose. Shared by import and re-detection so the two
+ * in and before lead-line recovery), because vocal onsets are rhythmically loose and the recovered
+ * lead notes would move the beat grid Easy and Medium are quantised to. Shared by import and re-detection so the two
  * cannot drift apart.
  */
 function transcriptionTempo(accomp: Note[], merged: Note[], duration: number): TempoInfo {
@@ -354,6 +403,97 @@ export function noteActivation(frames: Uint8Array | Float32Array, nFrames: numbe
   return { mean: (sum / (s1 - s0 + 1)) * scale, spread: own > 0 ? nb / own : nb > 0 ? Infinity : 0 };
 }
 
+/**
+ * The lead-recovery pass of detection parameters with ExtractionParams.leadPass set: LEAD_PASS,
+ * unless the main pass is already at least as sensitive (frame threshold and minimum note length
+ * at or below the pass's: then it would find nothing the main pass does not).
+ */
+export function leadPassParams(p: ExtractionParams): Omit<ExtractionParams, 'leadPass'> | undefined {
+  if (!p.leadPass) return undefined;
+  if (p.frameThreshold <= LEAD_PASS.frameThreshold && p.minNoteMs <= LEAD_PASS.minNoteMs) return undefined;
+  return LEAD_PASS;
+}
+
+/** The worker options of the lead-recovery pass (leadPassParams), if there is one. */
+export function leadWorkerOptions(p: ExtractionParams): NoteExtractionOptions | undefined {
+  const lp = leadPassParams(p);
+  return lp ? toWorkerOptions(lp) : undefined;
+}
+
+const canonical = (v: unknown): unknown =>
+  Array.isArray(v)
+    ? v.map(canonical)
+    : v && typeof v === 'object'
+      ? Object.fromEntries(Object.keys(v as object).sort().map((k) => [k, canonical((v as Record<string, unknown>)[k])]))
+      : v;
+const sameParams = (a: object, b: object) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
+
+/**
+ * Stored detection parameters as re-detection should use them: songs imported with the "Full song"
+ * preset before lead-line recovery existed carry its parameters without the flag; they get it, so
+ * re-detecting such a song gives what a new import would. Anything else is returned unchanged.
+ */
+export function withLeadPass(p: ExtractionParams): ExtractionParams {
+  if (p.leadPass !== undefined) return p;
+  const { leadPass: _flag, ...mix } = EXTRACTION_PRESETS.mix;
+  void _flag;
+  return sameParams(p, mix) ? { ...p, leadPass: true } : p;
+}
+
+/** Sung phrases (melody notes, `margin` s either side) as time ranges. */
+export function sungRanges(melody: Note[], margin = 0.5): [number, number][] {
+  const out: [number, number][] = [];
+  for (const n of sortNotes(melody)) {
+    const a = n.start - margin;
+    const b = n.start + n.dur + margin;
+    const last = out[out.length - 1];
+    if (last && a <= last[1]) last[1] = Math.max(last[1], b);
+    else out.push([a, b]);
+  }
+  return out;
+}
+
+export interface LeadContext {
+  /** the sung melody line (separated songs with singing): nothing is recovered inside its phrases */
+  melody?: Note[];
+}
+
+/**
+ * The accompaniment (or full-mix) notes of a transcription: the main events cleaned (`main`), plus
+ * the lead line recovered from the lead pass's events (ExtractionParams.leadPass;
+ * music/leadRecovery.ts) in `notes`. Shared by import and re-detection.
+ *
+ * The recovered notes are always Hard-only (role 'lead': Easy and Medium are built without them).
+ * Letting Easy and Medium use them was measured and is not worth it: without separation it filled
+ * the singer's pauses of the 5 sung test songs (Easy voicing-counted accuracy 0.533 -> 0.491, Easy
+ * LH bass 0.648 -> 0.639); with singing it doubled the instrumental-gap tune (vocal-1 62 -> 112
+ * notes) and lowered Easy's voicing-counted accuracy (vocal-1 0.518 -> 0.470); for the separated
+ * instrumental band-instrumental-1 the Easy gain on the tuning reference (31 -> 34 %) did not
+ * hold against independent ones (pYIN on a Demucs stem 19 -> 17 %; 0:20-0:22 worse in all).
+ */
+export function accompFromRaw(
+  raw: RawNoteEvent[],
+  leadRaw: RawNoteEvent[] | undefined,
+  rms: Float32Array,
+  params: ExtractionParams,
+  duration: number,
+  ctx: CleanContext = {},
+  lead: LeadContext = {},
+): { notes: Note[]; main: Note[] } {
+  const melody = lead.melody ?? [];
+  const main = cleanNotes(raw, rms, params, duration, ctx);
+  const leadParams = leadPassParams(params);
+  if (!leadParams || !leadRaw?.length) return { notes: main, main };
+  const candidates = cleanNotes(leadRaw, rms, leadParams, duration, ctx);
+  const { frames, nFrames } = ctx;
+  const notes = recoverLead(main, candidates, duration, {
+    ...(frames && nFrames ? { evidence: (n: Note) => noteActivation(frames, nFrames, n) } : {}),
+    ...(melody.length ? { exclude: sungRanges(melody) } : {}),
+    hardOnly: true,
+  });
+  return { notes, main };
+}
+
 /** Turn raw model note events into cleaned, hand-assigned notes. */
 export function postProcess(raw: RawNoteEvent[], rms: Float32Array, params: ExtractionParams, duration: number, ctx: CleanContext = {}): Note[] {
   return assignHands(cleanNotes(raw, rms, params, duration, ctx), duration);
@@ -395,8 +535,11 @@ export function cleanNotes(raw: RawNoteEvent[], rms: Float32Array, params: Extra
       ...(ctx.frames && ctx.nFrames ? noteActivation(ctx.frames, ctx.nFrames, n) : {}),
     }));
   }
+  // ghosts in near-silence (reverb tails, fades, a stem's noise floor; music/cleanup.ts TAIL_GATE)
+  if (TAIL_GATE.enabled && params.tailGate !== false && sortedRms.length) notes = removeTailGhosts(notes, rms, ref);
   notes = removeShortQuiet(notes, Math.min(0.045, params.minNoteMs / 1000), 0.1);
-  notes = notes.filter((n) => n.start < duration);
+  // nothing sounds past the end of the audio
+  notes = notes.filter((n) => n.start < duration).map((n) => (n.start + n.dur > duration ? { ...n, dur: Math.max(0.03, duration - n.start) } : n));
   return sortNotes(notes);
 }
 
@@ -407,6 +550,67 @@ export function melodyFromRaw(raw: RawNoteEvent[], rms: Float32Array, duration: 
 }
 
 const aborted = () => new DOMException('Transcription cancelled', 'AbortError');
+
+/**
+ * Whether the separated vocal stem goes back into the audio the accompaniment pass transcribes:
+ * when separation found no singing (an instrumental, or vocals under the presence gate), or found
+ * singing but no melody line came out of it (melodyFromRaw: too few notes), so that what is in the
+ * stem is transcribed with the rest instead of being lost.
+ */
+export function vocalsIntoAccomp(vocalsPresent: boolean, melodyNotes: number): boolean {
+  return !vocalsPresent || melodyNotes === 0;
+}
+
+/**
+ * Adding the vocal stem back (vocalsIntoAccomp): per block of `block` samples, gain 0 where the
+ * stem is more than `offDb` below the accompaniment block's level, 1 where it is within `onDb`,
+ * linear in dB between; each block's gain is the largest of the `spread` blocks either side (so the
+ * start and end of a phrase are not cut), and it is interpolated linearly sample by sample.
+ *
+ * Why: SCNet has 4 stems; a lead instrument that is not bass or "other" leaks into "vocals": in
+ * band-instrumental-1 the vocal stem holds 35-62 % of the closing lead's energy (the held climax
+ * notes, MIDI 84-86, 165-170.7 s; there the stem is 0-5 dB below the accompaniment) and 14-41 % of
+ * the phrase at 143-148 s; on the accompaniment alone the final notes' posteriors fell to
+ * 0.24-0.30 (0.44-0.63 on the mix). Elsewhere the stem is separator residue 40-50 dB down. Adding
+ * that residue changes nothing musically but flips near-threshold notes: with the "Sensitive"
+ * preset 3 short lead notes at 31-32 s (residue -42..-44 dB) were lost, 0:30-0:38 lead recall
+ * 56 -> 44 %. With the gate the residue stays out.
+ */
+export const VOCAL_ADDBACK = { block: 2048, offDb: -30, onDb: -20, spread: 5 };
+
+export function addVocalsInto(accomp: Float32Array, vocals: Float32Array, rule = VOCAL_ADDBACK): void {
+  const n = Math.min(accomp.length, vocals.length);
+  const B = rule.block;
+  const nb = Math.ceil(n / B);
+  if (!nb) return;
+  const raw = new Float32Array(nb);
+  for (let b = 0; b < nb; b++) {
+    let ea = 0;
+    let ev = 0;
+    for (let i = b * B, e = Math.min(n, i + B); i < e; i++) {
+      ea += accomp[i] * accomp[i];
+      ev += vocals[i] * vocals[i];
+    }
+    if (ev <= 0) continue;
+    const db = 10 * Math.log10(ev / Math.max(ea, 1e-20));
+    raw[b] = Math.min(1, Math.max(0, (db - rule.offDb) / (rule.onDb - rule.offDb)));
+  }
+  const gain = new Float32Array(nb);
+  for (let b = 0; b < nb; b++) {
+    let g = 0;
+    for (let k = Math.max(0, b - rule.spread); k <= Math.min(nb - 1, b + rule.spread); k++) g = Math.max(g, raw[k]);
+    gain[b] = g;
+  }
+  for (let i = 0; i < n; i++) {
+    // block centres at (b + 0.5) * B
+    const x = i / B - 0.5;
+    const b0 = Math.max(0, Math.min(nb - 1, Math.floor(x)));
+    const b1 = Math.min(nb - 1, b0 + 1);
+    const f = Math.max(0, Math.min(1, x - b0));
+    const g = gain[b0] + (gain[b1] - gain[b0]) * f;
+    if (g > 0) accomp[i] += g * vocals[i];
+  }
+}
 
 /** Peak-normalise in place so detection thresholds behave the same for quiet and loud input. */
 function normalise(audio: Float32Array): void {
@@ -427,7 +631,7 @@ async function runModel(
 ): Promise<ModelRun> {
   let backend = '';
   return transcriber.run(
-    { type: 'transcribe', audio, modelUrl: modelUrl(), options: toWorkerOptions(params), device: pageDeviceInfo() },
+    { type: 'transcribe', audio, modelUrl: modelUrl(), options: toWorkerOptions(params), leadOptions: leadWorkerOptions(params), device: pageDeviceInfo() },
     [audio.buffer],
     (e) => {
       if (e.backend) backend = e.backend;
@@ -517,35 +721,41 @@ async function transcribeAudioOnce(
     if (signal?.aborted) throw aborted();
   }
   const withVocals = !!sep && sep.vocalPresence.present;
+  if (sep && sep.sampleRate !== BP_SAMPLE_RATE) throw new Error(`Separated stems have an unexpected sample rate (${sep.sampleRate} Hz).`);
+
+  // ---- vocal melody (first: whether a melody line comes out decides what the accompaniment pass hears)
+  let vocal: ModelRun | null = null;
+  let melody: Note[] = [];
+  if (sep && withVocals) {
+    // a copy: the stem itself may still be added back into the accompaniment (vocalsIntoAccomp)
+    const v = sep.vocals.slice();
+    normalise(v);
+    vocal = await runModel(v, VOCAL_EXTRACTION, onProgress, signal, 'Neural pitch detection — vocal melody (1 of 2)');
+    melody = melodyFromRaw(vocal.notes, vocal.rms, duration);
+  }
+  const vocalsBack = !!sep && vocalsIntoAccomp(withVocals, melody.length);
   if (sep) {
     audio = sep.accomp;
-    if (sep.sampleRate !== BP_SAMPLE_RATE) throw new Error(`Separated stems have an unexpected sample rate (${sep.sampleRate} Hz).`);
+    // no sung line: the vocal stem holds lead-instrument leakage (or singing nothing else will show), so it goes back into what is transcribed
+    if (vocalsBack) addVocalsInto(audio, sep.vocals);
   }
   normalise(audio);
 
   // ---- accompaniment (or the full mix)
-  const what = sep ? (withVocals ? 'Neural pitch detection — accompaniment (1 of 2)' : 'Neural pitch detection — accompaniment') : 'Neural pitch detection';
+  const what = sep ? (withVocals ? 'Neural pitch detection — accompaniment (2 of 2)' : 'Neural pitch detection — accompaniment') : 'Neural pitch detection';
   const result = await runModel(audio, params, onProgress, signal, what);
 
-  // ---- vocal melody
-  let vocal: ModelRun | null = null;
-  if (sep && withVocals) {
-    const v = sep.vocals;
-    normalise(v);
-    vocal = await runModel(v, VOCAL_EXTRACTION, onProgress, signal, 'Neural pitch detection — vocal melody (2 of 2)');
-  }
-
-  onProgress({ stage: 'arranging', progress: null, detail: vocal ? 'Extracting the vocal melody, assigning hands, tracking beats' : 'Cleaning notes, assigning hands, tracking beats' });
+  onProgress({ stage: 'arranging', progress: null, detail: melody.length ? 'Fitting the vocal melody, assigning hands, tracking beats' : 'Cleaning notes, assigning hands, tracking beats' });
   const drums = sep?.drumOnsets;
-  const accompNotes = cleanNotes(result.notes, result.rms, params, duration, { frames: result.frames, nFrames: result.nFrames, drums });
-  const melody = vocal ? melodyFromRaw(vocal.notes, vocal.rms, duration) : [];
+  const accomp = accompFromRaw(result.notes, result.leadNotes, result.rms, params, duration, { frames: result.frames, nFrames: result.nFrames, drums }, { melody });
+  const accompNotes = accomp.notes;
   const notes = mergeMelody(accompNotes, melody, duration);
   if (result.backend === 'cpu') {
     warnings.push('Ran on the CPU fallback backend (no WebGL/WASM available); transcription was slower than usual.');
   }
   if (vocal && !melody.length) warnings.push('Singing was detected but no clear melody line could be extracted from it.');
   if (notes.length === 0) warnings.push('No notes were detected. Try the "Sensitive" detection preset.');
-  const tempo = transcriptionTempo(accompNotes, notes, duration);
+  const tempo = transcriptionTempo(accomp.main, notes, duration);
   if (tempo.confidence < 0.15) warnings.push('Tempo could not be detected reliably; the beat grid and quantisation may be off.');
   const meanConf = result.notes.length ? result.notes.reduce((s, n) => s + n.amplitude, 0) / result.notes.length : 0;
   return {
@@ -560,7 +770,18 @@ async function transcribeAudioOnce(
       params,
       backend: result.backend,
       processingMs: Math.round(performance.now() - t0),
-      ...(sep ? { separated: true, separation: { engine: sep.engine, vocals: melody.length > 0, ms: Math.round(sep.ms), ...(sep.threads ? { threads: sep.threads } : {}) } } : {}),
+      ...(sep
+        ? {
+            separated: true,
+            separation: {
+              engine: sep.engine,
+              vocals: melody.length > 0,
+              ...(vocalsBack ? { vocalsInAccomp: true } : {}),
+              ms: Math.round(sep.ms),
+              ...(sep.threads ? { threads: sep.threads } : {}),
+            },
+          }
+        : {}),
       warnings,
       confidence: Math.round(meanConf * 100) / 100,
     },
@@ -692,17 +913,17 @@ async function decodeMono(blob: Blob, sampleRate: number): Promise<{ audio: Floa
   return { audio: mixToMono(buffer), duration: buffer.duration };
 }
 
-async function extractRaw(post: StoredPosteriors, params: ExtractionParams): Promise<RawNoteEvent[]> {
+async function extractRaw(post: StoredPosteriors, params: ExtractionParams): Promise<{ notes: RawNoteEvent[]; leadNotes?: RawNoteEvent[] }> {
   const frames = post.frames.slice();
   const onsets = post.onsets.slice();
   const res = await transcriber.run(
-    { type: 'extract', frames, onsets, nFrames: post.nFrames, options: toWorkerOptions(params) },
+    { type: 'extract', frames, onsets, nFrames: post.nFrames, options: toWorkerOptions(params), leadOptions: leadWorkerOptions(params) },
     [frames.buffer, onsets.buffer],
     () => {},
     undefined,
     'extracted',
   );
-  return res.notes;
+  return { notes: res.notes, leadNotes: res.leadNotes };
 }
 
 export interface ReextractOptions {
@@ -731,13 +952,13 @@ export async function redetectNotes(
   duration: number,
   opts: ReextractOptions = {},
 ): Promise<{ notes: Note[]; tempo: TempoInfo }> {
-  const { accomp, notes } = await reextract(post, params, duration, opts);
-  return { notes, tempo: transcriptionTempo(accomp, notes, duration) };
+  const { main, notes } = await reextract(post, params, duration, opts);
+  return { notes, tempo: transcriptionTempo(main, notes, duration) };
 }
 
-async function reextract(post: StoredPosteriors, params: ExtractionParams, duration: number, opts: ReextractOptions): Promise<{ accomp: Note[]; notes: Note[] }> {
+async function reextract(post: StoredPosteriors, params: ExtractionParams, duration: number, opts: ReextractOptions): Promise<{ main: Note[]; notes: Note[] }> {
   const raw = await extractRaw(post, params);
-  const accomp = cleanNotes(raw, post.rms, params, duration, { frames: post.frames, nFrames: post.nFrames, drums: post.drums });
   const melody = (opts.melody ?? []).filter((n) => n.role === 'melody').map((n) => ({ ...n, hand: 'R' as const }));
-  return { accomp, notes: mergeMelody(accomp, melody, duration) };
+  const accomp = accompFromRaw(raw.notes, raw.leadNotes, post.rms, params, duration, { frames: post.frames, nFrames: post.nFrames, drums: post.drums }, { melody });
+  return { main: accomp.main, notes: mergeMelody(accomp.notes, melody, duration) };
 }

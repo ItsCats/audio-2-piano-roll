@@ -15,6 +15,17 @@ export interface PracticeSettings {
   timingWindowMs: number;
 }
 
+/** Sheet music view and PDF options (added later: old saved settings get these defaults). */
+export interface SheetSettings {
+  view: 'roll' | 'sheet';
+  /** null = automatic (100% on desktop, 75% on phones). */
+  zoom: number | null;
+  paper: 'auto' | 'a4' | 'letter';
+  follow: boolean;
+}
+
+export const DEFAULT_SHEET: SheetSettings = { view: 'roll', zoom: null, paper: 'auto', follow: true };
+
 export interface SavedExportPreset {
   id: string;
   name: string;
@@ -32,6 +43,8 @@ interface SettingsState {
   exportSettings: ExportSettings;
   exportPresets: SavedExportPreset[];
   reducedMotion: boolean;
+  sheet: SheetSettings;
+  setSheet: (patch: Partial<SheetSettings>) => void;
   setVisual: (patch: Partial<VisualSettings>) => void;
   replaceVisual: (v: VisualSettings) => void;
   setLabels: (patch: Partial<VisualSettings['labels']>) => void;
@@ -46,19 +59,32 @@ interface SettingsState {
   resetAudio: () => void;
 }
 
+/**
+ * Saved settings from older versions. v2 (2026-11-12): the default level became Hard (the closest to
+ * the original), so a saved default that is still the old default, Medium, moves to Hard; Easy, picked
+ * on purpose, is kept.
+ */
+export function migrateSettings(persisted: unknown, version: number): unknown {
+  const p = (persisted && typeof persisted === 'object' ? { ...(persisted as Record<string, unknown>) } : {}) as Record<string, unknown>;
+  if (version < 2 && (p.defaultDifficulty === 'medium' || p.defaultDifficulty === undefined)) p.defaultDifficulty = 'hard';
+  return p;
+}
+
 export const useSettings = create<SettingsState>()(
   persist(
     (set) => ({
       visual: DEFAULT_VISUAL,
       audio: DEFAULT_AUDIO_SETTINGS,
       practice: { countIn: false, metronome: false, metronomeVolume: 0.6, waitMode: false, timingWindowMs: 150 },
-      defaultDifficulty: 'medium',
+      defaultDifficulty: 'hard',
       detectionPreset: 'piano',
       customDetection: EXTRACTION_PRESETS.piano,
       backendUrl: '',
       exportSettings: DEFAULT_EXPORT,
       exportPresets: [],
       reducedMotion: false,
+      sheet: DEFAULT_SHEET,
+      setSheet: (patch) => set((s) => ({ sheet: { ...s.sheet, ...patch } })),
       setVisual: (patch) => set((s) => ({ visual: { ...s.visual, ...patch } })),
       replaceVisual: (v) => set({ visual: v }),
       setLabels: (patch) => set((s) => ({ visual: { ...s.visual, labels: { ...s.visual.labels, ...patch }, labelsHiddenByTheme: false } })),
@@ -74,7 +100,8 @@ export const useSettings = create<SettingsState>()(
     }),
     {
       name: 'pianovision-settings', // storage key predates the rename; keep so saved settings survive
-      version: 1,
+      version: 2,
+      migrate: migrateSettings,
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as Partial<SettingsState>;
         return {
@@ -91,6 +118,7 @@ export const useSettings = create<SettingsState>()(
           audio: { ...current.audio, ...(p.audio ?? {}) },
           practice: { ...current.practice, ...(p.practice ?? {}) },
           exportSettings: { ...current.exportSettings, ...(p.exportSettings ?? {}) },
+          sheet: { ...current.sheet, ...(p.sheet ?? {}) },
         };
       },
     },

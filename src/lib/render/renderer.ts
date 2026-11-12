@@ -83,6 +83,12 @@ export class PianoRollRenderer {
     this.bgCacheKey = '';
   }
 
+  /** The canvas lost its 2D context and got it back: cached layers are blank, paint them again. */
+  invalidateCaches(): void {
+    this.bgCache = null;
+    this.bgCacheKey = '';
+  }
+
   get width() {
     return this.w;
   }
@@ -189,6 +195,11 @@ export class PianoRollRenderer {
     if (s.colorMode === 'pitch') return hexToRgb(PITCH_COLORS[pitchClass(n.midi)]);
     if (s.colorMode === 'single') return hexToRgb(s.singleColor);
     return hexToRgb(n.hand === 'L' ? s.leftColor : s.rightColor);
+  }
+
+  /** Paints only the background (preset, colour, image or current video frame), e.g. for a title page. */
+  drawBackdrop(ctx: Ctx2D): void {
+    this.drawBackground(ctx);
   }
 
   private drawBackground(ctx: Ctx2D) {

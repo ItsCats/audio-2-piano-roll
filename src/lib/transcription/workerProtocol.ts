@@ -18,6 +18,8 @@ export type WorkerRequest =
       audio: Float32Array;
       modelUrl: string;
       options: NoteExtractionOptions;
+      /** a second extraction of the same posteriors (ExtractionParams.leadPass), returned as leadNotes */
+      leadOptions?: NoteExtractionOptions;
       preferredBackend?: string;
       /** the page's device facts for the backend choice (backendChoice.ts) */
       device?: DeviceInfo;
@@ -29,6 +31,7 @@ export type WorkerRequest =
       onsets: Uint8Array;
       nFrames: number;
       options: NoteExtractionOptions;
+      leadOptions?: NoteExtractionOptions;
     }
   | { type: 'cancel'; jobId: number };
 
@@ -38,6 +41,7 @@ export type WorkerResponse =
       type: 'transcribed';
       jobId: number;
       notes: RawNoteEvent[];
+      leadNotes?: RawNoteEvent[];
       nFrames: number;
       frames: Uint8Array;
       onsets: Uint8Array;
@@ -45,5 +49,5 @@ export type WorkerResponse =
       backend: string;
       ms: number;
     }
-  | { type: 'extracted'; jobId: number; notes: RawNoteEvent[] }
+  | { type: 'extracted'; jobId: number; notes: RawNoteEvent[]; leadNotes?: RawNoteEvent[] }
   | { type: 'error'; jobId: number; message: string };
