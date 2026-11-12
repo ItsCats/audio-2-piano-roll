@@ -1,4 +1,5 @@
 import type { NoteExtractionOptions, RawNoteEvent } from './noteExtraction';
+import type { DeviceInfo } from './backendChoice';
 
 export type TranscriptionStage =
   | 'validating'
@@ -18,8 +19,8 @@ export type WorkerRequest =
       modelUrl: string;
       options: NoteExtractionOptions;
       preferredBackend?: string;
-      /** main-thread device facts the worker can't read itself (WorkerNavigator has no maxTouchPoints) */
-      device?: { maxTouchPoints: number; deviceMemory?: number };
+      /** the page's device facts for the backend choice (backendChoice.ts) */
+      device?: DeviceInfo;
     }
   | {
       type: 'extract';

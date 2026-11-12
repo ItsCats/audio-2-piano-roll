@@ -25,8 +25,11 @@ class Job:
     artist: str | None = None
     duration: float | None = None
     detail: str | None = None
-    result_path: str | None = None
+    result_path: str | None = None  # default download (GET /audio without ?stem=)
+    stems: dict[str, str] = field(default_factory=dict)  # stem name ('vocals' | 'accomp' | 'mix') -> file path
     created: float = field(default_factory=time.time)
+    separation_ms: int | None = None  # wall time of decoding + SCNet + encoding the stems
+    separation_error: str | None = None  # a YouTube job whose separation failed is still done (mix only)
 
     def public(self) -> dict:
         return {
@@ -39,6 +42,10 @@ class Job:
             "artist": self.artist,
             "duration": self.duration,
             "detail": self.detail,
+            "kind": self.kind,
+            "stems": sorted(self.stems) if self.status == "done" else [],
+            "separationMs": self.separation_ms,
+            "separationError": self.separation_error,
         }
 
 

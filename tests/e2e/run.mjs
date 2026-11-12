@@ -8,7 +8,7 @@
  */
 import { createServer } from 'vite';
 
-const THRESHOLDS = { bach: 0.9, chords: 0.82 };
+const THRESHOLDS = { bach: 0.92, chords: 0.86 };
 
 let chromium;
 try {
@@ -37,6 +37,14 @@ try {
         `tempo ${r.tempo.bpm} BPM, key ${r.key}, ${r.backend}, ${r.transcribeMs} ms`,
     );
   }
+  // a reused in-page separation result is not consumed (its buffers are copied, not transferred)
+  const reuse = await page.evaluate(() => window.runSeparationReuse());
+  const reuseOk = reuse.intact && reuse.notes[0] > 0 && reuse.notes[0] === reuse.notes[1] && reuse.melody[0] === reuse.melody[1];
+  failed ||= !reuseOk;
+  console.log(`${reuseOk ? 'PASS' : 'FAIL'} separation  the same in-page separation result transcribes twice identically ${JSON.stringify(reuse)}`);
+  const reOk = reuse.redetect.keptMelody > 0 && reuse.redetect.sameTempoWithAndWithoutMelody;
+  failed ||= !reOk;
+  console.log(`${reOk ? 'PASS' : 'FAIL'} re-detect   keeps the sung line and takes the beats from the accompaniment only ${JSON.stringify(reuse.redetect)}`);
 } finally {
   await browser.close();
   await server.close();

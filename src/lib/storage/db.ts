@@ -4,7 +4,7 @@
  * background media) is stored separately from song metadata.
  */
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
-import type { Song, SongSummary } from '../music/types';
+import type { Song, SongSource, SongSummary } from '../music/types';
 import type { StoredPosteriors } from '../transcription/posteriors';
 import { bumpNoteIds } from '../music/cleanup';
 
@@ -17,30 +17,112 @@ export interface MediaItem {
   createdAt: number;
 }
 
+/**
+ * An import that has started but not finished, written before any decoding so that a tab the
+ * browser kills mid-analysis (out of memory, most often on phones) does not lose the recording.
+ * Deleted when the import finishes, fails or is cancelled.
+ */
+export interface PendingImport {
+  id: string;
+  title: string;
+  artist?: string;
+  /** song source kind ('audio' file, 'capture' microphone recording, 'youtube' tab capture) */
+  kind: SongSource['kind'];
+  source: SongSource;
+  /** the audio to import again; absent for files too large to keep a copy of */
+  blob?: Blob;
+  mimeType: string;
+  fileName: string;
+  /** Date.now() when the import started */
+  startedAt: number;
+  /** detection preset at the time */
+  presetId: string;
+  separate: boolean;
+}
+
 interface PVSchema extends DBSchema {
   songs: { key: string; value: Song };
   summaries: { key: string; value: SongSummary; indexes: { updatedAt: number } };
   audio: { key: string; value: { blob: Blob; name: string; type: string } };
   posteriors: { key: string; value: StoredPosteriors };
   media: { key: string; value: MediaItem };
+  pending: { key: string; value: PendingImport };
 }
+
+/** Name and version of the IndexedDB database (exported for the upgrade test). */
+// database name predates the Piano2Vision rename; changing it would orphan users' libraries
+export const DB_NAME = 'pianovision';
+/** 1: songs, summaries, audio, posteriors, media. 2: + pending (interrupted imports). */
+export const DB_VERSION = 2;
 
 let dbp: Promise<IDBPDatabase<PVSchema>> | null = null;
 function db() {
   if (!dbp) {
-    // database name predates the Piano2Vision rename; changing it would orphan users' libraries
-    dbp = openDB<PVSchema>('pianovision', 1, {
-      upgrade(d) {
-        d.createObjectStore('songs', { keyPath: 'id' });
-        const s = d.createObjectStore('summaries', { keyPath: 'id' });
-        s.createIndex('updatedAt', 'updatedAt');
-        d.createObjectStore('audio');
-        d.createObjectStore('posteriors');
-        d.createObjectStore('media', { keyPath: 'id' });
+    dbp = openDB<PVSchema>(DB_NAME, DB_VERSION, {
+      // each step only adds what that version introduced: existing stores and data are kept
+      upgrade(d, oldVersion) {
+        if (oldVersion < 1) {
+          d.createObjectStore('songs', { keyPath: 'id' });
+          const s = d.createObjectStore('summaries', { keyPath: 'id' });
+          s.createIndex('updatedAt', 'updatedAt');
+          d.createObjectStore('audio');
+          d.createObjectStore('posteriors');
+          d.createObjectStore('media', { keyPath: 'id' });
+        }
+        if (oldVersion < 2 && !d.objectStoreNames.contains('pending')) {
+          d.createObjectStore('pending', { keyPath: 'id' });
+        }
+      },
+      // another tab still has the database open at the old version. A tab of this version closes it in
+      // its `blocking` handler, but a tab still running the previous version of the app has no such
+      // handler: every read and write here waits until that tab is closed or reloaded, so say so
+      blocked() {
+        setBlocked(true);
+      },
+      // a newer version of the app in another tab wants to upgrade: let it, reopen on next use
+      blocking() {
+        void dbp?.then((d) => d.close());
+        dbp = null;
+      },
+      terminated() {
+        dbp = null;
       },
     });
+    dbp.then(
+      () => setBlocked(false),
+      () => {
+        setBlocked(false);
+        dbp = null;
+      },
+    );
   }
   return dbp;
+}
+
+let blockedNow = false;
+const blockedListeners = new Set<(blocked: boolean) => void>();
+function setBlocked(b: boolean) {
+  if (b === blockedNow) return;
+  blockedNow = b;
+  for (const l of blockedListeners) l(b);
+}
+
+/**
+ * Be told while the database can't be opened because another tab (an older version of the app)
+ * keeps it open at the old version (the listener is called at once if that is the case now).
+ * Returns the unsubscribe function.
+ */
+export function watchDatabaseBlocked(listener: (blocked: boolean) => void): () => void {
+  blockedListeners.add(listener);
+  if (blockedNow) listener(true);
+  return () => blockedListeners.delete(listener);
+}
+
+/** Close the connection (tests). */
+export async function closeDb(): Promise<void> {
+  const p = dbp;
+  dbp = null;
+  if (p) (await p).close();
 }
 
 export function summarize(song: Song): SongSummary {
@@ -62,8 +144,23 @@ export function summarize(song: Song): SongSummary {
   };
 }
 
-export async function saveSong(song: Song): Promise<void> {
+/**
+ * `pendingId`: the interrupted-import record of the import that produced this song, deleted in the
+ * same transaction, so a tab killed while saving leaves either the record (song not saved) or the
+ * song (record gone), never both (which would offer to import the song a second time).
+ */
+export async function saveSong(song: Song, opts: { pendingId?: string } = {}): Promise<void> {
   const d = await db();
+  if (opts.pendingId) {
+    const tx = d.transaction(['songs', 'summaries', 'pending'], 'readwrite');
+    await Promise.all([
+      tx.objectStore('songs').put(song),
+      tx.objectStore('summaries').put(summarize(song)),
+      tx.objectStore('pending').delete(opts.pendingId),
+      tx.done,
+    ]);
+    return;
+  }
   const tx = d.transaction(['songs', 'summaries'], 'readwrite');
   await Promise.all([tx.objectStore('songs').put(song), tx.objectStore('summaries').put(summarize(song)), tx.done]);
 }
@@ -118,6 +215,31 @@ export async function listMedia(): Promise<MediaItem[]> {
 }
 export async function deleteMedia(id: string): Promise<void> {
   await (await db()).delete('media', id);
+}
+
+export async function savePending(p: PendingImport): Promise<void> {
+  await (await db()).put('pending', p);
+}
+export async function getPending(id: string): Promise<PendingImport | undefined> {
+  return (await db()).get('pending', id);
+}
+export async function listPending(): Promise<PendingImport[]> {
+  return (await (await db()).getAll('pending')).sort((a, b) => b.startedAt - a.startedAt);
+}
+/**
+ * `startedAt`: delete the record only if it is still the one written then (an import resumed under
+ * the same id has rewritten it, and the cleanup of an earlier run must not delete the newer one).
+ */
+export async function deletePending(id: string, startedAt?: number): Promise<void> {
+  const d = await db();
+  if (startedAt === undefined) {
+    await d.delete('pending', id);
+    return;
+  }
+  const tx = d.transaction('pending', 'readwrite');
+  const cur = await tx.store.get(id);
+  if (cur && cur.startedAt === startedAt) await tx.store.delete(id);
+  await tx.done;
 }
 
 export async function storageEstimate(): Promise<{ usage: number; quota: number } | null> {

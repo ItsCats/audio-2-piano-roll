@@ -15,11 +15,14 @@
   to = "/index.html"
   status = 200
 
-# Fingerprinted build assets never change
+# Fingerprinted build assets never change. COEP here too: a worker script's own COEP decides
+# whether the worker (SCNet separation, Basic Pitch, CREPE) is cross-origin isolated.
 [[headers]]
   for = "/assets/*"
   [headers.values]
     Cache-Control = "public, max-age=31536000, immutable"
+    Cross-Origin-Embedder-Policy = "credentialless"
+    Cross-Origin-Opener-Policy = "same-origin"
 
 # Piano samples and the AI model are large and rarely change
 [[headers]]
@@ -27,9 +30,76 @@
   [headers.values]
     Cache-Control = "public, max-age=2592000, stale-while-revalidate=86400"
 [[headers]]
-  for = "/models/*"
+  for = "/models/basic-pitch/*"
   [headers.values]
     Cache-Control = "public, max-age=2592000, stale-while-revalidate=86400"
+# SCNet separation model (12.9 MB). The app requests it as scnet.int8.onnx?v=<sha256 prefix> and checks the
+# sha256, so a long cache is safe; a new model ships with a new ?v= and the old Cache API entry is dropped.
+[[headers]]
+  for = "/models/scnet/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+# CREPE tiny pitch model (2 MB, src/lib/pitch)
+[[headers]]
+  for = "/models/crepe/*"
+  [headers.values]
+    Cache-Control = "public, max-age=2592000, stale-while-revalidate=86400"
+
+
+# Cross-origin isolation (SharedArrayBuffer → multi-threaded WASM separation) on the app routes,
+# see src/lib/isolation.ts. NOT on /import/youtube: the YouTube player iframe sends no COEP, so an
+# isolated page can't embed it (the app does a full page load when entering/leaving that route).
+# credentialless (not require-corp): cross-origin no-cors loads still work, just without cookies;
+# browsers without credentialless support (Safari) simply stay non-isolated and single-threaded.
+# Header rules match the requested path (also for the SPA rewrite to /index.html) and merge with
+# the "/*" rule below; keep exactly ONE rule per path that sets these two headers (a header set by
+# two matching rules may be sent twice, and a repeated COEP/COOP value is invalid → no isolation).
+# Keep in sync with ISOLATED_ROUTES in src/lib/isolation.ts and vite.config.ts.
+[[headers]]
+  for = "/"
+  [headers.values]
+    Cross-Origin-Opener-Policy = "same-origin"
+    Cross-Origin-Embedder-Policy = "credentialless"
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cross-Origin-Opener-Policy = "same-origin"
+    Cross-Origin-Embedder-Policy = "credentialless"
+[[headers]]
+  for = "/import"
+  [headers.values]
+    Cross-Origin-Opener-Policy = "same-origin"
+    Cross-Origin-Embedder-Policy = "credentialless"
+[[headers]]
+  for = "/studio"
+  [headers.values]
+    Cross-Origin-Opener-Policy = "same-origin"
+    Cross-Origin-Embedder-Policy = "credentialless"
+[[headers]]
+  for = "/studio/:id"
+  [headers.values]
+    Cross-Origin-Opener-Policy = "same-origin"
+    Cross-Origin-Embedder-Policy = "credentialless"
+[[headers]]
+  for = "/library"
+  [headers.values]
+    Cross-Origin-Opener-Policy = "same-origin"
+    Cross-Origin-Embedder-Policy = "credentialless"
+[[headers]]
+  for = "/settings"
+  [headers.values]
+    Cross-Origin-Opener-Policy = "same-origin"
+    Cross-Origin-Embedder-Policy = "credentialless"
+[[headers]]
+  for = "/accuracy"
+  [headers.values]
+    Cross-Origin-Opener-Policy = "same-origin"
+    Cross-Origin-Embedder-Policy = "credentialless"
+[[headers]]
+  for = "/credits"
+  [headers.values]
+    Cross-Origin-Opener-Policy = "same-origin"
+    Cross-Origin-Embedder-Policy = "credentialless"
 
 [[headers]]
   for = "/*"

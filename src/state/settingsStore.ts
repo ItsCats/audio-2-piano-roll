@@ -97,7 +97,9 @@ export const useSettings = create<SettingsState>()(
   ),
 );
 
-export function detectionParams(): ExtractionParams {
+/** Extraction parameters of a detection preset (default: the current one). */
+export function detectionParams(preset: string = useSettings.getState().detectionPreset): ExtractionParams {
   const s = useSettings.getState();
-  return s.detectionPreset === 'custom' ? s.customDetection : EXTRACTION_PRESETS[s.detectionPreset];
+  if (preset === 'custom') return s.customDetection;
+  return EXTRACTION_PRESETS[preset as keyof typeof EXTRACTION_PRESETS] ?? EXTRACTION_PRESETS[s.detectionPreset === 'custom' ? 'piano' : s.detectionPreset];
 }

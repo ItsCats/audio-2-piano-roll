@@ -1,14 +1,22 @@
 /**
  * Client for the optional self-hosted processing server (server/). It fetches audio for
- * YouTube URLs (yt-dlp) and isolates the piano/harmonic part of full mixes (Demucs).
+ * YouTube URLs (yt-dlp) and separates full mixes with SCNet (the same model the browser runs,
+ * faster on a multi-core server) into two stems: `vocals` and `accomp` (bass + other: no drums,
+ * no vocals), each mono 22.05 kHz FLAC, sample-aligned with the mixture. Servers before 2.0
+ * (Demucs) returned a single "piano part" file instead and report no `features.stems`.
  * Transcription itself always runs in the browser.
  */
 export interface BackendHealth {
   ok: boolean;
   version: string;
-  features: { youtube: boolean; separation: boolean };
+  /** stems: separation returns ?stem=vocals|accomp (server 2.0+, SCNet) */
+  features: { youtube: boolean; separation: boolean; stems?: boolean };
+  separationModel?: string | null;
   maxDurationSec: number;
 }
+
+/** Downloadable results of a job: separation -> vocals, accomp; YouTube -> mix (+ vocals, accomp when separated). */
+export type BackendStem = 'vocals' | 'accomp' | 'mix';
 
 export interface BackendJob {
   id: string;
@@ -19,6 +27,14 @@ export interface BackendJob {
   title?: string;
   artist?: string;
   duration?: number;
+  detail?: string | null;
+  kind?: string;
+  /** stems available for download once done (server 2.0+) */
+  stems?: BackendStem[];
+  /** server's time for separating the stems (decode + SCNet + encode), when it ran */
+  separationMs?: number | null;
+  /** a YouTube job whose separation failed is still done, with the mix only and this error */
+  separationError?: string | null;
 }
 
 function base(url: string): string {
@@ -86,10 +102,24 @@ export async function getJob(url: string, id: string): Promise<BackendJob> {
   return handle(await fetch(`${base(url)}/api/jobs/${id}`, { headers: await headers() }));
 }
 
-export async function getJobAudio(url: string, id: string): Promise<Blob> {
-  const res = await fetch(`${base(url)}/api/jobs/${id}/audio`, { headers: await headers() });
-  if (!res.ok) throw new Error(`Could not download processed audio (${res.status})`);
+/**
+ * Download a job's audio. Without `stem` the server returns its default: the accompaniment for
+ * separation jobs, the mix for plain YouTube jobs (what pre-2.0 clients expect).
+ */
+export async function getJobAudio(url: string, id: string, stem?: BackendStem, signal?: AbortSignal): Promise<Blob> {
+  const q = stem ? `?stem=${stem}` : '';
+  const res = await fetch(`${base(url)}/api/jobs/${encodeURIComponent(id)}/audio${q}`, { headers: await headers(), signal });
+  if (!res.ok) {
+    if (stem && res.status === 404) throw new Error(`The processing server returned no ${stem} stem for this job.`);
+    throw new Error(`Could not download processed audio (${res.status})`);
+  }
   return res.blob();
+}
+
+/** Both separated stems of a finished separation (or separated YouTube) job, downloaded in parallel. */
+export async function fetchStems(serverUrl: string, jobId: string, signal?: AbortSignal): Promise<{ vocals: Blob; accomp: Blob }> {
+  const [vocals, accomp] = await Promise.all([getJobAudio(serverUrl, jobId, 'vocals', signal), getJobAudio(serverUrl, jobId, 'accomp', signal)]);
+  return { vocals, accomp };
 }
 
 export async function waitForJob(

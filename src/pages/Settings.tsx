@@ -9,6 +9,7 @@ import { storageEstimate } from '../lib/storage/db';
 import type { Difficulty } from '../lib/music/types';
 import { PIANO_PRESETS } from '../lib/audio/presets';
 import { toast } from '../state/toastStore';
+import { rememberServerHealth } from '../state/importStore';
 
 const SHORTCUTS: [string, string][] = [
   ['Space', 'Play / pause'],
@@ -37,8 +38,11 @@ function BackendSettings() {
     if (!url) return setStatus({ state: 'idle' });
     setStatus({ state: 'checking' });
     try {
-      setStatus({ state: 'ok', health: await health(url) });
+      const h = await health(url);
+      rememberServerHealth(url, h); // the Import page's separation option uses the same answer
+      setStatus({ state: 'ok', health: h });
     } catch (e) {
+      rememberServerHealth(url, null);
       setStatus({ state: 'error', error: (e as Error).message });
     }
   };
@@ -48,8 +52,8 @@ function BackendSettings() {
   return (
     <Section title="Processing server (optional)">
       <p className="text-[12.5px] leading-relaxed text-ink-300">
-        Transcription runs in your browser. A self-hosted processing server adds YouTube audio fetching and Demucs piano isolation for full
-        songs. See <code className="text-ink-100">server/README.md</code>.
+        Transcription runs in your browser. A self-hosted processing server adds YouTube audio fetching and faster SCNet vocals &amp; drums
+        separation for full songs. See <code className="text-ink-100">server/README.md</code>.
       </p>
       <div className="flex gap-2">
         <input
@@ -74,7 +78,8 @@ function BackendSettings() {
       {status.state === 'checking' && <p className="flex items-center gap-2 text-[12.5px] text-ink-300"><Loader2 size={14} className="animate-spin" /> Connecting…</p>}
       {status.state === 'ok' && status.health && (
         <p className="flex items-center gap-2 text-[12.5px] text-ok">
-          <CheckCircle2 size={14} /> Connected (v{status.health.version}) · YouTube {status.health.features.youtube ? '✓' : '✗'} · Separation {status.health.features.separation ? '✓' : '✗'}
+          <CheckCircle2 size={14} /> Connected (v{status.health.version}) · YouTube {status.health.features.youtube ? '✓' : '✗'} · Separation{' '}
+          {status.health.features.separation ? (status.health.features.stems ? '✓ (SCNet stems)' : '✓ (old server without stems: update it)') : '✗'}
         </p>
       )}
       {status.state === 'error' && <p className="flex items-center gap-2 text-[12.5px] text-bad"><XCircle size={14} /> {status.error}</p>}
@@ -206,13 +211,18 @@ export default function SettingsPage() {
               </Link>
             </p>
           </Section>
-          <Section title="Open-source components">
+          <Section title="Credits & licences">
             <ul className="flex flex-col gap-1 text-[12.5px] text-ink-300">
-              <li>Basic Pitch model — Spotify (Apache-2.0)</li>
-              <li>Salamander Grand Piano V3 — Alexander Holm (CC-BY 3.0)</li>
-              <li>Upright Piano KW — freepats.zenvoid.org (CC0)</li>
-              <li>TensorFlow.js (Apache-2.0) · mediabunny (MPL-2.0) · @tonejs/midi (MIT) · React (MIT)</li>
+              <li>Basic Pitch note-detection model — Spotify (Apache-2.0)</li>
+              <li>SCNet vocals &amp; drums separation model — Tong et al. (MIT)</li>
+              <li>Salamander Grand Piano V3 — Alexander Holm (CC BY 3.0) · Upright Piano KW — FreePats (CC0)</li>
+              <li>TensorFlow.js · ONNX Runtime Web · Mediabunny · @tonejs/midi · React, and more</li>
             </ul>
+            <p className="mt-2 text-[12.5px] leading-relaxed text-ink-300">
+              <Link to="/credits" className="text-accent-400 hover:text-accent-300">
+                All credits, licences and the test data we used →
+              </Link>
+            </p>
           </Section>
         </div>
       </div>

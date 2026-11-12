@@ -1,0 +1,81 @@
+# Real-recording accuracy harness
+
+Measures the app's real in-browser pipeline on real recordings. Audio, stems, downloaded references
+and results live in a WORK directory OUTSIDE the repo. Copyrighted songs are passed by path only and
+are never copied here.
+
+Python: `server/.venv/bin/python` (torch, demucs, librosa, mir_eval, pretty_midi, torchcrepe,
+piano_transcription_inference, remotezip). Node 22 + Playwright Chromium.
+
+| step | script | output (under WORK) |
+| --- | --- | --- |
+| app transcription (base + Easy/Medium/Hard, tempo, key, timing) | `node tests/accuracy/transcribe.mjs --out WORK/transcriptions --port 5302 --presets piano,mix FILES...` | `transcriptions/<id>.<preset>.json` |
+| MAESTRO pieces with exact MIDI | `fetch_maestro.py WORK/maestro 2011/MIDI-...wav ...` | `maestro/*.wav + .midi` |
+| Demucs stems (htdemucs_6s) | `separate.py WORK/stems FILES...` | `stems/<id>/{vocals,bass,drums,...}.wav` |
+| vocal / bass pitch reference | `vocal_ref.py WORK/stems/<id> WORK/refs/vocal/<id>.vocals` (bass: `--stem bass --fmin 35 --fmax 400`; fmin must stay >= 32.7 Hz) | `refs/vocal/<id>.<stem>.f0.npz, .notes.json` |
+| vocal reference cross-check (pYIN) | `vocal_ref_check.py WORK/stems/<id> REF.f0.npz --seconds 90` | stdout JSON |
+| score MIDI to recording alignment (DTW) | `align_score.py SCORE.mid AUDIO OUT.json [--truth PERF.midi]` | `refs/aligned/<id>.json` |
+| strong piano transcriber (eval aid only) | `pti_transcribe.py CKPT WORK/refs/pti FILES...` | `refs/pti/<id>.pti.json` |
+| score-informed snapping | `snap_ref.py ALIGNED.json PTI.json OUT.json [--truth PERF.midi]` | `refs/snapped/<id>.json` |
+| metric sanity checks | `sanity.py REF AUDIO [VOCAL.f0.npz] [--no-proxies]` | stdout, `$SANITY_OUT` |
+| posterior dump | `node tests/accuracy/transcribe.mjs --dump-posteriors WORK/posteriors WORK/maestro/m-*.wav` | `posteriors/<id>.{frames.u8,onsets.u8,rms.f32,post.json}` |
+| synthetic e2e posteriors | `node tests/accuracy/sweep_extraction.e2e.mjs --dump WORK/posteriors` | `posteriors/e2e-*` |
+| detection sweep (no model) | `node tests/accuracy/sweep_extraction.mjs --post WORK/posteriors --ref WORK/maestro --configs tests/accuracy/sweep_extraction.configs.mjs [--json OUT]` | stdout / JSON |
+| evaluation | `evaluate.py --work WORK --out WORK/eval/x FILES...` (config: `songs.json`) | `eval/x.json` |
+| Easy RH source analysis | `rh_source.py WORK OUT.json ids...` (needs the app run on stems) | JSON |
+| report | `make_report.py EVAL.json OUT.md [--title T] --refs ... --sanity ... --prepend ... --append ...` | Markdown |
+| separated app path (in-browser SCNet + vocal melody) | `node tests/accuracy/transcribe.mjs --separate --coi --out WORK/sep --presets mix FILES...` (~2.2 GB, one run at a time; `--coi` = cross-origin isolated page like the shipped app, 3 WASM threads, ≈1 min per audio minute; without it single-threaded, ≈2.3 min) | `sep/<id>.<preset>.json` (with `memory`: peak tab RSS / tree PSS) |
+| offline melody / arrangement regeneration from saved runs with posteriors | `node tests/accuracy/melody_regen.mjs [--keep-base] OUTDIR RUN.json ...` (env `MELODY_OPTS` = JSON MelodyOptions overrides) | `OUTDIR/<id>.json` (base/easy/medium/hard/vocalNotes/speech) |
+| melody evaluation | `melody_eval.py --work WORK [--out OUT.json] RUN.json ...` | Easy/Medium RH, melody line and ceiling as RPA/RCA/OA/OA-chroma; RPA/RCA on stable-periodicity frames; RH register, LH clearance, speech-section stats, Easy LH bass RCA |
+| offline arrangement regeneration from any saved base (loads only music/difficulty.ts) | `node tests/accuracy/inst_regen.mjs OUTDIR RUN.json ...` | `OUTDIR/<basename>` (base/easy/medium/hard, ms) |
+| instrumental / solo-piano tune-line evaluation | `inst_eval.py --work WORK [--maestro WORK/maestro] [--pti WORK/refs/pti] [--lead ID=LEAD.npz ...] [--no-drums] [--out OUT.json] RUN.json ...` | Easy/Medium/Hard RH top RPA/RCA/VR vs the MAESTRO MIDI top voice, PTI top voice or pYIN 'other'-stem lead proxy (plus confident frames), and duration-independent note-choice measures next to RCA (onsetPC: RH onset pitch class vs the reference; bothCA: chroma on frames where both sound; legatoRCA: RCA with every RH note held to the next onset; RCA alone rises with longer notes); Easy shape (leaps), LH bass RCA, drum suspects; vocal songs scored on instrumental gaps only (with gap RH note and repeat counts); means per group: exact / pti / lead-band (no sung line) / lead-vocal-gaps |
+| CREPE-tiny ONNX export (parity-checked) | `crepe_export.py OUT.onnx` | ONNX file |
+| CREPE + Basic Pitch vocal path in Chromium (speed, RSS) | `node tests/accuracy/crepe_track.mjs --out WORK/crepe [--hop 10] [--no-bp] [--coi] ID=VOCALS.wav ...` | `crepe/<id>.*.json` |
+| CREPE line variants without re-running models | `node tests/accuracy/crepe_lines.mjs --in DIR --out DIR2 [--variants FILE.mjs]` | `DIR2/*` |
+| CREPE parity vs torchcrepe / pYIN references / scoring | `crepe_eval.py parity STEM.wav X.crepe.json`; `crepe_eval.py pyin OUTDIR id=STEM.wav ...`; `crepe_eval.py score --tracks DIR --work WORK --pyin-demucs D1 --pyin-scnet D2 ids...` | stdout / JSON (CREPE reference is circular; pYIN-Demucs is the independent check; P\|V and note-onset F1) |
+
+`transcribe.mjs --override '{"piano":{...}}'` merges candidate values into the app's presets in the page, so candidate presets run through the full browser path.
+
+The separation oracle is the app run on `<id>.vocals.wav` / `<id>.accomp-nodrums.wav`, using the same
+transcribe.mjs. evaluate.py picks those runs up automatically when
+`transcriptions/<id>.vocals.mix.json` exists.
+
+Build the oracle inputs from the stems (16-bit stereo, 44.1 kHz; the stems are summed, not normalised):
+
+    S=WORK/stems/<id>
+    ffmpeg -i $S/vocals.wav -c:a pcm_s16le WORK/oracle/<id>.vocals.wav
+    ffmpeg -i $S/bass.wav -i $S/guitar.wav -i $S/piano.wav -i $S/other.wav \
+      -filter_complex amix=inputs=4:normalize=0 -c:a pcm_s16le WORK/oracle/<id>.accomp-nodrums.wav
+
+## Round-2 final measurement (how the published numbers were made)
+
+1. Snapshot the commit under test outside the repo (`git archive HEAD | tar -x -C WORK/round2/app`, symlink
+   `node_modules`) so parallel edits cannot change the code mid-run; run transcribe.mjs from there with
+   `ACC_VITE_CACHE=WORK/round2/vitecache` (a private Vite cache).
+2. Band songs: `--separate --coi --presets mix` (Full song + separation) and `--coi --presets mix,piano`;
+   solo piano and MAESTRO: `--coi --presets piano,sensitive`. Strictly sequential.
+3. Link `<id>.sep.json` → the separated run into one transcription dir and evaluate with a copy of
+   songs.json whose band songs list `"presets": ["sep", "mix", "piano"]` (`make_report.py` treats `sep` like
+   any preset); then melody_eval.py (sep and mix runs vs the baseline runs), inst_eval.py (MAESTRO / PTI /
+   lead proxies) and the independent pYIN-on-Demucs vocal check.
+4. The Accuracy page (`src/lib/accuracyStats.ts`) quotes those numbers, rounded.
+
+## Notes on the separated path
+
+- Easy/Medium move the sung line by octaves on purpose (median E4–E5, at least 5 semitones above the
+  left hand), so score them with RCA / OA-chroma; RPA is only meaningful for Hard and the melody line.
+- Separated songs store the drums stem's onset envelope with the posteriors (`StoredPosteriors.drums`,
+  8-bit at 100 fps, `separation/dsp.ts drumOnsetEnvelope`). The drum-hit false-note filter
+  (`music/cleanup.ts DRUM_HIT_RULE`) is off by default because it lowered bass RCA; flip `enabled` to
+  re-measure.
+- `sweep_extraction.mjs` passes the frame posteriors to `cleanNotes`, so it scores the bass re-strike
+  rule (`RESTRIKE`) exactly as the app applies it. It also prints onset+offset F1 (`F+off`, against a
+  sustain-pedal-extended MAESTRO reference) and a per-piece `splitRate` (share of notes restarting the
+  same pitch within 40 ms of the previous one ending) in the JSON. Chopped-note joining is
+  `transcription/noteExtraction.ts REPEAT_JOIN`; a config with `extraction: { joinRepeats: null }`
+  scores without it (the vocal stem runs without it: `VOCAL_EXTRACTION.joinRepeats = false`).
+- Hand reach per level is `music/playability.ts MAX_SPAN` (Easy 7, Medium 12, Hard 14 semitones);
+  `spanStats` measures onsets where one hand holds more than a given span.
+- The CREPE-tiny tracker (`src/lib/pitch`) is built and measured but not wired into the app: against
+  the independent pYIN-on-Demucs reference its gain was small and mixed (+0.02 RPA mean, worse on one
+  song of five).

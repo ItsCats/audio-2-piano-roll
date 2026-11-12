@@ -33,7 +33,7 @@ export function HomePage() {
         }
       },
     },
-    { icon: SquarePlay, title: 'Paste a YouTube link', text: 'Turn a video you have rights to into a piano roll.', onClick: () => navigate('/import?tab=youtube') },
+    { icon: SquarePlay, title: 'Paste a YouTube link', text: 'Turn a video you have rights to into a piano roll.', onClick: () => navigate('/import/youtube') },
     { icon: Music2, title: 'Import a MIDI file', text: 'Exact notes, pedal and tempo — no transcription needed.', onClick: () => navigate('/import?tab=midi') },
     { icon: Keyboard, title: 'Connect a MIDI keyboard', text: 'Practice along and get scored on accuracy and timing.', onClick: () => navigate('/settings#midi') },
   ];

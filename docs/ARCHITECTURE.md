@@ -1,6 +1,6 @@
 # Architecture
 
-Piano2Vision is a **local-first single-page app**. The browser does the heavy lifting — neural transcription, sampled-piano synthesis, rendering and video encoding — so the site can be hosted as static files on Netlify with no per-user compute cost. An optional processing server covers the two things a browser cannot do well or legitimately on its own: fetching YouTube audio and AI source separation.
+Piano2Vision is a **local-first single-page app**. The browser does the heavy lifting — neural transcription, sampled-piano synthesis, rendering and video encoding — so the site can be hosted as static files on Netlify with no per-user compute cost. An optional processing server adds what a browser cannot do legitimately on its own, fetching YouTube audio, and runs source separation faster: the same SCNet model also runs in the browser.
 
 ```
 ┌──────────────────────────── Browser ────────────────────────────┐
@@ -21,7 +21,7 @@ Piano2Vision is a **local-first single-page app**. The browser does the heavy li
                 │ static files + 1 function     │ optional, user-configured
         ┌───────▼────────┐              ┌───────▼───────────────────┐
         │    Netlify     │  token (HMAC)│ Processing server (FastAPI)│
-        │  dist/, CDN    ├─────────────►│ yt-dlp · Demucs · ffmpeg   │
+        │  dist/, CDN    ├─────────────►│ yt-dlp · SCNet · ffmpeg    │
         │ backend-token  │              │ Docker; local/Fly/Cloud Run│
         └────────────────┘              └───────────────────────────┘
 ```
@@ -34,7 +34,7 @@ Piano2Vision is a **local-first single-page app**. The browser does the heavy li
 | State | zustand | Tiny, selector-based; high-frequency values (playback time, pressed keys) stay **outside** React so playback never re-renders the UI |
 | Transcription | Spotify **Basic Pitch** model on **TensorFlow.js** | Polyphonic, instrument-agnostic, small (≈0.9 MB), runs client-side. A piano-only model (Onsets & Frames / ByteDance) would be more accurate on solo piano but is 10–200× larger and fails on full mixes. |
 | Inference runtime | TF.js WebGL → WASM (SIMD) → CPU | Best available backend is picked automatically; software WebGL is detected and skipped in favour of WASM |
-| Source separation | **Demucs** `htdemucs_6s` (server, optional) | State of the art with a dedicated piano stem; too heavy for the browser |
+| Source separation | **SCNet** int8 ONNX on **onnxruntime-web** (WASM, multi-threaded when the page is cross-origin isolated); the optional server runs the same model faster | MIT-licensed weights (Demucs weights are research-only, so it was removed); 13 MB; the vocals stem feeds the right-hand melody, the accompaniment stem has no drums or vocals |
 | Piano sound | Own Web Audio sampler + **Salamander Grand V3** (5 velocity layers) and **Upright KW** | Tone.js's Sampler has no velocity layers and doesn't run in `OfflineAudioContext` exports; our engine runs identically live and offline |
 | Rendering | Canvas 2D | Visible-note culling keeps it cheap; the same class renders exported frames |
 | Video | **WebCodecs** via **mediabunny** (+ WASM AAC encoder fallback) | Frame-exact, faster than real time, H.264/AAC MP4 in Chrome/Edge/Safari/Firefox 130+. FFmpeg.wasm was rejected: ~30 MB download, slower, memory-hungry. MediaRecorder is kept only as a fallback. |
@@ -75,7 +75,7 @@ IndexedDB stores: `songs`, `summaries` (fast library listing), `audio` (original
 
 ## Known limitations
 
-* **Transcription is an estimate.** On solo piano it is good (note-onset F1 ≈ 0.94 on our rendered benchmark); on dense full mixes it is noticeably worse — use the *Full song* preset, server-side separation, or edit the result. The UI labels every audio transcription as AI-estimated.
+* **Transcription is an estimate.** On solo piano it is good (note-onset F1 ≈ 0.94 on our rendered benchmark); on dense full mixes it is noticeably worse — use the *Full song* preset with "Separate vocals & drums" (in the browser or on the processing server), or edit the result. The UI labels every audio transcription as AI-estimated.
 * Sustain pedal is not transcribed from audio (Basic Pitch doesn't predict it); note durations already include the ringing. MIDI imports keep their pedal.
 * Hand assignment and the Easy/Medium arrangements are heuristics — good starting points, not engraved editions.
 * YouTube: browsers cannot legally/technically download YouTube media. Use the processing server (your responsibility to use it for content you have rights to) or record the embedded player's tab audio (Chrome/Edge desktop, real time).

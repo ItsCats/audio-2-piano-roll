@@ -4,14 +4,14 @@ import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, Wand2 } from 'lucide-r
 import { useStudio } from '../../../state/studioStore';
 import { detectionParams } from '../../../state/settingsStore';
 import { getPosteriors } from '../../../lib/storage/db';
-import { reextractNotes, EXTRACTION_PRESETS } from '../../../lib/transcription/pipeline';
-import { estimateTempo, regularBeats } from '../../../lib/music/beats';
+import { redetectNotes, EXTRACTION_PRESETS } from '../../../lib/transcription/pipeline';
+import { regularBeats } from '../../../lib/music/beats';
 import { detectKey } from '../../../lib/music/theory';
 import { generateAllArrangements } from '../../../lib/music/difficulty';
 import type { Difficulty, ExtractionParams } from '../../../lib/music/types';
 import { Badge, Button, Section, Slider, Toggle } from '../../ui';
 import { toast } from '../../../state/toastStore';
-import { makeThumbnail } from '../../../lib/songs';
+import { arrangementOptions, makeThumbnail } from '../../../lib/songs';
 
 function LevelStats() {
   const song = useStudio((s) => s.song)!;
@@ -70,14 +70,17 @@ export function ArrangementPanel() {
     try {
       const post = await getPosteriors(song.id);
       if (!post) throw new Error('The analysis data for this song is no longer stored. Re-import the audio to re-detect.');
-      const notes = await reextractNotes(post, params, song.duration);
-      const tempo = song.tempo.source === 'manual' ? song.tempo : estimateTempo(notes, song.duration);
+      // keep the sung melody line (role 'melody') of separated songs: only the accompaniment is
+      // re-detected, and the beats come from it alone, as on import
+      const det = await redetectNotes(post, params, song.duration, { melody: song.base.filter((n) => n.role === 'melody') });
+      const notes = det.notes;
+      const tempo = song.tempo.source === 'manual' ? song.tempo : det.tempo;
       replaceSong({
         ...song,
         base: notes,
         tempo,
         key: detectKey(notes),
-        arrangements: generateAllArrangements(notes, song.basePedal, tempo, song.duration),
+        arrangements: generateAllArrangements(notes, song.basePedal, tempo, song.duration, arrangementOptions(song)),
         transcription: { ...t, params },
         thumbnail: makeThumbnail(notes, song.duration),
         updatedAt: Date.now(),
@@ -98,7 +101,7 @@ export function ArrangementPanel() {
     }
     const first = song.tempo.beats[song.tempo.downbeatIndex] ?? song.base[0]?.start ?? 0;
     const tempo = { ...song.tempo, bpm: v, beats: regularBeats(v, first, song.duration), downbeatIndex: 0, source: 'manual' as const, confidence: 1 };
-    replaceSong({ ...song, tempo, arrangements: generateAllArrangements(song.base, song.basePedal, tempo, song.duration) });
+    replaceSong({ ...song, tempo, arrangements: generateAllArrangements(song.base, song.basePedal, tempo, song.duration, arrangementOptions(song)) });
     toast.success('Tempo updated', 'The beat grid and the Easy/Medium arrangements were regenerated.');
   };
 
@@ -150,13 +153,37 @@ export function ArrangementPanel() {
               <dd className="text-right text-ink-100">{(t.processingMs / 1000).toFixed(1)} s</dd>
             </>
           )}
-          {t.separated && (
+          {t.separation ? (
             <>
               <dt className="text-ink-300">Source separation</dt>
-              <dd className="text-right text-ink-100">Demucs</dd>
+              <dd className="text-right text-ink-100">
+                SCNet · {t.separation.engine === 'scnet-server' ? 'server' : 'browser'}
+                {t.separation.ms > 0 && <span className="text-ink-300"> · {(t.separation.ms / 1000).toFixed(0)} s</span>}
+              </dd>
             </>
+          ) : (
+            t.separated && (
+              <>
+                <dt className="text-ink-300">Source separation</dt>
+                <dd className="text-right text-ink-100">Demucs</dd>
+              </>
+            )
           )}
         </dl>
+        {t.separation && (
+          <div className="flex flex-wrap gap-1.5" aria-label="Source separation">
+            {t.separation.vocals ? (
+              <Badge tone="accent" title="The sung melody was transcribed from the separated vocals and put on the right hand">
+                Vocals separated
+              </Badge>
+            ) : (
+              <Badge title="No sung melody was found in the separated vocals">No singing found</Badge>
+            )}
+            <Badge tone="accent" title="Drums and vocals were removed before the accompaniment was transcribed">
+              Drums removed
+            </Badge>
+          </div>
+        )}
         {t.warnings.length > 0 && (
           <ul className="flex flex-col gap-1">
             {t.warnings.map((w) => (
@@ -180,7 +207,7 @@ export function ArrangementPanel() {
           <Button size="sm" variant="ghost" onClick={() => {
             if (!confirm('Rebuild Easy and Medium from the current Hard arrangement (including your Hard edits)?')) return;
             const hard = song.arrangements.hard.notes;
-            const all = generateAllArrangements(hard, song.basePedal, song.tempo, song.duration);
+            const all = generateAllArrangements(hard, song.basePedal, song.tempo, song.duration, arrangementOptions(song));
             replaceSong({ ...song, arrangements: { ...song.arrangements, easy: all.easy, medium: all.medium } });
           }}>
             Easy & Medium from Hard

@@ -1,14 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { FileAudio, SquarePlay, Music2, Mic, Loader2, CheckCircle2, XCircle, Circle, ArrowRight, Square, Info, Server } from 'lucide-react';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { FileAudio, SquarePlay, Music2, Mic, Loader2, CheckCircle2, XCircle, Circle, ArrowRight, Square, Info, Server, RotateCcw, Download, Smartphone } from 'lucide-react';
 import { Dropzone } from '../components/import/Dropzone';
-import { Badge, Button, ProgressBar, Segmented, Toggle, cn } from '../components/ui';
-import { STAGE_LABELS, useImport, type ImportStage } from '../state/importStore';
+import { SeparationOption, useSeparationChoice } from '../components/import/SeparationOption';
+import { Badge, Button, ProgressBar, Segmented, cn } from '../components/ui';
+import { STAGE_LABELS, rememberServerHealth, useImport, type ImportJob, type ImportStage } from '../state/importStore';
 import { useSettings } from '../state/settingsStore';
 import { configuredBackendUrl, health, type BackendHealth } from '../lib/backend/client';
 import { createPlayer, fetchVideoMeta, parseYouTubeId, startTabCapture, tabCaptureSupported, type TabCapture, type VideoMeta, type YTPlayer } from '../lib/youtube/youtube';
 import { formatTime } from '../lib/music/theory';
 import { toast } from '../state/toastStore';
+import { createScreenWakeLock, isTouchDevice } from '../lib/wakeLock';
+import { saveBlobAs } from '../lib/saveBlob';
+import { YOUTUBE_IMPORT_PATH, documentIsolated, isYouTubeImportPath, switchDocument } from '../lib/isolation';
 
 type Tab = 'audio' | 'youtube' | 'midi' | 'record';
 
@@ -20,8 +24,14 @@ function useBackend() {
     let alive = true;
     setState({ health: null, checking: true });
     health(url)
-      .then((h) => alive && setState({ health: h, checking: false }))
-      .catch(() => alive && setState({ health: null, checking: false }));
+      .then((h) => {
+        rememberServerHealth(url, h); // the separation option and the import use the same answer
+        if (alive) setState({ health: h, checking: false });
+      })
+      .catch(() => {
+        rememberServerHealth(url, null);
+        if (alive) setState({ health: null, checking: false });
+      });
     return () => {
       alive = false;
     };
@@ -56,25 +66,75 @@ function DetectionOptions() {
   );
 }
 
+/** Timeline: the planned stages, with any unplanned stage that actually happened slotted in where it happened. */
+function timeline(job: ImportJob): ImportStage[] {
+  const order = [...job.plan];
+  job.history.forEach((st, i) => {
+    if (st === 'done' || st === 'error' || order.includes(st)) return;
+    // right after the stage that preceded it
+    const prev = i > 0 ? order.indexOf(job.history[i - 1]) : -1;
+    order.splice(prev + 1, 0, st);
+  });
+  return order;
+}
+
+function formatEta(sec: number): string {
+  if (sec < 15) return 'a few seconds left';
+  if (sec < 60) return `about ${Math.round(sec / 5) * 5} s left`;
+  const m = Math.round(sec / 60);
+  return m <= 1 ? 'about 1 min left' : `about ${m} min left`;
+}
+
+/**
+ * The step the speed measurement covers ("separation", "pitch detection 1 of 2"): the ETA is for
+ * this step only, so it says which one (more steps follow, see the checklist below the bar).
+ */
+function etaStep(job: Pick<ImportJob, 'stage' | 'detail'>): string {
+  const part = job.detail?.match(/\((\d+) of (\d+)\)/);
+  switch (job.stage) {
+    case 'separating':
+      return 'separation';
+    case 'analyzing':
+      return part ? `pitch detection ${part[1]} of ${part[2]}` : 'pitch detection';
+    case 'downloading':
+      return 'download';
+    case 'uploading':
+      return 'upload';
+    default:
+      return STAGE_LABELS[job.stage].toLowerCase();
+  }
+}
+
+/** time remaining in the current step, extrapolated from its measured speed (null until measured) */
+function etaText(job: ImportJob): string | null {
+  const r = job.rate;
+  if (!r || r.etaSec === undefined || r.at === undefined) return null;
+  const left = r.etaSec - (Date.now() - r.at) / 1000;
+  return `${etaStep(job)}: ${left > 0 ? formatEta(left) : 'finishing…'}`;
+}
+
 function JobProgress() {
   const job = useImport((s) => s.job);
   const cancel = useImport((s) => s.cancel);
   const clear = useImport((s) => s.clear);
+  const failed = useImport((s) => s.failed);
   const navigate = useNavigate();
+  const [touch] = useState(isTouchDevice);
   const [, force] = useState(0);
   useEffect(() => {
     const t = setInterval(() => force((x) => x + 1), 500);
     return () => clearInterval(t);
   }, []);
   if (!job) return null;
-  const order: ImportStage[] = job.kind === 'midi' || job.kind === 'demo'
-    ? ['validating', 'arranging', 'saving']
-    : ['validating', ...(job.history.includes('uploading') ? (['uploading'] as ImportStage[]) : []), ...(job.history.includes('downloading') ? (['downloading'] as ImportStage[]) : []), ...(job.history.includes('separating') ? (['separating'] as ImportStage[]) : []), 'decoding', 'loading-model', 'analyzing', 'arranging', 'saving'];
+  const order = timeline(job);
   const failedStage = job.stage === 'error' ? job.history[job.history.length - 2] : null;
-  const activeIdx = failedStage ? order.indexOf(failedStage) : order.indexOf(job.stage);
+  const current = failedStage ?? job.stage;
+  const activeIdx = order.indexOf(current);
+  const eta = etaText(job);
   const elapsed = ((job.finishedAt ?? Date.now()) - job.startedAt) / 1000;
   const done = job.stage === 'done';
   const err = job.stage === 'error';
+  const failedHere = err && failed?.jobId === job.id ? failed : null;
   return (
     <div className="panel animate-fade-in p-5" aria-live="polite">
       <div className="flex items-start justify-between gap-4">
@@ -92,15 +152,24 @@ function JobProgress() {
       </div>
       {!done && !err && (
         <div className="mt-4">
-          <ProgressBar value={job.stage === 'analyzing' || job.stage === 'separating' ? job.progress : null} />
-          {job.stage === 'analyzing' && job.progress !== null && (
-            <p className="mt-1.5 text-right font-mono text-[11px] text-ink-300">{Math.round(job.progress * 100)}%</p>
+          <ProgressBar value={job.progress} />
+          {touch && job.kind !== 'midi' && job.kind !== 'demo' && (
+            <p className="mt-2 flex items-center gap-1.5 text-[12px] text-ink-300">
+              <Smartphone size={13} className="shrink-0 text-accent-400" /> Keep this page open while it’s analysing.
+            </p>
+          )}
+          {job.progress !== null && (
+            <p className="mt-1.5 flex justify-between gap-3 font-mono text-[11px] text-ink-300">
+              <span>{eta ?? ((job.stage === 'separating' || job.stage === 'analyzing') && job.progress < 0.99 ? `${etaStep(job)}: measuring speed…` : '')}</span>
+              <span>{Math.round(job.progress * 100)}%</span>
+            </p>
           )}
         </div>
       )}
       <ol className="mt-4 grid gap-1.5 sm:grid-cols-2">
         {order.map((st, i) => {
-          const state = done || i < activeIdx ? 'done' : i === activeIdx ? (err ? 'failed' : 'active') : 'todo';
+          const state =
+            done ? 'done' : st === current ? (err ? 'failed' : 'active') : i < activeIdx || job.history.includes(st) ? 'done' : 'todo';
           return (
             <li key={st} className="flex items-center gap-2 text-[12.5px]">
               {state === 'done' ? <CheckCircle2 size={14} className="text-ok" /> : state === 'active' ? <Loader2 size={14} className="animate-spin text-accent-400" /> : state === 'failed' ? <XCircle size={14} className="text-bad" /> : <Circle size={14} className="text-ink-500" />}
@@ -120,10 +189,20 @@ function JobProgress() {
         </ul>
       )}
       {(done || err) && (
-        <div className="mt-4 flex gap-2">
+        <div className="mt-4 flex flex-wrap gap-2">
           {done && job.songId && (
             <Button variant="primary" onClick={() => navigate(`/studio/${job.songId}`)} icon={<ArrowRight size={16} />}>
               Open in Piano Studio
+            </Button>
+          )}
+          {err && failedHere && (
+            <Button variant="primary" onClick={() => void failedHere.retry()} icon={<RotateCcw size={15} />}>
+              Try again
+            </Button>
+          )}
+          {err && failedHere?.recording && (
+            <Button onClick={() => saveBlobAs(failedHere.recording!.blob, failedHere.recording!.fileName)} icon={<Download size={15} />}>
+              Download recording
             </Button>
           )}
           <Button variant="ghost" onClick={clear}>
@@ -135,11 +214,14 @@ function JobProgress() {
   );
 }
 
-function YouTubeTab({ busy }: { busy: boolean }) {
-  const [url, setUrl] = useState('');
+function YouTubeTab({ busy, separate }: { busy: boolean; separate: boolean }) {
+  const [params] = useSearchParams();
+  const [url, setUrl] = useState(() => params.get('url') ?? '');
+  // Only reachable while an import was running when the tab was opened (App.tsx IsolationGate):
+  // this page is cross-origin isolated, which the YouTube player can't be embedded in.
+  const [isolated] = useState(documentIsolated);
   const [meta, setMeta] = useState<VideoMeta | null>(null);
   const [rights, setRights] = useState(false);
-  const [separate, setSeparate] = useState(true);
   const [capturing, setCapturing] = useState<{ t: number; d: number } | null>(null);
   const [playerError, setPlayerError] = useState<string | null>(null);
   const playerEl = useRef<HTMLDivElement>(null);
@@ -150,6 +232,20 @@ function YouTubeTab({ busy }: { busy: boolean }) {
   const backend = useBackend();
   const id = parseYouTubeId(url);
   const serverReady = !!backend.health?.features.youtube;
+  // say why a button is disabled instead of leaving it silently grey
+  const commonBlock = !rights
+    ? 'Tick the box above to confirm you have the rights to this video.'
+    : busy
+      ? 'Another import is still running — wait for it to finish (progress is shown above).'
+      : null;
+  const recordBlock = !tabCaptureSupported()
+    ? 'Recording tab audio needs Chrome or Edge on a computer.'
+    : isolated
+      ? 'Load the video player above first.'
+      : playerError
+      ? 'This video can’t be played here, so it can’t be recorded.'
+      : commonBlock;
+  const serverBlock = !serverReady ? 'Set up a processing server in Settings to use this.' : commonBlock;
 
   useEffect(() => {
     setMeta(null);
@@ -158,7 +254,7 @@ function YouTubeTab({ busy }: { busy: boolean }) {
     let alive = true;
     void fetchVideoMeta(id).then((m) => alive && setMeta(m));
     const host = playerEl.current;
-    if (host) {
+    if (host && !isolated) {
       host.innerHTML = '<div></div>';
       createPlayer(host.firstElementChild as HTMLElement, id, (state) => {
         if (state === 0 && capture.current) void finishCapture();
@@ -201,7 +297,7 @@ function YouTubeTab({ busy }: { busy: boolean }) {
       title: meta?.title ?? 'YouTube capture',
       artist: meta?.author,
       source: { kind: 'youtube', youtubeId: id ?? undefined, url, mimeType: blob.type, fileSize: blob.size },
-      separate: separate && !!backend.health?.features.separation,
+      separate,
     });
   };
 
@@ -239,7 +335,23 @@ function YouTubeTab({ busy }: { busy: boolean }) {
         {url && !id && <p className="text-[12px] text-bad">That doesn’t look like a YouTube video link.</p>}
       </div>
       <div className={cn('overflow-hidden rounded-xl border border-ink-700 bg-black', !id && 'hidden')}>
-        <div className="aspect-video w-full" ref={playerEl} />
+        <div className={cn('aspect-video w-full', isolated && 'hidden')} ref={playerEl} />
+        {isolated && (
+          <div className="flex aspect-video w-full flex-col items-center justify-center gap-3 px-6 text-center">
+            <p className="max-w-sm text-[12.5px] leading-relaxed text-ink-200">
+              {busy
+                ? 'The video player needs a page reload, which would stop the import that is running. It can load as soon as that import finishes.'
+                : 'The video player needs a quick page reload.'}
+            </p>
+            <Button
+              size="sm"
+              disabled={busy}
+              onClick={() => switchDocument(`${YOUTUBE_IMPORT_PATH}${url ? `?url=${encodeURIComponent(url)}` : ''}`)}
+            >
+              Load the video player
+            </Button>
+          </div>
+        )}
       </div>
       {playerError && <p className="text-[12.5px] text-bad">{playerError}</p>}
       {id && (
@@ -249,11 +361,15 @@ function YouTubeTab({ busy }: { busy: boolean }) {
               <span className="font-medium text-ink-50">{meta.title}</span> · {meta.author}
             </p>
           )}
-          <label className="flex items-start gap-2 text-[12.5px] text-ink-200">
+          <label
+            className={cn(
+              'flex items-start gap-2 rounded-lg border p-2.5 text-[12.5px] transition-colors',
+              rights ? 'border-transparent text-ink-200' : 'border-accent-500/40 bg-accent-500/10 text-ink-100',
+            )}
+          >
             <input type="checkbox" checked={rights} onChange={(e) => setRights(e.target.checked)} className="mt-0.5 accent-[var(--color-accent-500)]" />
             I own this content or have permission to use it, and I’ll respect YouTube’s Terms of Service and the creator’s copyright.
           </label>
-          {backend.health?.features.separation && <Toggle label="Isolate the piano part on my server (Demucs)" checked={separate} onChange={setSeparate} />}
           <div className="grid gap-3 md:grid-cols-2">
             <div className="rounded-xl border border-ink-700 bg-ink-900/60 p-4">
               <div className="flex items-center gap-2 text-[13.5px] font-medium text-ink-50">
@@ -263,9 +379,10 @@ function YouTubeTab({ busy }: { busy: boolean }) {
               <p className="mt-1.5 text-[12px] leading-relaxed text-ink-300">
                 Fastest and most reliable. Your self-hosted processing server fetches the audio. See the README to set one up.
               </p>
-              <Button className="mt-3" variant="primary" size="sm" disabled={!serverReady || !rights || busy} onClick={() => void importYT(url, id, separate, { title: meta?.title, artist: meta?.author })}>
+              <Button className="mt-3" variant="primary" size="sm" disabled={!!serverBlock} onClick={() => void importYT(url, id, separate, { title: meta?.title, artist: meta?.author })}>
                 Fetch & transcribe
               </Button>
+              {serverBlock && <p className="mt-1.5 text-[11.5px] text-ink-400">{serverBlock}</p>}
             </div>
             <div className="rounded-xl border border-ink-700 bg-ink-900/60 p-4">
               <div className="flex items-center gap-2 text-[13.5px] font-medium text-ink-50">
@@ -288,9 +405,12 @@ function YouTubeTab({ busy }: { busy: boolean }) {
                   </div>
                 </div>
               ) : (
-                <Button className="mt-3" size="sm" disabled={!tabCaptureSupported() || !rights || busy || !!playerError} onClick={() => void startCapture()}>
-                  Start recording
-                </Button>
+                <>
+                  <Button className="mt-3" size="sm" disabled={!!recordBlock} onClick={() => void startCapture()}>
+                    Start recording
+                  </Button>
+                  {recordBlock && <p className="mt-1.5 text-[11.5px] text-ink-400">{recordBlock}</p>}
+                </>
               )}
             </div>
           </div>
@@ -309,26 +429,58 @@ function RecordTab({ busy }: { busy: boolean }) {
   const chunks = useRef<Blob[]>([]);
   const [, tick] = useState(0);
   const importBlob = useImport((s) => s.importAudioBlob);
+  const [touch] = useState(isTouchDevice);
+  // a phone that auto-locks mid-recording suspends the page (and the microphone): keep the screen on
+  // while recording; the import holds its own lock from "Stop & transcribe" on (importStore.ts)
+  const [wake] = useState(() => createScreenWakeLock());
   useEffect(() => {
     if (!rec) return;
     const t = setInterval(() => tick((x) => x + 1), 250);
     return () => clearInterval(t);
   }, [rec]);
+  // leaving the tab mid-recording: stop the microphone (nothing is imported) and let the screen lock
+  const live = useRef<{ r: MediaRecorder; stream: MediaStream } | null>(null);
+  useEffect(
+    () => () => {
+      const l = live.current;
+      live.current = null;
+      if (l) {
+        l.r.onstop = null;
+        try {
+          if (l.r.state !== 'inactive') l.r.stop();
+        } catch {
+          /* already stopped */
+        }
+        l.stream.getTracks().forEach((t) => t.stop());
+      }
+      chunks.current = [];
+      void wake.hold(false);
+    },
+    [wake],
+  );
   const start = async () => {
+    // asked for inside the tap (some browsers only grant it with a user gesture); never throws
+    void wake.hold(true);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
       const r = new MediaRecorder(stream);
       chunks.current = [];
       r.ondataavailable = (e) => e.data.size && chunks.current.push(e.data);
       r.onstop = () => {
+        live.current = null;
         stream.getTracks().forEach((t) => t.stop());
         const blob = new Blob(chunks.current, { type: r.mimeType || 'audio/webm' });
-        chunks.current = []; // don't keep a second copy of the recording alive during analysis
+        // the Blob holds the data now: don't keep a second reference to every chunk
+        chunks.current = [];
         void importBlob(blob, { title: `Recording ${new Date().toLocaleString()}`, source: { kind: 'capture', mimeType: blob.type, fileSize: blob.size } });
+        // the import has asked for its own lock by now (importStore.ts)
+        void wake.hold(false);
       };
       r.start(500);
+      live.current = { r, stream };
       setRec({ r, start: Date.now(), stream });
     } catch (e) {
+      void wake.hold(false);
       toast.error('Microphone unavailable', (e as Error).message);
     }
   };
@@ -340,7 +492,12 @@ function RecordTab({ busy }: { busy: boolean }) {
           <div className="flex items-center gap-2 text-[14px] text-ink-50">
             <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-bad" /> Recording {formatTime((Date.now() - rec.start) / 1000)}
           </div>
-          <Button variant="danger" onClick={() => { rec.r.stop(); setRec(null); }} icon={<Square size={14} />}>
+          {touch && (
+            <p className="flex items-center gap-1.5 text-[12px] text-ink-300">
+              <Smartphone size={13} className="shrink-0 text-accent-400" /> Keep this page open while recording.
+            </p>
+          )}
+          <Button variant="danger" onClick={() => { live.current = null; rec.r.stop(); setRec(null); }} icon={<Square size={14} />}>
             Stop & transcribe
           </Button>
         </>
@@ -354,13 +511,14 @@ function RecordTab({ busy }: { busy: boolean }) {
 }
 
 export default function ImportPage() {
-  const [params, setParams] = useSearchParams();
-  const tab = (params.get('tab') as Tab) || 'audio';
+  const [params] = useSearchParams();
+  const { pathname } = useLocation();
+  // the YouTube tab is its own route (no cross-origin isolation there: src/lib/isolation.ts)
+  const tab: Tab = isYouTubeImportPath(pathname) ? 'youtube' : ((params.get('tab') as Tab) || 'audio');
   const job = useImport((s) => s.job);
   const importFile = useImport((s) => s.importFile);
   const navigate = useNavigate();
-  const backend = useBackend();
-  const [separate, setSeparate] = useState(false);
+  const sep = useSeparationChoice();
   const busy = !!job && job.stage !== 'done' && job.stage !== 'error';
 
   // jump to the studio as soon as an import started on this page finishes
@@ -377,7 +535,7 @@ export default function ImportPage() {
 
   const onFile = (f: File) => {
     if (busy) return;
-    void importFile(f, { separate }).then(() => {});
+    void importFile(f, { separate: sep.checked }).then(() => {});
     startedHere.current = (useImport.getState().job?.id ?? 0);
   };
 
@@ -412,7 +570,7 @@ export default function ImportPage() {
                 key={t.id}
                 role="tab"
                 aria-selected={tab === t.id}
-                onClick={() => setParams({ tab: t.id })}
+                onClick={() => navigate(t.id === 'youtube' ? YOUTUBE_IMPORT_PATH : `/import?tab=${t.id}`)}
                 className={cn(
                   'focus-ring flex h-12 items-center gap-2 border-b-2 px-4 text-[13.5px] font-medium whitespace-nowrap transition-colors',
                   tab === t.id ? 'border-accent-500 text-ink-50' : 'border-transparent text-ink-300 hover:text-ink-100',
@@ -427,20 +585,15 @@ export default function ImportPage() {
               <div className="flex flex-col gap-5">
                 <Dropzone onFile={onFile} />
                 <DetectionOptions />
-                <Toggle
-                  label="Isolate the piano part first"
-                  hint={backend.health?.features.separation ? 'Uses Demucs on your processing server — slower, much cleaner for full songs.' : 'Requires a processing server with Demucs (Settings → Processing server).'}
-                  checked={separate && !!backend.health?.features.separation}
-                  onChange={setSeparate}
-                  disabled={!backend.health?.features.separation}
-                />
+                <SeparationOption />
                 <p className="text-[12px] text-ink-400">Up to 20 minutes / 300 MB. Longer files: trim first. Video files use their audio track.</p>
               </div>
             )}
             {tab === 'youtube' && (
               <div className="flex flex-col gap-5">
-                <YouTubeTab busy={busy} />
+                <YouTubeTab busy={busy} separate={sep.checked} />
                 <DetectionOptions />
+                <SeparationOption />
               </div>
             )}
             {tab === 'midi' && (

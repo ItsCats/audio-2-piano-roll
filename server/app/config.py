@@ -21,7 +21,13 @@ class Settings:
     job_ttl_sec: int = int(os.environ.get("JOB_TTL_SEC", "3600"))
     enable_youtube: bool = _bool("ENABLE_YOUTUBE", True)
     enable_separation: bool = _bool("ENABLE_SEPARATION", True)
-    demucs_model: str = os.environ.get("DEMUCS_MODEL", "htdemucs_6s")
+    # SCNet separation (see app/separation.py). SCNET_MODEL: path to scnet.int8.onnx (default DATA_DIR/models/...;
+    # the Docker image bakes it in). Missing files are downloaded from the pinned URL and SHA-256-verified.
+    scnet_model: str = os.environ.get("SCNET_MODEL", "")
+    scnet_auto_download: bool = _bool("SCNET_AUTO_DOWNLOAD", True)
+    scnet_threads: int = int(os.environ.get("SCNET_THREADS", "0"))  # 0 = all cores
+    scnet_step: float = float(os.environ.get("SCNET_STEP", "0.9"))  # segment hop / 11 s; 0.9 = same as the browser
+    scnet_fade: float = 0.1
     jobs_per_hour_per_ip: int = int(os.environ.get("JOBS_PER_HOUR_PER_IP", "20"))
     workers: int = int(os.environ.get("WORKERS", "1"))
 

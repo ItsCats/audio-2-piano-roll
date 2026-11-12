@@ -23,7 +23,7 @@ import {
 import { useStudio, currentArrangement } from '../state/studioStore';
 import { useSettings } from '../state/settingsStore';
 import { useTransport } from '../state/transportStore';
-import { getPlayer } from '../state/playback';
+import { ensurePianoSamples, getPlayer, releasePianoSamplesIfLight } from '../state/playback';
 import { attachInput } from '../state/practiceRuntime';
 import { PianoRollView } from '../components/studio/PianoRollView';
 import { Transport } from '../components/studio/Transport';
@@ -194,12 +194,15 @@ function usePlayerSync() {
 
   useEffect(() => {
     const player = getPlayer();
+    ensurePianoSamples();
     const unsub = player.subscribe(() => useTransport.setState({ playing: player.isPlaying }));
     const detach = attachInput();
     return () => {
       unsub();
       detach();
       player.pause();
+      // phones: don't keep the decoded piano in memory under the next import
+      releasePianoSamplesIfLight();
     };
   }, []);
 

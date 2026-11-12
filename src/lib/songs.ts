@@ -1,5 +1,5 @@
 import type { Difficulty, Note, PedalRange, Song, SongSource, TempoInfo, TranscriptionInfo, KeyInfo } from './music/types';
-import { generateAllArrangements, generateArrangement } from './music/difficulty';
+import { generateAllArrangements, generateArrangement, type ArrangementOptions } from './music/difficulty';
 import { detectKey } from './music/theory';
 import { songDuration } from './music/cleanup';
 import { newId } from './storage/db';
@@ -43,6 +43,12 @@ export function makeThumbnail(notes: Note[], duration: number, colors = { R: '#4
   return c.toDataURL('image/webp', 0.8);
 }
 
+/** Arrangement options for a song (Hard keeps hands that come from the score). */
+export function arrangementOptions(song: { transcription: TranscriptionInfo }): ArrangementOptions {
+  const t = song.transcription;
+  return { handsFromScore: t.handsFromScore === true || t.method === 'demo' };
+}
+
 interface BuildInput {
   title: string;
   artist?: string;
@@ -73,7 +79,7 @@ export function buildSong(input: BuildInput): Song {
     transcription: input.transcription,
     base: input.notes,
     basePedal: input.pedal,
-    arrangements: generateAllArrangements(input.notes, input.pedal, input.tempo, duration),
+    arrangements: generateAllArrangements(input.notes, input.pedal, input.tempo, duration, arrangementOptions(input)),
     thumbnail: makeThumbnail(input.notes, duration),
     hasAudio: input.hasAudio,
     hasPosteriors: input.hasPosteriors,
@@ -88,7 +94,7 @@ export function songFromMidi(parsed: ParsedMidi, fileName: string, fileSize: num
     pedal: parsed.pedal,
     tempo: parsed.tempo,
     duration: parsed.duration,
-    transcription: { method: 'midi-file', estimated: false, warnings: parsed.warnings },
+    transcription: { method: 'midi-file', estimated: false, warnings: parsed.warnings, handsFromScore: parsed.handsKnown },
     hasAudio: false,
     hasPosteriors: false,
   });
@@ -104,7 +110,7 @@ export function demoSong(): Song {
     pedal: d.pedal,
     tempo: d.tempo,
     duration: d.duration,
-    transcription: { method: 'demo', estimated: false, warnings: [] },
+    transcription: { method: 'demo', estimated: false, warnings: [], handsFromScore: true },
     hasAudio: false,
     hasPosteriors: false,
   });
@@ -112,7 +118,7 @@ export function demoSong(): Song {
 
 export function regenerate(song: Song, which: Difficulty[]): Song {
   const arrangements = { ...song.arrangements };
-  for (const d of which) arrangements[d] = generateArrangement(d, song.base, song.basePedal, song.tempo, song.duration);
+  for (const d of which) arrangements[d] = generateArrangement(d, song.base, song.basePedal, song.tempo, song.duration, arrangementOptions(song));
   return { ...song, arrangements, updatedAt: Date.now() };
 }
 

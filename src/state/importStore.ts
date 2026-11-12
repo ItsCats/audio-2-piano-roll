@@ -3,19 +3,34 @@
  * while the user navigates around the app.
  */
 import { create } from 'zustand';
-import { transcribeAudio, type ProgressEvent } from '../lib/transcription/pipeline';
+import { transcribeAudio, type ProgressEvent, type TranscribeOptions } from '../lib/transcription/pipeline';
 import type { TranscriptionStage } from '../lib/transcription/workerProtocol';
 import { classifyFile } from '../lib/transcription/decode';
 import { parseMidi } from '../lib/music/midi';
 import { buildSong, demoSong, songFromMidi, titleFromFileName } from '../lib/songs';
-import { saveAudio, savePosteriors, saveSong } from '../lib/storage/db';
+import { deletePending, newId, saveAudio, savePending, savePosteriors, saveSong, type PendingImport } from '../lib/storage/db';
+import { createScreenWakeLock } from '../lib/wakeLock';
 import { detectionParams, useSettings } from './settingsStore';
 import { useLibrary } from './libraryStore';
-import { configuredBackendUrl, createSeparationJob, createYouTubeJob, getJobAudio, waitForJob } from '../lib/backend/client';
+import {
+  configuredBackendUrl,
+  createSeparationJob,
+  createYouTubeJob,
+  getJobAudio,
+  health,
+  waitForJob,
+  type BackendHealth,
+} from '../lib/backend/client';
+// namespace import: fetchStems is read at call time, so this module still loads against an older client
+import * as backendApi from '../lib/backend/client';
+import { separationSupport, type SeparationSupport } from '../lib/separation';
 import type { Song, SongSource } from '../lib/music/types';
 import { toast } from './toastStore';
 
 export type ImportStage = TranscriptionStage | 'downloading' | 'uploading' | 'done' | 'error';
+
+/** Where vocals/drums separation runs for an import. */
+export type SeparationEngine = 'server' | 'browser';
 
 export interface ImportJob {
   id: number;
@@ -31,68 +46,542 @@ export interface ImportJob {
   finishedAt?: number;
   /** stages seen so far, in order (for the progress timeline) */
   history: ImportStage[];
+  /** the stages this import is expected to go through, in order (for the progress timeline) */
+  plan: ImportStage[];
+  /** separation engine chosen for this import, if any */
+  separation?: SeparationEngine;
+  /**
+   * Speed measurement for the current phase (same stage and same kind of detail message): where
+   * progress was when the phase started, and the time remaining extrapolated from the measured
+   * rate at the last update. Only set once there is real progress to extrapolate from.
+   */
+  rate?: { key: string; t0: number; p0: number; etaSec?: number; at?: number };
+}
+
+/**
+ * What the error card offers after a failed import, while the page stays open: the same import
+ * again, and the recording itself (microphone / tab captures) so a failure never loses it.
+ */
+export interface FailedImport {
+  jobId: number;
+  retry: () => Promise<string | null>;
+  recording?: { blob: Blob; fileName: string };
+}
+
+/** Options shared by the audio imports (a resumed import passes the ones it was started with). */
+export interface ImportRunOptions {
+  /** detection preset to use (default: the current one) */
+  presetId?: PresetId;
+  /** reuse this interrupted-import record instead of writing a new one */
+  pendingId?: string;
+}
+
+/** Detection preset ids (mirrors settings.detectionPreset). */
+export type PresetId = 'piano' | 'mix' | 'sensitive' | 'custom';
+
+export interface ImportPrefs {
+  /** the user's last explicit "Separate vocals & drums" choice, per detection preset */
+  separate: Partial<Record<PresetId, boolean>>;
+  /** where separation would have run when that choice was made (a "yes" for the server is not a "yes" for a phone's browser) */
+  engine?: Partial<Record<PresetId, SeparationEngine>>;
 }
 
 interface ImportState {
   job: ImportJob | null;
   controller: AbortController | null;
-  importFile: (file: File, opts?: { separate?: boolean; title?: string }) => Promise<string | null>;
-  importAudioBlob: (blob: Blob, meta: { title: string; artist?: string; source: SongSource; separate?: boolean }) => Promise<string | null>;
+  prefs: ImportPrefs;
+  /** remember the user's separation choice for a detection preset (and where it would have run) */
+  setSeparatePref: (preset: PresetId, value: boolean, engine?: SeparationEngine | null) => void;
+  /** the last failed import's retry and recording (cleared by the next import, Dismiss or Cancel) */
+  failed: FailedImport | null;
+  /** `separate` defaults to the user's choice for the current detection preset */
+  importFile: (file: File, opts?: { separate?: boolean; title?: string } & ImportRunOptions) => Promise<string | null>;
+  importAudioBlob: (
+    blob: Blob,
+    meta: { title: string; artist?: string; source: SongSource; separate?: boolean } & ImportRunOptions,
+  ) => Promise<string | null>;
+  /** run an import that a killed tab left behind (see lib/storage/db.ts PendingImport) again */
+  resumePending: (rec: PendingImport) => Promise<string | null>;
   importYouTubeViaServer: (videoUrl: string, videoId: string, separate: boolean, meta?: { title?: string; artist?: string }) => Promise<string | null>;
   importDemo: () => Promise<string>;
   cancel: () => void;
   clear: () => void;
 }
 
+// ---------------------------------------------------------------- preferences (own key; the settings key is untouched)
+
+const PREFS_KEY = 'piano2vision-import-prefs';
+
+function loadPrefs(): ImportPrefs {
+  try {
+    const raw = localStorage.getItem(PREFS_KEY);
+    if (!raw) return { separate: {} };
+    const p = JSON.parse(raw) as Partial<ImportPrefs>;
+    const sep: ImportPrefs['separate'] = {};
+    const engine: NonNullable<ImportPrefs['engine']> = {};
+    for (const k of ['piano', 'mix', 'sensitive', 'custom'] as PresetId[]) {
+      if (typeof p.separate?.[k] === 'boolean') sep[k] = p.separate[k];
+      const e = p.engine?.[k];
+      if (e === 'server' || e === 'browser') engine[k] = e;
+    }
+    return { separate: sep, engine };
+  } catch {
+    return { separate: {} };
+  }
+}
+
+function savePrefs(p: ImportPrefs) {
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify(p));
+  } catch {
+    /* private mode / storage full: the choice just isn't remembered */
+  }
+}
+
+// ---------------------------------------------------------------- processing-server capabilities
+
+/**
+ * Whether a processing server can return separated stems (SCNet: vocals + drum-less accompaniment).
+ * Old servers (Demucs) only return a single "piano part" file, which is not usable as stems.
+ */
+export function serverHasStems(h: BackendHealth | null | undefined): boolean {
+  if (!h?.features.separation) return false;
+  const f = h.features as BackendHealth['features'] & { stems?: boolean };
+  return f.stems === true;
+}
+
+const healthCache = new Map<string, { at: number; value: Promise<BackendHealth | null> }>();
+
+/**
+ * Health of the processing server (null when unreachable). A reachable server is cached for a
+ * minute; an unreachable one is not cached at all, so a server that just came up is used at once.
+ */
+export function serverHealth(url: string): Promise<BackendHealth | null> {
+  const hit = healthCache.get(url);
+  if (hit && Date.now() - hit.at < 60_000) return hit.value;
+  const value = health(url).catch(() => {
+    if (healthCache.get(url)?.value === value) healthCache.delete(url);
+    return null;
+  });
+  healthCache.set(url, { at: Date.now(), value });
+  return value;
+}
+
+/** Record a health check made elsewhere (Settings, the YouTube tab), so the import uses the same answer. */
+export function rememberServerHealth(url: string, h: BackendHealth | null): void {
+  if (h) healthCache.set(url, { at: Date.now(), value: Promise.resolve(h) });
+  else healthCache.delete(url);
+}
+
+export interface SeparationAvailability {
+  /** the checkbox can be ticked */
+  available: boolean;
+  /** where it would run */
+  engine: SeparationEngine | null;
+  /** default for the "Full song" preset: on unless this device is not recommended and there is no server */
+  recommended: boolean;
+  /** why it is disabled or not recommended (human readable) */
+  reason?: string;
+  browser: SeparationSupport;
+}
+
+export function separationAvailability(serverStems: boolean, browser: SeparationSupport = separationSupport()): SeparationAvailability {
+  if (serverStems) return { available: true, engine: 'server', recommended: true, browser };
+  if (!browser.ok) return { available: false, engine: null, recommended: false, reason: browser.reason, browser };
+  return { available: true, engine: 'browser', recommended: browser.recommended, reason: browser.recommended ? undefined : browser.reason, browser };
+}
+
+/**
+ * The separation default for a preset: the user's last choice, else on for "Full song" (when
+ * recommended). A "yes" given while the server would have separated does not carry over to this
+ * browser when separating here is not recommended (phones, low memory).
+ */
+export function separationChoice(prefs: ImportPrefs, preset: PresetId, avail: SeparationAvailability): boolean {
+  if (!avail.available) return false;
+  const remembered = prefs.separate[preset];
+  if (remembered === true && avail.engine === 'browser' && !avail.recommended && prefs.engine?.[preset] === 'server') return false;
+  if (remembered !== undefined) return remembered;
+  return preset === 'mix' && avail.recommended;
+}
+
+/** Whether a failed server separation may fall back to separating in this browser: only where that is recommended. */
+export function browserFallback(browser: SeparationSupport = separationSupport()): { ok: boolean; why?: string } {
+  if (browser.ok && browser.recommended) return { ok: true };
+  return { ok: false, why: browser.ok ? `separating in this browser is not recommended on this device: ${browser.reason ?? 'not enough memory'}` : browser.reason };
+}
+
+// ---------------------------------------------------------------- crash marker for in-browser separation
+
+/**
+ * Set while this browser separates (own key; the settings and prefs keys are untouched), together
+ * with a Web Lock held for as long as the separating tab lives. A marker left behind without the
+ * lock means that tab died mid-separation (almost always out of memory): the next load says so and
+ * turns the option off for that preset. A normal unload (reload, close, navigation) removes it.
+ */
+const SEPARATING_KEY = 'piano2vision-separating';
+const SEPARATING_LOCK = 'piano2vision-separating';
+let ownsSeparatingMarker = false;
+
+function markSeparating(preset: PresetId): () => void {
+  const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
+  if (!locks) return () => {};
+  let release: () => void = () => {};
+  const held = new Promise<void>((r) => (release = r));
+  void locks.request(SEPARATING_LOCK, () => held).catch(() => undefined);
+  try {
+    localStorage.setItem(SEPARATING_KEY, JSON.stringify({ preset, at: Date.now() }));
+    ownsSeparatingMarker = true;
+  } catch {
+    /* storage blocked: no crash detection */
+  }
+  return () => {
+    if (ownsSeparatingMarker) {
+      ownsSeparatingMarker = false;
+      try {
+        localStorage.removeItem(SEPARATING_KEY);
+      } catch {
+        /* ignore */
+      }
+    }
+    release();
+  };
+}
+
+async function checkCrashedSeparation(turnOff: (preset: PresetId) => void): Promise<void> {
+  let raw: string | null = null;
+  try {
+    raw = localStorage.getItem(SEPARATING_KEY);
+  } catch {
+    return;
+  }
+  if (!raw || typeof navigator === 'undefined' || !navigator.locks) return;
+  const state = await navigator.locks.query().catch(() => null);
+  // another tab is separating right now
+  if (!state || state.held?.some((l) => l.name === SEPARATING_LOCK)) return;
+  try {
+    localStorage.removeItem(SEPARATING_KEY);
+  } catch {
+    /* ignore */
+  }
+  let m: { preset?: PresetId; at?: number } = {};
+  try {
+    m = JSON.parse(raw) as typeof m;
+  } catch {
+    return;
+  }
+  if (!m.preset || !['piano', 'mix', 'sensitive', 'custom'].includes(m.preset) || !m.at || Date.now() - m.at > 6 * 3600_000) return;
+  turnOff(m.preset);
+  toast.warn(
+    'The last import stopped while separating vocals & drums',
+    'The page most likely ran out of memory. "Separate vocals & drums" is now off for this detection preset. Close other tabs and tick it again to retry, or use a processing server with separation.',
+  );
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', () => {
+    if (!ownsSeparatingMarker) return;
+    try {
+      localStorage.removeItem(SEPARATING_KEY);
+    } catch {
+      /* ignore */
+    }
+  });
+}
+
+// ---------------------------------------------------------------- interrupted-import records
+
+/**
+ * Files above this size are not copied into the interrupted-import record (writing a 300 MB video
+ * to IndexedDB first would slow every import down); the notice then asks to choose the file again.
+ */
+export const PENDING_COPY_MAX_BYTES = 200 * 1024 * 1024;
+/** Web Lock held by the tab running an import: a record whose lock is held is not interrupted. */
+export const PENDING_LOCK_PREFIX = 'piano2vision-import:';
+
+/**
+ * Write the record before any decoding and hold its lock for as long as this import runs. Never
+ * throws and never holds the import up for long (a stuck IndexedDB must not block the import).
+ * Returns the cleanup that deletes the record (after the write settled) and releases the lock.
+ */
+function persistPending(rec: PendingImport): () => Promise<void> {
+  let release: () => void = () => {};
+  try {
+    const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
+    if (locks) {
+      const held = new Promise<void>((r) => (release = r));
+      void locks.request(PENDING_LOCK_PREFIX + rec.id, () => held).catch(() => undefined);
+    }
+  } catch {
+    /* no Web Locks: the record is still written */
+  }
+  const written = savePending(rec).catch((err: unknown) => console.warn('[import] could not keep a copy for crash recovery', err));
+  let cleaned: Promise<void> | null = null;
+  const cleanup = () =>
+    (cleaned ??= written
+      // only this run's record: an import resumed under the same id may have rewritten it since
+      .then(() => deletePending(rec.id, rec.startedAt))
+      .catch((err: unknown) => console.warn('[import] could not delete the crash-recovery copy', err))
+      .finally(() => release()));
+  // the caller waits for the write, but at most a few seconds
+  (cleanup as unknown as { written: Promise<void> }).written = Promise.race([written, new Promise<void>((r) => setTimeout(r, 3000))]);
+  return cleanup;
+}
+
+// ---------------------------------------------------------------- timeline plans
+
+const TRANSCRIBE: ImportStage[] = ['decoding', 'loading-model', 'analyzing', 'arranging', 'saving'];
+const BROWSER_SEP: ImportStage[] = ['decoding', 'separating', 'loading-model', 'analyzing', 'arranging', 'saving'];
+const SERVER_SEP: ImportStage[] = ['uploading', 'separating', 'downloading', ...TRANSCRIBE];
+
+function planFor(kind: SongSource['kind'], sep: SeparationEngine | undefined, youtubeServer = false): ImportStage[] {
+  if (kind === 'midi' || kind === 'demo') return ['validating', 'arranging', 'saving'];
+  const rest = sep === 'server' ? SERVER_SEP : sep === 'browser' ? BROWSER_SEP : TRANSCRIBE;
+  // unique: a YouTube import via the server downloads twice (the video's audio, then the stems)
+  return [...new Set<ImportStage>(['validating', ...(youtubeServer ? (['downloading'] as ImportStage[]) : []), ...rest])];
+}
+
+/** "Separating vocals & drums: part 3 of 12" and "… part 4 of 12" are the same phase; numbers are dropped. */
+/** Human-readable text for a processing-server job stage (server 2.0: queued → decoding → separating → encoding → done). */
+function serverStageDetail(stage: string): string {
+  switch (stage) {
+    case 'queued':
+      return 'Waiting for your processing server';
+    case 'downloading':
+      return 'Fetching audio on your processing server';
+    case 'decoding':
+      return 'Preparing the audio on your processing server';
+    case 'separating':
+      return 'Separating vocals & drums on your server';
+    case 'encoding':
+      return 'Saving the separated stems on your server';
+    default:
+      return `Processing on your server (${stage})`;
+  }
+}
+
+/** File extension for a recording's MIME type ("audio/webm;codecs=opus" → "webm", "audio/mp4" → "m4a"). */
+export function extFor(mime: string): string {
+  const m = mime.toLowerCase();
+  if (m.includes('mp4') || m.includes('aac') || m.includes('m4a')) return 'm4a';
+  if (m.includes('ogg')) return 'ogg';
+  if (m.includes('wav')) return 'wav';
+  if (m.includes('mpeg') || m.includes('mp3')) return 'mp3';
+  return 'webm';
+}
+
+const phaseKey = (stage: ImportStage, detail?: string) => `${stage}|${(detail ?? '').replace(/[\d.,]+/g, '#')}`;
+
 let seq = 1;
 
+/** One import's handle: its updates are dropped once it was cancelled or replaced by a newer import. */
+interface Ctx {
+  id: number;
+  /** detection preset when the import started */
+  preset: PresetId;
+  signal: AbortSignal;
+  update: (patch: Partial<ImportJob>) => void;
+  onProgress: (e: ProgressEvent) => void;
+  /** deletes this import's interrupted-import record (set once it was written) */
+  unpend?: () => Promise<void>;
+  /** that record's id (saveSong deletes it in the transaction that saves the song) */
+  pendingId?: string;
+}
+
 export const useImport = create<ImportState>((set, get) => {
-  const update = (patch: Partial<ImportJob>) => {
+  const apply = (id: number, patch: Partial<ImportJob>) => {
     const job = get().job;
-    if (!job) return;
+    if (!job || job.id !== id) return;
     const history = patch.stage && job.history[job.history.length - 1] !== patch.stage ? [...job.history, patch.stage] : job.history;
-    set({ job: { ...job, ...patch, history } });
+    const next: ImportJob = { ...job, ...patch, history };
+    // speed measurement: reset at every phase change, extrapolate from real progress only
+    if ('progress' in patch || patch.stage || 'detail' in patch) {
+      const key = phaseKey(next.stage, next.detail);
+      const p = next.progress;
+      const now = Date.now();
+      if (p === null || p === undefined) next.rate = undefined;
+      else if (!job.rate || job.rate.key !== key || p < job.rate.p0) next.rate = { key, t0: now, p0: p };
+      else {
+        const dp = p - job.rate.p0;
+        const dt = (now - job.rate.t0) / 1000;
+        const etaSec = dp >= 0.02 && dt >= 2 ? (dt / dp) * Math.max(0, 1 - p) : undefined;
+        next.rate = { ...job.rate, etaSec, at: now };
+      }
+    }
+    set({ job: next });
   };
 
-  const start = (title: string, kind: SongSource['kind']) => {
+  /** the running import's handle (to delete its record on Cancel) */
+  let current: Ctx | null = null;
+
+  const start = (title: string, kind: SongSource['kind'], plan: ImportStage[], separation?: SeparationEngine, preset?: PresetId): Ctx => {
     get().controller?.abort();
+    void current?.unpend?.();
     const controller = new AbortController();
+    const id = seq++;
     set({
+      failed: null,
       controller,
-      job: { id: seq++, title, kind, stage: 'validating', progress: null, warnings: [], startedAt: Date.now(), history: ['validating'] },
+      job: { id, title, kind, stage: 'validating', progress: null, warnings: [], startedAt: Date.now(), history: ['validating'], plan, separation },
     });
-    return controller;
+    const update = (patch: Partial<ImportJob>) => {
+      if (!controller.signal.aborted) apply(id, patch);
+    };
+    const ctx: Ctx = {
+      id,
+      preset: preset ?? (useSettings.getState().detectionPreset as PresetId),
+      signal: controller.signal,
+      update,
+      onProgress: (e) => update({ stage: e.stage, progress: e.progress, detail: e.detail }),
+    };
+    current = ctx;
+    return ctx;
   };
 
-  const finish = async (song: Song) => {
+  /** Keep a copy of the audio and the options until this import ends (see persistPending). */
+  const pend = async (ctx: Ctx, rec: Omit<PendingImport, 'id' | 'startedAt' | 'presetId'> & { id?: string }) => {
+    const id = rec.id ?? newId();
+    const unpend = persistPending({ ...rec, id, startedAt: Date.now(), presetId: ctx.preset });
+    ctx.unpend = unpend;
+    ctx.pendingId = id;
+    await (unpend as unknown as { written: Promise<void> }).written;
+  };
+
+  const finish = async ({ update, unpend, pendingId }: Ctx, song: Song) => {
     update({ stage: 'saving', progress: null, detail: 'Saving to your library' });
-    await saveSong(song);
+    // the record goes in the same transaction: a tab killed now never leaves both (see saveSong)
+    await saveSong(song, pendingId ? { pendingId } : undefined);
+    void unpend?.();
     void useLibrary.getState().refresh();
     update({ stage: 'done', progress: 1, songId: song.id, finishedAt: Date.now(), detail: undefined });
     return song.id;
   };
 
-  const fail = (err: unknown) => {
-    if (err instanceof DOMException && err.name === 'AbortError') {
-      set({ job: null, controller: null });
+  const isQuotaError = (err: unknown) => {
+    const e = err as { name?: string; message?: string } | null;
+    return /quota/i.test(`${e?.name ?? ''} ${e?.message ?? ''}`);
+  };
+
+  const isAbort = (err: unknown) => (err instanceof DOMException || err instanceof Error) && err.name === 'AbortError';
+
+  /**
+   * `again` (audio imports): what the error card's "Try again" runs while the page is open. The
+   * interrupted-import record is deleted either way: it is only for a tab that gets killed.
+   */
+  const fail = (ctx: Ctx, err: unknown, again?: Omit<FailedImport, 'jobId'>) => {
+    void ctx.unpend?.();
+    if (isAbort(err) || ctx.signal.aborted) {
+      if (get().job?.id === ctx.id) set({ job: null, controller: null });
       return null;
     }
     const msg = err instanceof Error ? err.message : String(err);
-    update({ stage: 'error', error: msg, finishedAt: Date.now() });
+    ctx.update({ stage: 'error', error: msg, finishedAt: Date.now() });
+    if (again && get().job?.id === ctx.id) set({ failed: { jobId: ctx.id, ...again } });
     return null;
   };
 
-  const onProgress = (e: ProgressEvent) => update({ stage: e.stage, progress: e.progress, detail: e.detail });
+  const isRecording = (kind: SongSource['kind']) => kind === 'capture' || kind === 'youtube';
+  const recordingName = (title: string, mime: string) => `${title.replace(/[\\/:*?"<>|]+/g, '-').trim() || 'Recording'}.${extFor(mime)}`;
 
+  const backendUrl = () => configuredBackendUrl(useSettings.getState().backendUrl);
+
+  /** Which engine to use when the user asked for separation (server with stems first, else this browser). */
+  const pickEngine = async (separate: boolean): Promise<SeparationEngine | undefined> => {
+    if (!separate) return undefined;
+    const url = backendUrl();
+    const serverStems = url ? serverHasStems(await serverHealth(url)) : false;
+    const avail = separationAvailability(serverStems);
+    return avail.engine ?? undefined;
+  };
+
+  const defaultSeparate = async (): Promise<boolean> => {
+    const preset = useSettings.getState().detectionPreset as PresetId;
+    const url = backendUrl();
+    const serverStems = url ? serverHasStems(await serverHealth(url)) : false;
+    return separationChoice(get().prefs, preset, separationAvailability(serverStems));
+  };
+
+  /** Separate on the processing server and download both stems. */
+  const serverStems = async ({ update, signal }: Ctx, blob: Blob, name: string) => {
+    const url = backendUrl();
+    if (!url) throw new Error('No processing server is configured.');
+    update({ stage: 'uploading', progress: null, detail: 'Uploading to your processing server' });
+    const job = await createSeparationJob(url, blob, name);
+    if (signal.aborted) throw new DOMException('Cancelled', 'AbortError');
+    const done = await waitForJob(
+      url,
+      job.id,
+      (j) =>
+        update({
+          stage: 'separating',
+          progress: j.progress,
+          detail: serverStageDetail(j.stage),
+        }),
+      signal,
+    );
+    update({ stage: 'downloading', progress: null, detail: 'Downloading the separated vocals and accompaniment' });
+    const stems = await backendApi.fetchStems(url, job.id, signal);
+    if (signal.aborted) throw new DOMException('Cancelled', 'AbortError');
+    return { ...stems, serverMs: done.separationMs ?? undefined };
+  };
+
+  /**
+   * Transcribe (optionally separating first) and save. `engine` decides where separation runs;
+   * a failing server falls back to separating in this browser, so the user still gets what they ticked.
+   */
   const transcribeAndSave = async (
+    ctx: Ctx,
     original: Blob,
-    forTranscription: Blob,
-    meta: { title: string; artist?: string; source: SongSource; separated?: boolean },
-    signal: AbortSignal,
+    meta: { title: string; artist?: string; source: SongSource; fileName: string },
+    engine: SeparationEngine | undefined,
+    /** stems the server already produced (a separated YouTube job): used as they are */
+    prefetched?: { vocals: Blob; accomp: Blob; serverMs?: number },
+    /** warnings from earlier steps of this import */
+    earlier: string[] = [],
   ) => {
-    const params = detectionParams();
-    const result = await transcribeAudio(forTranscription, params, onProgress, signal);
-    if (meta.separated) result.info.separated = true;
+    const { update, onProgress, signal } = ctx;
+    const params = detectionParams(ctx.preset);
+    const extraWarnings: string[] = [...earlier];
+    let opts: TranscribeOptions = {};
+    let progress = onProgress;
+    if (engine === 'server') {
+      try {
+        opts = { stems: prefetched ?? (await serverStems(ctx, original, meta.fileName)) };
+        // the pipeline's "separating" step for ready-made stems is only decoding them
+        progress = (e) => onProgress(e.stage === 'separating' ? { ...e, stage: 'decoding', progress: null } : e);
+      } catch (err) {
+        if (isAbort(err) || signal.aborted) throw err;
+        // fall back to this browser only where that is recommended (not on phones / low memory)
+        const fb = browserFallback();
+        const why = (err as Error)?.message ?? String(err);
+        if (fb.ok) {
+          extraWarnings.push(`The processing server could not separate this song (${why}); it was separated in the browser instead.`);
+          opts = { separate: true };
+          const job = get().job;
+          if (job) update({ plan: planFor(job.kind, 'browser', job.plan[1] === 'downloading'), separation: 'browser' });
+        } else {
+          extraWarnings.push(`The processing server could not separate this song (${why}); the full mix was transcribed${fb.why ? ` (${fb.why})` : ''}.`);
+          const job = get().job;
+          if (job) update({ plan: planFor(job.kind, undefined, job.plan[1] === 'downloading'), separation: undefined });
+        }
+        update({ warnings: [...(get().job?.warnings ?? []), ...extraWarnings] });
+      }
+    } else if (engine === 'browser') {
+      opts = { separate: true };
+    }
+    // in-browser separation: leave a marker in case the tab dies of it (see markSeparating)
+    const unmark = opts.separate ? markSeparating(ctx.preset) : () => {};
+    let result: Awaited<ReturnType<typeof transcribeAudio>>;
+    try {
+      result = await transcribeAudio(original, params, progress, signal, opts);
+    } finally {
+      unmark();
+    }
+    if (result.separationFailure === 'memory' && opts.separate) {
+      // the next import of this preset would fail the same way
+      get().setSeparatePref(ctx.preset, false, 'browser');
+      result.info.warnings.push('"Separate vocals & drums" is now off for this detection preset; tick it again to retry.');
+    }
+    result.info.warnings = [...extraWarnings, ...result.info.warnings];
     const song = buildSong({
       title: meta.title,
       artist: meta.artist,
@@ -106,135 +595,284 @@ export const useImport = create<ImportState>((set, get) => {
       hasAudio: true,
       hasPosteriors: true,
     });
-    update({ warnings: result.info.warnings, stage: 'saving', progress: null });
-    try {
+    update({ warnings: result.info.warnings, stage: 'saving', progress: null, detail: 'Saving to your library' });
+    const storeOriginal = async () => {
       await saveAudio(song.id, original, meta.source.fileName ?? meta.title);
+      // (separated songs: includes the drums stem's onset envelope)
       await savePosteriors(song.id, result.posteriors);
+    };
+    try {
+      try {
+        await storeOriginal();
+      } catch (err) {
+        // the crash-recovery copy of the same audio may be what filled the storage: drop it, try once more
+        if (!ctx.unpend || !isQuotaError(err)) throw err;
+        await ctx.unpend();
+        await storeOriginal();
+      }
     } catch (err) {
       song.hasAudio = false;
       song.hasPosteriors = false;
       toast.warn('Original audio not stored', `Browser storage is full or unavailable (${(err as Error).message}). The arrangement is still saved.`);
     }
-    return finish(song);
-  };
-
-  const separateIfRequested = async (blob: Blob, name: string, separate: boolean | undefined, signal: AbortSignal) => {
-    const backend = configuredBackendUrl(useSettings.getState().backendUrl);
-    if (!separate || !backend) return { blob, separated: false };
-    update({ stage: 'uploading', progress: null, detail: 'Uploading to your processing server' });
-    const job = await createSeparationJob(backend, blob, name);
-    await waitForJob(
-      backend,
-      job.id,
-      (j) => update({ stage: 'separating', progress: j.progress, detail: `Isolating the piano part (${j.stage})` }),
-      signal,
-    );
-    update({ stage: 'downloading', progress: null, detail: 'Downloading separated audio' });
-    return { blob: await getJobAudio(backend, job.id), separated: true };
+    return finish(ctx, song);
   };
 
   return {
     job: null,
     controller: null,
+    failed: null,
+    prefs: loadPrefs(),
+
+    setSeparatePref: (preset, value, engine) => {
+      const cur = get().prefs;
+      const eng = { ...cur.engine };
+      if (engine) eng[preset] = engine;
+      else delete eng[preset];
+      const prefs = { ...cur, separate: { ...cur.separate, [preset]: value }, engine: eng };
+      set({ prefs });
+      savePrefs(prefs);
+    },
 
     importFile: async (file, opts = {}) => {
-      const controller = start(opts.title ?? titleFromFileName(file.name), 'audio');
-      try {
-        const kind = classifyFile(file);
-        if (kind === 'unsupported') {
-          throw new Error(`"${file.name}" is not a supported audio, video or MIDI file.`);
-        }
-        if (kind === 'midi') {
+      const kind = classifyFile(file);
+      const title = opts.title ?? titleFromFileName(file.name);
+      if (kind === 'midi' || kind === 'unsupported') {
+        const ctx = start(title, kind === 'midi' ? 'midi' : 'audio', planFor('midi', undefined));
+        const { update } = ctx;
+        try {
+          if (kind === 'unsupported') throw new Error(`"${file.name}" is not a supported audio, video or MIDI file.`);
           update({ kind: 'midi', stage: 'arranging', detail: 'Reading MIDI file' });
           if (file.size > 20 * 1024 * 1024) throw new Error('MIDI file is unusually large (max 20 MB).');
           const parsed = parseMidi(await file.arrayBuffer());
           const song = songFromMidi(parsed, file.name, file.size);
           if (opts.title) song.title = opts.title;
-          return await finish(song);
+          return await finish(ctx, song);
+        } catch (err) {
+          return fail(ctx, err);
         }
+      }
+      // start the job right away (the page shows it), then decide where separation runs
+      const ctx = start(title, 'audio', planFor('audio', undefined), undefined, opts.presetId);
+      let separate = opts.separate;
+      try {
+        separate ??= await defaultSeparate();
         const source: SongSource = { kind: 'audio', fileName: file.name, mimeType: file.type, fileSize: file.size };
-        const sep = await separateIfRequested(file, file.name, opts.separate, controller.signal);
-        return await transcribeAndSave(
-          file,
-          sep.blob,
-          { title: opts.title ?? titleFromFileName(file.name), source, separated: sep.separated },
-          controller.signal,
-        );
+        await pend(ctx, {
+          id: opts.pendingId,
+          title,
+          kind: 'audio',
+          source,
+          blob: file.size <= PENDING_COPY_MAX_BYTES ? file : undefined,
+          mimeType: file.type,
+          fileName: file.name,
+          separate,
+        });
+        const engine = await pickEngine(separate);
+        if (ctx.signal.aborted) return null;
+        ctx.update({ plan: planFor('audio', engine), separation: engine });
+        return await transcribeAndSave(ctx, file, { title, source, fileName: file.name }, engine);
       } catch (err) {
-        return fail(err);
+        return fail(ctx, err, { retry: () => get().importFile(file, { ...opts, separate, presetId: ctx.preset, pendingId: undefined }) });
       }
     },
 
     importAudioBlob: async (blob, meta) => {
-      const controller = start(meta.title, meta.source.kind);
+      const ctx = start(meta.title, meta.source.kind, planFor(meta.source.kind, undefined), undefined, meta.presetId);
+      const fileName = recordingName(meta.title, blob.type);
       try {
-        const sep = await separateIfRequested(blob, `${meta.title}.webm`, meta.separate, controller.signal);
-        return await transcribeAndSave(blob, sep.blob, { ...meta, separated: sep.separated }, controller.signal);
+        await pend(ctx, {
+          id: meta.pendingId,
+          title: meta.title,
+          artist: meta.artist,
+          kind: meta.source.kind,
+          source: meta.source,
+          blob,
+          mimeType: blob.type,
+          fileName,
+          separate: !!meta.separate,
+        });
+        const engine = await pickEngine(!!meta.separate);
+        if (ctx.signal.aborted) return null;
+        ctx.update({ plan: planFor(meta.source.kind, engine), separation: engine });
+        return await transcribeAndSave(ctx, blob, { ...meta, fileName }, engine);
       } catch (err) {
-        return fail(err);
+        return fail(ctx, err, {
+          retry: () => get().importAudioBlob(blob, { ...meta, presetId: ctx.preset, pendingId: undefined }),
+          recording: isRecording(meta.source.kind) ? { blob, fileName } : undefined,
+        });
       }
     },
 
+    resumePending: async (rec) => {
+      if (!rec.blob) return null;
+      const presetId = (['piano', 'mix', 'sensitive', 'custom'] as PresetId[]).includes(rec.presetId as PresetId) ? (rec.presetId as PresetId) : undefined;
+      // a separation that crashed the tab has already been switched off for this preset (checkCrashedSeparation)
+      const separate = rec.separate && (presetId ? get().prefs.separate[presetId] !== false : true);
+      if (rec.kind === 'audio') {
+        const file = new File([rec.blob], rec.fileName, { type: rec.mimeType || rec.blob.type });
+        return get().importFile(file, { title: rec.title, separate, presetId, pendingId: rec.id });
+      }
+      return get().importAudioBlob(rec.blob, { title: rec.title, artist: rec.artist, source: rec.source, separate, presetId, pendingId: rec.id });
+    },
+
     importYouTubeViaServer: async (videoUrl, videoId, separate, meta) => {
-      const controller = start(meta?.title ?? 'YouTube video', 'youtube');
+      const ctx = start(meta?.title ?? 'YouTube video', 'youtube', planFor('youtube', undefined, true));
+      const { update, signal } = ctx;
       try {
-        const backend = configuredBackendUrl(useSettings.getState().backendUrl);
+        const backend = backendUrl();
         if (!backend) throw new Error('No processing server is configured (Settings → Processing server).');
+        const engine = await pickEngine(separate);
+        if (signal.aborted) return null;
+        const meta0 = { title: meta?.title ?? 'YouTube video', artist: meta?.artist };
+        const sourceOf = (blob: Blob): SongSource => ({ kind: 'youtube', youtubeId: videoId, url: videoUrl, mimeType: blob.type, fileSize: blob.size });
+        const earlier: string[] = [];
+        let fallBackToBrowser = false;
+
+        // the original mix of a separated job, when the server got that far (reused by the fallback)
+        let mixFromServer: { blob: Blob; title: string; artist?: string } | null = null;
+        if (engine === 'server') {
+          // one server job fetches the video's audio and separates it: the original mix (for playback
+          // in the Studio) and both stems come back from the same job, nothing is uploaded again
+          update({ plan: [...new Set<ImportStage>(['validating', 'downloading', 'separating', ...TRANSCRIBE])], separation: 'server' });
+          // only the server's part is inside this try: transcription and saving errors are not
+          // separation failures and must not start the fallback
+          let served: { mix: Blob; stems: { vocals: Blob; accomp: Blob; serverMs?: number }; title: string; artist?: string } | null = null;
+          let why = '';
+          try {
+            update({ stage: 'downloading', progress: null, detail: 'Fetching audio on your processing server' });
+            const job = await createYouTubeJob(backend, videoUrl, true);
+            const done = await waitForJob(
+              backend,
+              job.id,
+              (j) =>
+                update({
+                  stage: j.stage === 'downloading' || j.stage === 'queued' ? 'downloading' : 'separating',
+                  progress: j.progress,
+                  detail: serverStageDetail(j.stage),
+                  title: j.title ?? meta0.title,
+                }),
+              signal,
+            );
+            const title = done.title ?? meta0.title;
+            const artist = done.artist ?? meta0.artist;
+            update({ stage: 'downloading', progress: null, detail: 'Transferring the audio and the separated stems to the browser' });
+            const mix = await getJobAudio(backend, job.id, 'mix', signal);
+            mixFromServer = { blob: mix, title, artist };
+            const hasStems = !!done.stems?.includes('vocals') && done.stems.includes('accomp');
+            if (!hasStems) {
+              why = done.separationError || 'it returned no separated stems';
+            } else {
+              const stems = await backendApi.fetchStems(backend, job.id, signal);
+              served = { mix, stems: { ...stems, serverMs: done.separationMs ?? undefined }, title, artist };
+            }
+          } catch (err) {
+            if (isAbort(err) || signal.aborted) throw err;
+            why = (err as Error)?.message ?? String(err);
+          }
+          if (signal.aborted) return null;
+          if (served) {
+            return await transcribeAndSave(ctx, served.mix, { title: served.title, artist: served.artist, source: sourceOf(served.mix), fileName: `${served.title}.m4a` }, 'server', served.stems);
+          }
+          // e.g. the server could fetch but not separate: separate here (where recommended) or transcribe the full mix
+          const fb = browserFallback();
+          fallBackToBrowser = fb.ok;
+          earlier.push(
+            fb.ok
+              ? `The processing server could not separate this video (${why}); it was separated in the browser instead.`
+              : `The processing server could not separate this video (${why}); the full mix was transcribed${fb.why ? ` (${fb.why})` : ''}.`,
+          );
+          update({ warnings: [...earlier] });
+        }
+
+        const engine2: SeparationEngine | undefined = engine === 'server' ? (fallBackToBrowser ? 'browser' : undefined) : engine;
+        update({ plan: planFor('youtube', engine2, true), separation: engine2 });
+        if (mixFromServer) {
+          // the separated job already fetched the video: no second download on the server
+          const { blob, title, artist } = mixFromServer;
+          return await transcribeAndSave(ctx, blob, { title, artist, source: sourceOf(blob), fileName: `${title}.m4a` }, engine2, undefined, earlier);
+        }
         update({ stage: 'downloading', progress: null, detail: 'Fetching audio on your processing server' });
-        const job = await createYouTubeJob(backend, videoUrl, separate);
+        // fetch the original mix: it is what plays back in the Studio; separation follows as for files
+        const job = await createYouTubeJob(backend, videoUrl, false);
         const done = await waitForJob(
           backend,
           job.id,
           (j) =>
             update({
-              stage: j.stage === 'separating' ? 'separating' : 'downloading',
+              stage: 'downloading',
               progress: j.progress,
-              detail: j.stage === 'separating' ? 'Isolating the piano part (Demucs)' : 'Fetching audio on your processing server',
-              title: j.title ?? meta?.title ?? 'YouTube video',
+              detail: j.stage === 'downloading' ? 'Fetching audio on your processing server' : `Preparing audio on your processing server (${j.stage})`,
+              title: j.title ?? meta0.title,
             }),
-          controller.signal,
+          signal,
         );
         update({ stage: 'downloading', progress: null, detail: 'Transferring audio to the browser' });
-        const blob = await getJobAudio(backend, job.id);
-        const title = done.title ?? meta?.title ?? 'YouTube video';
+        const blob = await getJobAudio(backend, job.id, undefined, signal);
+        const title = done.title ?? meta0.title;
         return await transcribeAndSave(
+          ctx,
           blob,
-          blob,
-          {
-            title,
-            artist: done.artist ?? meta?.artist,
-            source: { kind: 'youtube', youtubeId: videoId, url: videoUrl, mimeType: blob.type, fileSize: blob.size },
-            separated: separate,
-          },
-          controller.signal,
+          { title, artist: done.artist ?? meta0.artist, source: sourceOf(blob), fileName: `${title}.m4a` },
+          engine2,
+          undefined,
+          earlier,
         );
       } catch (err) {
-        return fail(err);
+        return fail(ctx, err);
       }
     },
 
     importDemo: async () => {
-      start('Bach — Prelude in C major', 'demo');
+      const ctx = start('Bach — Prelude in C major', 'demo', planFor('demo', undefined));
       const song = demoSong();
-      return (await finish(song))!;
+      return (await finish(ctx, song))!;
     },
 
     cancel: () => {
       get().controller?.abort();
-      set({ job: null, controller: null });
+      void current?.unpend?.();
+      set({ job: null, controller: null, failed: null });
     },
     clear: () => {
       const j = get().job;
-      if (j && (j.stage === 'done' || j.stage === 'error')) set({ job: null, controller: null });
+      if (j && (j.stage === 'done' || j.stage === 'error')) set({ job: null, controller: null, failed: null });
     },
   };
 });
+
+/** an import is running (not finished, failed or cancelled) */
+export function importBusy(job: ImportJob | null): boolean {
+  return !!job && job.stage !== 'done' && job.stage !== 'error';
+}
+
+if (typeof window !== 'undefined') {
+  // A page load ends the document and the import with it. Router navigations keep the document
+  // (App.tsx IsolationGate), but Back/Forward into a history entry of another document (the YouTube
+  // route is its own document), a reload or closing the tab do not: ask first while an import runs.
+  const onBeforeUnload = (e: BeforeUnloadEvent) => {
+    e.preventDefault();
+    e.returnValue = '';
+  };
+  let guarded = false;
+  useImport.subscribe((st) => {
+    const busy = importBusy(st.job);
+    if (busy === guarded) return;
+    guarded = busy;
+    if (busy) window.addEventListener('beforeunload', onBeforeUnload);
+    else window.removeEventListener('beforeunload', onBeforeUnload);
+  });
+  // keep the screen on while an import runs (a locked phone suspends the page)
+  const wake = createScreenWakeLock();
+  useImport.subscribe((st) => void wake.hold(importBusy(st.job)));
+  setTimeout(() => void checkCrashedSeparation((preset) => useImport.getState().setSeparatePref(preset, false, 'browser')), 0);
+}
 
 export const STAGE_LABELS: Record<ImportStage, string> = {
   validating: 'Checking file',
   uploading: 'Uploading',
   downloading: 'Fetching audio',
-  separating: 'Isolating piano',
+  separating: 'Separating vocals & drums',
   decoding: 'Decoding audio',
   'loading-model': 'Loading AI model',
   analyzing: 'Detecting notes',

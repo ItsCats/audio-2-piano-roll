@@ -10,6 +10,11 @@ export interface Note {
   dur: number;
   vel: number;
   hand: Hand;
+  /**
+   * Musical role, when known. 'melody' marks notes of the sung melody line extracted from the
+   * separated vocal stem: they always sit in the right hand and Easy/Medium are built around them.
+   */
+  role?: 'melody';
 }
 
 /** Sustain pedal held from `start` to `end` (seconds). */
@@ -74,16 +79,43 @@ export interface ExtractionParams {
    * continuation of a still-ringing note rather than a re-strike (0 disables).
    */
   continuationOnset?: number;
+  /**
+   * Register-dependent detection: thresholds (and the minimum note length) are scaled towards the
+   * keyboard ends, ramping linearly from lowMidi down to A0 and from highMidi up to C8 (factors are
+   * multipliers; 1 or omitted = unchanged). Same shape as RegisterCurve in transcription/noteExtraction.ts.
+   */
+  register?: {
+    lowMidi: number;
+    highMidi: number;
+    lowOnset?: number;
+    lowFrame?: number;
+    lowMinFrames?: number;
+    highOnset?: number;
+    highFrame?: number;
+    highMinFrames?: number;
+  };
+  /**
+   * Re-join held notes chopped into back-to-back same-pitch repeats by other notes' attacks
+   * (transcription/noteExtraction.ts REPEAT_JOIN). false turns it off; omitted = on (default).
+   */
+  joinRepeats?: boolean;
 }
 
 export interface TranscriptionInfo {
   method: 'basic-pitch' | 'midi-file' | 'demo';
   /** True whenever the notes were inferred from audio (always an estimate). */
   estimated: boolean;
+  /**
+   * The hands come from the score (a MIDI file's named hand tracks or two-staff layout, the
+   * built-in demo): Hard keeps them as written (no hand-span reassignment).
+   */
+  handsFromScore?: boolean;
   params?: ExtractionParams;
   backend?: string;
   processingMs?: number;
   separated?: boolean;
+  /** Source separation that ran before transcription (SCNet, in the browser or on the server). */
+  separation?: { engine: 'scnet-browser' | 'scnet-server'; vocals: boolean; ms: number; threads?: number };
   warnings: string[];
   /** Rough 0..1 indicator of how clean the model output was (mean peak note confidence). */
   confidence?: number;

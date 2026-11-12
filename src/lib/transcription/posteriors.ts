@@ -4,6 +4,18 @@ export interface StoredPosteriors {
   frames: Uint8Array;
   onsets: Uint8Array;
   rms: Float32Array;
+  /**
+   * Separated songs (in-browser SCNet): onset strength of the drums stem, 8-bit at
+   * DRUM_ENV_FPS (separation/dsp.ts drumOnsetEnvelope), for the drum-hit false-note filter
+   * (music/cleanup.ts DRUM_HIT_RULE, currently off). ~6 KB per minute.
+   */
+  drums?: Uint8Array;
+  /**
+   * @deprecated Older records (before the melody line was kept as notes) also stored the vocal
+   * stem's posteriors here. Nothing reads them any more; re-detection keeps the song's
+   * melody notes instead.
+   */
+  melody?: StoredPosteriors;
 }
 
 export function dequantize(a: Uint8Array): Float32Array {

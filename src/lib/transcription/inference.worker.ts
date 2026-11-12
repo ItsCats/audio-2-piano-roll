@@ -24,7 +24,19 @@ import {
 import { extractNotes, type NoteExtractionOptions } from './noteExtraction';
 import type { WorkerRequest, WorkerResponse } from './workerProtocol';
 import { dequantize } from './posteriors';
-import { batchFor, chooseBackendOrder } from './backendOrder';
+import { WEBGL_MEMORY_FLAGS, batchFor, chooseBackendOrder, isMemoryConstrained, type DeviceInfo } from './backendChoice';
+
+// Stays single-threaded: on a cross-origin-isolated page the threaded build starts blob: scripts
+// that the CSP does not allow.
+tf.env().set('WASM_HAS_MULTITHREAD_SUPPORT', false);
+// Memory-safe WebGL (see backendChoice.ts): set before any WebGL kernel can run.
+for (const [flag, value] of Object.entries(WEBGL_MEMORY_FLAGS)) {
+  try {
+    tf.env().set(flag, value);
+  } catch (err) {
+    console.warn(`[transcribe] could not set ${flag}`, err);
+  }
+}
 
 setWasmPaths({
   'tfjs-backend-wasm.wasm': wasmPlain,
@@ -45,29 +57,26 @@ function webglIsSoftware(): boolean {
     if (!gl) return true;
     const ext = gl.getExtension('WEBGL_debug_renderer_info');
     const renderer = ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) : '';
+    gl.getExtension('WEBGL_lose_context')?.loseContext();
     return /swiftshader|llvmpipe|software|basic render/i.test(renderer);
   } catch {
     return true;
   }
 }
 
-async function initBackend(preferred?: string, device?: { maxTouchPoints: number; deviceMemory?: number }): Promise<string> {
-  const hasOffscreen = typeof OffscreenCanvas !== 'undefined';
-  const nav = ctx.navigator as WorkerNavigator & { deviceMemory?: number; maxTouchPoints?: number };
-  const order = chooseBackendOrder(
-    {
-      ua: nav.userAgent ?? '',
-      maxTouchPoints: device?.maxTouchPoints ?? nav.maxTouchPoints ?? 0,
-      deviceMemory: device?.deviceMemory ?? nav.deviceMemory,
-      softwareRenderer: hasOffscreen ? webglIsSoftware() : true,
-      offscreen: hasOffscreen,
-    },
-    preferred,
-  );
-  // WebGL, when used (desktop GPUs): avoid the ~170 MB-per-window im2col matrix and free textures
-  // as soon as they are released instead of caching them for the whole session.
-  tf.env().set('WEBGL_CONV_IM2COL', false);
-  tf.env().set('WEBGL_DELETE_TEXTURE_THRESHOLD', 0);
+async function initBackend(preferred?: string, device?: DeviceInfo): Promise<string> {
+  const nav = (self as unknown as { navigator?: Navigator & { deviceMemory?: number; userAgentData?: { mobile?: boolean } } }).navigator;
+  const offscreen = typeof OffscreenCanvas !== 'undefined';
+  const facts = {
+    ua: device?.ua ?? nav?.userAgent ?? '',
+    maxTouchPoints: device?.maxTouchPoints,
+    deviceMemory: device?.deviceMemory ?? nav?.deviceMemory,
+    mobile: device?.mobile ?? nav?.userAgentData?.mobile,
+  };
+  // the renderer only matters where WebGL could lead (not on phones: no GPU context is made there);
+  // a 1×1 WebGL2 context, released right after reading the renderer's name
+  const softwareRenderer = !offscreen || isMemoryConstrained(facts) ? true : webglIsSoftware();
+  const order = chooseBackendOrder({ ...facts, softwareRenderer, offscreen }, preferred);
   for (const name of order) {
     try {
       if (name === 'wasm') await import('@tensorflow/tfjs-backend-wasm');
@@ -83,7 +92,7 @@ async function initBackend(preferred?: string, device?: { maxTouchPoints: number
   throw new Error('No TensorFlow.js backend could be initialised in this browser.');
 }
 
-async function ensureModel(modelUrl: string, preferredBackend?: string, device?: { maxTouchPoints: number; deviceMemory?: number }): Promise<void> {
+async function ensureModel(modelUrl: string, preferredBackend?: string, device?: DeviceInfo): Promise<void> {
   if (model) return;
   backendName = await initBackend(preferredBackend, device);
   try {

@@ -3,11 +3,13 @@ import { bachPreludeDemo } from '../../src/lib/music/demo';
 import { renderOffline } from '../../src/lib/audio/offlineRender';
 import { WavWriter } from '../../src/lib/audio/wav';
 import { DEFAULT_AUDIO_SETTINGS } from '../../src/lib/audio/types';
-import { transcribeAudio, reextractNotes, EXTRACTION_PRESETS, type TranscriptionResult } from '../../src/lib/transcription/pipeline';
+import { transcribeAudio, reextractNotes, redetectNotes, EXTRACTION_PRESETS, type TranscriptionResult } from '../../src/lib/transcription/pipeline';
 import type { ExtractionParams } from '../../src/lib/music/types';
 import { generateAllArrangements } from '../../src/lib/music/difficulty';
 import type { Note } from '../../src/lib/music/types';
 import { newNoteId } from '../../src/lib/music/cleanup';
+import { decodeToRate, mixToMono } from '../../src/lib/transcription/decode';
+import type { SeparationResult } from '../../src/lib/separation';
 
 function scoreNotes(ref: Note[], est: Note[], tol = 0.05) {
   const used = new Set<number>();
@@ -187,7 +189,47 @@ async function runTune(piece: 'bach' | 'chords', grid: Partial<ExtractionParams>
   return out;
 }
 
-Object.assign(window, { runAccuracy, scoreNotes, runDiagnose, runTune });
+/**
+ * TranscribeOptions.separation must not be consumed: the same in-page result is passed to two
+ * calls (the accompaniment = the rendered piece, the "vocals" = the same audio at half level).
+ */
+async function runSeparationReuse() {
+  const src = bachPreludeDemo();
+  const end = Math.min(src.duration, 12);
+  const audio = await renderOffline({ notes: src.notes.filter((n) => n.start < end), pedal: [], settings: DEFAULT_AUDIO_SETTINGS, start: 0, end, rate: 1, sampleRate: 44100 });
+  const wav = new WavWriter(44100);
+  wav.append(audio);
+  const blob = wav.finish();
+  const mono = mixToMono(await decodeToRate(blob, 22050));
+  const separation: SeparationResult = {
+    sampleRate: 22050,
+    accomp: mono,
+    vocals: mono.map((v) => v * 0.5),
+    vocalPresence: { activeFraction: 1, relDb: -6, present: true },
+    engine: 'scnet-browser',
+    ms: 1,
+  };
+  const before = { accomp: separation.accomp.length, vocals: separation.vocals.length, v0: separation.vocals.find((v) => v !== 0) };
+  const a = await transcribeAudio(blob, EXTRACTION_PRESETS.mix, () => {}, undefined, { separation });
+  const b = await transcribeAudio(blob, EXTRACTION_PRESETS.mix, () => {}, undefined, { separation });
+  // Studio "Re-detect" keeps the sung line; its beats must come from the accompaniment alone, as on
+  // import, so the kept melody notes must not change the tempo
+  const melody = a.notes.filter((n) => n.role === 'melody');
+  const withMelody = await redetectNotes(a.posteriors, EXTRACTION_PRESETS.mix, a.duration, { melody });
+  const without = await redetectNotes(a.posteriors, EXTRACTION_PRESETS.mix, a.duration);
+  return {
+    intact: separation.accomp.length === before.accomp && separation.vocals.length === before.vocals && separation.vocals.find((v) => v !== 0) === before.v0,
+    notes: [a.notes.length, b.notes.length],
+    melody: [a.notes.filter((n) => n.role === 'melody').length, b.notes.filter((n) => n.role === 'melody').length],
+    redetect: {
+      keptMelody: withMelody.notes.filter((n) => n.role === 'melody').length,
+      sameTempoWithAndWithoutMelody:
+        withMelody.tempo.bpm === without.tempo.bpm && withMelody.tempo.confidence === without.tempo.confidence && withMelody.tempo.beats.join() === without.tempo.beats.join(),
+    },
+  };
+}
+
+Object.assign(window, { runAccuracy, scoreNotes, runDiagnose, runTune, runSeparationReuse });
 document.getElementById('log')!.textContent = 'ready';
 
 async function sampleOnsets() {

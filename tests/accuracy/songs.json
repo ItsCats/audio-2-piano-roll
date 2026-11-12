@@ -1,0 +1,191 @@
+{
+ "_doc": "Per-song evaluation config for tests/accuracy/evaluate.py. Keys are audio basenames (without extension). Audio files are passed on the command line and never stored in the repo. 'suggested' is the preset the UI would suggest; 'presets' are all presets run. noteRef: 'exact' (sibling .midi = exact performance MIDI), 'snapped' (refs/snapped/<id>.json: score aligned + snapped to a strong piano transcriber), 'aligned' (refs/aligned/<id>.json: score DTW-aligned only), or null. vocalRef/bassRef: use refs/vocal/<id>.<stem>.f0.npz. stems: refs from stems/<id>/ (drums onsets).",
+ "songs": {
+  "vocal-1": {
+   "kind": "vocal",
+   "suggested": "mix",
+   "presets": [
+    "mix",
+    "piano"
+   ],
+   "vocalRef": true,
+   "bassRef": true,
+   "stems": true
+  },
+  "vocal-2": {
+   "kind": "vocal",
+   "suggested": "mix",
+   "presets": [
+    "mix",
+    "piano"
+   ],
+   "vocalRef": true,
+   "bassRef": true,
+   "stems": true
+  },
+  "vocal-3": {
+   "kind": "vocal",
+   "suggested": "mix",
+   "presets": [
+    "mix",
+    "piano"
+   ],
+   "vocalRef": true,
+   "bassRef": true,
+   "stems": true
+  },
+  "vocal-4": {
+   "kind": "vocal",
+   "suggested": "mix",
+   "presets": [
+    "mix",
+    "piano"
+   ],
+   "vocalRef": true,
+   "bassRef": true,
+   "stems": true
+  },
+  "vocal-5": {
+   "kind": "vocal",
+   "suggested": "mix",
+   "presets": [
+    "mix",
+    "piano"
+   ],
+   "vocalRef": true,
+   "bassRef": true,
+   "stems": true
+  },
+  "band-instrumental-1": {
+   "kind": "instrumental",
+   "suggested": "mix",
+   "presets": [
+    "mix",
+    "piano"
+   ],
+   "bassRef": true,
+   "stems": true
+  },
+  "heroic": {
+   "kind": "piano-classical",
+   "suggested": "piano",
+   "presets": [
+    "piano",
+    "sensitive",
+    "mix"
+   ],
+   "ptiRef": true,
+   "note": "Chopin, Polonaise in A-flat major Op. 53 ('Heroic') — solo piano (earlier mislabelled as an instrumental band track)"
+  },
+  "piano-jazz-1": {
+   "kind": "piano-jazz",
+   "suggested": "piano",
+   "presets": [
+    "piano",
+    "sensitive",
+    "mix"
+   ],
+   "ptiRef": true
+  },
+  "chopin-ballade-1": {
+   "kind": "piano-classical",
+   "suggested": "piano",
+   "presets": [
+    "piano",
+    "sensitive",
+    "mix"
+   ],
+   "noteRef": "snapped",
+   "ptiRef": true
+  },
+  "clair-de-lune": {
+   "kind": "piano-classical",
+   "suggested": "piano",
+   "presets": [
+    "piano",
+    "sensitive",
+    "mix"
+   ],
+   "noteRef": "snapped",
+   "ptiRef": true
+  },
+  "nocturne": {
+   "kind": "piano-classical",
+   "suggested": "piano",
+   "presets": [
+    "piano",
+    "sensitive",
+    "mix"
+   ],
+   "noteRef": "snapped",
+   "ptiRef": true
+  },
+  "m-debussy-pas-neige": {
+   "kind": "piano-maestro",
+   "suggested": "piano",
+   "presets": [
+    "piano",
+    "sensitive",
+    "mix"
+   ],
+   "noteRef": "exact",
+   "ptiRef": true
+  },
+  "m-chopin-noct15-1": {
+   "kind": "piano-maestro",
+   "suggested": "piano",
+   "presets": [
+    "piano",
+    "sensitive",
+    "mix"
+   ],
+   "noteRef": "exact",
+   "ptiRef": true
+  },
+  "m-bach-bwv850": {
+   "kind": "piano-maestro",
+   "suggested": "piano",
+   "presets": [
+    "piano",
+    "sensitive",
+    "mix"
+   ],
+   "noteRef": "exact",
+   "ptiRef": true
+  },
+  "m-mozart-k280-1": {
+   "kind": "piano-maestro",
+   "suggested": "piano",
+   "presets": [
+    "piano",
+    "sensitive",
+    "mix"
+   ],
+   "noteRef": "exact",
+   "ptiRef": true
+  },
+  "m-liszt-waldesrauschen": {
+   "kind": "piano-maestro",
+   "suggested": "piano",
+   "presets": [
+    "piano",
+    "sensitive",
+    "mix"
+   ],
+   "noteRef": "exact",
+   "ptiRef": true
+  },
+  "m-chopin-ballade1": {
+   "kind": "piano-maestro",
+   "suggested": "piano",
+   "presets": [
+    "piano",
+    "sensitive",
+    "mix"
+   ],
+   "noteRef": "exact",
+   "ptiRef": true,
+   "note": "MAESTRO train split (the PTI reference model was trained on it); same piece as chopin-ballade-1"
+  }
+ }
+}
