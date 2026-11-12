@@ -232,6 +232,14 @@ export const CREDITS: CreditGroup[] = [
   },
 ];
 
+/** People whose work inspired a part of Piano2Vision (nothing of theirs is copied or included). */
+export const INSPIRATION: { name: string; text: string }[] = [
+  {
+    name: 'Rousseau',
+    text: 'Pianist and YouTube creator. The video title page styles were inspired by the classical title cards in Rousseau’s videos. Piano2Vision is not affiliated with Rousseau, and no logos or artwork were copied.',
+  },
+];
+
 /** Made specifically for Piano2Vision (no third-party assets). */
 export const ORIGINAL_WORK = [
   'All 13 note decal patterns (meadow, sakura, galaxy …) are drawn by code written for Piano2Vision.',

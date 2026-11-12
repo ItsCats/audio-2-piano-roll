@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { ExternalLink, Heart, Sparkles } from 'lucide-react';
-import { CREDITS, ORIGINAL_WORK } from '../lib/credits';
+import { CREDITS, INSPIRATION, ORIGINAL_WORK } from '../lib/credits';
 import { Badge } from '../components/ui';
 
 export default function CreditsPage() {
@@ -54,6 +54,19 @@ export default function CreditsPage() {
 
         <section className="panel p-5">
           <h2 className="flex items-center gap-2 text-[15px] font-semibold text-ink-50">
+            <Heart size={16} className="text-accent-400" /> Design inspiration
+          </h2>
+          <ul className="mt-2 flex flex-col gap-2 text-[13px] leading-relaxed text-ink-300">
+            {INSPIRATION.map((i) => (
+              <li key={i.name}>
+                <b className="font-semibold text-ink-100">{i.name}</b> — {i.text}
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        <section className="panel p-5">
+          <h2 className="flex items-center gap-2 text-[15px] font-semibold text-ink-50">
             <Sparkles size={16} className="text-accent-400" /> Made for Piano2Vision
           </h2>
           <ul className="mt-2 flex list-disc flex-col gap-1 pl-5 text-[13px] leading-relaxed text-ink-300">
@@ -68,7 +81,7 @@ export default function CreditsPage() {
             <Heart size={13} className="text-accent-400" /> Found something missing or credited wrongly? Please let us know and we’ll fix it.
           </p>
           <p>
-            Piano2Vision is not affiliated with YouTube, Spotify, Google, ByteDance or any other project listed here. The YouTube player is
+            Piano2Vision is not affiliated with YouTube, Spotify, Google, ByteDance, Rousseau or any other project or person listed here. The YouTube player is
             embedded under YouTube’s Terms of Service; you are responsible for having the rights to the music you import. See also{' '}
             <Link to="/accuracy" className="text-accent-400 hover:text-accent-300">
               how accurate is it?
