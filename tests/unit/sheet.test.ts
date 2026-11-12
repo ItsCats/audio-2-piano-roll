@@ -120,12 +120,17 @@ describe('sheet quantization', () => {
     expect(q.notes.map((n) => n.on)).toEqual(notes.map((_, i) => i * 6));
     expect(q.tripletQuarters.size).toBe(0);
   });
-  it('finds clean triplets on Hard only', () => {
+  it('finds clean triplets on Medium and Hard; Easy plays them as straight 8ths', () => {
     const notes = Array.from({ length: 12 }, (_, i) => raw(60 + (i % 3), i / 3, i / 3 + 0.3));
-    const hard = quantize(notes, LEVEL_RULES.hard);
-    expect([...hard.tripletQuarters].sort()).toEqual([0, 1, 2, 3]);
-    expect(hard.notes.map((n) => n.on)).toEqual(notes.map((_, i) => i * 4));
-    expect(quantize(notes, LEVEL_RULES.medium).tripletQuarters.size).toBe(0);
+    for (const level of ['medium', 'hard'] as const) {
+      const q = quantize(notes, LEVEL_RULES[level]);
+      expect([...q.tripletQuarters].sort()).toEqual([0, 1, 2, 3]);
+      expect(q.notes.map((n) => n.on)).toEqual(notes.map((_, i) => i * 4));
+    }
+    const easy = quantize(notes, LEVEL_RULES.easy);
+    expect(easy.tripletQuarters.size).toBe(0);
+    // never a 16th-8th-16th rewrite of a triplet
+    for (const n of easy.notes) expect(n.on % 6).toBe(0);
   });
   it('does not call jittered 16ths triplets', () => {
     const r = rng(3);
@@ -134,6 +139,7 @@ describe('sheet quantization', () => {
       return raw(60 + (i % 4), i / 4 + j, i / 4 + 0.2 + j);
     });
     expect(quantize(notes, LEVEL_RULES.hard).tripletQuarters.size).toBe(0);
+    expect(quantize(notes, LEVEL_RULES.medium).tripletQuarters.size).toBe(0);
   });
   it('removes duplicates and cuts same-pitch overlaps', () => {
     const q = quantize([raw(60, 0, 1), raw(60, 0.02, 0.5), raw(60, 0.5, 1.5), raw(48, 0, 1, 2)], LEVEL_RULES.medium);
@@ -157,6 +163,40 @@ describe('sheet voices', () => {
     }
     const [, easyV2] = assignVoices(notes, 2, LEVEL_RULES.easy, vctx());
     expect(easyV2).toHaveLength(0);
+  });
+  it('keeps a held chord under a higher note on Medium (right hand)', () => {
+    // F4 + A♭4 held a bar, D5 a 16th later, then moving 8ths above
+    const notes = [qn(65, 0, 48), qn(68, 0, 48), qn(74, 3, 12), ...[12, 18, 24, 30, 36, 42].map((p) => qn(72 + (p % 5), p, p + 6))];
+    const [v1, v2] = assignVoices(notes, 1, LEVEL_RULES.medium, vctx());
+    expect(v2).toEqual([expect.objectContaining({ on: 0, off: 48, midis: [65, 68] })]);
+    expect(v1[0]).toEqual(expect.objectContaining({ on: 3, midis: [74] }));
+  });
+  it('a rolled chord keeps its bass held rather than writing it short', () => {
+    // bass D3 held, F3 / (A♭3 + B3) rolled in after it, all held for a bar
+    const notes = [qn(50, 0, 48, 2), qn(53, 3, 48, 2), qn(56, 6, 48, 2), qn(59, 6, 42, 2)];
+    const [v1, v2] = assignVoices(notes, 2, LEVEL_RULES.hard, vctx());
+    const bass = [...v1, ...v2].find((c) => c.midis.includes(50))!;
+    expect(bass.off).toBe(48);
+  });
+  it('filling gaps never lets the voices cross', () => {
+    const r = rng(5);
+    for (let trial = 0; trial < 40; trial++) {
+      const notes: QNote[] = [];
+      for (let i = 0; i < 40; i++) {
+        const on = Math.floor(r() * 64) * 3;
+        notes.push(qn(40 + Math.floor(r() * 30), on, on + 3 * (1 + Math.floor(r() * 10)), 2));
+      }
+      const uniq = [...new Map(notes.map((n) => [`${n.midi}:${n.on}`, n])).values()];
+      for (const level of ['medium', 'hard'] as const) {
+        const [v1, v2] = assignVoices(uniq, 2, LEVEL_RULES[level], vctx());
+        // a voice-1 chord that starts while a voice-2 chord sounds is never below it (and vice versa)
+        for (const a of v1)
+          for (const b of v2) {
+            if (b.on < a.on && a.on < b.off) expect(a.midis[0], `trial ${trial}`).toBeGreaterThan(b.midis[b.midis.length - 1]);
+            if (a.on < b.on && b.on < a.off) expect(b.midis[b.midis.length - 1], `trial ${trial}`).toBeLessThan(a.midis[0]);
+          }
+      }
+    }
   });
   it('trims legato overlaps into one voice', () => {
     const notes = [qn(60, 0, 14), qn(62, 12, 26), qn(64, 24, 38), qn(65, 36, 48)];
