@@ -63,7 +63,7 @@ export interface VoiceContext {
   tripletQuarters: Set<number>;
 }
 
-export function assignVoices(notesIn: QNote[], staff: Staff, rules: SheetLevelRules, ctx: VoiceContext): [Chord[], Chord[]] {
+export function assignVoices(notesIn: QNote[], _staff: Staff, rules: SheetLevelRules, ctx: VoiceContext): [Chord[], Chord[]] {
   const beatLen = ctx.beatLen;
   const notes = trimLegato(notesIn, Math.max(beatLen, 6));
   const groups = new Map<number, QNote[]>();
@@ -80,16 +80,65 @@ export function assignVoices(notesIn: QNote[], staff: Staff, rules: SheetLevelRu
     const l = last(i);
     if (l && l.off > t) l.off = t;
   };
-  // Medium: a held melody over moving notes (staff 1), or a held bass under moving notes (staff 2)
-  const allowUnder = mode === 'always' || (mode === 'limited' && staff === 1);
-  const allowOver = mode === 'always' || (mode === 'limited' && staff === 2);
+  // Medium too: a held note or chord keeps its length in its own voice under or over moving notes
+  // (otherwise it would be written short and read as staccato)
+  const allowUnder = mode !== 'never';
+  const allowOver = mode !== 'never';
+  /** How much held music (quarters × notes) cutting voice i at t would lose. */
+  const cutLoss = (i: number, t: number) => {
+    const l = last(i);
+    return l && l.off > t ? ((l.off - t) / DIV) * l.midis.length : 0;
+  };
+  /** Places one chord (or only measures what it would cut, with apply = false). */
+  const placeOne = (c: Chord, t: number, apply: boolean): number => {
+    const f0 = busy(0) <= t;
+    const f1 = busy(1) <= t;
+    let cuts: number[] = [];
+    let into = 0;
+    let swap = false;
+    if (f0) {
+      const l1 = last(1);
+      if (!f1 && l1 && !(bottom(c) > top(l1))) cuts = [1];
+    } else {
+      const held = last(0)!;
+      if (f1 && allowUnder && top(c) < bottom(held)) into = 1;
+      else if (f1 && allowOver && bottom(c) > top(held) && busy(1) <= held.on) swap = true;
+      else if (!f1) {
+        const l1 = last(1)!;
+        const above = bottom(c) > top(l1);
+        const below = top(c) < bottom(held);
+        // between the two held voices: one must stop; keep the one with more left to sound
+        if (above && below) [cuts, into] = cutLoss(0, t) <= cutLoss(1, t) ? [[0], 0] : [[1], 1];
+        else if (above) cuts = [0];
+        else if (below) [cuts, into] = [[1], 1];
+        else cuts = [0, 1];
+      } else cuts = [0];
+    }
+    const loss = cuts.reduce((x, i) => x + cutLoss(i, t), 0);
+    if (!apply) return loss;
+    for (const i of cuts) cut(i, t);
+    if (swap) {
+      v[1].push(v[0].pop()!);
+      v[0].push(c);
+    } else v[into].push(c);
+    return loss;
+  };
   for (const t of [...groups.keys()].sort((a, b) => a - b)) {
     const g = groups.get(t)!;
     let parts = groupParts(g, t, mode !== 'never');
     if (parts.length === 2) {
       const [up, lo] = parts;
-      const ok = mode === 'always' || (mode === 'limited' && (staff === 1 ? up.off > lo.off : lo.off > up.off));
-      if (!ok) parts = [{ on: t, off: Math.min(up.off, lo.off), midis: [...lo.midis, ...up.midis] }];
+      // Medium: two voices only for a note held at least a beat longer than the others
+      const ok = mode === 'always' || (mode === 'limited' && Math.abs(up.off - lo.off) >= beatLen);
+      const merged: Chord = { on: t, off: Math.min(up.off, lo.off), midis: [...lo.midis, ...up.midis] };
+      if (!ok) parts = [merged];
+      else if (busy(0) > t || busy(1) > t) {
+        // two parts would stop both held voices: writing the group as one chord (the longer part
+        // shortened) may lose less, e.g. a rolled chord whose bass is still sounding
+        const splitLoss = cutLoss(0, t) + cutLoss(1, t);
+        const shorten = ((Math.max(up.off, lo.off) - merged.off) / DIV) * (up.off > lo.off ? up.midis.length : lo.midis.length);
+        if (shorten + placeOne(merged, t, false) < splitLoss) parts = [merged];
+      }
     }
     if (parts.length === 2) {
       cut(0, t);
@@ -98,46 +147,26 @@ export function assignVoices(notesIn: QNote[], staff: Staff, rules: SheetLevelRu
       v[1].push(parts[1]);
       continue;
     }
-    const c = parts[0];
-    const f0 = busy(0) <= t;
-    const f1 = busy(1) <= t;
-    if (f0) {
-      const l1 = last(1);
-      if (!f1 && l1 && !(bottom(c) > top(l1))) cut(1, t);
-      v[0].push(c);
-      continue;
-    }
-    const held = last(0)!;
-    if (f1 && allowUnder && top(c) < bottom(held)) {
-      v[1].push(c);
-    } else if (f1 && allowOver && bottom(c) > top(held) && busy(1) <= held.on) {
-      v[0].pop();
-      v[1].push(held);
-      v[0].push(c);
-    } else if (!f1) {
-      const l1 = last(1)!;
-      if (bottom(c) > top(l1)) {
-        cut(0, t);
-        v[0].push(c);
-      } else if (top(c) < bottom(held)) {
-        cut(1, t);
-        v[1].push(c);
-      } else {
-        cut(0, t);
-        cut(1, t);
-        v[0].push(c);
-      }
-    } else {
-      cut(0, t);
-      v[0].push(c);
-    }
+    placeOne(parts[0], t, true);
   }
   // no tiny rests: close small gaps inside a voice (except a rest that starts on a beat), and
   // lengthen a note before a longer rest so the rest starts on the level's rest grid
-  for (const voice of v) {
+  // (never past an onset of the other voice that would sit across this one: crossed stems)
+  for (let vi = 0; vi < 2; vi++) {
+    const voice = v[vi];
+    const other = v[1 - vi];
+    const otherOns = other.map((o) => o.on);
+    const crossLimit = (c: Chord, from: number, to: number) => {
+      let k = lowerBoundAbove(otherOns, from - 1);
+      for (; k < other.length && other[k].on < to; k++) {
+        const o = other[k];
+        if (vi === 1 ? bottom(o) <= top(c) : top(o) >= bottom(c)) return o.on;
+      }
+      return to;
+    };
     for (let i = 0; i < voice.length; i++) {
       const c = voice[i];
-      const next = voice[i + 1]?.on ?? Infinity;
+      const next = crossLimit(c, c.off, voice[i + 1]?.on ?? Infinity);
       const gap = next - c.off;
       if (gap <= 0) continue;
       if (gap <= rules.fillGap && !ctx.isBeat(c.off)) {

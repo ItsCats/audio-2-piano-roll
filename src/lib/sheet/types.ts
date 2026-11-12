@@ -25,11 +25,13 @@ export interface SheetLevelRules {
   secondVoice: 'never' | 'limited' | 'always';
   /** Whether clef changes are allowed. */
   clefChanges: boolean;
+  /** Cap on the shortest length a note gets from its quarter's grid (compound meters: an 8th). */
+  maxStep?: number;
 }
 
 export const LEVEL_RULES: Record<Difficulty, SheetLevelRules> = {
   easy: { level: 'easy', grids: [1, 2], minDur: 6, fillGap: 12, restGrid: 12, secondVoice: 'never', clefChanges: false },
-  medium: { level: 'medium', grids: [1, 2, 4], minDur: 3, fillGap: 6, restGrid: 6, secondVoice: 'limited', clefChanges: true },
+  medium: { level: 'medium', grids: [1, 2, 4, 3], minDur: 3, fillGap: 6, restGrid: 6, secondVoice: 'limited', clefChanges: true },
   hard: { level: 'hard', grids: [1, 2, 4, 3], minDur: 3, fillGap: 3, restGrid: 3, secondVoice: 'always', clefChanges: true },
 };
 

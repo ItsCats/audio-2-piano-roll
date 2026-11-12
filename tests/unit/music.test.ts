@@ -60,6 +60,19 @@ describe('tempo & beats', () => {
     const [c] = quantizeNotes([n(60, 0.3)], tempo, { subdivision: 4, strength: 0.5, quantizeDurations: false });
     expect(c.start).toBeCloseTo(0.275);
   });
+  it('keeps clear triplets as triplets on a 16th grid when asked (Medium)', () => {
+    const tempo = { bpm: 70, beats: regularBeats(70, 0, 20), beatsPerBar: 4, downbeatIndex: 0, confidence: 0.8, source: 'estimated' as const };
+    const q = 60 / 70;
+    const trip = Array.from({ length: 12 }, (_, i) => n(60 + (i % 3), (i * q) / 3 + 0.01));
+    const on = quantizeNotes(trip, tempo, { subdivision: 4, strength: 1, quantizeDurations: false, window: 0.45, triplets: true });
+    on.forEach((x, i) => expect(x.start).toBeCloseTo((i * q) / 3, 4));
+    // without the option they become 16ths (0, 1/4, 3/4 of a beat)
+    const off = quantizeNotes(trip, tempo, { subdivision: 4, strength: 1, quantizeDurations: false, window: 0.45 });
+    expect(off[1].start).toBeCloseTo(q / 4, 4);
+    // straight 16ths stay 16ths
+    const sixteenths = Array.from({ length: 16 }, (_, i) => n(60, (i * q) / 4 + 0.005));
+    quantizeNotes(sixteenths, tempo, { subdivision: 4, strength: 1, quantizeDurations: false, triplets: true }).forEach((x, i) => expect(x.start).toBeCloseTo((i * q) / 4, 4));
+  });
 });
 
 describe('hands', () => {

@@ -51,7 +51,11 @@ export function buildScore(input: ScoreInput): Score {
   const notes = input.notes.filter((n) => Number.isFinite(n.start) && Number.isFinite(n.dur) && n.midi >= 0 && n.midi <= 127);
   const time = buildGrid(tempo, duration, notes);
   const base = LEVEL_RULES[level];
-  const rules = time.compound ? { ...base, grids: base.grids.filter((g) => g !== 3) } : base;
+  // compound meters (6/8 …): no triplets, rests on the dotted-quarter beat (Easy) or 8ths, and a
+  // lone 8th stays an 8th (the quarter grid is not a unit there)
+  const rules = time.compound
+    ? { ...base, grids: base.grids.filter((g) => g !== 3), restGrid: base.restGrid >= 12 ? 18 : base.restGrid, maxStep: 6 }
+    : base;
   const raw: RawNote[] = notes.map((n) => ({
     midi: n.midi,
     on: time.toPos(n.start),

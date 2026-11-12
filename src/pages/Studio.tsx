@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   Film,
@@ -32,9 +32,7 @@ import { PianoRollView } from '../components/studio/PianoRollView';
 import { Transport } from '../components/studio/Transport';
 import { EditToolbar } from '../components/studio/EditToolbar';
 import { ExportVideoDialog } from '../components/studio/ExportVideoDialog';
-import { SheetMusicView } from '../components/studio/SheetMusicView';
 import { SheetPdfDialog } from '../components/studio/SheetPdfDialog';
-import { loadOsmd } from '../lib/sheet/render';
 import { FullscreenStage } from '../components/studio/FullscreenStage';
 import { isFullscreenKey, isStageFullscreen, toggleStageFullscreen } from '../state/fullscreenStore';
 import { LookPanel } from '../components/studio/panels/LookPanel';
@@ -53,7 +51,26 @@ import { arrowSeekDelta, shouldHandleGlobalKey } from '../state/studioKeys';
 
 type PanelTab = 'look' | 'labels' | 'sound' | 'practice' | 'arrangement';
 
-const warmSheet = () => void loadOsmd().catch(() => undefined);
+// the sheet-music view and its notation library load only when they are wanted
+const loadSheetView = () => import('../components/studio/SheetMusicView');
+const SheetMusicView = lazy(() => loadSheetView().then((m) => ({ default: m.SheetMusicView })));
+let warmed = false;
+/**
+ * Starts loading the notation code when the switch is approached, so the sheet shows sooner. Not
+ * while music plays (evaluating the library blocks the page for a moment, which would make the
+ * falling notes stutter), and only when the browser is idle.
+ */
+const warmSheet = () => {
+  if (warmed || getPlayer().isPlaying || useSettings.getState().sheet.view === 'sheet') return;
+  warmed = true;
+  const go = () =>
+    void loadSheetView()
+      .then((m) => m.warmNotation())
+      .catch(() => (warmed = false));
+  const ric = (window as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }).requestIdleCallback;
+  if (ric) ric(go, { timeout: 1500 });
+  else setTimeout(go, 200);
+};
 
 /** "Piano roll / Sheet music" switch (words on wide screens, icons with tooltips otherwise). */
 function ViewSwitch({ className }: { className?: string }) {
@@ -71,7 +88,7 @@ function ViewSwitch({ className }: { className?: string }) {
   });
   return (
     // start loading the notation library as soon as the switch is approached
-    <span className={cn('shrink-0', className)} onPointerOver={warmSheet} onFocus={warmSheet} onTouchStart={warmSheet}>
+    <span className={cn('shrink-0', className)} onPointerOver={(e) => e.pointerType !== 'touch' && warmSheet()} onFocus={warmSheet}>
       <Segmented<'roll' | 'sheet'>
         ariaLabel="View"
         value={view}
@@ -419,7 +436,19 @@ export default function StudioPage() {
         {editMode && <EditToolbar />}
         {/* full screen covers the app and the controls around the view (edit mode is for the normal layout) */}
         <FullscreenStage onEnter={() => setEditMode(false)}>
-          {view === 'sheet' ? <SheetMusicView /> : <PianoRollView />}
+          {view === 'sheet' ? (
+            <Suspense
+              fallback={
+                <div className="absolute inset-0 flex items-center justify-center bg-ink-950 text-ink-400">
+                  <Loader2 className="animate-spin" size={22} />
+                </div>
+              }
+            >
+              <SheetMusicView />
+            </Suspense>
+          ) : (
+            <PianoRollView />
+          )}
         </FullscreenStage>
         <Transport />
       </div>

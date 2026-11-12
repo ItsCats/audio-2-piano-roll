@@ -30,30 +30,112 @@ function fromLof(lof: number): { step: number; alter: number } {
   return { step: LOF_STEP[((k % 7) + 7) % 7], alter: Math.floor(k / 7) };
 }
 
-/** Spells a MIDI note in a key. `minorTonic` (pitch class) enables the leading-tone / raised-6th spelling. */
-export function spell(midi: number, fifths: number, minorTonic?: number): Spelled {
-  const pc = ((midi % 12) + 12) % 12;
-  let lof: number;
-  if (minorTonic !== undefined && pc === (minorTonic + 11) % 12) lof = fifths + 3 + 5;
-  else if (minorTonic !== undefined && pc === (minorTonic + 9) % 12) lof = fifths + 3 + 3;
-  else {
-    // the spelling on the line of fifths closest to the key's centre (fifths + 2)
-    const centre = fifths + 2;
-    let best = 0;
-    let bestD = Infinity;
-    for (let x = -15; x <= 19; x++) {
-      if ((((x * 7) % 12) + 12) % 12 !== pc) continue;
-      const d = Math.abs(x - centre);
-      if (d < bestD || (d === bestD && (fifths >= 0 ? x > best : x < best))) {
-        best = x;
-        bestD = d;
-      }
+/**
+ * Line-of-fifths positions that spell a pitch class with at most one sharp or flat (one or two;
+ * every pitch class has one, so double sharps / flats are never needed).
+ */
+function candidates(pc: number): number[] {
+  const out: number[] = [];
+  for (let x = -8; x <= 12; x++) if ((((x * 7) % 12) + 12) % 12 === pc) out.push(x);
+  return out;
+}
+
+const WHITE = new Set([0, 2, 4, 5, 7, 9, 11]);
+/** Extra cost of E♯, B♯, F♭, C♭ when they are not in the key (a plain letter reads far easier). */
+const AWKWARD = 4.5;
+
+/** Cost of a spelling in a key: distance from the key's centre on the line of fifths. */
+function lofCost(x: number, pc: number, fifths: number): number {
+  const d = Math.abs(x - (fifths + 2));
+  const alter = fromLof(x).alter;
+  return d + (alter !== 0 && WHITE.has(pc) && d > 3 ? AWKWARD : 0);
+}
+
+function bestLof(pc: number, fifths: number, exclude?: number): number | undefined {
+  let best: number | undefined;
+  let bestC = Infinity;
+  for (const x of candidates(pc)) {
+    if (x === exclude) continue;
+    const c = lofCost(x, pc, fifths);
+    const better =
+      best === undefined ||
+      c < bestC - 1e-9 ||
+      (Math.abs(c - bestC) < 1e-9 &&
+        (Math.abs(fromLof(x).alter) < Math.abs(fromLof(best).alter) ||
+          (Math.abs(fromLof(x).alter) === Math.abs(fromLof(best).alter) && (fifths >= 0 ? x > best : x < best))));
+    if (better) {
+      best = x;
+      bestC = c;
     }
-    lof = best;
   }
+  return best;
+}
+
+function lofOf(midi: number, fifths: number, minorTonic?: number): number {
+  const pc = ((midi % 12) + 12) % 12;
+  // minor keys: the raised 7th (leading tone) and raised 6th, unless that needs a double sharp
+  if (minorTonic !== undefined && pc === (minorTonic + 11) % 12 && fifths + 8 <= 12) return fifths + 8;
+  if (minorTonic !== undefined && pc === (minorTonic + 9) % 12 && fifths + 6 <= 12) return fifths + 6;
+  return bestLof(pc, fifths)!;
+}
+
+function fromMidiLof(midi: number, lof: number): Spelled {
   const { step, alter } = fromLof(lof);
   const octave = Math.floor((midi - alter - STEP_PC[step]) / 12) - 1;
   return { step: STEPS[step], alter, octave };
+}
+
+/**
+ * Spells a MIDI note in a key: the spelling nearest the key on the line of fifths, never with a
+ * double sharp or flat, and E♯ / B♯ / F♭ / C♭ only when the key uses them. `minorTonic` (pitch
+ * class) enables the leading-tone / raised-6th spelling.
+ */
+export function spell(midi: number, fifths: number, minorTonic?: number): Spelled {
+  return fromMidiLof(midi, lofOf(midi, fifths, minorTonic));
+}
+
+/**
+ * Spells the notes of a chord (ascending MIDI numbers). Like `spell`, but two notes never share a
+ * letter in the same octave (F + F♯ is written F + G♭): one of them takes its other spelling.
+ */
+export function spellChord(midis: number[], fifths: number, minorTonic?: number): Spelled[] {
+  const base = midis.map((m) => lofOf(m, fifths, minorTonic));
+  const out = midis.map((m, i) => fromMidiLof(m, base[i]));
+  const key = (s: Spelled) => s.octave * 7 + STEPS.indexOf(s.step);
+  const clashes = (sp: Spelled[]) => {
+    let n = 0;
+    for (let i = 0; i < sp.length; i++) for (let j = i + 1; j < sp.length; j++) if (key(sp[i]) === key(sp[j]) && midis[i] !== midis[j]) n++;
+    return n;
+  };
+  if (midis.length < 2 || midis.length > 10 || !clashes(out)) return out;
+  // each note: its usual spelling, or its other single-accidental one at a cost; fewest clashes first
+  const opts = midis.map((m, i) => {
+    const pc = ((m % 12) + 12) % 12;
+    const alt = bestLof(pc, fifths, base[i]);
+    const o = [{ sp: out[i], cost: 0 }];
+    if (alt !== undefined) o.push({ sp: fromMidiLof(m, alt), cost: 1 + Math.max(0, lofCost(alt, pc, fifths) - lofCost(base[i], pc, fifths)) });
+    return o;
+  });
+  let best = out;
+  let bestScore = clashes(out) * 1000;
+  const cur: Spelled[] = new Array(midis.length);
+  const walk = (i: number, cost: number) => {
+    if (cost >= bestScore) return;
+    if (i === midis.length) {
+      const sc = clashes(cur) * 1000 + cost;
+      if (sc < bestScore) {
+        bestScore = sc;
+        best = [...cur];
+      }
+      return;
+    }
+    for (const o of opts[i]) {
+      cur[i] = o.sp;
+      walk(i + 1, cost + o.cost);
+    }
+  };
+  walk(0, 0);
+  return best;
 }
 
 /** Alteration of a letter in the key signature. */

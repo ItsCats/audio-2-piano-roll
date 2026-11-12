@@ -9,12 +9,15 @@ import { currentArrangement, useStudio } from '../../state/studioStore';
 import { useSettings } from '../../state/settingsStore';
 import { getPlayer } from '../../state/playback';
 import { buildSheet, type Score } from '../../lib/sheet';
-import { SheetRenderer } from '../../lib/sheet/render';
+import { loadOsmd, SheetRenderer } from '../../lib/sheet/render';
 import { Button, cn, IconButton } from '../ui';
 
 const ZOOM_MIN = 0.5;
 const ZOOM_MAX = 1.5;
 const clampZoom = (z: number) => Math.round(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z)) * 10) / 10;
+/** Loads the notation library ahead of time (see Studio's view switch). */
+export const warmNotation = () => loadOsmd();
+
 export const defaultSheetZoom = (width: number) => (width < 640 ? 0.75 : 1);
 
 export function SheetMusicView() {
@@ -31,11 +34,17 @@ export function SheetMusicView() {
   const rendererRef = useRef<SheetRenderer | null>(null);
   const followRef = useRef(sheet.follow);
   const userScrollAt = useRef(0);
+  /** Zoom shown while a pinch / ctrl + wheel gesture runs (drawn for real when it ends). */
+  const gestureZoom = useRef<number | null>(null);
+  const zoomLayerRef = useRef<HTMLDivElement>(null);
+  /** Song and level of the music on screen (a redraw of the same keeps it until the new one is ready). */
+  const drawnKey = useRef('');
   const tappedAt = useRef(0);
   const [width, setWidth] = useState(0);
   const [score, setScore] = useState<Score | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [attempt, setAttempt] = useState(0);
+  const [gestureLabel, setGestureLabel] = useState<number | null>(null);
   followRef.current = sheet.follow;
   const zoom = sheet.zoom ?? defaultSheetZoom(width || window.innerWidth);
   const empty = arr.notes.length === 0;
@@ -52,7 +61,9 @@ export function SheetMusicView() {
         setWidth(w);
         return;
       }
-      if (Math.abs(w - last) <= 32) return;
+      // small growth is ignored (the music just gets a little margin); any shrink redraws, or the
+      // fixed-width music would be cut off at the right edge
+      if (w >= last && w - last <= 32) return;
       clearTimeout(timer);
       timer = window.setTimeout(() => {
         last = el.clientWidth;
@@ -88,7 +99,15 @@ export function SheetMusicView() {
   useEffect(() => {
     if (!score || !width) return;
     const host = hostRef.current!;
-    const r = (rendererRef.current ??= new SheetRenderer(host));
+    // the host div is re-created after a level with no notes: never draw into a detached one
+    if (rendererRef.current?.host !== host) {
+      rendererRef.current?.destroy();
+      rendererRef.current = new SheetRenderer(host);
+    }
+    const r = rendererRef.current;
+    const drawKey = `${song.id}:${difficulty}`;
+    const keepOld = drawnKey.current === drawKey;
+    drawnKey.current = drawKey;
     const player = getPlayer();
     const t = player.getVisualTime();
     let shown = false;
@@ -97,9 +116,12 @@ export function SheetMusicView() {
       zoom,
       startTime: t,
       linesPerChunk: width < 640 ? 1 : 2,
-      onChunk: (done) => {
-        if (done !== 1 || shown) return;
+      keepOld,
+      onChunk: () => {
+        if (shown) return;
         shown = true;
+        // the pinch preview (a scaled copy of the old drawing) ends when the new drawing shows
+        if (zoomLayerRef.current) zoomLayerRef.current.style.transform = '';
         setStatus('ready');
         const top = r.lineTopOf(r.measureAt(t));
         const sc = scrollRef.current;
@@ -173,29 +195,71 @@ export function SheetMusicView() {
     return () => cancelAnimationFrame(raf);
   }, []);
 
-  // hand scrolling pauses following for 4 s; ctrl + wheel zooms
+  // hand scrolling pauses following for 4 s (wheel, touch, keys, dragging the scroll bar, middle-
+  // click scrolling); ctrl + wheel / trackpad pinch zooms
   useEffect(() => {
     const sc = scrollRef.current!;
     const mark = () => (userScrollAt.current = performance.now());
+    let wheelAcc = 0;
+    let commit = 0;
     const onWheel = (e: WheelEvent) => {
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
-        const z = useSettings.getState().sheet.zoom ?? defaultSheetZoom(sc.clientWidth);
-        setSheet({ zoom: clampZoom(z + (e.deltaY < 0 ? 0.1 : -0.1)) });
+        // a pinch sends many small events: step 10 % per 50 px, show it scaled at once and draw
+        // the music at the new size only when the gesture stops
+        wheelAcc += e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+        if (Math.abs(wheelAcc) < 50) return;
+        const steps = Math.trunc(wheelAcc / 50);
+        wheelAcc -= steps * 50;
+        const drawn = useSettings.getState().sheet.zoom ?? defaultSheetZoom(sc.clientWidth);
+        const next = clampZoom((gestureZoom.current ?? drawn) - steps * 0.1);
+        gestureZoom.current = next;
+        const layer = zoomLayerRef.current;
+        if (layer) {
+          layer.style.transformOrigin = 'top center';
+          layer.style.transform = next === drawn ? '' : `scale(${next / drawn})`;
+        }
+        setGestureLabel(next);
+        clearTimeout(commit);
+        commit = window.setTimeout(() => {
+          const z = gestureZoom.current;
+          gestureZoom.current = null;
+          setGestureLabel(null);
+          if (z !== null && z !== (useSettings.getState().sheet.zoom ?? defaultSheetZoom(sc.clientWidth))) setSheet({ zoom: z });
+          else if (layer) layer.style.transform = '';
+        }, 300);
         return;
       }
       mark();
     };
     const onKey = (e: KeyboardEvent) => {
-      if (['PageUp', 'PageDown', 'ArrowUp', 'ArrowDown'].includes(e.key)) mark();
+      if (['PageUp', 'PageDown', 'ArrowUp', 'ArrowDown', 'Home', 'End', ' '].includes(e.key)) mark();
+    };
+    let dragging = false;
+    const onDown = (e: PointerEvent) => {
+      // the scroll bar belongs to the scroll box itself; the middle button starts auto-scrolling
+      if (e.target === sc || e.button === 1) dragging = true;
+    };
+    const onUp = () => (dragging = false);
+    const onScroll = () => {
+      if (dragging) mark();
     };
     sc.addEventListener('wheel', onWheel, { passive: false });
     sc.addEventListener('touchmove', mark, { passive: true });
     sc.addEventListener('keydown', onKey);
+    sc.addEventListener('pointerdown', onDown);
+    sc.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
     return () => {
+      clearTimeout(commit);
       sc.removeEventListener('wheel', onWheel);
       sc.removeEventListener('touchmove', mark);
       sc.removeEventListener('keydown', onKey);
+      sc.removeEventListener('pointerdown', onDown);
+      sc.removeEventListener('scroll', onScroll);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
     };
   }, [setSheet]);
 
@@ -233,7 +297,7 @@ export function SheetMusicView() {
             title="Reset size"
             onClick={() => setSheet({ zoom: null })}
           >
-            {Math.round(zoom * 100)}%
+            {Math.round((gestureLabel ?? zoom) * 100)}%
           </button>
           <IconButton size="sm" label="Bigger" onClick={() => setZoom(zoom + 0.1)} disabled={zoom >= ZOOM_MAX}>
             <Plus size={15} />
@@ -258,11 +322,14 @@ export function SheetMusicView() {
             {song.artist && <p className="mt-1 font-serif text-[14px] break-words text-neutral-700">{song.artist}</p>}
             <p className="mt-1 text-[11.5px] text-neutral-500 capitalize">{difficulty}</p>
             {song.transcription.estimated && <p className="mt-1 text-[11.5px] text-neutral-500">Written out automatically — may contain mistakes.</p>}
+            {!song.transcription.estimated && song.tempo.source === 'midi' && score?.time.source === 'estimated' && (
+              <p className="mt-1 text-[11.5px] text-neutral-500">The bar lines were guessed from how it was played.</p>
+            )}
           </div>
           {empty ? (
             <p className="py-16 text-center text-[14px] text-neutral-500">No notes to show yet.</p>
           ) : (
-            <div className="relative" onPointerDown={onPointerDown} onPointerUp={onPointerUp} data-testid="sheet-music">
+            <div ref={zoomLayerRef} className="relative" onPointerDown={onPointerDown} onPointerUp={onPointerUp} data-testid="sheet-music">
               <div ref={hostRef} className="relative" />
               <div ref={tintRef} className="pointer-events-none absolute top-0 left-0 hidden rounded-sm bg-accent-500/10" />
               <div ref={cursorRef} className="pointer-events-none absolute top-0 left-0 hidden w-[3px] rounded-full bg-accent-500/80" data-testid="sheet-cursor" />

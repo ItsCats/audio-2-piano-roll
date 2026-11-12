@@ -26,6 +26,15 @@ export function loadOsmd(): Promise<OsmdModule> {
   return osmdModule;
 }
 
+/**
+ * OSMD stops drawing the "3" of triplets after two in a row (for the rest of the piece); our
+ * triplets have no bracket, so without the number they read as plain 8ths. Mark every one.
+ */
+export function showAllTupletNumbers(osmd: { EngravingRules: { TupletNumberLimitConsecutiveRepetitions: boolean; TupletNumberAlwaysDisableAfterFirstMax: boolean } }): void {
+  osmd.EngravingRules.TupletNumberLimitConsecutiveRepetitions = false;
+  osmd.EngravingRules.TupletNumberAlwaysDisableAfterFirstMax = false;
+}
+
 export interface MeasureBox {
   measure: number;
   t0: number;
@@ -67,6 +76,25 @@ export interface RenderOptions {
   /** Lines per OSMD instance (default 2). */
   linesPerChunk?: number;
   onChunk?: (done: number, total: number) => void;
+  /**
+   * Keep the music on screen while the new one is drawn, and swap it in when complete (a new
+   * width, zoom or edited notes of the same level). Otherwise each chunk shows as soon as it is
+   * drawn (first draw, another level or song).
+   */
+  keepOld?: boolean;
+}
+
+/** Index of the measure holding a song time. */
+function measureAtTime(s: Score, t: number): number {
+  const ts = s.measureStartTimes;
+  let lo = 0;
+  let hi = s.measureCount - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (ts[mid] <= t) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo;
 }
 
 /** Draws one Score into a container and answers time ↔ position questions about it. */
@@ -79,7 +107,7 @@ export class SheetRenderer {
   /** Longest single chunk draw (ms) of the last render, for measurements. */
   maxChunkMs = 0;
 
-  constructor(private host: HTMLElement) {}
+  constructor(readonly host: HTMLElement) {}
 
   get measureCount(): number {
     return this.score?.measureCount ?? 0;
@@ -88,10 +116,13 @@ export class SheetRenderer {
   /** Cancels any drawing in progress (a new render does this too). */
   cancel(): void {
     this.token++;
+    this.staging?.remove();
+    this.staging = null;
   }
 
   destroy(): void {
     this.cancel();
+    this.staging = null;
     this.host.replaceChildren();
     this.chunks = [];
     this.boxes = [];
@@ -107,7 +138,6 @@ export class SheetRenderer {
     const { OpenSheetMusicDisplay } = await loadOsmd();
     performance.mark('sheet:library-ready');
     if (token !== this.token) return false;
-    this.score = score;
     const width = Math.max(240, this.host.clientWidth);
     const zoom = opts.zoom;
     const starts = systemBreaks(score, lineBudget(width - 20 * zoom, zoom));
@@ -124,11 +154,28 @@ export class SheetRenderer {
       chunks.push({ from: starts[i], to: starts[i + per] ?? score.measureCount, lines, el, done: false });
       frag.appendChild(el);
     }
-    this.host.replaceChildren(frag);
-    this.chunks = chunks;
-    this.boxes = new Array(score.measureCount);
+    // keepOld: the new chunks are drawn in a hidden layer over the old music, swapped in at the end
+    this.staging?.remove();
+    this.staging = null;
+    const staged = !!opts.keepOld && this.chunks.some((c) => c.done);
+    let layer: HTMLElement = this.host;
+    if (staged) {
+      layer = document.createElement('div');
+      layer.style.cssText = 'position:absolute;left:0;top:0;width:100%;visibility:hidden;pointer-events:none';
+      layer.setAttribute('aria-hidden', 'true');
+      layer.appendChild(frag);
+      this.host.appendChild(layer);
+      this.staging = layer;
+    } else {
+      this.host.replaceChildren(frag);
+      this.chunks = chunks;
+      this.boxes = new Array(score.measureCount);
+      this.score = score;
+    }
+    const boxes: (MeasureBox | undefined)[] = new Array(score.measureCount);
     this.maxChunkMs = 0;
-    const first = opts.startTime !== undefined ? Math.max(0, chunks.findIndex((c) => this.measureAt(opts.startTime!) < c.to)) : 0;
+    const startM = opts.startTime !== undefined ? measureAtTime(score, opts.startTime) : 0;
+    const first = Math.max(0, chunks.findIndex((c) => startM < c.to));
     const order = [first, ...chunks.map((_, i) => i).filter((i) => i !== first)];
     let done = 0;
     for (const i of order) {
@@ -153,6 +200,7 @@ export class SheetRenderer {
         autoBeam: false,
         stretchLastSystemLine: c.to < score.measureCount,
       });
+      showAllTupletNumbers(osmd);
       const xml = toMusicXml(score, { title: '', from: c.from, to: c.to, breaks: starts });
       if (!done) performance.mark('sheet:first-xml');
       await osmd.load(xml);
@@ -162,28 +210,43 @@ export class SheetRenderer {
       osmd.render();
       c.el.style.minHeight = '';
       c.done = true;
-      this.indexChunk(osmd, c);
+      this.indexChunk(osmd, c, score, boxes, layer);
+      if (!staged) this.copyBoxes(boxes, c);
       this.maxChunkMs = Math.max(this.maxChunkMs, performance.now() - t0);
       if (!this.lineHeight || i === first) this.lineHeight = c.el.offsetHeight / c.lines;
       done++;
       if (done === 1) performance.mark('sheet:first-chunk');
       if (done === chunks.length) performance.mark('sheet:all-chunks');
-      opts.onChunk?.(done, chunks.length);
+      if (!staged || done === chunks.length) opts.onChunk?.(done, chunks.length);
       await yieldToMain();
     }
-    return token === this.token;
+    if (token !== this.token) return false;
+    if (staged) {
+      // swap in the new music in one go
+      this.staging = null;
+      this.host.replaceChildren(...chunks.map((c) => c.el));
+      this.chunks = chunks;
+      this.boxes = boxes;
+      this.score = score;
+    }
+    return true;
+  }
+
+  private staging: HTMLElement | null = null;
+
+  private copyBoxes(boxes: (MeasureBox | undefined)[], c: Chunk): void {
+    for (let m = c.from; m < c.to; m++) this.boxes[m] = boxes[m];
   }
 
   /** Reads measure boxes and note x positions of a freshly drawn chunk. */
-  private indexChunk(osmd: InstanceType<OsmdModule['OpenSheetMusicDisplay']>, c: Chunk): void {
-    const score = this.score!;
+  private indexChunk(osmd: InstanceType<OsmdModule['OpenSheetMusicDisplay']>, c: Chunk, score: Score, boxes: (MeasureBox | undefined)[], layer: HTMLElement): void {
     const t = score.time;
     const svg = c.el.querySelector('svg');
     if (!svg) return;
     // x relative to the host, y relative to the chunk (chunks above may still change height)
-    const hostRect = this.host.getBoundingClientRect();
+    const hostRect = layer.getBoundingClientRect();
     const svgRect = svg.getBoundingClientRect();
-    const ox = svgRect.left - hostRect.left - this.host.clientLeft;
+    const ox = svgRect.left - hostRect.left - layer.clientLeft;
     const oy = svgRect.top - c.el.getBoundingClientRect().top;
     const unit = 10 * osmd.zoom;
     const list = osmd.GraphicSheet?.MeasureList ?? [];
@@ -212,7 +275,7 @@ export class SheetRenderer {
         }
       }
       entries.sort((a, b) => a.t - b.t);
-      this.boxes[m] = { measure: m, t0: score.measureStartTimes[m], t1: score.measureStartTimes[m + 1], x, w, top: yTop, bottom: yBot, entries };
+      boxes[m] = { measure: m, t0: score.measureStartTimes[m], t1: score.measureStartTimes[m + 1], x, w, top: yTop, bottom: yBot, entries };
     }
   }
 
@@ -221,17 +284,7 @@ export class SheetRenderer {
   }
 
   measureAt(t: number): number {
-    const s = this.score;
-    if (!s) return 0;
-    const ts = s.measureStartTimes;
-    let lo = 0;
-    let hi = s.measureCount - 1;
-    while (lo < hi) {
-      const mid = (lo + hi + 1) >> 1;
-      if (ts[mid] <= t) lo = mid;
-      else hi = mid - 1;
-    }
-    return lo;
+    return this.score ? measureAtTime(this.score, t) : 0;
   }
 
   /** Measure box in host coordinates, or null while it isn't drawn yet. */
@@ -264,22 +317,29 @@ export class SheetRenderer {
     return { x, top: b.top, bottom: b.bottom, box: b };
   }
 
-  /** Song time for a tap at content coordinates (x, y), or null when nothing is there. */
+  /**
+   * Song time for a tap at content coordinates (x, y), or null when nothing is there. The line
+   * whose staves contain y wins; a tap just above or below a line (up to 35 % of its height) goes
+   * to the nearest line.
+   */
   timeAtPoint(x: number, y: number): number | null {
     let best: MeasureBox | null = null;
-    let bestD = Infinity;
+    let bestDy = Infinity;
+    let bestDx = Infinity;
     for (let m = 0; m < this.boxes.length; m++) {
       const b = this.box(m);
       if (!b) continue;
       const pad = (b.bottom - b.top) * 0.35;
-      if (y < b.top - pad || y > b.bottom + pad) continue;
+      const dy = y < b.top ? b.top - y : y > b.bottom ? y - b.bottom : 0;
+      if (dy > pad) continue;
       const dx = x < b.x ? b.x - x : x > b.x + b.w ? x - (b.x + b.w) : 0;
-      if (dx < bestD) {
-        bestD = dx;
+      if (dy < bestDy - 0.5 || (Math.abs(dy - bestDy) <= 0.5 && dx < bestDx)) {
+        bestDy = dy;
+        bestDx = dx;
         best = b;
       }
     }
-    if (!best || bestD > 24) return null;
+    if (!best || bestDx > 24) return null;
     let t = best.t0;
     let d = Infinity;
     for (const e of best.entries) {

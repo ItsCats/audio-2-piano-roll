@@ -277,6 +277,8 @@ export function generateMedium(allNotes: Note[], tempo: TempoInfo): Note[] {
     strength: quantStrength(tempo),
     quantizeDurations: false,
     window: 0.45,
+    // triplet passages (shuffle, 12/8 ballads) stay triplets instead of becoming 16th rhythms
+    triplets: true,
   });
   // a sung line (and the chord tones struck with it) keeps its note ends
   for (let i = 0; i < keepEnd.length; i++) if (keepEnd[i]) q[i] = { ...q[i], dur: Math.max(0.06, notes[i].start + notes[i].dur - q[i].start) };

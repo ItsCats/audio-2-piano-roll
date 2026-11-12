@@ -1,11 +1,11 @@
 /** Sheet music: grid, quantization, voices, rhythm spelling, beams, pitch spelling, clefs, MusicXML. */
 import { describe, expect, it } from 'vitest';
 import type { Note, TempoInfo } from '../../src/lib/music/types';
-import { buildGrid } from '../../src/lib/sheet/grid';
+import { buildGrid, gridFit, sheetTempo } from '../../src/lib/sheet/grid';
 import { quantize, type RawNote } from '../../src/lib/sheet/quantize';
 import { assignVoices, trimLegato, type VoiceContext } from '../../src/lib/sheet/voices';
 import { beams, decompose, type RhythmContext } from '../../src/lib/sheet/rhythm';
-import { AccidentalTracker, keyFifths, spell } from '../../src/lib/sheet/spelling';
+import { AccidentalTracker, keyAlter, keyFifths, spell, spellChord } from '../../src/lib/sheet/spelling';
 import { chooseClefs } from '../../src/lib/sheet/clefs';
 import { buildScore } from '../../src/lib/sheet/score';
 import { toMusicXml, xmlEscape } from '../../src/lib/sheet/musicxml';
@@ -100,6 +100,38 @@ describe('sheet grid', () => {
 
 const raw = (midi: number, onQ: number, offQ: number, staff: 1 | 2 = 1): RawNote => ({ midi, on: onQ * DIV, off: offQ * DIV, staff });
 
+describe('sheet tempo for MIDI files', () => {
+  // a 4/4 piece at 84 BPM played freely, saved with a default 120 BPM header (like MAESTRO)
+  const r = rng(21);
+  const played: Note[] = [];
+  let t = 0.3;
+  for (let i = 0; i < 160; i++) {
+    const beat = (60 / 84) * (1 + 0.08 * Math.sin(i / 9));
+    played.push(note(60 + (i % 7), t, beat * 0.45));
+    if (i % 2 === 0) played.push(note(i % 8 === 0 ? 40 : 47, t, beat * 0.9, 'L'));
+    t += beat / 2 + (r() - 0.5) * 0.02;
+  }
+  it('tracks the beats of a performance whose MIDI tempo is a constant default', () => {
+    const header = tempo(120);
+    expect(gridFit(header, played.map((n) => n.start))).toBeLessThan(0.6);
+    const st = sheetTempo(header, played, t + 1);
+    expect(st.source).toBe('estimated');
+    expect(Math.abs(st.bpm - 84) / 84).toBeLessThan(0.12);
+  });
+  it('keeps the tempo map of a written-out MIDI file', () => {
+    const written = Array.from({ length: 64 }, (_, i) => note(60 + (i % 5), i * 0.25, 0.2));
+    const header = tempo(120);
+    expect(gridFit(header, written.map((n) => n.start))).toBe(1);
+    expect(sheetTempo(header, written, 20)).toBe(header);
+    // tempo changes in the file: kept even when the notes don't follow it
+    const changing = tempo(120, { beats: [...regularBeats(120, 0, 5), ...regularBeats(90, 5.5, 30)] });
+    expect(sheetTempo(changing, played, t + 1)).toBe(changing);
+    // audio transcriptions are never touched here
+    const est = tempo(84, { source: 'estimated' });
+    expect(sheetTempo(est, played, t + 1)).toBe(est);
+  });
+});
+
 describe('sheet quantization', () => {
   it('puts Easy on 8ths', () => {
     const q = quantize([raw(60, 0.25, 0.5), raw(62, 0.75, 1.1), raw(64, 1.4, 2)], LEVEL_RULES.easy);
@@ -120,12 +152,17 @@ describe('sheet quantization', () => {
     expect(q.notes.map((n) => n.on)).toEqual(notes.map((_, i) => i * 6));
     expect(q.tripletQuarters.size).toBe(0);
   });
-  it('finds clean triplets on Hard only', () => {
+  it('finds clean triplets on Medium and Hard; Easy plays them as straight 8ths', () => {
     const notes = Array.from({ length: 12 }, (_, i) => raw(60 + (i % 3), i / 3, i / 3 + 0.3));
-    const hard = quantize(notes, LEVEL_RULES.hard);
-    expect([...hard.tripletQuarters].sort()).toEqual([0, 1, 2, 3]);
-    expect(hard.notes.map((n) => n.on)).toEqual(notes.map((_, i) => i * 4));
-    expect(quantize(notes, LEVEL_RULES.medium).tripletQuarters.size).toBe(0);
+    for (const level of ['medium', 'hard'] as const) {
+      const q = quantize(notes, LEVEL_RULES[level]);
+      expect([...q.tripletQuarters].sort()).toEqual([0, 1, 2, 3]);
+      expect(q.notes.map((n) => n.on)).toEqual(notes.map((_, i) => i * 4));
+    }
+    const easy = quantize(notes, LEVEL_RULES.easy);
+    expect(easy.tripletQuarters.size).toBe(0);
+    // never a 16th-8th-16th rewrite of a triplet
+    for (const n of easy.notes) expect(n.on % 6).toBe(0);
   });
   it('does not call jittered 16ths triplets', () => {
     const r = rng(3);
@@ -134,6 +171,7 @@ describe('sheet quantization', () => {
       return raw(60 + (i % 4), i / 4 + j, i / 4 + 0.2 + j);
     });
     expect(quantize(notes, LEVEL_RULES.hard).tripletQuarters.size).toBe(0);
+    expect(quantize(notes, LEVEL_RULES.medium).tripletQuarters.size).toBe(0);
   });
   it('removes duplicates and cuts same-pitch overlaps', () => {
     const q = quantize([raw(60, 0, 1), raw(60, 0.02, 0.5), raw(60, 0.5, 1.5), raw(48, 0, 1, 2)], LEVEL_RULES.medium);
@@ -141,6 +179,25 @@ describe('sheet quantization', () => {
       [0, 6],
       [6, 18],
     ]);
+  });
+  it('keeps a quickly re-struck note (Hard) instead of dropping it', () => {
+    // pairs 0.16 quarter apart that would both snap to the same 16th
+    const notes = [1, 2, 3, 4].flatMap((b) => [raw(64, b - 0.1, b + 0.02), raw(64, b + 0.06, b + 0.2)]);
+    const q = quantize(notes, LEVEL_RULES.hard);
+    expect(q.notes.map((n) => [n.on, n.off])).toEqual([1, 2, 3, 4].flatMap((b) => [[b * 12, b * 12 + 3], [b * 12 + 3, b * 12 + 6]]));
+  });
+  it('writes every Hard arrangement note (none lost between the arrangement and the page)', () => {
+    const r = rng(9);
+    const notes: Note[] = [];
+    for (let i = 0; i < 200; i++) {
+      const t = i * 0.13 + r() * 0.03;
+      notes.push(note(60 + Math.floor(r() * 12), t, 0.1 + r() * 0.5, r() < 0.5 ? 'R' : 'L'));
+      if (r() < 0.15) notes.push(note(notes[notes.length - 1].midi, t + 0.075, 0.1)); // re-strike 75 ms later
+    }
+    const score = buildScore({ notes, tempo: tempo(100), duration: 30, level: 'hard' });
+    let written = 0;
+    for (const sv of score.staves) for (const v of sv.voices) for (const c of v) written += c.midis.length;
+    expect(written).toBeGreaterThanOrEqual(Math.floor(notes.length * 0.99));
   });
 });
 
@@ -157,6 +214,40 @@ describe('sheet voices', () => {
     }
     const [, easyV2] = assignVoices(notes, 2, LEVEL_RULES.easy, vctx());
     expect(easyV2).toHaveLength(0);
+  });
+  it('keeps a held chord under a higher note on Medium (right hand)', () => {
+    // F4 + A♭4 held a bar, D5 a 16th later, then moving 8ths above
+    const notes = [qn(65, 0, 48), qn(68, 0, 48), qn(74, 3, 12), ...[12, 18, 24, 30, 36, 42].map((p) => qn(72 + (p % 5), p, p + 6))];
+    const [v1, v2] = assignVoices(notes, 1, LEVEL_RULES.medium, vctx());
+    expect(v2).toEqual([expect.objectContaining({ on: 0, off: 48, midis: [65, 68] })]);
+    expect(v1[0]).toEqual(expect.objectContaining({ on: 3, midis: [74] }));
+  });
+  it('a rolled chord keeps its bass held rather than writing it short', () => {
+    // bass D3 held, F3 / (A♭3 + B3) rolled in after it, all held for a bar
+    const notes = [qn(50, 0, 48, 2), qn(53, 3, 48, 2), qn(56, 6, 48, 2), qn(59, 6, 42, 2)];
+    const [v1, v2] = assignVoices(notes, 2, LEVEL_RULES.hard, vctx());
+    const bass = [...v1, ...v2].find((c) => c.midis.includes(50))!;
+    expect(bass.off).toBe(48);
+  });
+  it('filling gaps never lets the voices cross', () => {
+    const r = rng(5);
+    for (let trial = 0; trial < 40; trial++) {
+      const notes: QNote[] = [];
+      for (let i = 0; i < 40; i++) {
+        const on = Math.floor(r() * 64) * 3;
+        notes.push(qn(40 + Math.floor(r() * 30), on, on + 3 * (1 + Math.floor(r() * 10)), 2));
+      }
+      const uniq = [...new Map(notes.map((n) => [`${n.midi}:${n.on}`, n])).values()];
+      for (const level of ['medium', 'hard'] as const) {
+        const [v1, v2] = assignVoices(uniq, 2, LEVEL_RULES[level], vctx());
+        // a voice-1 chord that starts while a voice-2 chord sounds is never below it (and vice versa)
+        for (const a of v1)
+          for (const b of v2) {
+            if (b.on < a.on && a.on < b.off) expect(a.midis[0], `trial ${trial}`).toBeGreaterThan(b.midis[b.midis.length - 1]);
+            if (a.on < b.on && b.on < a.off) expect(b.midis[b.midis.length - 1], `trial ${trial}`).toBeLessThan(a.midis[0]);
+          }
+      }
+    }
   });
   it('trims legato overlaps into one voice', () => {
     const notes = [qn(60, 0, 14), qn(62, 12, 26), qn(64, 24, 38), qn(65, 36, 48)];
@@ -293,6 +384,39 @@ describe('sheet spelling', () => {
     expect(name(71, -1, 2)).toBe('B4'); // D minor raised 6th
     expect(name(66, -2, 7)).toBe('F♯4'); // G minor leading tone
   });
+  it('never writes double accidentals, and E♯ / B♯ / F♭ / C♭ only when the key has them', () => {
+    for (let tonic = 0; tonic < 12; tonic++)
+      for (const mode of ['major', 'minor'] as const) {
+        const f = keyFifths({ tonic, mode });
+        for (let pc = 0; pc < 12; pc++) {
+          const s = spell(60 + pc, f, mode === 'minor' ? tonic : undefined);
+          expect(Math.abs(s.alter)).toBeLessThanOrEqual(1);
+          const odd = (s.step === 'E' || s.step === 'B') && s.alter === 1 ? 1 : (s.step === 'F' || s.step === 'C') && s.alter === -1 ? -1 : 0;
+          // allowed only when the key signature alters that letter, or as a minor key's leading tone / raised 6th
+          if (odd && keyAlter(s.step, f) !== odd) expect(mode === 'minor' && (pc === (tonic + 11) % 12 || pc === (tonic + 9) % 12)).toBe(true);
+        }
+      }
+    expect([69, 64, 71].map((m) => name(m, -5))).toEqual(['A4', 'E4', 'B4']); // D♭ major: not B𝄫, F♭, C♭
+    expect([62, 69].map((m) => name(m, -6))).toEqual(['D4', 'A4']); // G♭ major: not E𝄫, B𝄫
+    expect([67, 60].map((m) => name(m, 5))).toEqual(['G4', 'C4']); // B major: not F𝄪, B♯
+    expect(name(65, 3)).toBe('F4'); // A major: not E♯
+    expect(name(71, -3)).toBe('B4'); // E♭ major: not C♭
+    expect([64, 71].map((m) => name(m, -4))).toEqual(['E4', 'B4']); // A♭ major: not F♭, C♭
+  });
+  it('never puts two notes of a chord on the same letter', () => {
+    const nm = (s: { step: string; alter: number; octave: number }) => s.step + (s.alter > 0 ? '♯' : s.alter < 0 ? '♭' : '') + s.octave;
+    expect(spellChord([62, 65, 69], 3).map(nm)).toEqual(['D4', 'F4', 'A4']); // A major iv chord
+    expect(spellChord([65, 66], 0).map(nm)).toEqual(['F4', 'G♭4']);
+    expect(spellChord([67, 68], 0).map(nm)).toEqual(['G4', 'A♭4']);
+    expect(spellChord([62, 64, 65], -5).map(nm)).toEqual(['D4', 'E4', 'F4']);
+    for (let f = -6; f <= 5; f++)
+      for (let a = 60; a < 72; a++)
+        for (let b = a + 1; b < 72; b++) {
+          const [x, y] = spellChord([a, b], f);
+          expect(x.step + x.octave === y.step + y.octave, `${a},${b} in ${f}`).toBe(false);
+          expect(Math.abs(x.alter) <= 1 && Math.abs(y.alter) <= 1).toBe(true);
+        }
+  });
   it('tracks accidentals per bar; tie continuations print none', () => {
     const acc = new AccidentalTracker(0);
     const fs = spell(66, 0);
@@ -312,6 +436,22 @@ describe('sheet spelling', () => {
   });
 });
 
+describe('sheet compound meters', () => {
+  it('6/8: a dotted quarter + dotted-quarter rest, and a lone 8th stays an 8th', () => {
+    const e = 0.25; // an 8th at 240 eighths per minute
+    const notes = [0, 1].flatMap((b) => [note(72, b * 6 * e, 3 * e * 0.9), note(48, b * 6 * e, e * 0.9, 'L')]);
+    const tokens = (level: 'easy' | 'medium' | 'hard') => {
+      const s = buildScore({ notes, tempo: tempo(240, { beatsPerBar: 6, beatUnit: 8 }), duration: 4, level });
+      const m1 = toMusicXml(s, { title: 't' }).match(/<measure number="1"[\s\S]*?<\/measure>/)![0];
+      return [...m1.matchAll(/<note>([\s\S]*?)<\/note>/g)].map(
+        ([, b]) => (b.includes('<rest') ? 'r' : 'n') + /<type>(\w+)/.exec(b)![1] + (b.includes('<dot/>') ? '.' : '') + (b.includes('<tie type="start"') ? '~' : '') + b.match(/<staff>(\d)/)![1],
+      );
+    };
+    expect(tokens('easy')).toEqual(['nquarter.1', 'rquarter.1', 'nquarter.2', 'rquarter.2']);
+    for (const level of ['medium', 'hard'] as const) expect(tokens(level)).toEqual(['nquarter.1', 'rquarter.1', 'neighth2', 'rquarter2', 'rquarter.2']);
+  });
+});
+
 describe('sheet clefs and octave marks', () => {
   it('marks a high run 8va and a low bass run 8vb', () => {
     const notes = [76, 84, 88, 91, 86].map((m, i) => note(m, i * 0.25, 0.25)).concat([28, 31, 33].map((m, i) => note(m, 2 + i * 0.5, 0.5, 'L')));
@@ -324,6 +464,15 @@ describe('sheet clefs and octave marks', () => {
     expect(xml).toContain('<octave-shift type="down" size="8"/>');
     expect(xml).toContain('<octave-shift type="up" size="8"/>');
     expect(xml.match(/<octave-shift type="stop"/g)).toHaveLength(2);
+  });
+  it('keeps the 8vb when a long low note joins the end of the run', () => {
+    // A0…E1 run, then a held C2 (also low) that sounds across later left-hand notes
+    const notes = [21, 23, 24, 26, 28].map((m, i) => note(m, i * 0.5, 0.5, 'L'));
+    notes.push(note(36, 3, 8, 'L'), ...[43, 45, 47, 48].map((m, i) => note(m, 5 + i, 0.5, 'L')));
+    const score = buildScore({ notes, tempo: tempo(120), duration: 12, level: 'hard' });
+    const o = score.ottavas.filter((x) => x.staff === 2);
+    expect(o).toHaveLength(1);
+    expect(o[0]).toEqual(expect.objectContaining({ shift: -8, start: 0, stop: 60 }));
   });
   it('leaves single high notes alone', () => {
     const score = buildScore({ notes: [note(72, 0, 0.5), note(90, 0.5, 0.5), note(72, 1, 0.5)], tempo: tempo(120), duration: 2, level: 'hard' });

@@ -97,6 +97,20 @@ export function findOttavas(sv: StaffVoices, clefAt: (pos: number) => ClefSign, 
     const ms = g.items.flatMap((x) => x.c.midis);
     return clef === 'G' ? ms.every((m) => m >= 76) : ms.every((m) => m <= 40);
   };
+  /** The octave mark for onsets i..k, or null when it can't have one. */
+  const tryRun = (i: number, k: number, clef: ClefSign, limit: number) => {
+    const items = onsets.slice(i, k + 1).flatMap((g) => g.items);
+    const ms = items.flatMap((x) => x.c.midis);
+    const extreme = clef === 'G' ? ms.some((m) => m >= 88) : ms.some((m) => m <= 31);
+    if (ms.length < 2 || !extreme) return null;
+    const start = onsets[i].on;
+    const stopItem = items.reduce((a, b) => (b.c.off > a.c.off || (b.c.off === a.c.off && b.v < a.v) ? b : a));
+    const stop = stopItem.c.off;
+    if (stop > limit) return null;
+    const inRun = new Set(items.map((x) => x.c));
+    if (all.some((x) => !inRun.has(x.c) && x.c.on < stop && x.c.off > start)) return null;
+    return { start, stop, stopItem };
+  };
   let i = 0;
   while (i < onsets.length) {
     const clef = clefAt(onsets[i].on);
@@ -107,22 +121,33 @@ export function findOttavas(sv: StaffVoices, clefAt: (pos: number) => ClefSign, 
     let j = i;
     const limit = clefChangeAfter(onsets[i].on);
     while (j + 1 < onsets.length && onsets[j + 1].on < limit && qualifies(onsets[j + 1], clef)) j++;
-    const items = onsets.slice(i, j + 1).flatMap((g) => g.items);
-    const ms = items.flatMap((x) => x.c.midis);
-    const extreme = clef === 'G' ? ms.some((m) => m >= 88) : ms.some((m) => m <= 31);
-    const start = onsets[i].on;
-    const stopItem = items.reduce((a, b) => (b.c.off > a.c.off || (b.c.off === a.c.off && b.v < a.v) ? b : a));
-    const stop = stopItem.c.off;
-    const inRun = new Set(items.map((x) => x.c));
-    const clash = all.some((x) => !inRun.has(x.c) && x.c.on < stop && x.c.off > start);
-    if (ms.length >= 2 && extreme && !clash && stop <= limit) {
-      const shift: 8 | -8 = clef === 'G' ? 8 : -8;
-      const first = onsets[i].items[0].c; // voice 1 first when both voices start here
-      first.ottavaStart = shift;
-      stopItem.c.ottavaStop = true;
-      runs.push({ staff: sv.staff, shift, start, stop });
+    // the whole run, else the run cut back to where nothing sounds across the cut (e.g. a long
+    // held note joined the end of the run and clashes with what follows), at most a few tries
+    const cuts: number[] = [j];
+    let stop = -Infinity;
+    for (let k = i; k < j; k++) {
+      for (const it of onsets[k].items) stop = Math.max(stop, it.c.off);
+      if (stop <= onsets[k + 1].on) cuts.push(k);
     }
-    i = j + 1;
+    cuts.sort((x, y) => y - x);
+    let found: { k: number; r: NonNullable<ReturnType<typeof tryRun>> } | null = null;
+    for (const k of cuts.slice(0, 6)) {
+      const r = tryRun(i, k, clef, limit);
+      if (r) {
+        found = { k, r };
+        break;
+      }
+    }
+    if (!found) {
+      i++; // a later start inside this run may still work
+      continue;
+    }
+    const shift: 8 | -8 = clef === 'G' ? 8 : -8;
+    const first = onsets[i].items[0].c; // voice 1 first when both voices start here
+    first.ottavaStart = shift;
+    found.r.stopItem.c.ottavaStop = true;
+    runs.push({ staff: sv.staff, shift, start: found.r.start, stop: found.r.stop });
+    i = found.k + 1;
   }
   return runs;
 }
