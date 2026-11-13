@@ -87,7 +87,10 @@ if (!(self.name ?? '').startsWith('em-pthread')) self.onmessage = async (e: Mess
     const drumsOn = !!req.wantDrums || !!req.keep44;
     const groups = [
       { name: 'vocals', stems: [3] },
-      { name: 'accomp', stems: [1, 2] },
+      // bass and other apart: the bass stem is also transcribed on its own (one bass line,
+      // transcription/bassLine.ts); the accompaniment is their sum (the iSTFT is linear)
+      { name: 'bass', stems: [1] },
+      { name: 'other', stems: [2] },
       // only reduced to an onset envelope below (drum-hit false notes), never returned as audio
       ...(drumsOn ? [{ name: 'drums', stems: [0] }] : []),
     ];
@@ -118,7 +121,11 @@ if (!(self.name ?? '').startsWith('em-pthread')) self.onmessage = async (e: Mess
     for (let i = 0; i < n; i++) mono[i] = (left[i] + right[i]) * 0.5;
     const mix22 = decimate2(mono, outLen);
     const vocals22 = drumsOn ? decimate2(stems.vocals, outLen) : stems.vocals;
-    const accomp22 = drumsOn ? decimate2(stems.accomp, outLen) : stems.accomp;
+    const bass22 = drumsOn ? decimate2(stems.bass, outLen) : stems.bass;
+    const accomp22 = drumsOn ? decimate2(stems.other, outLen) : stems.other;
+    for (let i = 0; i < accomp22.length; i++) accomp22[i] += bass22[i];
+    // (the 44.1 kHz accompaniment for tests: other + bass, in place)
+    if (req.keep44) for (let i = 0; i < n; i++) stems.other[i] += stems.bass[i];
     const t4 = performance.now();
     const drumOnsets = drumsOn ? drumOnsetEnvelope(stems.drums, mono, SCNET_RATE) : new Uint8Array(0);
     const t5 = performance.now();
@@ -126,10 +133,11 @@ if (!(self.name ?? '').startsWith('em-pthread')) self.onmessage = async (e: Mess
       type: 'result',
       vocals: vocals22,
       accomp: accomp22,
+      bass: bass22,
       mix: mix22,
       drumOnsets,
       vocals44: req.keep44 ? stems.vocals : undefined,
-      accomp44: req.keep44 ? stems.accomp : undefined,
+      accomp44: req.keep44 ? stems.other : undefined,
       drums44: req.keep44 ? stems.drums : undefined,
       stats: {
         fromCache,
@@ -142,8 +150,8 @@ if (!(self.name ?? '').startsWith('em-pthread')) self.onmessage = async (e: Mess
         sampleRate: SCNET_RATE,
       },
     };
-    const transfer: Transferable[] = [vocals22.buffer, accomp22.buffer, mix22.buffer, drumOnsets.buffer];
-    if (req.keep44) transfer.push(stems.vocals.buffer, stems.accomp.buffer, stems.drums.buffer);
+    const transfer: Transferable[] = [vocals22.buffer, accomp22.buffer, bass22.buffer, mix22.buffer, drumOnsets.buffer];
+    if (req.keep44) transfer.push(stems.vocals.buffer, stems.other.buffer, stems.drums.buffer);
     post(result, transfer);
   } catch (err) {
     await session?.release().catch(() => undefined);

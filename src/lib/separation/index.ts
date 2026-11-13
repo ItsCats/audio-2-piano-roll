@@ -31,6 +31,11 @@ export interface SeparationResult {
   vocals: Float32Array;
   /** bass + other (no drums, no vocals), mono 22.05 kHz */
   accomp: Float32Array;
+  /**
+   * The bass stem alone (already contained in `accomp`), mono 22.05 kHz: read as one bass line
+   * (transcription/bassLine.ts). Browser separation only (the server returns two stems).
+   */
+  bass?: Float32Array;
   vocalPresence: VocalPresence;
   /**
    * Onset strength of the drums stem, 8-bit at DRUM_ENV_FPS (separation/dsp.ts drumOnsetEnvelope).
@@ -181,6 +186,7 @@ const abortError = () => new DOMException('Separation cancelled', 'AbortError');
 export interface RawSeparation {
   vocals: Float32Array;
   accomp: Float32Array;
+  bass: Float32Array;
   mix: Float32Array;
   drumOnsets: Uint8Array;
   vocals44?: Float32Array;
@@ -239,6 +245,7 @@ export function separateStereo44k(
         resolve({
           vocals: m.vocals,
           accomp: m.accomp,
+          bass: m.bass,
           mix: m.mix,
           drumOnsets: m.drumOnsets,
           vocals44: m.vocals44,
@@ -285,6 +292,7 @@ export async function separateStems(
     sampleRate: SEPARATION_RATE,
     vocals: raw.vocals,
     accomp: raw.accomp,
+    bass: raw.bass,
     vocalPresence,
     ...(raw.drumOnsets.length ? { drumOnsets: raw.drumOnsets } : {}),
     engine: 'scnet-browser',

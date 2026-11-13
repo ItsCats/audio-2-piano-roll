@@ -39,7 +39,10 @@ export type WorkerResponse =
       type: 'result';
       /** mono 22.05 kHz */
       vocals: Float32Array;
+      /** bass + other */
       accomp: Float32Array;
+      /** the bass stem alone (also in accomp) */
+      bass: Float32Array;
       mix: Float32Array;
       /** onset strength of the drums stem, 8-bit at DRUM_ENV_FPS (dsp.drumOnsetEnvelope); empty unless wantDrums */
       drumOnsets: Uint8Array;
