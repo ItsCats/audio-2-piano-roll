@@ -56,7 +56,7 @@ describe('sheet-music reader numbers', () => {
     for (const r of SHEET_READER.rows) {
       expect(r.quick, r.what).not.toBeNull();
       for (const s of [r.accurate, r.quick]) {
-        expect(readerScoreText(s)).toMatch(/^(\d+% \/ \d+%|not measured)$/);
+        expect(readerScoreText(s)).toMatch(/^(\d+(\.\d)?% \/ \d+(\.\d)?%|not measured)$/);
         if (s) expect(s.rhythm).toBeLessThanOrEqual(s.notes);
       }
       if (/photo/i.test(r.what)) expect(r.what).toMatch(/Simulated/);
@@ -65,6 +65,8 @@ describe('sheet-music reader numbers', () => {
     expect(SHEET_READER.rows[0].note).toContain(`${SHEET_READER_INFO.quick.notesRight}% /`);
     expect(SHEET_READER.rows.find((r) => r.what === 'Real printed scores')!.accurate!.notes).toBeGreaterThanOrEqual(SHEET_READER_INFO.accurate.notesRight / 100);
     expect(readerScoreText(null)).toBe('not measured');
+    expect(readerScoreText({ notes: 0.998, rhythm: 0.873 })).toBe('99.8% / 87%');
+    expect(readerScoreText({ notes: 1, rhythm: 0.9949 })).toBe('100% / 99%');
     expect(SHEET_READER.intro).toMatch(/real phone photos have not been measured/);
     expect(SHEET_READER.metric).toMatch(/wrong time/);
     expect(SHEET_READER.limits.map((l) => l.title)).toEqual(expect.arrayContaining(['Lay the page flat', 'Very high or very low notes']));

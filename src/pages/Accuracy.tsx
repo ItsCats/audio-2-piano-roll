@@ -206,7 +206,7 @@ function SheetReaderSection() {
       <Note>{SHEET_READER.speed}</Note>
       <Note>
         Songs read by the Quick reader are labeled <b className="text-warn">Sheet music · Beta</b> in the Studio, those read by the Accurate reader{' '}
-        <b className="text-warn">Read from sheet music</b>. Compare them with your page and fix mistakes in Edit mode. Have the music as a MusicXML or
+        <b className="text-warn">Read from PDF</b> or <b className="text-warn">Read from photo</b>. Compare them with your page and fix mistakes in Edit mode. Have the music as a MusicXML or
         MuseScore file? Import that instead — it is exact.
       </Note>
       <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

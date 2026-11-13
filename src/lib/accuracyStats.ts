@@ -411,4 +411,6 @@ export const SHEET_READER = {
 } as const;
 
 /** "99% / 98%" (notes / rhythm) or "not measured". */
-export const readerScoreText = (s: ReaderScore): string => (s ? `${Math.round(s.notes * 100)}% / ${Math.round(s.rhythm * 100)}%` : 'not measured');
+export const readerScoreText = (s: ReaderScore): string => (s ? `${scorePct(s.notes)} / ${scorePct(s.rhythm)}` : 'not measured');
+/** 0.873 → "87%"; just under 1 keeps a decimal (0.998 → "99.8%", not a misleading "100%") */
+const scorePct = (x: number): string => (x < 1 && x >= 0.995 ? `${(Math.floor(x * 1000) / 10).toFixed(1)}%` : `${Math.round(x * 100)}%`);
