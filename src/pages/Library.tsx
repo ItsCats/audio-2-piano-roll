@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Search, Star, Trash2, Upload, LayoutGrid, List, FileJson, Library as LibraryIcon } from 'lucide-react';
 import { useLibrary } from '../state/libraryStore';
 import { Badge, Button, EmptyState, IconButton, Segmented, Select, cn } from '../components/ui';
-import { SongCard, sourceIcon } from '../components/SongCard';
+import { SongCard, sourceIcon, sourceLabel } from '../components/SongCard';
 import { formatTime } from '../lib/music/theory';
 import type { SongSummary } from '../lib/music/types';
 import { getSong, saveSong } from '../lib/storage/db';
@@ -164,10 +164,15 @@ export default function LibraryPage() {
                   <Link to={`/studio/${s.id}`} className="min-w-0 flex-1">
                     <p className="truncate text-[13.5px] font-medium text-ink-50">{s.title}</p>
                     <p className="flex items-center gap-1.5 text-[11.5px] text-ink-300">
-                      <Icon size={12} /> {s.artist || s.source.fileName || s.source.kind} · {s.noteCount} notes · {Math.round(s.bpm)} BPM {s.keyName && `· ${s.keyName}`}
+                      <Icon size={12} /> {s.artist || (s.source.reader ? sourceLabel(s.source.kind, s.source.reader) : s.source.fileName || s.source.kind)} · {s.noteCount} notes · {Math.round(s.bpm)} BPM {s.keyName && `· ${s.keyName}`}
                     </p>
                   </Link>
                   {s.estimated && <Badge tone="warn">AI</Badge>}
+                  {s.source.kind === 'score' && s.source.reader && (
+                    <Badge tone="warn" title={`${sourceLabel(s.source.kind, s.source.reader)} by the sheet-music reader (Beta) — check the notes`}>
+                      Beta
+                    </Badge>
+                  )}
                   <span className="hidden font-mono text-[12px] text-ink-300 sm:block">{formatTime(s.duration)}</span>
                   <span className="hidden text-[11.5px] text-ink-400 md:block">{new Date(s.createdAt).toLocaleDateString()}</span>
                   <IconButton size="sm" label="Favourite" active={!!s.favorite} onClick={() => void toggleFavorite(s.id)}>

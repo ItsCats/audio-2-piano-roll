@@ -370,3 +370,30 @@ export const DATASETS: Dataset[] = [
   { name: 'librosa (pYIN) & mir_eval', use: 'Independent second pitch tracker; standard accuracy metrics', license: 'ISC; MIT', url: 'https://github.com/mir-evaluation/mir_eval' },
   { name: 'Test songs and recordings', use: '5 songs with a singer, 1 instrumental soundtrack track, 4 commercial piano recordings — used privately for measuring only, never copied into the app or shared', license: 'Copyrighted (not distributed)' },
 ];
+
+/**
+ * Sheet-music reader (beta, src/lib/omr): measured 2026-11-13 with the shipped pipeline (Sheet Music
+ * Transformer, Camera-GrandStaff checkpoint, 8-bit weights) in headless Chromium; the full table is in
+ * public/models/omr/README.md. Notes: the pitch is in the right chord, in order; rhythm: the timing too.
+ */
+export const SHEET_READER = {
+  intro:
+    'Printed piano music in a PDF or a photo is read by the Sheet Music Transformer, an AI model that runs on your device. It is a Beta: it gets most notes right on clear printed pages, but rhythm mistakes are common, and photos are harder than PDFs.',
+  rows: [
+    { what: 'Clean printed pages', note: '12 pages made with a notation program, exact answer key', before: '93%', after: '82%' },
+    { what: 'Real printed scores', note: '6 public-domain pages (Mutopia Project: études, Bach chorales)', before: '80%', after: '56%' },
+    { what: 'Photos of clean pages', note: 'phone-like photos (tilt, shadow, blur), corners set', before: '91%', after: '81%' },
+    { what: 'Photos of real scores', note: 'corners set on the corner screen', before: '76%', after: '53%' },
+    { what: 'Photos of real scores, corners not adjusted', note: 'the automatic corners were wrong on 2 of 6 photos', before: '50%', after: '—' },
+  ],
+  speed:
+    'A full page of piano music took 20–35 seconds on a computer (a page with two lines: a few seconds). Phones are slower: we estimate about 50 seconds a page (not yet measured on a real phone). The reader is a 24 MB download, once, and needs about 0.5–1 GB of memory while it reads.',
+  limits: [
+    { title: 'Printed piano music only', body: 'Two staves (right and left hand). A vocal line, more than two staves, or band and orchestra scores come out wrong.' },
+    { title: 'No handwriting', body: 'Hand-written music is not supported.' },
+    { title: 'Text is ignored', body: 'Lyrics, chord symbols, fingering, dynamics and tempo words are not read.' },
+    { title: 'Repeats as written', body: 'Repeat signs are not followed: the music plays straight through, as printed.' },
+    { title: 'Rhythm is the weak spot', body: 'Bars that come out with too many beats are lengthened so no note is lost; check the rhythm there.' },
+    { title: 'One key', body: 'The key used most is kept for the whole piece; a key change partway through is not followed.' },
+  ],
+} as const;
