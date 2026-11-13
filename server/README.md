@@ -16,7 +16,9 @@ transcribes the drum-less accompaniment for the rest. The browser can run the sa
 (the "Separate vocals & drums" import option); a server is simply faster — about 0.4–0.6× real time on
 2–4 CPU cores versus 2–3× real time single-threaded in the browser.
 
-> **Rights & terms**: only process content you own or are licensed to use. Fetching YouTube media may be restricted by YouTube's Terms of Service, so it is off by default (`ENABLE_YOUTUBE=1` turns it on; the web app no longer uses it). YouTube blocks most datacenter IPs, so YouTube fetching is reliable mainly when this server runs on a home connection.
+> **Rights & terms**: only process content you own or are licensed to use.
+>
+> **YouTube downloads are off by default and are a self-host option only.** YouTube's Terms of Service and developer policies do not allow downloading or storing its videos or audio without permission, so the web app no longer offers YouTube links and never calls this endpoint. `ENABLE_YOUTUBE=1` turns it on for your own private server; use it only for videos you own or have written permission to use, never on a public site. YouTube blocks most datacenter IPs, so it works mainly on a home connection.
 
 ## Separation model
 

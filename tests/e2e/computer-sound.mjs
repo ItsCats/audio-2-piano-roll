@@ -8,12 +8,16 @@
  *  - the browser's own "Stop sharing" also ends the recording and imports it;
  *  - sharing without sound says so, and nothing is imported;
  *  - the Home card and old /import/youtube links lead to the tab;
- *  - iPhone (390 px): the tab explains Screen Recording instead, with no sideways scrolling.
+ *  - iPhone (390 px): the tab explains Screen Recording instead, with no sideways scrolling, and a
+ *    screen-recording-style video (QuickTime .MOV, H.264 + AAC, made here with ffmpeg; skipped
+ *    without ffmpeg) uploaded under Audio / Video is imported.
  *
  *   npx vite build --outDir /tmp/p2v-dist
  *   node tests/e2e/computer-sound.mjs --dist /tmp/p2v-dist [--port 5397] [--shots DIR]
  */
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
@@ -98,11 +102,11 @@ try {
 
   const start = page.getByRole('button', { name: 'Start recording' });
   check('Start is greyed out until the rights box is ticked', await start.isDisabled());
-  check('the terms note is shown', await page.getByText('Check the terms and conditions of the site or app you record from').isVisible());
+  check('the terms note is shown', await page.getByText('Check the terms of the website or app you’re playing from').isVisible());
   await page.getByLabel('Song name (optional)').fill('Tone test');
   await page.getByRole('checkbox', { name: /I own this music/ }).check();
   check('Start is available after ticking', await start.isEnabled());
-  if (shots) await page.screenshot({ path: path.join(shots, 'computer-sound-desktop.png') });
+  if (shots) await page.screenshot({ path: path.join(shots, 'record-tab-desktop.png') });
   await start.click();
   await page
     .getByText(/Recording \d+:\d\d/)
@@ -161,6 +165,7 @@ try {
     await page.goto(base + old);
     await page.waitForURL(/\/import\?tab=computer/);
     check(`${old} lands on Computer sound`, (await page.getByRole('tab', { name: 'Computer sound' }).getAttribute('aria-selected')) === 'true', page.url());
+    check(`${old}: no YouTube (or other) player on the page`, (await page.locator('iframe').count()) === 0 && !(await page.content()).includes('youtube.com/embed'));
   }
   check('no page errors (desktop)', errors.length === 0, errors.join(' | '));
   await ctx.close();
@@ -177,12 +182,29 @@ try {
   const overflow = await p2.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   check('iPhone: no sideways scrolling', overflow <= 0, `overflow ${overflow}px`);
   check('iPhone: the tab is selected', (await tabBtn.getAttribute('aria-selected')) === 'true');
-  if (shots) await p2.screenshot({ path: path.join(shots, 'computer-sound-iphone.png'), fullPage: true });
+  if (shots) await p2.screenshot({ path: path.join(shots, 'record-tab-iphone.png'), fullPage: true });
   await p2.getByRole('link', { name: 'Audio / Video' }).first().click();
   await p2.waitForURL(/tab=audio$/);
   await p2.waitForTimeout(500);
   const tabsNow = await p2.evaluate(() => [...document.querySelectorAll('[role=tab]')].map((t) => `${t.textContent?.trim()}:${t.getAttribute('aria-selected')}`));
   check('iPhone: the link opens the Audio / Video tab', tabsNow[0] === 'Audio / Video:true', tabsNow);
+  // what an iPhone hands over for a screen recording picked from Photos: a QuickTime .MOV with H.264 video and AAC sound
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'p2v-mov-'));
+  const mov = path.join(tmp, 'RPReplay_Final0000000001.MOV');
+  let haveMov = false;
+  try {
+    const tones = [261.63, 329.63, 392.0, 523.25].map((f, i) => `sine=f=${f}:d=0.5,adelay=${i * 500}|${i * 500}`);
+    execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=black:s=180x390:r=30:d=4', '-f', 'lavfi', '-i', `${tones.map((t, i) => `${t}[a${i}]`).join(';')};[a0][a1][a2][a3]amix=inputs=4:normalize=0,aloop=loop=1:size=88200,atrim=0:4`, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '128k', '-ar', '44100', '-ac', '2', '-f', 'mov', '-shortest', mov], { stdio: 'ignore' });
+    haveMov = fs.statSync(mov).size > 1000;
+  } catch {
+    console.log('SKIP .MOV upload (ffmpeg with libx264 and aac not found)');
+  }
+  if (haveMov) {
+    await p2.setInputFiles('input[type=file]', mov);
+    await p2.waitForURL(/\/studio\/.+/, { timeout: 240000 }).catch(() => undefined);
+    check('iPhone: a screen recording (.MOV) uploaded under Audio / Video is imported', /\/studio\//.test(p2.url()), p2.url());
+  }
+  fs.rmSync(tmp, { recursive: true, force: true });
   check('no page errors (iPhone)', errors2.length === 0, errors2.join(' | '));
   await phone.close();
 } finally {

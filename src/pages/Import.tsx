@@ -9,7 +9,7 @@ import { Button, ProgressBar, Segmented, cn } from '../components/ui';
 import { STAGE_LABELS, stageLabel, useImport, type ImportJob, type ImportStage } from '../state/importStore';
 import { SheetMusicTab } from '../components/import/SheetMusicTab';
 import { useSettings } from '../state/settingsStore';
-import { NO_SOUND_SHARED, startTabAudioCapture, tabAudioSupport, type TabAudioCapture } from '../lib/audio/tabAudio';
+import { NO_SOUND_SHARED, TERMS_NOTE, startTabAudioCapture, tabAudioSupport, type TabAudioCapture } from '../lib/audio/tabAudio';
 import { formatTime } from '../lib/music/theory';
 import { toast } from '../state/toastStore';
 import { createScreenWakeLock, isTouchDevice } from '../lib/wakeLock';
@@ -298,7 +298,7 @@ function ComputerTab({ busy, separate, transcriber }: { busy: boolean; separate:
             <p>Use a screen recording instead:</p>
             <ol className="ml-5 list-decimal space-y-1">
               <li>Open Control Center and tap Screen Recording.</li>
-              <li>Play the song in its app, then stop the recording.</li>
+              <li>Play the song in its app with the sound on, then stop the recording.</li>
               <li>
                 Come back here and upload the video from Photos under <TabLink tab="audio">Audio / Video</TabLink>. Only its sound is used.
               </li>
@@ -382,8 +382,6 @@ function ComputerTab({ busy, separate, transcriber }: { busy: boolean; separate:
   );
 }
 
-/** Shown wherever the app records sound from other sites and apps. */
-const TERMS_NOTE = 'Check the terms and conditions of the site or app you record from (for example a social media app) before recording its audio.';
 
 function RecordTab({ busy }: { busy: boolean }) {
   const [rec, setRec] = useState<{ r: MediaRecorder; start: number; stream: MediaStream } | null>(null);

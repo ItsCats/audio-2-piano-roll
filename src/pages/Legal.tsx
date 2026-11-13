@@ -207,9 +207,9 @@ function Terms() {
 
       <Part id="recording" title="Recording from other sites and apps">
         <p>
-          Check the terms and conditions of a site or app (for example a social media app) before you record audio from it, with{' '}
-          <b>Computer sound</b>, a screen recording or the microphone. Many of them don’t allow it. {SITE_NAME} is not made by, affiliated with or
-          endorsed by any of them.
+          Check the terms of the website or app you’re playing from (for example a social media app) before you record its audio, with{' '}
+          <b>Computer sound</b>, a screen recording or the microphone. Many of them don’t allow it. Only record music you have the rights to use.{' '}
+          {SITE_NAME} is not made by, affiliated with or endorsed by any of them.
         </p>
       </Part>
 

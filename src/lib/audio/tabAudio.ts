@@ -39,6 +39,10 @@ export interface TabAudioCapture {
   onEnded: (fn: () => void) => void;
 }
 
+/** Shown on the Computer sound tab (and its how-to on phones and other browsers). */
+export const TERMS_NOTE =
+  'Check the terms of the website or app you’re playing from (for example a social media app) before recording its audio, and only record music you have the rights to use.';
+
 export const NO_SOUND_SHARED = 'No sound was shared. Pick the tab that plays the music and turn on “Share tab audio”, then try again.';
 
 /** Ask the user what to share (with sound) and start recording its sound. */
