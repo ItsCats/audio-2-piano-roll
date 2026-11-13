@@ -20,7 +20,7 @@ import { layoutOf, repairSystemsOfPage } from './systemRepair';
 import { restoreUnmarkedTriplets } from './triplets';
 import { EncodedSymbol, isUpperOrNoPosition, removeDuplicatedSymbols, VOCAB } from './vocabulary';
 import { serialize, type El } from './xml';
-import { MAX_ASPECT } from './page';
+import { MAX_ASPECT, rotate90 } from './page';
 import type { PageErrorKind } from './protocol';
 
 /** Token ids of one decoder step (rhythm, pitch, lift, articulation, slur, position). */
@@ -119,6 +119,7 @@ export interface PageResult {
   systems: number;
   /** the page's MusicXML tree */
   xml: El;
+  clefSides: { left: number; right: number };
 }
 
 export interface FoundSystems {
@@ -127,6 +128,8 @@ export interface FoundSystems {
   staffs: Staff[];
   /** the noise filter's mask (1 = keep), if it cleared part of the page */
   mask: Uint8Array | null;
+  /** clef / key-signature boxes in the left and right fifth of their staff (not in homr: tells an upside-down page) */
+  clefSides: { left: number; right: number };
 }
 
 /**
@@ -181,7 +184,15 @@ export function findSystems(predIn: Predictions, dump?: PageDump): FoundSystems 
   let multi = findBracesBracketsAndGrandStaffLines(staffs, braceDot);
   multi = repairSystemsOfPage(multi);
   if (dump) dump.systems = multi.map(layoutOf);
-  return { multi, staffs, mask };
+  const clefSides = { left: 0, right: 0 };
+  for (const c of clefs) {
+    const st = staffs.find((s) => c.center[1] >= s.minY && c.center[1] <= s.maxY && c.center[0] >= s.minX && c.center[0] <= s.maxX);
+    if (!st || st.maxX <= st.minX) continue;
+    const rel = (c.center[0] - st.minX) / (st.maxX - st.minX);
+    if (rel < 0.2) clefSides.left++;
+    else if (rel > 0.8) clefSides.right++;
+  }
+  return { multi, staffs, mask, clefSides };
 }
 
 /** homr process_image on one page image (RGB or gray). */
@@ -204,7 +215,37 @@ export async function readPage(page: Img, infer: HomrInfer, opts: ReadPageOption
   checkAbort(opts.signal);
 
   const voices = await parseStaffs(found.multi, pre, infer, opts);
-  return { voices, staffs: found.staffs.length, systems: found.multi.length, xml: generateXml(voices) };
+  return { voices, staffs: found.staffs.length, systems: found.multi.length, xml: generateXml(voices), clefSides: found.clefSides };
+}
+
+/**
+ * readPage, and for a landscape page without music a second try turned by 90 degrees (a sideways scan
+ * or screenshot; not in homr, which reports no staffs). Which way is unknown, and an upside-down page
+ * still yields (wrong) notes, so the turn is checked by where the clefs and key signatures are: at the
+ * start of the staffs on an upright page, at their end on an upside-down one; if they sit at the end,
+ * the other turn is read too and the one with clefs at the start is kept. `rotated` is the turn used.
+ */
+export async function readPageUpright(page: Img, infer: HomrInfer, opts: ReadPageOptions = {}): Promise<{ r: PageResult; rotated: 0 | 90 | 270 }> {
+  try {
+    return { r: await readPage(page, infer, opts), rotated: 0 };
+  } catch (err) {
+    if (!(err instanceof NoMusicError) || err.kind !== 'no-music' || page.w <= page.h) throw err;
+    const tryTurn = async (deg: 90 | 270) => {
+      try {
+        return { r: await readPage(rotate90(page, deg), infer, opts), rotated: deg };
+      } catch (e) {
+        if (e instanceof NoMusicError && e.kind === 'no-music') return null;
+        throw e;
+      }
+    };
+    const upright = (x: { r: PageResult } | null) => (x ? x.r.clefSides.left - x.r.clefSides.right : -Infinity);
+    const a = await tryTurn(90);
+    if (a && upright(a) > 0) return a;
+    const b = await tryTurn(270);
+    const best = upright(b) > upright(a) ? b : a;
+    if (!best) throw err;
+    return best;
+  }
 }
 
 function slotsInLayout(row: string, layout: string): number[] | null {

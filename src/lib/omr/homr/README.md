@@ -57,7 +57,11 @@ What was changed (summary, as the AGPL asks modified versions to state):
   a low-memory mode for phones (one network at a time, `ort.ts` `stagedInfer`), float16 weights expanded
   to float32 before session creation (`fp16w.ts`, lower peak memory, same numbers), a size limit on
   input images (scaled down to 4000 px; images over three times taller than wide are not read), and a
-  second try on landscape pages without music, turned by 90 degrees each way (sideways scans).
+  second try on landscape pages without music, turned by 90 degrees (sideways scans; `readPageUpright`
+  in `pipeline.ts`). An upside-down page still yields wrong notes rather than none, so the turn is
+  chosen by where the clef and key-signature boxes sit on the staffs (at the start when upright: 17 of
+  17 on a test page, at the end upside down: 13 of 13); a test page turned clockwise came back with
+  MusicXML identical to the upright page's.
 
 Known differences from Python homr (measured, see `public/models/homr/README.md`):
 

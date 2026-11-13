@@ -15,8 +15,8 @@ import * as ort from 'onnxruntime-web/wasm';
 import ortWasmUrl from 'onnxruntime-web/ort-wasm-simd-threaded.wasm?url';
 import { expandFp16Weights } from './fp16w';
 import { ortInfer, stagedInfer, type HomrSessions, type InferStats, type SessionName } from './ort';
-import { pageImage, rotate90, shrinkPixels, straighten } from './page';
-import { NoMusicError, pagesToMusicXml, readPage, SEG_BATCH, type HomrInfer, type PageProgress } from './pipeline';
+import { pageImage, shrinkPixels, straighten } from './page';
+import { NoMusicError, pagesToMusicXml, readPageUpright, SEG_BATCH, type HomrInfer, type PageProgress } from './pipeline';
 import { downloadFailedMessage, PlainError } from './protocol';
 import type { HomrModelSpec, HomrPageResult, ModelFile, PageInput, ProgressMessage, Quad, RunRequest, WorkerRequest, WorkerResponse } from './protocol';
 import type { El } from './xml';
@@ -257,23 +257,11 @@ async function getEngine(req: RunRequest, progress: (m: Omit<ProgressMessage, 't
   return { l, fromCache, reused: false, loadMs, createMs, notStored };
 }
 
-/** Reads one page; a sideways page (landscape, nothing found) is tried again turned both ways. */
+/** Reads one page (pixels from the page, optionally straightened to its corners). */
 async function readOne(input: PageInput, infer: HomrInfer, segBatch: number, onProgress: (p: PageProgress) => void) {
   let image = pageImage(fitInput(input));
   if (input.quad) image = straighten(image, scaleQuad(input.quad, input, image));
-  const turns = image.w > image.h ? ([0, 90, 270] as const) : ([0] as const);
-  let first: unknown = null;
-  for (const deg of turns) {
-    const im = deg ? rotate90(image, deg) : image;
-    try {
-      const r = await readPage(im, infer, { segBatch, onProgress });
-      return { r, rotated: deg };
-    } catch (err) {
-      if (!(err instanceof NoMusicError) || err.kind !== 'no-music') throw err;
-      first ??= err;
-    }
-  }
-  throw first;
+  return readPageUpright(image, infer, { segBatch, onProgress });
 }
 
 /** The page's pixels, scaled down to MAX_INPUT_SIDE if larger (the page normally did that already). */
