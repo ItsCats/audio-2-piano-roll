@@ -59,7 +59,7 @@ export const readerOf = (src: { sheetReader?: unknown } | undefined | null): She
 
 /** "about a minute" for a number of seconds */
 export function aboutTime(sec: number): string {
-  if (sec < 50) return `about ${Math.max(10, Math.round(sec / 10) * 10)} seconds`;
+  if (sec < 45) return `about ${Math.max(10, Math.round(sec / 10) * 10)} seconds`;
   const m = Math.round(sec / 60);
   return m <= 1 ? 'about a minute' : `about ${m} minutes`;
 }
