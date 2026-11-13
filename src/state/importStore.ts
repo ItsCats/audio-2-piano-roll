@@ -131,7 +131,11 @@ interface ImportState {
   /** the last failed import's retry and recording (cleared by the next import, Dismiss or Cancel) */
   failed: FailedImport | null;
   /** `separate` defaults to the user's choice for the current detection preset */
-  importFile: (file: File, opts?: { separate?: boolean; title?: string } & ImportRunOptions) => Promise<string | null>;
+  /**
+   * `keepVideo`: the file is a video of the user playing; it stays linked to the song (it is the
+   * song's original recording, stored once) for hands video exports (lib/handcam).
+   */
+  importFile: (file: File, opts?: { separate?: boolean; title?: string; keepVideo?: boolean } & ImportRunOptions) => Promise<string | null>;
   /**
    * Sheet music as MusicXML text (the hook for PDF / photo recognition, which produces MusicXML):
    * same as importing a .musicxml file. `source` defaults to a sheet-music file named `fileName`.
@@ -733,7 +737,7 @@ export const useImport = create<ImportState>((set, get) => {
   const transcribeAndSave = async (
     ctx: Ctx,
     original: Blob,
-    meta: { title: string; artist?: string; source: SongSource; fileName: string },
+    meta: { title: string; artist?: string; source: SongSource; fileName: string; keepVideo?: boolean },
     engine: SeparationEngine | undefined,
     /** stems the server already produced (a separated YouTube job): used as they are */
     prefetched?: { vocals: Blob; accomp: Blob; serverMs?: number },
@@ -824,6 +828,23 @@ export const useImport = create<ImportState>((set, get) => {
       song.hasPosteriors = false;
       toast.warn('Original audio not stored', `Browser storage is full or unavailable (${(err as Error).message}). The arrangement is still saved.`);
     }
+    if (meta.keepVideo) {
+      if (!song.hasAudio) toast.warn('Your video wasn’t saved', 'There wasn’t room in this browser’s storage. The notes are saved.');
+      else {
+        update({ stage: 'saving', progress: null, detail: 'Linking your video' });
+        try {
+          const { probeVideo, measureImportOffset, handVideoFrom, HEVC_MESSAGE } = await import('../lib/handcam/media');
+          const probe = await probeVideo(original);
+          const offset = await measureImportOffset(original, probe, signal);
+          song.handVideo = handVideoFrom(original, probe, { store: 'audio', offset, sync: { method: 'import', found: offset, confidence: 10, level: 'high' } });
+          if (!probe.canDecode) toast.warn('Your video is saved, but this browser can’t show it', HEVC_MESSAGE);
+          else toast.success('Your video is saved', 'Set up the hands video in Export video.');
+        } catch (err) {
+          if (isAbort(err) || signal.aborted) throw err;
+          toast.warn('Your video couldn’t be linked', (err as Error).message);
+        }
+      }
+    }
     return finish(ctx, song);
   };
 
@@ -911,7 +932,7 @@ export const useImport = create<ImportState>((set, get) => {
         const engine = await pickEngine(separate);
         if (ctx.signal.aborted) return null;
         ctx.update({ plan: planFor('audio', engine), separation: engine });
-        return await transcribeAndSave(ctx, file, { title, source, fileName: file.name }, engine);
+        return await transcribeAndSave(ctx, file, { title, source, fileName: file.name, keepVideo: opts.keepVideo }, engine);
       } catch (err) {
         const again = (transcriber: TranscriptionEngine) => () =>
           get().importFile(file, { ...opts, separate, presetId: ctx.preset, transcriber, pendingId: undefined });

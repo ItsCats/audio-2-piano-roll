@@ -7,6 +7,18 @@ import { ALL_FORMATS, AudioBufferSink, BlobSource, Input } from 'mediabunny';
 
 export const MAX_FILE_BYTES = 300 * 1024 * 1024;
 export const MAX_DURATION_SECONDS = 20 * 60;
+/**
+ * Videos (a phone video of someone playing) may be much larger: above this size their sound is read
+ * straight from the file (mediabunny, streamed), without loading the whole file into memory.
+ */
+export const STREAM_DECODE_BYTES = 200 * 1024 * 1024;
+export const MAX_VIDEO_BYTES = 4 * 1024 * 1024 * 1024;
+
+const VIDEO_EXTENSIONS = ['mp4', 'mov', 'm4v', 'webm', 'mkv'];
+/** A video container (by type or extension). */
+export function isVideoFile(f: { name?: string; type: string }): boolean {
+  return f.type.startsWith('video/') || VIDEO_EXTENSIONS.includes(fileExtension(f.name ?? ''));
+}
 
 export const AUDIO_EXTENSIONS = ['mp3', 'wav', 'm4a', 'mp4', 'aac', 'ogg', 'oga', 'opus', 'flac', 'webm', 'mov', 'mkv', 'aif', 'aiff', 'wma'];
 export const MIDI_EXTENSIONS = ['mid', 'midi', 'kar'];
@@ -70,8 +82,16 @@ const tooLong = (d: number) =>
 
 /** Decode to an AudioBuffer at `sampleRate` (the browser resamples during decoding). */
 export async function decodeToRate(blob: Blob, sampleRate: number): Promise<AudioBuffer> {
-  if (blob.size > MAX_FILE_BYTES) throw new Error(`File is too large (max ${MAX_FILE_BYTES / 1024 / 1024} MB).`);
   if (blob.size === 0) throw new Error('File is empty.');
+  if (decodeRoute(blob) === 'stream') {
+    try {
+      return checkDecoded(await decodeWithMediabunny(blob, sampleRate));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`Could not decode this file. ${msg}`, { cause: err });
+    }
+  }
+  if (blob.size > MAX_FILE_BYTES) throw new Error(`File is too large (max ${MAX_FILE_BYTES / 1024 / 1024} MB).`);
   let buffer: AudioBuffer;
   try {
     buffer = await decodeNative(await blob.arrayBuffer(), sampleRate);
@@ -83,9 +103,23 @@ export async function decodeToRate(blob: Blob, sampleRate: number): Promise<Audi
       throw new Error(`Could not decode this file. ${msg}`, { cause: nativeErr });
     }
   }
+  return checkDecoded(buffer);
+}
+
+function checkDecoded(buffer: AudioBuffer): AudioBuffer {
   if (buffer.duration > MAX_DURATION_SECONDS) throw new Error(tooLong(buffer.duration));
   if (buffer.duration < 0.5) throw new Error('The audio is shorter than half a second.');
   return buffer;
+}
+
+/**
+ * How decodeToRate reads a file: 'stream' (mediabunny, straight from the file: large videos) or
+ * 'native' (the browser's decoder on the whole file, mediabunny if that fails). Sample 0 of a streamed
+ * decode is the first audio sample in the file (its timestamp is the audio track's first timestamp).
+ */
+export function decodeRoute(blob: Blob): 'stream' | 'native' {
+  const file = blob as Blob & { name?: string };
+  return blob.size > STREAM_DECODE_BYTES && blob.size <= MAX_VIDEO_BYTES && isVideoFile({ name: file.name, type: blob.type }) ? 'stream' : 'native';
 }
 
 export function mixToMono(buffer: AudioBuffer): Float32Array {

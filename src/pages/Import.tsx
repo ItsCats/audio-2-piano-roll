@@ -6,8 +6,9 @@ import { SeparationOption, useSeparationChoice } from '../components/import/Sepa
 import { PianoModelOption, usePianoModelChoice } from '../components/import/PianoModelOption';
 import type { TranscriptionEngine } from '../lib/transcription/pipeline';
 import { Button, ProgressBar, Segmented, cn } from '../components/ui';
-import { STAGE_LABELS, stageLabel, useImport, type ImportJob, type ImportStage } from '../state/importStore';
+import { STAGE_LABELS, stageLabel, transcriberChoice, useImport, type ImportJob, type ImportStage } from '../state/importStore';
 import { SheetMusicTab } from '../components/import/SheetMusicTab';
+import { HandsVideoImport } from '../components/import/HandsVideoImport';
 import { useSettings } from '../state/settingsStore';
 import { NO_SOUND_SHARED, TERMS_NOTE, startTabAudioCapture, tabAudioSupport, type TabAudioCapture } from '../lib/audio/tabAudio';
 import { formatTime } from '../lib/music/theory';
@@ -507,6 +508,12 @@ export default function ImportPage() {
     void importFile(f, { separate, transcriber: model.transcriber }).then(() => {});
     startedHere.current = (useImport.getState().job?.id ?? 0);
   };
+  /** a video of the user playing: solo piano, no separation, the video kept with the song */
+  const onHandsVideo = (f: File, keep: boolean) => {
+    if (busy) return;
+    void importFile(f, { separate: false, transcriber: transcriberChoice(useImport.getState().prefs, 'piano', model.support.available), keepVideo: keep, presetId: 'piano' }).then(() => {});
+    startedHere.current = useImport.getState().job?.id ?? 0;
+  };
 
   const tabs = [
     { id: 'audio', label: 'Audio / Video', icon: FileAudio },
@@ -564,9 +571,10 @@ export default function ImportPage() {
             {tab === 'audio' && (
               <div className="flex flex-col gap-5">
                 <Dropzone onFile={onFile} />
+                <HandsVideoImport busy={busy} pianoModelOn={pianoModel} onVideo={onHandsVideo} />
                 <DetectionOptions />
                 <SeparationOption unusedReason={pianoModel ? 'Not used with the high-accuracy piano model.' : undefined} />
-                <p className="text-[12px] text-ink-400">Up to 20 minutes / 300 MB. Longer files: trim first. Video files use their audio track.</p>
+                <p className="text-[12px] text-ink-400">Up to 20 minutes / 300 MB (videos of you playing: up to 4 GB). Longer files: trim first. Video files use their audio track.</p>
               </div>
             )}
             {tab === 'computer' && (
