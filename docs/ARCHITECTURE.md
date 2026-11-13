@@ -59,7 +59,7 @@ Note { id, midi, start, dur, vel (0..1), hand: 'L' | 'R' }
 
 IndexedDB stores: `songs`, `summaries` (fast library listing), `audio` (original file, for A/B listening), `posteriors` (8-bit quantised model output, for instant re-detection), `media` (background images/videos).
 
-## Timing & synchronisation
+## Timing & synchronization
 
 * The **audio clock** (`AudioContext.currentTime`) is the single source of truth. The renderer asks the player for the current song time every animation frame, so dropped frames never cause drift.
 * Notes are scheduled ~200 ms ahead by a 25 ms timer ("two clocks" pattern). Speed changes, seeks and loop wrap-around re-anchor the clock at an exact context time.

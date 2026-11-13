@@ -26,7 +26,7 @@ const PHASE_LABEL: Record<ExportProgress['phase'], string> = {
   original: 'Loading the original song',
   audio: 'Rendering the sound',
   video: 'Rendering frames',
-  finalizing: 'Finalising file',
+  finalizing: 'Finalizing file',
 };
 
 const SOUND_LABEL: Record<ExportSound, string> = { piano: 'piano', original: 'original song', both: 'piano + original song' };
@@ -478,7 +478,7 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
               ]}
             />
             <Toggle label="Note labels" checked={visual.labels.style !== 'none'} onChange={(on) => setLabels({ style: on ? 'letter' : 'none' })} />
-            <p className="text-[11.5px] leading-relaxed text-ink-400">Colours, effects, labels and backgrounds come from the Studio’s Look and Labels tabs.</p>
+            <p className="text-[11.5px] leading-relaxed text-ink-400">Colors, effects, labels and backgrounds come from the Studio’s Look and Labels tabs.</p>
           </div>
           <TitleCardPanel song={song} exportSettings={settings} visual={visual} />
         </div>

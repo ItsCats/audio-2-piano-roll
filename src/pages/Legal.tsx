@@ -52,7 +52,7 @@ function Contact({ email, privateNote }: { email: string; privateNote: string })
     <>
       {email && (
         <p>
-          E-mail:{' '}
+          Email:{' '}
           <a href={`mailto:${email}`} className="text-accent-400 underline-offset-2 hover:text-accent-300 hover:underline">
             {email}
           </a>
@@ -60,7 +60,7 @@ function Contact({ email, privateNote }: { email: string; privateNote: string })
       )}
       <p>
         {email ? 'Or open' : 'Open'} an issue on GitHub: <Ext href={CONTACT_URL}>{CONTACT_URL.replace(/^https:\/\//, '')}</Ext>. Issues are public, so
-        don’t put private details there{email ? ': e-mail us instead.' : `. ${privateNote}`}
+        don’t put private details there{email ? ': email us instead.' : `. ${privateNote}`}
       </p>
     </>
   );
@@ -156,7 +156,7 @@ function Privacy() {
 
       <Part title="Children">
         <p>
-          {SITE_NAME} doesn’t ask anyone for their name, e-mail address or other personal details, whatever their age.
+          {SITE_NAME} doesn’t ask anyone for their name, email address or other personal details, whatever their age.
         </p>
       </Part>
 
@@ -196,7 +196,7 @@ function Terms() {
       <Part id="sharing" title="Your music, and what you share">
         <List>
           <li>Only import music, recordings, videos and sheet music you have the right to use.</li>
-          <li>Practising with a song on your own device is fine.</li>
+          <li>Practicing with a song on your own device is fine.</li>
           <li>
             Publishing what you make (a video, sheet music, a MIDI or MusicXML file) from someone else’s song may need permission from the people who
             own it, such as the songwriter or music publisher, and the record label if the original recording is mixed in.
@@ -228,7 +228,7 @@ function Terms() {
 
       <Part title="Other people’s work">
         <p>
-          The AI models, piano sounds, fonts and libraries in {SITE_NAME} were made by other people and keep their own licences. See the{' '}
+          The AI models, piano sounds, fonts and libraries in {SITE_NAME} were made by other people and keep their own licenses. See the{' '}
           <In to="/credits">Credits</In> page.
         </p>
       </Part>
@@ -260,7 +260,7 @@ function Copyright() {
       <Part title="What this site does host">
         <p>
           The app itself, the AI models, the piano sounds, the fonts and a demo piece (J. S. Bach’s Prelude in C major, which is in the public
-          domain). Everything we use from others is listed with its licence on the <In to="/credits">Credits</In> page.
+          domain). Everything we use from others is listed with its license on the <In to="/credits">Credits</In> page.
         </p>
       </Part>
 

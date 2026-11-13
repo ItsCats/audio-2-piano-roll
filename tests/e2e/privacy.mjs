@@ -74,7 +74,7 @@ try {
     ['My Library', null],
     ['Settings', null],
     ['How accurate is it?', null],
-    ['Credits & licences', null],
+    ['Credits & licenses', null],
     ['Privacy', 'Privacy'],
     ['Terms', 'Terms of use'],
     ['Copyright', 'Copyright'],

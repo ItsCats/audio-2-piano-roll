@@ -708,7 +708,7 @@ export const useImport = create<ImportState>((set, get) => {
     if (!url) throw new Error('No processing server is configured.');
     update({ stage: 'uploading', progress: null, detail: 'Uploading to your processing server' });
     const job = await createSeparationJob(url, blob, name);
-    if (signal.aborted) throw new DOMException('Cancelled', 'AbortError');
+    if (signal.aborted) throw new DOMException('Canceled', 'AbortError');
     const done = await waitForJob(
       url,
       job.id,
@@ -722,7 +722,7 @@ export const useImport = create<ImportState>((set, get) => {
     );
     update({ stage: 'downloading', progress: null, detail: 'Downloading the separated vocals and accompaniment' });
     const stems = await backendApi.fetchStems(url, job.id, signal);
-    if (signal.aborted) throw new DOMException('Cancelled', 'AbortError');
+    if (signal.aborted) throw new DOMException('Canceled', 'AbortError');
     return { ...stems, serverMs: done.separationMs ?? undefined };
   };
 

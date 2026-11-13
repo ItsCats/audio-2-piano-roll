@@ -195,7 +195,7 @@ describe('separateSegments', () => {
     let k = 0;
     await expect(
       separateSegments(noise(n, 1), noise(n, 2), [{ name: 'a', stems: [0] }], identity, { onSegment: () => k++, shouldStop: () => k >= 1 }),
-    ).rejects.toThrow(/cancelled/);
+    ).rejects.toThrow(/canceled/);
     expect(k).toBe(1);
   });
 });

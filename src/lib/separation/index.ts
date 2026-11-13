@@ -177,7 +177,7 @@ export function measureVocalPresence(vocals: Float32Array, mix: Float32Array, sa
   return vocalPresence(vocals, mix, sampleRate);
 }
 
-const abortError = () => new DOMException('Separation cancelled', 'AbortError');
+const abortError = () => new DOMException('Separation canceled', 'AbortError');
 
 export interface RawSeparation {
   vocals: Float32Array;

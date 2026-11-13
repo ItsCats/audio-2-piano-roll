@@ -216,7 +216,7 @@ export function releaseSheetReader(): void {
   warm = null;
 }
 
-const abortError = () => new DOMException('Sheet-music reading cancelled', 'AbortError');
+const abortError = () => new DOMException('Sheet-music reading canceled', 'AbortError');
 
 function baseUrl(): string {
   const origin = typeof location === 'undefined' ? 'http://localhost/' : location.href;

@@ -10,20 +10,20 @@ Everything runs in the browser. Audio is transcribed on the user's device by a n
 
 | Area | What you get |
 | --- | --- |
-| **Import** | MP3, WAV, M4A/AAC, MP4/MOV/WebM/MKV (audio track), FLAC, OGG/Opus, MIDI; sheet music (MusicXML `.musicxml`/`.xml`/`.mxl`, MuseScore 3–5 `.mscz`/`.mscx`, repeats played out in order); **PDFs and photos of printed piano music (Beta)**: pick the PDF pages or take / choose photos (one per page, a corner screen to frame each page), read on the device by the Sheet Music Transformer (24 MB, downloaded once), labelled "Sheet music · Beta" in the Studio with tips for checking the notes; microphone recording; **Computer sound**: record a song playing in another tab (Chrome / Edge on a computer; on iPhone, a screen recording uploaded as a video does the same) |
+| **Import** | MP3, WAV, M4A/AAC, MP4/MOV/WebM/MKV (audio track), FLAC, OGG/Opus, MIDI; sheet music (MusicXML `.musicxml`/`.xml`/`.mxl`, MuseScore 3–5 `.mscz`/`.mscx`, repeats played out in order); **PDFs and photos of printed piano music (Beta)**: pick the PDF pages or take / choose photos (one per page, a corner screen to frame each page), read on the device by the Sheet Music Transformer (24 MB, downloaded once), labeled "Sheet music · Beta" in the Studio with tips for checking the notes; microphone recording; **Computer sound**: record a song playing in another tab (Chrome / Edge on a computer; on iPhone, a screen recording uploaded as a video does the same) |
 | **Transcription** | Spotify's Basic Pitch model (polyphonic) running in a Web Worker on WebGL/WASM, with a piano-tuned note-extraction pipeline (register curve for the top/bottom octaves, chopped-note join), beat tracking, key detection and hand assignment. **Separate vocals & drums** (SCNet, in the browser, on by default for "Full song") puts the singer's melody on the right hand and transcribes the accompaniment without drums. Re-tune detection afterwards without re-running the model. For solo piano, an optional second model, **Solo piano – high accuracy (slower)** (ByteDance's piano transcription model, ONNX in the browser): far more accurate notes, note lengths and velocities on piano recordings, but a ≈ 41 MB one-time download, about 5× slower (≈ 38 s per audio minute with 3 threads, ≈ 97 s single-threaded) and ≈ 0.7 GB more memory, and no help for songs with vocals or drums. Measured accuracy: in-app **Accuracy** page. |
 | **Arrangements** | Easy (the sung melody — or one smooth instrument tune — on 8th notes + sustained bass), Medium (tune + chord tones, simplified left hand, never more than an octave per hand), Hard (full transcription, hands rebalanced for reach) — switch instantly, edit each independently |
-| **Piano roll** | Smooth canvas renderer locked to the audio clock, 49–88 keys or fit-to-song, note speed/zoom, hand colours, glow, trails, sparks, guides, pedal lane, loop markers |
+| **Piano roll** | Smooth canvas renderer locked to the audio clock, 49–88 keys or fit-to-song, note speed/zoom, hand colors, glow, trails, sparks, guides, pedal lane, loop markers |
 | **Sheet music** | Switch the Studio between *Piano roll* and *Sheet music*: the current level (with your edits) written out on a grand staff — readable rhythms for the level, chords, two voices, ties, key signature and accidentals, clef changes and 8va/8vb. A cursor follows playback and turns the page; tap a note or bar to jump there; zoom for phones |
-| **Labels** | Letters, letters+octave, solfège, MIDI numbers or custom; sharps/flats/auto-by-key; font, size, colour, position, opacity, size threshold |
-| **Look** | Themes (incl. Blossom), gradients, opacity, corners, borders, shadows, falling-note glow, note brightness, keyboard themes/colours/height, flat or realistic keyboard, scene/colour/image/video backgrounds with blur, brightness, contrast, overlay, fit, zoom, position |
-| **Note decals** | 13 original procedural patterns (meadow, sakura, lavender, watercolor, marble, galaxy, aurora, holographic, glitter, stained glass, geometric, wood, confetti) or your own uploaded image inside every note; size, strength, colour tint, moves-with-note or fixed-to-screen |
-| **Effects** | Light bursts where notes hit the keys, drifting sparkle dust, coloured light on the keys, outline glow, light trails, sparks — each with its own switch and intensity; all deterministic so videos match the app |
+| **Labels** | Letters, letters+octave, solfège, MIDI numbers or custom; sharps/flats/auto-by-key; font, size, color, position, opacity, size threshold |
+| **Look** | Themes (incl. Blossom), gradients, opacity, corners, borders, shadows, falling-note glow, note brightness, keyboard themes/colors/height, flat or realistic keyboard, scene/color/image/video backgrounds with blur, brightness, contrast, overlay, fit, zoom, position |
+| **Note decals** | 13 original procedural patterns (meadow, sakura, lavender, watercolor, marble, galaxy, aurora, holographic, glitter, stained glass, geometric, wood, confetti) or your own uploaded image inside every note; size, strength, color tint, moves-with-note or fixed-to-screen |
+| **Effects** | Light bursts where notes hit the keys, drifting sparkle dust, colored light on the keys, outline glow, light trails, sparks — each with its own switch and intensity; all deterministic so videos match the app |
 | **Sound** | Salamander Grand (5 real velocity layers, damper & pedal noises) and Upright Piano KW samples; Concert Grand / Bright Grand / Upright / Soft presets; true sustain-pedal model; convolution reverb (studio → church), chorus, tone, dynamics; limiter |
 | **Practice** | Speed 0.25×–2×, A–B looping, left/right/both hands, metronome, count-in, Web MIDI + computer-keyboard input, correct / wrong / missed scoring with timing, wait-for-me mode |
 | **Editing** | Select, marquee, move (time + pitch), resize, add, delete, hand assignment, velocity, transpose, quantize, snap grid, undo/redo, regenerate levels |
 | **Export** | Video MP4 (H.264/AAC) or WebM (VP9/Opus), 720p/1080p/1440p, 30/60 fps, 16:9 / 9:16 / 1:1, YouTube Ready & social presets, saved presets, section/full song, speed, volume, fades; MIDI; WAV; sheet music PDF (A4 / Letter, vector); MusicXML 4.0 (MuseScore, Sibelius, Finale); project file |
-| **Library** | Local library with thumbnails, search, filters, sorting, favourites, project import/export |
+| **Library** | Local library with thumbnails, search, filters, sorting, favorites, project import/export |
 
 ## Quick start
 
@@ -155,9 +155,9 @@ server/              optional FastAPI processing server
 tests/               unit tests and the browser accuracy harness
 ```
 
-## Credits & licences
+## Credits & licenses
 
-The full list (models, sounds, fonts, libraries, server components and the data used to measure accuracy) is on the in-app **Credits** page (`/credits`, source `src/lib/credits.ts`; linked from the sidebar, Settings and the Accuracy page) and, with copyright lines and licence details, in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). In short:
+The full list (models, sounds, fonts, libraries, server components and the data used to measure accuracy) is on the in-app **Credits** page (`/credits`, source `src/lib/credits.ts`; linked from the sidebar, Settings and the Accuracy page) and, with copyright lines and license details, in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). In short:
 
 - [Basic Pitch](https://github.com/spotify/basic-pitch) model by Spotify — Apache-2.0
 - [Salamander Grand Piano V3](https://freepats.zenvoid.org/Piano/acoustic-grand-piano.html) by Alexander Holm — CC-BY 3.0
@@ -172,7 +172,7 @@ The full list (models, sounds, fonts, libraries, server components and the data 
 
 **Users are responsible for having the rights to the music they import, and for following the terms of the sites and apps they record from.** No copyrighted music is included in this repository; the songs used to measure accuracy were used privately and are not distributed.
 
-## Licence
+## License
 
 Piano2Vision
 Copyright (C) 2026 Jack Anderson
@@ -186,5 +186,5 @@ You should have received a copy of the GNU Affero General Public License along w
 SPDX identifier: `AGPL-3.0-or-later`. Source code: <https://github.com/ItsCats/audio-2-piano-roll>.
 
 - The AGPL also covers network use: if you run a modified version as a website or server, you must offer its users the source of your version (section 13). The app links to its source from the sidebar and the Credits page, and the optional server from its root response; keep those links pointing at your own source if you change the code.
-- Third-party parts keep their own licences: the AI models in `public/models/` (each folder has its own `LICENSE` and `README.md`), the piano samples in `public/samples/` (CC BY 3.0 and CC0, see [public/samples/README.md](public/samples/README.md)), and the npm packages and fonts bundled into the built site. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+- Third-party parts keep their own licenses: the AI models in `public/models/` (each folder has its own `LICENSE` and `README.md`), the piano samples in `public/samples/` (CC BY 3.0 and CC0, see [public/samples/README.md](public/samples/README.md)), and the npm packages and fonts bundled into the built site. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 

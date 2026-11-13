@@ -368,7 +368,7 @@ export const FILL_PATTERNS: PatternInfo[] = [
   { id: 'silver', name: 'Silver', stops: SILVER_STOPS },
   { id: 'marble', name: 'Marble', decal: 'marble', tone: { lo: 0.22, hi: 1, sat: 1.5 } },
   { id: 'galaxy', name: 'Galaxy', decal: 'galaxy', tone: { lift: 0.34, sat: 1.15 } },
-  { id: 'watercolor', name: 'Watercolour', decal: 'watercolor', tone: { lo: 0.3, hi: 1, sat: 1.9 } },
+  { id: 'watercolor', name: 'Watercolor', decal: 'watercolor', tone: { lo: 0.3, hi: 1, sat: 1.9 } },
   { id: 'aurora', name: 'Aurora', decal: 'aurora', tone: { lift: 0.4, sat: 1.2 } },
   { id: 'sakura', name: 'Sakura', decal: 'sakura', tone: { lo: 0.32, hi: 1, sat: 2 } },
   { id: 'stained-glass', name: 'Stained glass', decal: 'stained-glass', tone: { lift: 0.12 } },

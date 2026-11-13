@@ -383,7 +383,7 @@ export async function separateSegments(
   const h = half ? halfbandTaps() : null;
   const cb = half ? new Float64Array(SEGMENT + 2 * P) : null;
   for (let k = 0; k < count; k++) {
-    if (opts.shouldStop?.()) throw new DOMException('Separation cancelled', 'AbortError');
+    if (opts.shouldStop?.()) throw new DOMException('Separation canceled', 'AbortError');
     const st = plan.starts[k];
     const len = fillSegment(left, plan, st, stats, segL);
     fillSegment(right, plan, st, stats, segR);

@@ -184,7 +184,7 @@ export interface RunOptions {
   transfer?: boolean;
 }
 
-const abortError = () => new DOMException('Piano transcription cancelled', 'AbortError');
+const abortError = () => new DOMException('Piano transcription canceled', 'AbortError');
 
 interface Warm {
   worker: Worker;

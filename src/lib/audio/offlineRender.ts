@@ -61,7 +61,7 @@ export async function renderOfflineChunks(
   const vol = opts.volume ?? 1;
 
   for (let c0 = 0; c0 < outDuration; c0 += chunk) {
-    if (opts.signal?.aborted) throw new DOMException('Render cancelled', 'AbortError');
+    if (opts.signal?.aborted) throw new DOMException('Render canceled', 'AbortError');
     const c1 = Math.min(outDuration, c0 + chunk);
     const pre = c0 === 0 ? 0 : PREROLL;
     // render the engine's processing latency extra and drop it, so output is sample-aligned

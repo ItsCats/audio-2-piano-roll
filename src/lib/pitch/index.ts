@@ -72,7 +72,7 @@ export interface PitchTrackDetail extends PitchTrack {
   stats: TrackStats & { totalMs: number };
 }
 
-const abortError = () => new DOMException('Pitch tracking cancelled', 'AbortError');
+const abortError = () => new DOMException('Pitch tracking canceled', 'AbortError');
 
 /** Voicing gate: median-filtered periodicity >= threshold and RMS within `loudnessDb` of the 95th percentile. */
 export function voicingMask(periodicity: Float32Array, rms: Float32Array, threshold: number, loudnessDb: number): Uint8Array {

@@ -8,7 +8,7 @@ someone first reads a PDF or a photo, then kept in the Cache API. One model serv
 | | |
 |---|---|
 | Checkpoint | `antoniorv6/smt-camera-grandstaff` (Hugging Face; fine-tuned on Camera-GrandStaff): `model.safetensors` sha256 `93be49ca62c1d270579648e0c6d596cd239a7f0461c796f647ec0597ac085448`, `config.json` sha256 `de430bd1c38063fd002b93eab623fc467527d5f1167bb4ded067637dbe32d961` |
-| Licence | MIT, Copyright (c) 2023 Antonio Ríos-Vila — see [LICENSE](LICENSE) (the repository's licence; the model card also says MIT) |
+| License | MIT, Copyright (c) 2023 Antonio Ríos-Vila — see [LICENSE](LICENSE) (the repository's license; the model card also says MIT) |
 | Files | `smt-camera-grandstaff/encoder.int8.part1.bin` (= `encoder.int8.onnx`, 6,935,635 bytes) and `decoder.int8.part1.bin` + `part2.bin` (joined: `decoder.int8.onnx`, 16,405,521 bytes), each piece under Netlify's 10 MB per file; `manifest.json` lists sizes and sha256 of the joined files, which `src/lib/omr/models.ts` checks. `vocab.json` (180,872 bytes): token id → bekern token, from the checkpoint's `config.json` |
 | Export | `tests/omr/export_smt.py MODEL_DIR OUT_DIR` (torch 2.9.1, onnx 1.23.2, onnxruntime 1.31.1, transformers 4.57.6): the inference path re-implemented in `tests/omr/smt_arch.py` from the upstream MIT code, with a key/value cache; ONNX opset 17; int8 = onnxruntime `quantize_dynamic` (QUInt8 weights) |
 

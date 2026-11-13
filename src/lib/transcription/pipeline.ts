@@ -318,7 +318,7 @@ class TranscriberClient {
       const onAbort = () => {
         worker.postMessage({ type: 'cancel', jobId } satisfies WorkerRequest);
         this.handlers.delete(jobId);
-        reject(new DOMException('Transcription cancelled', 'AbortError'));
+        reject(new DOMException('Transcription canceled', 'AbortError'));
       };
       if (signal?.aborted) return onAbort();
       signal?.addEventListener('abort', onAbort, { once: true });
@@ -633,7 +633,7 @@ export function melodyFromRaw(raw: RawNoteEvent[], rms: Float32Array, duration: 
   return line.length >= MIN_MELODY_NOTES ? line : [];
 }
 
-const aborted = () => new DOMException('Transcription cancelled', 'AbortError');
+const aborted = () => new DOMException('Transcription canceled', 'AbortError');
 
 /**
  * Whether the separated vocal stem goes back into the audio the accompaniment pass transcribes:

@@ -66,7 +66,7 @@ export function LabelsPanel() {
       <Section title="Appearance">
         <Select label="Font" value={l.font} onChange={(font) => setLabels({ font })} options={FONTS} />
         <Slider label="Size" min={8} max={32} step={1} value={l.size} onChange={(size) => setLabels({ size })} format={(x) => `${x}px`} />
-        <ColorInput label="Colour" value={l.color} onChange={(color) => setLabels({ color })} />
+        <ColorInput label="Color" value={l.color} onChange={(color) => setLabels({ color })} />
         <Slider label="Opacity" min={0.1} max={1} value={l.opacity} onChange={(opacity) => setLabels({ opacity })} format={(x) => `${Math.round(x * 100)}%`} />
         <Segmented
           size="sm"
@@ -74,7 +74,7 @@ export function LabelsPanel() {
           onChange={(position) => setLabels({ position })}
           options={[
             { value: 'bottom', label: 'Bottom' },
-            { value: 'center', label: 'Centre' },
+            { value: 'center', label: 'Center' },
             { value: 'top', label: 'Top' },
           ]}
         />

@@ -213,7 +213,7 @@ export default function SettingsPage() {
               </Link>
             </p>
           </Section>
-          <Section title="Credits & licences">
+          <Section title="Credits & licenses">
             <ul className="flex flex-col gap-1 text-[12.5px] text-ink-300">
               <li>Basic Pitch note-detection model — Spotify (Apache-2.0)</li>
               <li>SCNet vocals &amp; drums separation model — Tong et al. (MIT)</li>
@@ -222,7 +222,7 @@ export default function SettingsPage() {
             </ul>
             <p className="mt-2 text-[12.5px] leading-relaxed text-ink-300">
               <Link to="/credits" className="text-accent-400 hover:text-accent-300">
-                All credits, licences and the test data we used →
+                All credits, licenses and the test data we used →
               </Link>
             </p>
             <p className="mt-1 text-[12.5px] leading-relaxed text-ink-300">

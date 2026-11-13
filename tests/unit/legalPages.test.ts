@@ -56,7 +56,7 @@ describe('Contact on the Privacy, Terms and Copyright pages', () => {
     return renderToStaticMarkup(createElement(MemoryRouter, null, createElement(LegalPage, { page })));
   }
 
-  it('shows the site e-mail as a mailto link, and keeps the GitHub issues link', async () => {
+  it('shows the site email as a mailto link, and keeps the GitHub issues link', async () => {
     const { CONTACT_EMAIL, CONTACT_URL, DEFAULT_CONTACT_EMAIL } = await import('../../src/lib/site');
     expect(CONTACT_EMAIL).toBe(DEFAULT_CONTACT_EMAIL);
     expect(CONTACT_EMAIL).toMatch(/^[^@\s]+@[^@\s]+\.[a-z]+$/);

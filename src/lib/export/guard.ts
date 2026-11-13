@@ -2,7 +2,7 @@
 
 export const STALL_MESSAGE = 'Saving the video got stuck, so it was stopped. Try again, or choose WebM.';
 
-export const abortError = () => new DOMException('Export cancelled', 'AbortError');
+export const abortError = () => new DOMException('Export canceled', 'AbortError');
 
 /**
  * Waits for an encoder step, but gives up when the export is cancelled or the step takes longer

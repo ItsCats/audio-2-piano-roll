@@ -151,7 +151,7 @@ function JobProgress() {
           <ProgressBar value={job.progress} />
           {touch && job.kind !== 'midi' && job.kind !== 'demo' && (job.kind !== 'score' || job.sheet) && (
             <p className="mt-2 flex items-center gap-1.5 text-[12px] text-ink-300">
-              <Smartphone size={13} className="shrink-0 text-accent-400" /> {job.sheet ? 'Keep this page open while it reads the music.' : 'Keep this page open while it’s analysing.'}
+              <Smartphone size={13} className="shrink-0 text-accent-400" /> {job.sheet ? 'Keep this page open while it reads the music.' : 'Keep this page open while it’s analyzing.'}
             </p>
           )}
           {job.progress !== null && (
@@ -531,7 +531,7 @@ export default function ImportPage() {
         <header>
           <h1 className="text-[26px] font-semibold tracking-tight text-ink-50">Import music</h1>
           <p className="mt-1 text-[14px] text-ink-300">
-            Audio is analysed on your device with Spotify’s Basic Pitch neural network (or, for solo piano, an optional high-accuracy piano model).
+            Audio is analyzed on your device with Spotify’s Basic Pitch neural network (or, for solo piano, an optional high-accuracy piano model).
             Nothing is uploaded unless you use your own processing server.
             The result is an AI estimate —{' '}
             <Link to="/accuracy" className="text-accent-400 hover:text-accent-300">

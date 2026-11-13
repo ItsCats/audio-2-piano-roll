@@ -29,7 +29,7 @@ describe('export copyright notice', () => {
     expect(showExportNoticeOnce()).toBe(true);
     const [t] = useToasts.getState().toasts;
     expect(t.body).toBe(EXPORT_NOTICE_TEXT);
-    expect(t.body).toContain('Practising is fine.');
+    expect(t.body).toContain('Practicing is fine.');
     expect(t.actions?.map((a) => a.label)).toContain('Got it');
     expect(localStorage.getItem(EXPORT_NOTICE_KEY)).toBe('1');
     expect(showExportNoticeOnce()).toBe(false);

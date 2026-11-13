@@ -4,8 +4,8 @@ A small FastAPI service that adds two capabilities to the web app:
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /` | name, version, licence (`AGPL-3.0-or-later`) and a link to the source code |
-| `GET /api/health` | version, licence, source link and enabled features (`features.separation`, `features.stems`, `features.youtube`) |
+| `GET /` | name, version, license (`AGPL-3.0-or-later`) and a link to the source code |
+| `GET /api/health` | version, license, source link and enabled features (`features.separation`, `features.stems`, `features.youtube`) |
 | `POST /api/jobs/youtube` `{url, separate}` | fetch a YouTube video's audio with yt-dlp; with `separate: true` also split it into stems |
 | `POST /api/jobs/separate` (multipart `file`) | SCNet source separation: a **vocal stem** and the **accompaniment without drums or vocals** (bass + other) |
 | `GET /api/jobs/{id}` | status, stage (`decoding` → `separating` → `encoding`), real per-segment progress, available `stems`, `separationMs` (the server's separation time). A YouTube job whose separation fails still finishes as `done` with only the `mix` stem and the reason in `separationError`, so the client can separate that audio itself without a second download. |
@@ -22,7 +22,7 @@ transcribes the drum-less accompaniment for the rest. The browser can run the sa
 
 ## Separation model
 
-[SCNet](https://github.com/starrytong/SCNet) (Tong et al., ICASSP 2024; MIT licence, MUSDB18-HQ checkpoint)
+[SCNet](https://github.com/starrytong/SCNet) (Tong et al., ICASSP 2024; MIT license, MUSDB18-HQ checkpoint)
 as the int8 ONNX export by [audiojs](https://huggingface.co/audiojs/scnet) (12.9 MB), run with onnxruntime on
 the CPU. The STFT/iSTFT (n_fft 4096, hop 1024) and the 11 s segmenting run in numpy (`app/separation.py`) and
 mirror the browser worker, so server and browser produce the same stems (measured 51–55 dB agreement).
@@ -92,9 +92,9 @@ docker run -p 8000:8000 -e SHARED_SECRET=change-me -e ALLOWED_ORIGINS=https://yo
 
 See [../docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md) for hosting options and costs.
 
-## Licences
+## Licenses
 
-Server code: same licence as the app, GNU AGPL-3.0-or-later (see [../LICENSE](../LICENSE)); source: <https://github.com/ItsCats/audio-2-piano-roll>.
+Server code: same license as the app, GNU AGPL-3.0-or-later (see [../LICENSE](../LICENSE)); source: <https://github.com/ItsCats/audio-2-piano-roll>.
 Because of the AGPL, a server that other people use must offer them its source; `GET /` and `/api/health` return the
 link (`SOURCE_CODE_URL`). Third-party components: [../THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md). SCNet weights and code: MIT, © 2024 starrytong (ONNX export: audiojs).
 onnxruntime: MIT (Microsoft). FastAPI, Starlette, uvicorn: MIT/BSD. numpy: BSD. yt-dlp: Unlicense. ffmpeg: LGPL/GPL (system package).

@@ -8,7 +8,7 @@ import { useToasts } from '../state/toastStore';
 export const EXPORT_NOTICE_KEY = 'piano2vision-export-notice-seen';
 
 export const EXPORT_NOTICE_TITLE = 'Before you share it';
-export const EXPORT_NOTICE_TEXT = 'Practising is fine. Publishing an arrangement of someone else’s song may need permission.';
+export const EXPORT_NOTICE_TEXT = 'Practicing is fine. Publishing an arrangement of someone else’s song may need permission.';
 
 export function exportNoticeSeen(): boolean {
   try {

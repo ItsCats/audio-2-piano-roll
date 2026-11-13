@@ -179,13 +179,13 @@ function Customize({ look, resolved, setLook }: { look: TitleLook; resolved: Res
           value={fill}
           onChange={(v) => setLook({ fill: v })}
           options={[
-            { value: 'solid', label: 'Colour' },
+            { value: 'solid', label: 'Color' },
             { value: 'gradient', label: 'Gradient' },
             { value: 'pattern', label: 'Pattern' },
             { value: 'image', label: 'My image' },
           ]}
         />
-        {fill === 'solid' && <ColorInput label="Letter colour" value={hexOr(look.fillColor, solidHex(resolved.lines.title.color))} onChange={(fillColor) => setLook({ fill: 'solid', fillColor })} />}
+        {fill === 'solid' && <ColorInput label="Letter color" value={hexOr(look.fillColor, solidHex(resolved.lines.title.color))} onChange={(fillColor) => setLook({ fill: 'solid', fillColor })} />}
         {fill === 'gradient' && (
           <>
             <ColorInput label="From" value={hexOr(look.gradient?.[0], '#f6d8ff')} onChange={(c) => setLook({ gradient: [c, hexOr(look.gradient?.[1], '#8fb4ff')] })} />
@@ -235,13 +235,13 @@ function Customize({ look, resolved, setLook }: { look: TitleLook; resolved: Res
         onChange={(v) => setLook({ bg: v === 'style' ? null : v })}
         options={[
           { value: 'style', label: 'Style default' },
-          { value: 'color', label: 'Colour' },
+          { value: 'color', label: 'Color' },
           { value: 'gradient', label: 'Gradient' },
           { value: 'video', label: 'Same as video' },
           { value: 'image', label: 'My image' },
         ]}
       />
-      {bg === 'color' && <ColorInput label="Background colour" value={hexOr(look.bgColor, '#000000')} onChange={(bgColor) => setLook({ bgColor })} />}
+      {bg === 'color' && <ColorInput label="Background color" value={hexOr(look.bgColor, '#000000')} onChange={(bgColor) => setLook({ bgColor })} />}
       {bg === 'gradient' && (
         <>
           <ColorInput label="Top" value={hexOr(look.bgGradient?.[0], '#1b1430')} onChange={(c) => setLook({ bgGradient: [c, hexOr(look.bgGradient?.[1], '#05040a')] })} />
@@ -252,7 +252,7 @@ function Customize({ look, resolved, setLook }: { look: TitleLook; resolved: Res
       {(bg === 'image' || bg === 'video') && <Slider label="Dim" min={0} max={0.8} step={0.05} value={look.dim ?? DEFAULT_DIM} onChange={(dim) => setLook({ dim })} format={(x) => `${Math.round(x * 100)}%`} />}
       {/* only for lines that are not filled with the letters' pattern / image */}
       {(resolved.fill.kind === 'solid' || resolved.fillRoles.length < 3) && (
-        <ColorInput label="Text colour" value={hexOr(look.textColor, solidHex(resolved.lines.subtitle.color))} onChange={(textColor) => setLook({ textColor })} />
+        <ColorInput label="Text color" value={hexOr(look.textColor, solidHex(resolved.lines.subtitle.color))} onChange={(textColor) => setLook({ textColor })} />
       )}
       <Toggle label="Light streaks" checked={resolved.streaks} onChange={(streaks) => setLook({ streaks })} />
       <Toggle label="Sparkles" checked={resolved.sparkles} onChange={(sparkles) => setLook({ sparkles })} />
