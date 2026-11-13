@@ -218,13 +218,14 @@ export function toMusicXml(score: Score, opts: MusicXmlOptions): string {
   x.push(`<work><work-title>${title}</work-title></work>`);
   x.push('<identification>');
   if (artist) x.push(`<creator type="composer">${artist}</creator>`);
-  x.push(`<rights>${CREDIT_LINE}</rights>`);
-  x.push(`<encoding><software>Piano2Vision</software><encoding-date>${opts.date ?? new Date().toISOString().slice(0, 10)}</encoding-date></encoding>`);
+  // the credit names the software, not a rights holder: it goes in <encoding>, never in <rights>
+  x.push(`<encoding><software>${CREDIT_LINE}</software><encoding-date>${opts.date ?? new Date().toISOString().slice(0, 10)}</encoding-date></encoding>`);
   x.push('</identification>');
   if (opts.credits) {
     x.push(`<credit page="1"><credit-type>title</credit-type><credit-words justify="center" valign="top" font-size="20">${title}</credit-words></credit>`);
     if (artist) x.push(`<credit page="1"><credit-type>composer</credit-type><credit-words justify="right" valign="top" font-size="11">${artist}</credit-words></credit>`);
-    x.push(`<credit page="1"><credit-type>rights</credit-type><credit-words justify="center" valign="bottom" font-size="8">${CREDIT_LINE}</credit-words></credit>`);
+    // printed at the foot of page 1; no credit-type "rights" for the same reason
+    x.push(`<credit page="1"><credit-words justify="center" valign="bottom" font-size="8">${CREDIT_LINE}</credit-words></credit>`);
   }
   x.push(
     '<part-list><score-part id="P1"><part-name print-object="no">Piano</part-name>' +

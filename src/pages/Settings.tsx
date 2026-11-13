@@ -231,6 +231,16 @@ export default function SettingsPage() {
               </a>
             </p>
           </Section>
+          <Section title="Privacy & terms">
+            <p className="text-[12.5px] leading-relaxed text-ink-300">
+              No account, no tracking: your songs stay on this device.
+            </p>
+            <p className="flex flex-wrap gap-x-4 gap-y-1 text-[12.5px]">
+              <Link to="/privacy" className="text-accent-400 hover:text-accent-300">Privacy</Link>
+              <Link to="/terms" className="text-accent-400 hover:text-accent-300">Terms of use</Link>
+              <Link to="/copyright" className="text-accent-400 hover:text-accent-300">Copyright</Link>
+            </p>
+          </Section>
         </div>
       </div>
     </div>

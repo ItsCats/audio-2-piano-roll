@@ -95,6 +95,13 @@ export function AppShell() {
             >
               <Code size={14} /> {SOURCE_CODE_LABEL}
             </a>
+            <p className="mt-1 flex flex-wrap gap-x-1.5 px-2 text-[11.5px] text-ink-400">
+              <NavLink to="/privacy" className="focus-ring rounded hover:text-ink-100">Privacy</NavLink>
+              <span aria-hidden="true">·</span>
+              <NavLink to="/terms" className="focus-ring rounded hover:text-ink-100">Terms</NavLink>
+              <span aria-hidden="true">·</span>
+              <NavLink to="/copyright" className="focus-ring rounded hover:text-ink-100">Copyright</NavLink>
+            </p>
             <p className="mt-2 text-[11px] leading-relaxed text-ink-400">
               Everything stays in your browser. Songs are stored locally on this device.
             </p>

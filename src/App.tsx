@@ -15,6 +15,7 @@ const LibraryPage = lazy(() => import('./pages/Library'));
 const SettingsPage = lazy(() => import('./pages/Settings'));
 const AccuracyPage = lazy(() => import('./pages/Accuracy'));
 const CreditsPage = lazy(() => import('./pages/Credits'));
+const LegalPage = lazy(() => import('./pages/Legal'));
 
 function PageFallback() {
   return (
@@ -72,6 +73,9 @@ export function App() {
             <Route path="settings" element={<Suspense fallback={<PageFallback />}><SettingsPage /></Suspense>} />
             <Route path="accuracy" element={<Suspense fallback={<PageFallback />}><AccuracyPage /></Suspense>} />
             <Route path="credits" element={<Suspense fallback={<PageFallback />}><CreditsPage /></Suspense>} />
+            <Route path="privacy" element={<Suspense fallback={<PageFallback />}><LegalPage page="privacy" /></Suspense>} />
+            <Route path="terms" element={<Suspense fallback={<PageFallback />}><LegalPage page="terms" /></Suspense>} />
+            <Route path="copyright" element={<Suspense fallback={<PageFallback />}><LegalPage page="copyright" /></Suspense>} />
             <Route path="*" element={<HomePage />} />
             </Route>
           </Route>
