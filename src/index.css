@@ -205,3 +205,6 @@ input[type='color']::-moz-color-swatch {
 html.p2v-games-open #root {
   display: none;
 }
+
+/* a phone held sideways (short and wide): the games put their arrow pad beside the board */
+@custom-variant short-landscape (@media (orientation: landscape) and (max-height: 520px));

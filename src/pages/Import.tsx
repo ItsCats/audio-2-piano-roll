@@ -518,6 +518,14 @@ export default function ImportPage() {
     gamePlayedFor.current = job.id;
     setGameFor(job.id);
   };
+  // closed while the import still runs: back to the card as before, so the finished import opens the
+  // studio by itself again (one that finished while the game was open stays put: the player saw "Your
+  // song is ready" and chose to stay)
+  const closeGame = () => {
+    setGameFor(null);
+    const j = useImport.getState().job;
+    if (j && j.id === gamePlayedFor.current && j.stage !== 'done' && j.stage !== 'error') gamePlayedFor.current = null;
+  };
 
   // jump to the studio as soon as an import started on this page finishes
   const startedHere = useRef<number | null>(null);
@@ -576,7 +584,7 @@ export default function ImportPage() {
         {job && <JobProgress onPlayGame={openGame} />}
         {gameFor !== null && (
           <Suspense fallback={<div className="fixed inset-0 z-[58] bg-ink-950" aria-busy="true" />}>
-            <GameOverlay jobId={gameFor} onClose={() => setGameFor(null)} onOpenSong={(id) => navigate(`/studio/${id}`)} />
+            <GameOverlay jobId={gameFor} onClose={closeGame} onOpenSong={(id) => navigate(`/studio/${id}`)} />
           </Suspense>
         )}
 

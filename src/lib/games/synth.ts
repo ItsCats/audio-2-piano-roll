@@ -1,11 +1,14 @@
 /**
  * The games' sound: a tiny Web Audio synth (a triangle tone with a soft octave on top and a quick
- * piano-like decay), so a game never starts the piano sample download. Quiet by default. It does not
- * change the page's audio session, so on an iPhone the ring/silent switch mutes it like any other
- * page sound. The audio context is made on the first tap or key press (browsers need a gesture),
+ * piano-like decay), so a game never starts the piano sample download. Quiet by default. On an
+ * iPhone it uses the 'ambient' audio session (lib/audio/audioSession): the silent switch mutes it and
+ * the player's own music keeps playing; the piano's 'playback' setting comes back when the games
+ * close. The audio context is made on the first tap or key press (browsers need a gesture),
  * suspended whenever nothing has sounded for a moment (a running context keeps an audio thread busy
  * while the import needs the processor) and closed when the game closes.
  */
+
+import { audioSessionForEffects } from '../audio/audioSession';
 
 type Ctx = AudioContext;
 
@@ -32,6 +35,7 @@ export function createGameSynth(muted: boolean): GameSynth {
   let isMuted = muted;
   let closed = false;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  let endSession: (() => void) | null = null;
 
   /** suspend once nothing has sounded for IDLE_SUSPEND_MS (the last tone has faded by then) */
   const idleLater = () => {
@@ -48,6 +52,7 @@ export function createGameSynth(muted: boolean): GameSynth {
       try {
         const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
         if (!AC) return null;
+        endSession ??= audioSessionForEffects();
         ctx = new AC({ latencyHint: 'interactive' });
         master = ctx.createGain();
         master.gain.value = GAME_VOLUME;
@@ -109,6 +114,7 @@ export function createGameSynth(muted: boolean): GameSynth {
     close() {
       closed = true;
       if (idleTimer) clearTimeout(idleTimer);
+      endSession?.();
       const c = ctx;
       ctx = null;
       master = null;

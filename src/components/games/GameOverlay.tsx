@@ -14,6 +14,7 @@ import { gameFps } from '../../lib/games/loop';
 import { createGameSynth, type GameSynth } from '../../lib/games/synth';
 import { loadBest, loadSoundOn, saveBest, saveSoundOn, type GameId } from '../../lib/games/offer';
 import { Button, cn } from '../ui';
+import { Toaster } from '../layout/Toaster';
 import { GameStage, type StageHandle, type StageState } from './GameStage';
 import { createNoteHopper } from './noteHopperEngine';
 import { createKeySnake } from './keySnakeEngine';
@@ -75,6 +76,7 @@ function prefersReducedMotion(): boolean {
 
 export default function GameOverlay({ jobId, onClose, onOpenSong }: { jobId: number; onClose: () => void; onOpenSong: (songId: string) => void }) {
   const job = useImport((s) => s.job);
+  const cancelImport = useImport((s) => s.cancel);
   const status: ImportStatus = !job || job.id !== jobId ? 'canceled' : job.stage === 'done' ? 'done' : job.stage === 'error' ? 'failed' : 'running';
   const [touch] = useState(isTouchDevice);
   const [reducedMotion] = useState(prefersReducedMotion);
@@ -84,7 +86,8 @@ export default function GameOverlay({ jobId, onClose, onOpenSong }: { jobId: num
   const [stage, setStage] = useState<StageState>({ phase: 'ready', score: 0 });
   const [best, setBest] = useState(0);
   const [newBest, setNewBest] = useState(false);
-  const [notice, setNotice] = useState<ImportStatus | null>(null);
+  // the import may have ended while this layer's code was loading: say so right away
+  const [notice, setNotice] = useState<ImportStatus | null>(() => (status === 'running' ? null : status));
   const root = useRef<HTMLDivElement>(null);
   const stageHandle = useRef<StageHandle | null>(null);
 
@@ -114,6 +117,8 @@ export default function GameOverlay({ jobId, onClose, onOpenSong }: { jobId: num
 
   const phaseRef = useRef<StageState['phase']>('ready');
   const pick = (g: GameId | null) => {
+    // picking a game is a tap / click: make the sound ready now, so the first hop doesn't wait for it
+    if (g) synth.current?.unlock();
     phaseRef.current = 'ready';
     setGame(g);
     setStage({ phase: 'ready', score: 0 });
@@ -235,6 +240,8 @@ export default function GameOverlay({ jobId, onClose, onOpenSong }: { jobId: num
         paddingLeft: 'env(safe-area-inset-left)',
         paddingRight: 'env(safe-area-inset-right)',
         overscrollBehavior: 'contain',
+        // no double-tap zoom anywhere on the layer (fast taps just outside the board or a button)
+        touchAction: 'manipulation',
       }}
     >
       {/* top bar: back / close, the import's progress, sound and pause */}
@@ -267,61 +274,73 @@ export default function GameOverlay({ jobId, onClose, onOpenSong }: { jobId: num
       {!game || !engine || !info ? (
         <Picker touch={touch} onPick={pick} />
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col px-3 pt-2 pb-3 sm:px-6 sm:pb-6">
-          <div className="mx-auto flex w-full max-w-3xl items-baseline justify-between px-1 pb-2">
-            <h2 className="text-[15px] font-semibold text-ink-50">{info.name}</h2>
-            <p className="font-mono text-[13px] text-ink-200">
-              <span className="sr-only">Score </span>
-              <span className="text-[18px] font-semibold text-ink-50">{stage.score}</span>
-              <span className="ml-3 text-ink-300">Best {Math.max(best, stage.score)}</span>
-            </p>
-          </div>
-          <div className="relative mx-auto min-h-0 w-full max-w-3xl flex-1 sm:max-h-[560px]">
-            <GameStage
-              engine={engine}
-              paused={held}
-              fps={gameFps(touch, status === 'running')}
-              touch={touch}
-              swipe={game === 'key-snake'}
-              keyInput={game === 'key-snake' ? snakeKeys : hopperKeys}
-              onState={onState}
-              handle={stageHandle}
-              label={`${info.name}. ${touch ? info.touchHint : info.keyHint}.`}
-            />
-            {stage.phase === 'ready' && !notice && (
-              <div className="pointer-events-none absolute inset-x-0 top-[38%] flex justify-center px-4">
-                <p className="rounded-full bg-ink-900/90 px-4 py-2 text-[14px] font-medium text-ink-50 ring-1 ring-ink-600">{touch ? info.touchHint : info.keyHint}</p>
-              </div>
-            )}
-            {stage.phase === 'over' && !notice && (
-              <Panel role="status">
-                <p className="text-[13px] font-medium tracking-wide text-ink-300 uppercase">Game over</p>
-                <p className="mt-1 text-[32px] leading-none font-semibold text-ink-50">{stage.score}</p>
-                <p className="mt-2 text-[13px] text-ink-200">{newBest ? 'New best score!' : `Best ${best}`}</p>
-                <div className="mt-4 flex flex-wrap justify-center gap-2">
-                  <Button variant="primary" size="lg" data-notice-focus onClick={() => stageHandle.current?.restart()} icon={<Play size={16} />}>
-                    Play again
-                  </Button>
-                  <Button size="lg" onClick={() => pick(null)}>
-                    Other game
-                  </Button>
+        // the game: no scrolling, zooming or pinching (taps and swipes are the game's)
+        <div
+          className="flex min-h-0 flex-1 flex-col px-3 pt-2 pb-3 sm:px-6 sm:pb-6 short-landscape:flex-row short-landscape:items-stretch short-landscape:gap-3 short-landscape:pb-2"
+          style={{ touchAction: 'none' }}
+        >
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <div className="mx-auto flex w-full max-w-3xl items-baseline justify-between px-1 pb-2 short-landscape:pb-1">
+              <h2 className="text-[15px] font-semibold text-ink-50">{info.name}</h2>
+              <p className="font-mono text-[13px] text-ink-200">
+                <span className="sr-only">Score </span>
+                <span className="text-[18px] font-semibold text-ink-50">{stage.score}</span>
+                <span className="ml-3 text-ink-300">Best {Math.max(best, stage.score)}</span>
+              </p>
+            </div>
+            <div className="relative mx-auto min-h-0 w-full max-w-3xl flex-1 sm:max-h-[560px]">
+              <GameStage
+                engine={engine}
+                paused={held}
+                fps={gameFps(touch, status === 'running')}
+                touch={touch}
+                swipe={game === 'key-snake'}
+                keyInput={game === 'key-snake' ? snakeKeys : hopperKeys}
+                onState={onState}
+                handle={stageHandle}
+                label={`${info.name}. ${touch ? info.touchHint : info.keyHint}.`}
+              />
+              {stage.phase === 'ready' && !notice && (
+                // Note Hopper: below the note's start (about 40% down) and above the keys
+                <div className={cn('pointer-events-none absolute inset-x-0 flex justify-center px-4', game === 'note-hopper' ? 'top-[58%]' : 'top-[38%]')}>
+                  <p className="rounded-full bg-ink-900/90 px-4 py-2 text-[14px] font-medium text-ink-50 ring-1 ring-ink-600">{touch ? info.touchHint : info.keyHint}</p>
                 </div>
-              </Panel>
-            )}
-            {paused && !notice && playing && (
-              <Panel>
-                <p className="text-[17px] font-semibold text-ink-50">Paused</p>
-                <div className="mt-4 flex flex-wrap justify-center gap-2">
-                  <Button variant="primary" size="lg" data-notice-focus autoFocus onClick={() => setPaused(false)} icon={<Play size={16} />}>
-                    Resume
-                  </Button>
-                  <Button size="lg" onClick={onClose}>
-                    Back to import
-                  </Button>
-                </div>
-              </Panel>
-            )}
-            {notice && <ImportNotice status={notice} error={job?.id === jobId ? job.error : undefined} songId={songId} onOpenSong={onOpenSong} onBack={onClose} onKeepPlaying={keepPlaying} />}
+              )}
+              {stage.phase === 'over' && !notice && (
+                <Panel role="status">
+                  <p className="text-[13px] font-medium tracking-wide text-ink-300 uppercase">Game over</p>
+                  <p className="mt-1 text-[32px] leading-none font-semibold text-ink-50">{stage.score}</p>
+                  <p className="mt-2 text-[13px] text-ink-200">{newBest ? 'New best score!' : `Best ${best}`}</p>
+                  <div className="mt-4 flex flex-wrap justify-center gap-2">
+                    <Button variant="primary" size="lg" data-notice-focus onClick={() => stageHandle.current?.restart()} icon={<Play size={16} />}>
+                      Play again
+                    </Button>
+                    <Button size="lg" onClick={() => pick(null)}>
+                      Other game
+                    </Button>
+                  </div>
+                </Panel>
+              )}
+              {paused && !notice && playing && (
+                <Panel>
+                  <p className="text-[17px] font-semibold text-ink-50">Paused</p>
+                  <div className="mt-4 flex flex-wrap justify-center gap-2">
+                    <Button variant="primary" size="lg" data-notice-focus autoFocus onClick={() => setPaused(false)} icon={<Play size={16} />}>
+                      Resume
+                    </Button>
+                    <Button size="lg" onClick={onClose}>
+                      Back to import
+                    </Button>
+                  </div>
+                  {status === 'running' && (
+                    <button type="button" onClick={cancelImport} className="focus-ring mt-3 min-h-11 rounded-lg px-3 text-[13px] text-ink-300 underline-offset-2 hover:text-ink-50 hover:underline">
+                      Cancel import
+                    </button>
+                  )}
+                </Panel>
+              )}
+              {notice && <ImportNotice status={notice} error={job?.id === jobId ? job.error : undefined} songId={songId} onOpenSong={onOpenSong} onBack={onClose} onKeepPlaying={keepPlaying} />}
+            </div>
           </div>
           {game === 'key-snake' && touch && <DPad onDir={(dir) => stageHandle.current?.input({ kind: 'dir', dir })} />}
         </div>
@@ -331,6 +350,8 @@ export default function GameOverlay({ jobId, onClose, onOpenSong }: { jobId: num
           <ImportNotice status={notice} error={job?.id === jobId ? job.error : undefined} songId={songId} onOpenSong={onOpenSong} onBack={onClose} onKeepPlaying={keepPlaying} />
         </div>
       )}
+      {/* the app's toasts (the one under #root isn't drawn while this is open): below the top bar */}
+      <Toaster className="top-[calc(env(safe-area-inset-top)+64px)] right-2 sm:right-4" />
     </div>,
     document.body,
   );
@@ -344,6 +365,8 @@ function IconBtn({ label, onClick, children, pressed, disabled }: { label: strin
       title={label}
       aria-pressed={pressed}
       disabled={disabled}
+      // a mouse click leaves the focus on the board, so Space hops instead of pressing this again
+      onMouseDown={(e) => e.preventDefault()}
       onClick={onClick}
       className="focus-ring flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-ink-200 transition-colors hover:bg-ink-800 hover:text-ink-50 disabled:opacity-35"
       style={{ touchAction: 'manipulation' }}
@@ -365,7 +388,8 @@ function Panel({ children, role }: { children: React.ReactNode; role?: string })
 
 function ImportLine({ status, title, progress, songId, onOpenSong }: { status: ImportStatus; title: string; progress: number | null; songId?: string; onOpenSong: (id: string) => void }) {
   return (
-    <div className="min-w-0 flex-1 px-1" aria-live="polite">
+    // not a live region: the percent changes all the time (the end of the import is announced by the notice over the game)
+    <div className="min-w-0 flex-1 px-1">
       {status === 'running' && (
         <>
           <p className="flex items-center gap-1.5 truncate text-[12.5px] text-ink-200">
@@ -382,7 +406,12 @@ function ImportLine({ status, title, progress, songId, onOpenSong }: { status: I
             aria-valuemax={100}
             aria-valuenow={progress === null ? undefined : Math.round(progress * 100)}
           >
-            <div className="h-full rounded-full bg-accent-500" style={{ width: `${Math.round(Math.max(0.02, progress ?? 0.02) * 100)}%` }} />
+            <div
+              className="h-full rounded-full bg-accent-500"
+              style={{
+                width: `${Math.round(Math.max(0.02, progress ?? 0.02) * 100)}%`,
+              }}
+            />
           </div>
         </>
       )}
@@ -515,7 +544,7 @@ function DPad({ onDir }: { onDir: (d: 'up' | 'down' | 'left' | 'right') => void 
     </button>
   );
   return (
-    <div className="mx-auto mt-3 grid grid-cols-3 gap-1.5" style={{ touchAction: 'none' }}>
+    <div className="mx-auto mt-3 grid shrink-0 grid-cols-3 gap-1.5 short-landscape:mt-0 short-landscape:self-center" style={{ touchAction: 'none' }}>
       <span />
       {btn('up', <ArrowUp size={22} />, 'Up')}
       <span />

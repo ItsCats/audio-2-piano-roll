@@ -20,6 +20,8 @@ import {
   newSnake,
   pitchColumn,
   snakeConfig,
+  SNAKE_FRAME_MS,
+  SNAKE_STEP_SLACK_MS,
   snakeInterval,
   steer,
   stepSnake,
@@ -29,7 +31,7 @@ import {
 } from '../../src/lib/games/keySnake';
 import { MELODIES, isBlackKey, melodyCursor, nextNote, noteName, whiteKeyIndex } from '../../src/lib/games/melodies';
 import { OFFER_AFTER_SEC, loadBest, loadSoundOn, offerGame, saveBest, saveSoundOn } from '../../src/lib/games/offer';
-import { canvasScale, frameDue, frameWait, gameFps } from '../../src/lib/games/loop';
+import { FRAME_LEAD_MS, RESTART_DELAY_MS, canvasScale, frameDue, frameWait, gameFps, restartAllowed } from '../../src/lib/games/loop';
 import { makeRng, nextRandom } from '../../src/lib/games/rng';
 
 describe('melodies', () => {
@@ -206,10 +208,32 @@ describe('Key Snake', () => {
     expect(swipeDir(10, -40)).toBe('up');
   });
 
-  it('speed rises with the score up to a cap', () => {
-    expect(snakeInterval(0, cfg)).toBe(cfg.startInterval);
-    expect(snakeInterval(5, cfg)).toBeLessThan(cfg.startInterval);
-    expect(snakeInterval(1000, cfg)).toBe(cfg.minInterval);
+  it('speed rises with the score up to a cap, in whole 30 fps frames', () => {
+    const frames = (ms: number) => ms / SNAKE_FRAME_MS;
+    expect(frames(snakeInterval(0, cfg))).toBeCloseTo(5, 9); // 165 ms → 5 frames
+    expect(snakeInterval(10, cfg)).toBeLessThan(snakeInterval(0, cfg));
+    expect(frames(snakeInterval(1000, cfg))).toBeCloseTo(3, 9); // fastest: every 3rd frame (100 ms)
+    expect(frames(snakeInterval(1000, snakeConfig(1, true)))).toBeCloseTo(4, 9); // reduced motion: slower
+    for (let score = 0; score < 60; score++) {
+      const f = frames(snakeInterval(score, cfg));
+      expect(Math.abs(f - Math.round(f))).toBeLessThan(1e-9);
+      if (score) expect(snakeInterval(score, cfg)).toBeLessThanOrEqual(snakeInterval(score - 1, cfg));
+    }
+  });
+
+  it('moves land on every n-th frame at 30 fps, even with jittery frame times', () => {
+    const s = newSnake({ ...cfg, rows: 24 }, 5);
+    steer(s, 'down');
+    s.body[0].y = 0; // room to move
+    const moveFrames: number[] = [];
+    const out: SnakeEvent[] = [];
+    for (let f = 1; f <= 30 && s.phase === 'playing'; f++) {
+      out.length = 0;
+      stepSnake(s, { ...cfg, rows: 24 }, 1000 / 30 + (f % 2 ? -1.5 : 1.5), out);
+      if (out.length) moveFrames.push(f);
+    }
+    const gaps = moveFrames.slice(1).map((f, i) => f - moveFrames[i]);
+    expect(new Set(gaps)).toEqual(new Set([5]));
   });
 
   it('notes sit in their key’s column, folded into the board', () => {
@@ -237,7 +261,7 @@ describe('Key Snake', () => {
     expect(out).toEqual([]); // ready: waits
     steer(s, 'up');
     expect(s.phase).toBe('playing');
-    stepSnake(s, cfg, cfg.startInterval - 1, out);
+    stepSnake(s, cfg, snakeInterval(0, cfg) - SNAKE_STEP_SLACK_MS - 1, out);
     expect(out).toEqual([]);
     stepSnake(s, cfg, 1, out);
     expect(out).toHaveLength(1);
@@ -290,12 +314,15 @@ describe('Key Snake', () => {
     expect(moveSnake(t, cfg)).toBe('crash');
   });
 
-  it('a long frame moves a few steps at most', () => {
+  it('a long frame (the page held up) moves one cell, and the lost time is not made up after', () => {
     const s = newSnake(cfg, 5);
     steer(s, 'up');
     const out: SnakeEvent[] = [];
     stepSnake(s, cfg, 10_000, out);
-    expect(out.length).toBeLessThanOrEqual(2);
+    expect(out).toHaveLength(1);
+    out.length = 0;
+    stepSnake(s, cfg, 1000 / 30, out);
+    expect(out).toHaveLength(0);
   });
 });
 
@@ -325,6 +352,11 @@ describe('offer, pacing, storage', () => {
     expect(frameDue(1000, 1000 - 16.7, 60)).toBe(true);
     expect(frameDue(1000, 1000 - 16.7, 30)).toBe(false);
     expect(frameDue(1000, 1000 - 33.3, 30)).toBe(true);
+    // the loop sleeps until FRAME_LEAD_MS before due, so any frame after the sleep is drawn
+    expect(frameDue(1000 + 1000 / 30 - FRAME_LEAD_MS, 1000, 30)).toBe(true);
+    expect(frameDue(1000 + 1000 / 60 - FRAME_LEAD_MS, 1000, 60)).toBe(true);
+    // ... and two 60 Hz refreshes in a row are never both drawn at 30 fps
+    expect(frameDue(1000 + 1000 / 60 + 3, 1000, 30)).toBe(false);
     expect(canvasScale(3, true)).toBe(1.5);
     expect(canvasScale(3, false)).toBe(2);
     expect(canvasScale(1, false)).toBe(1);
@@ -336,9 +368,15 @@ describe('offer, pacing, storage', () => {
     expect(canvasScale(2, false, 300, 200)).toBe(2);
     expect(canvasScale(2, false, 4000, 4000)).toBe(0.5);
     // 30 fps: frame at 1000, done at 1003 → sleep until ~1025, then the browser's frame at ~1033; late → ask now
-    expect(frameWait(1003, 1000, 30)).toBe(22);
-    expect(frameWait(1025, 1000, 30)).toBe(0);
-    expect(frameWait(1003, 1000, 60)).toBe(6);
+    // 30 fps: frame drawn at 1000 (done at 1003) → sleep until ~1026, then the browser's frame at ~1033; late → ask now
+    expect(frameWait(1003, 1000, 30)).toBe(23);
+    expect(frameWait(1026, 1000, 30)).toBe(0);
+    expect(frameWait(1003, 1000, 60)).toBe(7);
+  });
+
+  it('a run that just ended waits a moment before Play again / a tap restarts it', () => {
+    expect(restartAllowed(1050, 1000)).toBe(false);
+    expect(restartAllowed(1000 + RESTART_DELAY_MS, 1000)).toBe(true);
   });
 
   it('random numbers are seeded', () => {
@@ -440,11 +478,16 @@ describe('game synth', () => {
     muted.unlock();
     muted.play(60);
     expect(last).toBeNull();
+    // iPhone: the games' sound is 'ambient' (the silent switch mutes it); the piano's setting comes back on close
+    const session = { type: 'playback' };
+    Object.defineProperty(globalThis.navigator, 'audioSession', { value: session, configurable: true });
     const s = createGameSynth(false);
     s.play(60); // before a tap: nothing
     expect(last).toBeNull();
+    expect(session.type).toBe('playback');
     s.unlock();
     expect(last).not.toBeNull();
+    expect(session.type).toBe('ambient');
     const ctx = last as unknown as FakeCtx;
     s.play(60);
     expect(ctx.oscillators).toBe(2);
@@ -459,5 +502,7 @@ describe('game synth', () => {
     expect(ctx.oscillators).toBe(4);
     s.close();
     expect(ctx.state).toBe('closed');
+    expect(session.type).toBe('playback');
+    delete (globalThis.navigator as unknown as Record<string, unknown>).audioSession;
   });
 });

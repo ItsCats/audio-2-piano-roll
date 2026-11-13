@@ -35,15 +35,25 @@ export function snakeConfig(aspect: number, reducedMotion = false): SnakeConfig 
     rows,
     lowC: cols === 21 ? 48 : 60,
     startInterval: reducedMotion ? 210 : 165,
-    minInterval: reducedMotion ? 130 : 85,
+    minInterval: reducedMotion ? 130 : 100,
     intervalStep: reducedMotion ? 2 : 3,
   };
 }
 
-/** ms per move at a score */
+/** the games draw at 30 fps while an import runs (60 after): moves land on whole 30 fps frames */
+export const SNAKE_FRAME_MS = 1000 / 30;
+
+/**
+ * ms per move at a score: from startInterval down to minInterval, rounded to whole 30 fps frames so
+ * the moves are evenly spaced on screen (85 ms would be 2 or 3 frames apart, a visible stutter).
+ */
 export function snakeInterval(score: number, cfg: SnakeConfig): number {
-  return Math.max(cfg.minInterval, cfg.startInterval - score * cfg.intervalStep);
+  const ms = Math.max(cfg.minInterval, cfg.startInterval - score * cfg.intervalStep);
+  return Math.max(1, Math.round(ms / SNAKE_FRAME_MS)) * SNAKE_FRAME_MS;
 }
+
+/** a move may come this much early (frame times jitter by a few ms; waiting a whole extra frame would stutter) */
+export const SNAKE_STEP_SLACK_MS = 6;
 
 /**
  * The column of a note (its white key; a black key sits on the white key to its left), folded by
@@ -218,16 +228,18 @@ export function moveSnake(s: SnakeState, cfg: SnakeConfig): SnakeEvent {
   return 'move';
 }
 
-/** Advance by `dtMs` of real time (at most 250 ms at once). Events are pushed to `out`. */
+/**
+ * Advance by `dtMs` of real time. Events are pushed to `out`. At most one move per call: after a
+ * long frame (the import can hold up the page for a moment) the line moves one cell, never several
+ * the player had no chance to see.
+ */
 export function stepSnake(s: SnakeState, cfg: SnakeConfig, dtMs: number, out: SnakeEvent[]): void {
-  const dt = Math.min(250, Math.max(0, dtMs));
   if (s.phase !== 'playing') return;
-  s.acc += dt;
-  for (let i = 0; i < 4 && s.phase === 'playing'; i++) {
-    const interval = snakeInterval(s.score, cfg);
-    if (s.acc < interval) break;
-    s.acc -= interval;
-    out.push(moveSnake(s, cfg));
-  }
-  if (s.acc > snakeInterval(s.score, cfg)) s.acc = 0;
+  s.acc += Math.max(0, dtMs);
+  const interval = snakeInterval(s.score, cfg);
+  if (s.acc < interval - SNAKE_STEP_SLACK_MS) return;
+  s.acc -= interval;
+  // a late frame: the time beyond one move is dropped
+  if (s.acc > 0) s.acc = Math.min(s.acc, SNAKE_STEP_SLACK_MS);
+  out.push(moveSnake(s, cfg));
 }

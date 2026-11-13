@@ -4,7 +4,7 @@
  * page), and draws at most `fps` times a second.
  */
 import { useEffect, useRef } from 'react';
-import { canvasScale, frameDue, frameWait } from '../../lib/games/loop';
+import { canvasScale, frameDue, frameWait, restartAllowed } from '../../lib/games/loop';
 import { swipeDir } from '../../lib/games/keySnake';
 import type { GameEngine, GameInput, Phase } from './engine';
 
@@ -12,9 +12,6 @@ export interface StageState {
   phase: Phase;
   score: number;
 }
-
-/** after a run ends, taps and keys wait this long before starting another (a late tap is not a restart) */
-const RESTART_DELAY_MS = 600;
 
 export interface StageHandle {
   input(i: GameInput): void;
@@ -79,9 +76,11 @@ export function GameStage({
       live.current.onState(reported);
     };
     const shouldRun = () => engine.phase() === 'playing' && !live.current.paused && w > 0;
-    const tick = (now: number) => {
+    // times are performance.now() at the callback, not the frame's timestamp (see lib/games/loop)
+    const tick = () => {
       raf = 0;
       if (!shouldRun()) return;
+      const now = performance.now();
       if (frameDue(now, lastDraw, live.current.fps)) {
         const dt = now - last;
         last = now;
@@ -134,7 +133,7 @@ export function GameStage({
     const send = (i: GameInput) => {
       if (live.current.paused) return;
       if (engine.phase() === 'over') {
-        if (performance.now() - overAt < RESTART_DELAY_MS) return;
+        if (!restartAllowed(performance.now(), overAt)) return;
         engine.restart();
       }
       engine.input(i);
@@ -145,6 +144,8 @@ export function GameStage({
     handle.current = {
       input: send,
       restart: () => {
+        // "Play again" right under the thumb that just crashed: the same short wait as a tap
+        if (engine.phase() === 'over' && !restartAllowed(performance.now(), overAt)) return;
         engine.restart();
         draw();
         report();
@@ -180,7 +181,8 @@ export function GameStage({
     const key = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
       const t = e.target as HTMLElement | null;
-      // Space / Enter on a focused button presses that button
+      // Space / Enter on a focused button presses that button (the top bar's buttons don't take focus
+      // from a mouse click, so after clicking one Space still hops)
       if ((e.key === ' ' || e.key === 'Enter') && t && t !== box && /^(BUTTON|A|INPUT|SELECT|TEXTAREA)$/.test(t.tagName)) return;
       const i = live.current.keyInput(e);
       if (!i) return;
