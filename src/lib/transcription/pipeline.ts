@@ -348,6 +348,8 @@ function modelUrl(): string {
 export interface CleanContext {
   /** frame posteriors the events were extracted from (nFrames x 88; 8-bit stored or float) */
   frames?: Uint8Array | Float32Array;
+  /** onset posteriors of the same model run (same layout as `frames`): lead recovery's attack test */
+  onsets?: Uint8Array | Float32Array;
   nFrames?: number;
   /** onset strength of the separated drums stem (8-bit, DRUM_ENV_FPS): drops drum-hit false low notes */
   drums?: Uint8Array;
@@ -401,6 +403,19 @@ export function noteActivation(frames: Uint8Array | Float32Array, nFrames: numbe
   own /= e - s0 + 1;
   const scale = frames instanceof Uint8Array ? 1 / 255 : 1;
   return { mean: (sum / (s1 - s0 + 1)) * scale, spread: own > 0 ? nb / own : nb > 0 ? Infinity : 0 };
+}
+
+/**
+ * Strongest onset posterior of a note's pitch from 2 frames before to 5 frames after its start
+ * (≈ -25..+60 ms): how clearly the model heard a new attack there.
+ */
+export function onsetPeak(onsets: Uint8Array | Float32Array, nFrames: number, n: Note): number {
+  const f = n.midi - BP_MIDI_OFFSET;
+  if (f < 0 || f >= BP_N_PITCHES || nFrames < 1) return 0;
+  const s0 = Math.min(nFrames - 1, timeToFrame(n.start));
+  let m = 0;
+  for (let t = Math.max(0, s0 - 2); t <= Math.min(nFrames - 1, s0 + 5); t++) m = Math.max(m, onsets[t * BP_N_PITCHES + f]);
+  return onsets instanceof Uint8Array ? m / 255 : m;
 }
 
 /**
@@ -485,9 +500,17 @@ export function accompFromRaw(
   const leadParams = leadPassParams(params);
   if (!leadParams || !leadRaw?.length) return { notes: main, main };
   const candidates = cleanNotes(leadRaw, rms, leadParams, duration, ctx);
-  const { frames, nFrames } = ctx;
+  const { frames, onsets, nFrames } = ctx;
   const notes = recoverLead(main, candidates, duration, {
-    ...(frames && nFrames ? { evidence: (n: Note) => noteActivation(frames, nFrames, n) } : {}),
+    ...(frames && nFrames
+      ? {
+          evidence: (n: Note) => ({
+            ...noteActivation(frames, nFrames, n),
+            rise: frameRise(frames, nFrames, timeToFrame(n.start + ONSET_LATENCY), n.midi),
+            ...(onsets ? { onset: onsetPeak(onsets, nFrames, n) } : {}),
+          }),
+        }
+      : {}),
     ...(melody.length ? { exclude: sungRanges(melody) } : {}),
     hardOnly: true,
   });
@@ -747,7 +770,7 @@ async function transcribeAudioOnce(
 
   onProgress({ stage: 'arranging', progress: null, detail: melody.length ? 'Fitting the vocal melody, assigning hands, tracking beats' : 'Cleaning notes, assigning hands, tracking beats' });
   const drums = sep?.drumOnsets;
-  const accomp = accompFromRaw(result.notes, result.leadNotes, result.rms, params, duration, { frames: result.frames, nFrames: result.nFrames, drums }, { melody });
+  const accomp = accompFromRaw(result.notes, result.leadNotes, result.rms, params, duration, { frames: result.frames, onsets: result.onsets, nFrames: result.nFrames, drums }, { melody });
   const accompNotes = accomp.notes;
   const notes = mergeMelody(accompNotes, melody, duration);
   if (result.backend === 'cpu') {
@@ -959,6 +982,6 @@ export async function redetectNotes(
 async function reextract(post: StoredPosteriors, params: ExtractionParams, duration: number, opts: ReextractOptions): Promise<{ main: Note[]; notes: Note[] }> {
   const raw = await extractRaw(post, params);
   const melody = (opts.melody ?? []).filter((n) => n.role === 'melody').map((n) => ({ ...n, hand: 'R' as const }));
-  const accomp = accompFromRaw(raw.notes, raw.leadNotes, post.rms, params, duration, { frames: post.frames, nFrames: post.nFrames, drums: post.drums }, { melody });
+  const accomp = accompFromRaw(raw.notes, raw.leadNotes, post.rms, params, duration, { frames: post.frames, onsets: post.onsets, nFrames: post.nFrames, drums: post.drums }, { melody });
   return { main: accomp.main, notes: mergeMelody(accomp.notes, melody, duration) };
 }

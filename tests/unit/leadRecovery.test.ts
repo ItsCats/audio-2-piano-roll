@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { LEAD_RECOVERY, capDensity, freshCandidates, recoverLead } from '../../src/lib/music/leadRecovery';
+import { LEAD_RECOVERY, capDensity, freshCandidates, overtoneCandidates, recoverLead, splitRestrikes } from '../../src/lib/music/leadRecovery';
 import { mergeMelody } from '../../src/lib/music/melody';
 import { generateAllArrangements, withoutHardOnly } from '../../src/lib/music/difficulty';
-import { EXTRACTION_PRESETS, LEAD_PASS, accompFromRaw, leadPassParams, leadWorkerOptions, sungRanges, withLeadPass } from '../../src/lib/transcription/pipeline';
-import { timeToFrame } from '../../src/lib/transcription/constants';
+import { EXTRACTION_PRESETS, LEAD_PASS, accompFromRaw, leadPassParams, leadWorkerOptions, onsetPeak, sungRanges, withLeadPass } from '../../src/lib/transcription/pipeline';
+import { BP_N_PITCHES, frameToTime, timeToFrame } from '../../src/lib/transcription/constants';
 import type { RawNoteEvent } from '../../src/lib/transcription/noteExtraction';
 import type { Note, TempoInfo } from '../../src/lib/music/types';
 
@@ -104,6 +104,64 @@ describe('lead recovery', () => {
     // no lead pass in the params, or no lead events: the main notes only
     expect(accompFromRaw(raw, leadRaw, rms, { ...EXTRACTION_PRESETS.mix, leadPass: false }, 5).notes).toHaveLength(4);
     expect(accompFromRaw(raw, undefined, rms, EXTRACTION_PRESETS.mix, 5).notes).toHaveLength(4);
+  });
+
+  it('tests the evidence before choosing the line: a weak candidate on top does not hide the real one', () => {
+    const base = [note(48, 0, 4, 0.6), note(52, 0, 4, 0.6), note(72, 0, 0.4), note(74, 0.5, 0.4), note(77, 1.5, 0.4), note(79, 2, 0.4)];
+    const real = note(76, 1, 0.4, 0.6);
+    const ghost = note(88, 1, 0.4, 0.6); // the faint octave above, on top: the line prefers it
+    const evidence = (n: Note) => (n.midi === 88 ? { mean: 0.15, spread: 0, onset: 0.8 } : { mean: 0.4, spread: 0, onset: 0.8 });
+    const out = recoverLead(base, [real, ghost], 4, { evidence });
+    expect(out.some((n) => n.midi === 76)).toBe(true);
+    expect(out.some((n) => n.midi === 88)).toBe(false);
+  });
+
+  it('asks for an onset; a clear onset lowers the activation needed', () => {
+    const base = [note(48, 0, 4, 0.6), note(72, 0, 0.4), note(74, 0.5, 0.4), note(77, 1.5, 0.4), note(79, 2, 0.4)];
+    const missing = note(76, 1, 0.4, 0.6);
+    const keep = (e: { mean: number; spread: number; onset?: number }) => recoverLead(base, [missing], 4, { evidence: () => e }).some((n) => n.midi === 76);
+    expect(keep({ mean: 0.4, spread: 0, onset: 0.3 })).toBe(false); // no attack: a held chord tone
+    expect(keep({ mean: 0.4, spread: 0, onset: 0.5 })).toBe(true);
+    expect(keep({ mean: 0.22, spread: 0, onset: 0.5 })).toBe(false);
+    expect(keep({ mean: 0.22, spread: 0, onset: 0.7 })).toBe(true); // fast note with a clear attack
+    expect(keep({ mean: 0.4, spread: 0 })).toBe(true); // no onset evidence: mean / spread only
+  });
+
+  it('finds overtones: an octave above a sounding, much stronger main note', () => {
+    const low = note(64, 0, 1);
+    const up = note(76, 0.3, 0.3);
+    const fifth = note(71, 0.3, 0.3);
+    const mean = (n: Note) => (n === low ? 0.6 : 0.3);
+    expect([...overtoneCandidates([low], [up, fifth], 0.55, mean)]).toEqual([up]);
+    expect(overtoneCandidates([low], [up], 0.55, (n) => (n === low ? 0.4 : 0.3)).size).toBe(0); // comparable strength: a doubled line
+    expect(overtoneCandidates([note(64, 0, 0.2)], [up], 0.55, mean).size).toBe(0); // no longer sounding
+  });
+
+  it('splits a main note where a candidate re-strikes it', () => {
+    const held = note(72, 0, 1);
+    const again = note(72, 0.5, 0.3);
+    const split = splitRestrikes([held], [again], LEAD_RECOVERY, () => ({ mean: 0.5, spread: 0, onset: 0.8, rise: 0.3 }));
+    expect(split.map((n) => [n.start, +(n.start + n.dur).toFixed(3)])).toEqual([
+      [0, 0.495],
+      [0.5, 1],
+    ]);
+    expect(new Set(split.map((n) => n.id)).size).toBe(2);
+    // flat activation (vibrato), a weak onset, or too soon after the start: one note
+    expect(splitRestrikes([held], [again], LEAD_RECOVERY, () => ({ mean: 0.5, spread: 0, onset: 0.8, rise: 0.05 }))).toEqual([held]);
+    expect(splitRestrikes([held], [again], LEAD_RECOVERY, () => ({ mean: 0.5, spread: 0, onset: 0.4, rise: 0.3 }))).toEqual([held]);
+    expect(splitRestrikes([held], [note(72, 0.05, 0.3)], LEAD_RECOVERY, () => ({ mean: 0.5, spread: 0, onset: 0.8, rise: 0.3 }))).toEqual([held]);
+    // inside a sung phrase: left alone
+    expect(splitRestrikes([held], [again], LEAD_RECOVERY, () => ({ mean: 0.5, spread: 0, onset: 0.8, rise: 0.3 }), [[0.4, 0.6]])).toEqual([held]);
+  });
+
+  it('reads the onset peak of a note', () => {
+    const n = 300;
+    const onsets = new Float32Array(n * BP_N_PITCHES);
+    const f = 79 - 21;
+    const t0 = timeToFrame(1);
+    onsets[t0 * BP_N_PITCHES + f] = 0.8;
+    expect(onsetPeak(onsets, n, note(79, frameToTime(t0), 0.3))).toBeCloseTo(0.8);
+    expect(onsetPeak(onsets, n, note(79, 2.5, 0.2))).toBe(0);
   });
 
   it('sung phrases as merged time ranges', () => {
