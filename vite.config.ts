@@ -52,6 +52,8 @@ const licenses = thirdPartyLicenses({
 });
 
 export default defineConfig({
+  // the commit being built, for the source-code link (src/lib/credits.ts): VITE_COMMIT, else Netlify's COMMIT_REF
+  define: { 'import.meta.env.VITE_COMMIT': JSON.stringify(process.env.VITE_COMMIT || process.env.COMMIT_REF || '') },
   plugins: [react(), tailwindcss(), crossOriginIsolation(), licenses.plugin()],
   worker: { format: 'es', plugins: () => [licenses.plugin()] },
   resolve: { alias: { html2canvas: jspdfStub, dompurify: jspdfStub, canvg: jspdfStub } },

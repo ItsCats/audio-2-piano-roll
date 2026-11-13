@@ -2,7 +2,7 @@
   "name": "piano2vision",
   "private": true,
   "version": "0.1.0",
-  "license": "AGPL-3.0-or-later",
+  "license": "(AGPL-3.0-or-later AND AGPL-3.0-only)",
   "type": "module",
   "description": "Turn audio, YouTube and MIDI into an interactive falling-note piano roll with realistic piano playback and video export.",
   "scripts": {

@@ -4,12 +4,23 @@
  * font or library (and check the licence allows redistribution from a public website).
  */
 /**
- * Where the source code of Piano2Vision is published (GNU AGPL-3.0-or-later, see LICENSE). Linked from the sidebar,
- * Settings, the Accuracy page and the Credits page to offer the source to every user (AGPL section 13). If you run a
- * modified version, point this at your own source.
+ * Where the source code of Piano2Vision is published (GNU AGPL, version 3 or later; the homr sheet-music reader
+ * in src/lib/omr/homr is version 3 only; see LICENSE). Linked from the sidebar, Settings, the Accuracy page and the
+ * Credits page to offer the source to every user (AGPL section 13). If you run a modified version, point this at
+ * your own source.
  */
-export const SOURCE_CODE_URL = 'https://github.com/ItsCats/audio-2-piano-roll';
+export const SOURCE_REPO_URL = 'https://github.com/ItsCats/audio-2-piano-roll';
+/**
+ * The commit this build was made from: VITE_COMMIT, or Netlify's COMMIT_REF (vite.config.ts passes it in), so the
+ * source link shows exactly the code being served. Empty in local builds: the link then opens the repository.
+ */
+export const SOURCE_COMMIT: string = ((c: unknown) => (typeof c === 'string' && /^[0-9a-f]{7,40}$/i.test(c.trim()) ? c.trim() : ''))(import.meta.env?.VITE_COMMIT);
+export const SOURCE_CODE_URL = SOURCE_COMMIT ? `${SOURCE_REPO_URL}/tree/${SOURCE_COMMIT}` : SOURCE_REPO_URL;
 export const SOURCE_CODE_LABEL = 'Source code (AGPL-3.0)';
+/** Shown next to the license and warranty notices (Terms, Credits). */
+export const COPYRIGHT_LINE = 'Copyright (C) 2026 Jack Anderson. The homr sheet-music reader: Copyright the homr contributors, port Copyright the Piano2Vision contributors.';
+/** The license in words (README, Terms, Credits footer, THIRD_PARTY_NOTICES.md say the same). */
+export const LICENSE_WORDS = 'version 3 or later; the homr sheet-music reader is version 3 only';
 
 export interface Credit {
   name: string;
