@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { LEAD_RECOVERY, capDensity, freshCandidates, overtoneCandidates, recoverLead, splitRestrikes } from '../../src/lib/music/leadRecovery';
 import { mergeMelody } from '../../src/lib/music/melody';
 import { generateAllArrangements, withoutHardOnly } from '../../src/lib/music/difficulty';
-import { EXTRACTION_PRESETS, LEAD_PASS, accompFromRaw, leadPassParams, leadWorkerOptions, onsetPeak, sungRanges, withLeadPass } from '../../src/lib/transcription/pipeline';
+import { EXTRACTION_PRESETS, LEAD_PASS, accompFromRaw, heldEnd, leadPassParams, leadWorkerOptions, onsetPeak, sungRanges, withLeadPass } from '../../src/lib/transcription/pipeline';
 import { BP_N_PITCHES, frameToTime, timeToFrame } from '../../src/lib/transcription/constants';
 import type { RawNoteEvent } from '../../src/lib/transcription/noteExtraction';
 import type { Note, TempoInfo } from '../../src/lib/music/types';
@@ -154,14 +154,30 @@ describe('lead recovery', () => {
     expect(splitRestrikes([held], [again], LEAD_RECOVERY, () => ({ mean: 0.5, spread: 0, onset: 0.8, rise: 0.3 }), [[0.4, 0.6]])).toEqual([held]);
   });
 
-  it('reads the onset peak of a note', () => {
+  it('reads the onset peak and holds a note while its frame posterior stays above the off level', () => {
     const n = 300;
+    const frames = new Float32Array(n * BP_N_PITCHES);
     const onsets = new Float32Array(n * BP_N_PITCHES);
     const f = 79 - 21;
     const t0 = timeToFrame(1);
+    const t1 = timeToFrame(1.3);
+    const t2 = timeToFrame(2);
+    for (let t = t0; t < t1; t++) frames[t * BP_N_PITCHES + f] = 0.6;
+    for (let t = t1; t < t2; t++) frames[t * BP_N_PITCHES + f] = 0.25; // under the detection threshold, above the off level
     onsets[t0 * BP_N_PITCHES + f] = 0.8;
-    expect(onsetPeak(onsets, n, note(79, frameToTime(t0), 0.3))).toBeCloseTo(0.8);
+    const g = note(79, frameToTime(t0), frameToTime(t1) - frameToTime(t0));
+    expect(onsetPeak(onsets, n, g)).toBeCloseTo(0.8);
     expect(onsetPeak(onsets, n, note(79, 2.5, 0.2))).toBe(0);
+    const end = heldEnd(frames, onsets, n, g, 3);
+    expect(end).toBeGreaterThan(1.9);
+    expect(end).toBeLessThan(2.05);
+    expect(heldEnd(frames, onsets, n, g, 1.6)).toBeLessThanOrEqual(1.6); // capped
+    // a new attack of the pitch ends the hold there
+    const ra = timeToFrame(1.6);
+    onsets[ra * BP_N_PITCHES + f] = 0.9;
+    expect(heldEnd(frames, onsets, n, g, 3)).toBeCloseTo(frameToTime(ra), 5);
+    // nothing to hold
+    expect(heldEnd(frames, onsets, n, note(60, 1, 0.3), 3)).toBe(1.3);
   });
 
   it('sung phrases as merged time ranges', () => {

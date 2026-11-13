@@ -30,6 +30,7 @@ import { estimateTempo } from '../music/beats';
 import { detectKey } from '../music/theory';
 import { extractMelodyLine, mergeMelody } from '../music/melody';
 import { recoverLead } from '../music/leadRecovery';
+import { sustainTuneLine } from '../music/sustain';
 import type { StoredPosteriors } from './posteriors';
 import { isMemoryConstrained, pageDeviceInfo } from './backendChoice';
 import { DRUM_ENV_FPS, longReason, separateStems, separationSupport, stemsFromBlobs, type SeparationResult } from '../separation';
@@ -418,6 +419,42 @@ export function onsetPeak(onsets: Uint8Array | Float32Array, nFrames: number, n:
   return onsets instanceof Uint8Array ? m / 255 : m;
 }
 
+/** Posterior thresholds of heldEnd (music/sustain.ts): the "off" level and a new attack's onset. */
+export const HOLD = { low: 0.2, restrike: 0.75 };
+
+/**
+ * End (s) of a note held while its pitch's frame posterior (median of 5 frames) stays at `low` or
+ * above, scanning from its detected end to at most `limit`; a new attack of the pitch (onset
+ * posterior at `restrike` or above, past the first 2 frames) stops it. The note's own end when it
+ * is not held.
+ */
+export function heldEnd(
+  frames: Uint8Array | Float32Array,
+  onsets: Uint8Array | Float32Array | undefined,
+  nFrames: number,
+  n: Note,
+  limit: number,
+  rule = HOLD,
+): number {
+  const f = n.midi - BP_MIDI_OFFSET;
+  const end = n.start + n.dur;
+  if (f < 0 || f >= BP_N_PITCHES || nFrames < 1) return end;
+  const P = BP_N_PITCHES;
+  const fs = frames instanceof Uint8Array ? 255 : 1;
+  const os = onsets instanceof Uint8Array ? 255 : 1;
+  const low = rule.low * fs;
+  const at = (t: number) => frames[Math.max(0, Math.min(nFrames - 1, t)) * P + f];
+  const med = (t: number) => {
+    const w = [at(t - 2), at(t - 1), at(t), at(t + 1), at(t + 2)].sort((a, b) => a - b);
+    return w[2];
+  };
+  const t0 = Math.min(nFrames - 1, timeToFrame(end + ONSET_LATENCY));
+  const tMax = Math.min(nFrames - 1, timeToFrame(limit + ONSET_LATENCY));
+  let t = t0;
+  while (t < tMax && med(t) >= low && !(onsets && t > t0 + 2 && onsets[t * P + f] >= rule.restrike * os)) t++;
+  return t > t0 ? Math.min(limit, frameToTime(t) - ONSET_LATENCY) : end;
+}
+
 /**
  * The lead-recovery pass of detection parameters with ExtractionParams.leadPass set: LEAD_PASS,
  * unless the main pass is already at least as sensitive (frame threshold and minimum note length
@@ -514,7 +551,16 @@ export function accompFromRaw(
     ...(melody.length ? { exclude: sungRanges(melody) } : {}),
     hardOnly: true,
   });
-  return { notes, main };
+  // with a sung line the singer carries the tune: nothing is held (holding the instruments' tune in
+  // the singer's pauses lowered the 5 sung test songs' voicing-counted Easy / Medium accuracy)
+  if (!frames || !nFrames || melody.length) return { notes, main };
+  // the tune line's notes held while the model still hears them (music/sustain.ts)
+  const held = sustainTuneLine(notes, duration, {
+    heldEnd: (n, limit) => heldEnd(frames, onsets, nFrames, n, limit),
+    ...(onsets ? { onset: (n: Note) => onsetPeak(onsets, nFrames, n) } : {}),
+    rise: (n) => frameRise(frames, nFrames, timeToFrame(n.start + ONSET_LATENCY), n.midi),
+  });
+  return { notes: held, main };
 }
 
 /** Turn raw model note events into cleaned, hand-assigned notes. */
