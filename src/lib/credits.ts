@@ -43,6 +43,8 @@ const LIC = {
   cc0: 'https://creativecommons.org/publicdomain/zero/1.0/',
   bsd3: 'https://opensource.org/license/bsd-3-clause',
   unlicense: 'https://unlicense.org/',
+  agpl3: 'https://www.gnu.org/licenses/agpl-3.0.html',
+  ccbync4: 'https://creativecommons.org/licenses/by-nc/4.0/',
 };
 
 export const CREDITS: CreditGroup[] = [
@@ -86,6 +88,42 @@ export const CREDITS: CreditGroup[] = [
         licenseUrl: LIC.mit,
         url: 'https://github.com/marl/crepe',
         note: 'Converted to ONNX by us from torchcrepe’s “tiny” weights (see public/models/crepe/README.md).',
+      },
+      {
+        name: 'homr',
+        use: 'Reads printed sheet music from PDFs and photos: finds the staffs, notes, bar lines and clefs, then transcribes each staff (the default sheet-music reader). Downloaded only when you first read a PDF or photo.',
+        author: 'Christian Liebhardt and the homr contributors',
+        license: 'AGPL-3.0-only (code and model weights)',
+        licenseUrl: LIC.agpl3,
+        url: 'https://github.com/liebharc/homr',
+        note: 'homr 0.7.1, licensed under version 3 of the AGPL only. Changed by the Piano2Vision contributors in 2026: we ported its image analysis and MusicXML writer from Python to TypeScript (src/lib/omr/homr, AGPL-3.0-only, published with this app’s source) and run its three networks with ONNX Runtime Web; the segmentation weights are stored as 16-bit floats and the encoder with 8-bit weights to halve the download; title recognition (OCR) is left out. The original model files: github.com/liebharc/homr/releases/tag/onnx_checkpoints. Includes homr’s page joining, which is based on relieur by Papoteur and contributors (Apache-2.0). See src/lib/omr/homr/README.md and public/models/homr/README.md.',
+      },
+      {
+        name: 'OpenCV (ported functions)',
+        use: 'The image operations the sheet-music reader needs (contours, convex hulls, rotated boxes, ellipse fitting, the Subdiv2D triangulation, polygon filling, CLAHE, resizing, morphology, blurring, warping), rewritten in TypeScript with OpenCV’s algorithms so the results match homr’s.',
+        author: 'Intel Corporation, Willow Garage, NVIDIA, Itseez, Advanced Micro Devices and the OpenCV contributors',
+        license: '3-clause BSD and Apache-2.0',
+        licenseUrl: LIC.bsd3,
+        url: 'https://github.com/opencv/opencv',
+        note: 'Ported from OpenCV 4.x imgproc (no OpenCV code is downloaded). Copyright notices and license: src/lib/omr/homr/LICENSE-OpenCV.txt.',
+      },
+      {
+        name: 'Pillow (ported bicubic resize)',
+        use: 'Scaling each page to the size the sheet-music reader expects, with the same filter as homr.',
+        author: 'Secret Labs AB, Fredrik Lundh, Jeffrey A. Clark and contributors',
+        license: 'MIT-CMU',
+        licenseUrl: 'https://github.com/python-pillow/Pillow/blob/main/LICENSE',
+        url: 'https://python-pillow.org',
+        note: 'Pillow’s bicubic resampling rewritten in TypeScript. Copyright notices and license: src/lib/omr/homr/LICENSE-Pillow.txt.',
+      },
+      {
+        name: 'Training data of the homr models',
+        use: 'The data homr’s authors trained its networks on (not included in the app).',
+        author: 'DeepScoresV2 (Tuggener et al.; CC BY 4.0) for the segmentation; OpenScore Lieder and String Quartets (CC0), GrandStaff (Ríos-Vila et al.), Camera-PrIMuS (Calvo-Zaragoza, Rizo), PDMX (public-domain subset) and the MuseTrainer library for the transcription',
+        license: 'Mixed; Camera-PrIMuS: CC BY-NC 4.0 (non-commercial)',
+        licenseUrl: LIC.ccbync4,
+        url: 'https://github.com/liebharc/homr/blob/main/LICENSE_FAQ.md',
+        note: 'The transcription model was partly trained on Camera-PrIMuS, whose published copy is licensed for non-commercial use only. Piano2Vision is free and non-commercial; anyone reusing these weights should check homr’s license FAQ.',
       },
       {
         name: 'Sheet Music Transformer (SMT)',
