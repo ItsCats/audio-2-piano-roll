@@ -156,8 +156,8 @@ async function getModel(req: RunRequest, progress: (m: Omit<ProgressMessage, 'ty
 
 /** Most spines a piano system plausibly needs (two staves, a few voices each). */
 const MAX_SPINES = 10;
-/** Consecutive lines with nothing but '.' after which the output is a runaway. */
-const MAX_EMPTY_LINES = 6;
+/** Consecutive lines with nothing but '.' after which the output is a runaway (the model writes a few as spacers). */
+const MAX_EMPTY_LINES = 32;
 
 /**
  * Greedy decoding with the key/value cache. Stops at <eos>, at MAX_STEPS, or when the model is
