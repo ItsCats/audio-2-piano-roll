@@ -11,7 +11,7 @@ declare global {
   interface Window {
     support: () => unknown;
     makePiece: (seed: number) => Promise<{ notes: number; png: string }>;
-    readPage: (threads?: number) => Promise<unknown>;
+    readPage: (threads?: number, lowMemory?: boolean) => Promise<unknown>;
     readAbort: () => Promise<unknown>;
     readRaw: (url: string, w: number, h: number, threads?: number) => Promise<unknown>;
     readUrl: (url: string, o?: { threads?: number; release?: boolean; quad?: [number, number][] | null }) => Promise<unknown>;
@@ -136,22 +136,28 @@ function score(xml: string) {
   );
 }
 
-window.readPage = async (threads) => {
+window.readPage = async (threads, lowMemory = false) => {
   if (!page) throw new Error('no page');
   let progressMax = 0;
   let last = 0;
   let monotonic = true;
   const stages = new Set<string>();
+  let downloadTotal = 0;
+  let pageLines = 0;
   const t0 = performance.now();
   const bitmap = await createImageBitmap(page);
   const res = await homrEngine.readPages([bitmap], {
     threads,
     title: 'Study',
+    lowMemory,
+    release: lowMemory || undefined,
     onProgress: (p) => {
       if (p.progress + 1e-9 < last) monotonic = false;
       last = p.progress;
       progressMax = Math.max(progressMax, p.progress);
       stages.add(p.stage);
+      if (p.stage === 'loading-model') downloadTotal = Math.max(downloadTotal, p.total ?? 0);
+      if (p.stage === 'reading') pageLines = Math.max(pageLines, p.pageLines ?? 0);
     },
   });
   bitmap.close();
@@ -165,6 +171,9 @@ window.readPage = async (threads) => {
     progressMax: +progressMax.toFixed(3),
     monotonic,
     stages: [...stages],
+    downloadTotal,
+    pageLines,
+    musicXml: res.musicXml,
     titled: res.musicXml.includes('<work-title>Study</work-title>'),
   };
 };

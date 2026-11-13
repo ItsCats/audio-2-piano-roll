@@ -18,9 +18,19 @@ Cache API (`src/lib/omr/homr/worker.ts`, sha256-checked).
 | Transformer encoder | `encoder.int8.onnx`, 17,142,614 bytes, 2 pieces | `encoder_pytorch_model_509-2293bba14bfea47d9d28411339362af15fce4c31.onnx` (52,861,122 bytes) | onnxruntime dynamic quantisation of MatMul / Gemm weights to int8 |
 | Transformer decoder (with key/value cache) | `decoder.int8.onnx`, 47,356,003 bytes, 5 pieces | `decoder_pytorch_model_509-2293bba14bfea47d9d28411339362af15fce4c31.onnx` | none (homr ships it with int8 weights already) |
 
+**Where the originals come from:** homr's release `onnx_checkpoints`,
+https://github.com/liebharc/homr/releases/tag/onnx_checkpoints (the files homr 0.7.1 downloads on first
+run, from `https://github.com/liebharc/homr/releases/download/onnx_checkpoints/`; homr's
+`homr/main.py` `download_weights`). The port follows homr 0.7.1 as published on PyPI (source:
+https://github.com/liebharc/homr). homr licenses them under the AGPL version 3 only (`AGPL-3.0` in its
+`pyproject.toml`, no "or any later version").
+
 Total download 93.2 MB. Each piece (`*.partN.bin`) is under Netlify's 10 MB per file; the sizes and
 sha256 of the joined files are in `src/lib/omr/homr/manifest.ts`. Made with `tests/homr/convert_models.py`
-and `tests/homr/package_models.py` (onnx 1.23.2, onnxruntime 1.31.1).
+and `tests/homr/package_models.py` (onnx 1.23.2, onnxruntime 1.31.1); these scripts are part of the
+corresponding source of the converted files. In the browser the float16 weights are expanded back to
+float32 before onnxruntime builds the session (`src/lib/omr/homr/fp16w.ts`): the same numbers as the
+in-graph casts, but a lower peak of memory (the casts' constant folding briefly needs both copies).
 
 Why these variants (OMR test set below, Python homr, notes F1 per category):
 
@@ -69,7 +79,12 @@ paper itself).
 | pages with identical MusicXML (same models) | 12/12 | 6/6 | 12/12 | 4/6 |
 
 The two real photos whose MusicXML is not identical have the same notes and rhythm; each differs in one
-articulation (an accent; staccato instead of staccatissimo). Their class maps and staff images are identical
+articulation (an accent; staccato instead of staccatissimo). On harder input the same cause can also
+change a rhythm: on a real photo scaled down to 900 px wide (not in the test set), one staff came out as
+eighths in the port and as a triplet group in Python homr (notes F1 against the answer key 0.998 vs 0.996,
+rhythm 0.986 vs 0.863, so the port was not worse there); with the float32 encoder both agree. So the port
+and Python homr agree on the notes, but with the int8 encoder their output is not guaranteed identical;
+an encoder with float16 weights (+9 MB) would make it so. Their class maps and staff images are identical
 to Python homr's; the difference comes from the int8 encoder: onnxruntime-web's WASM kernels and native
 onnxruntime quantize the activations with different rounding, so the two encoder outputs differ by up to
 0.25 (the float32 encoder agrees to 1e-4), and the decoder's articulation choice on those two notes had a

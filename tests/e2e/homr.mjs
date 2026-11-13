@@ -6,7 +6,7 @@
  * Fails if notes F1 < 0.95, if progress never reaches the end or goes backwards, or if cancelling does
  * not stop the job within 3 s. Also prints the time per page and the browser's peak memory.
  *
- *   node tests/e2e/homr.mjs [--port 5183] [--seed 7] [--threads 3,1] [--no-coi] [--png OUT.png] [--timeout-min 20]
+ *   node tests/e2e/homr.mjs [--port 5183] [--seed 7] [--threads 3,1] [--no-coi] [--no-low] [--png OUT.png] [--timeout-min 20]
  *
  * The first run downloads the model files from public/models/homr/ (~93 MB).
  */
@@ -87,19 +87,26 @@ try {
   const piece = await page.evaluate((s) => window.makePiece(s), seed);
   console.log(`piece    seed ${seed}: ${piece.notes} notes`);
   if (pngOut) fs.writeFileSync(pngOut, Buffer.from(piece.png.split(',')[1], 'base64'));
-  for (const threads of threadList) {
-    // two runs per thread count: the first may download / compile, the second is the steady state
-    for (const run of [1, 2]) {
-      const base = browserPid ? browserRssMB(browserPid) : 0;
-      let peak = base;
-      const timer = browserPid ? setInterval(() => (peak = Math.max(peak, browserRssMB(browserPid))), 250) : null;
-      const r = await withTimeout(page.evaluate((t) => window.readPage(t), threads), `read (${threads} threads)`);
-      if (timer) clearInterval(timer);
-      console.log(`read     threads ${threads} run ${run}: ${JSON.stringify(r)} browser RSS peak ${Math.round(peak)} MB (+${Math.round(peak - base)} MB)`);
-      check(r.notesF1 >= THRESH.notesF1, `notes F1 (threads ${threads})`, `${r.notesF1} >= ${THRESH.notesF1} (rhythm ${r.rhythmF1})`);
-      check(r.progressMax >= 0.99 && r.monotonic && r.stages.includes('reading'), `progress (threads ${threads})`, `${r.progressMax} ${r.stages.join(',')}`);
-      check(r.titled, 'title in the MusicXML');
-    }
+  let reference = null;
+  let runs = 0;
+  // two runs per thread count (the first may download / compile, the second is the steady state), then
+  // one in low-memory mode (phones: one network at a time), which must give the same MusicXML
+  const plan = [...threadList.flatMap((t) => [[t, false], [t, false]]), ...(flag('no-low') ? [] : [[1, true]])];
+  for (const [threads, low] of plan) {
+    const base = browserPid ? browserRssMB(browserPid) : 0;
+    let peak = base;
+    const timer = browserPid ? setInterval(() => (peak = Math.max(peak, browserRssMB(browserPid))), 250) : null;
+    const { musicXml, ...r } = await withTimeout(page.evaluate(([t, l]) => window.readPage(t, l), [threads, low]), `read (${threads} threads)`);
+    if (timer) clearInterval(timer);
+    runs++;
+    console.log(`read     threads ${threads}${low ? ' low-memory' : ''} run ${runs}: ${JSON.stringify(r)} browser RSS peak ${Math.round(peak)} MB (+${Math.round(peak - base)} MB)`);
+    check(r.notesF1 >= THRESH.notesF1, `notes F1 (threads ${threads})`, `${r.notesF1} >= ${THRESH.notesF1} (rhythm ${r.rhythmF1})`);
+    check(r.progressMax >= 0.99 && r.monotonic && r.stages.includes('reading'), `progress (threads ${threads})`, `${r.progressMax} ${r.stages.join(',')}`);
+    check(r.pageLines > 0, 'progress reports the lines of the page (pageLine / pageLines)', String(r.pageLines));
+    if (runs > 1) check(r.downloadTotal === 0, 'models from the cache report total 0 (no download)', String(r.downloadTotal));
+    check(r.titled, 'title in the MusicXML');
+    if (reference === null) reference = musicXml;
+    else check(musicXml === reference, `same MusicXML as the first run (threads ${threads}${low ? ', low-memory' : ''})`);
   }
   const ab = await withTimeout(page.evaluate(() => window.readAbort()), 'cancel');
   check(ab.rejected && ab.name === 'AbortError' && ab.rejectAfterAbortMs <= THRESH.abortMs, 'cancel  ', JSON.stringify(ab));

@@ -8,13 +8,15 @@
  *   npx vitest run --config tests/homr/vitest.parity.config.ts
  *
  * (raw images: tests/homr/to_raw.py, decoded by OpenCV like homr does; HOMR_QUADS=<dir> straightens
- * photos to the page corners in <dir>/<cat>/<name>.quad.json first, as after the app's corner screen)
+ * photos to the page corners in <dir>/<cat>/<name>.quad.json first, as after the app's corner screen;
+ * HOMR_LOW=1 runs the worker's low-memory mode: one network at a time, one window per segmentation run)
  */
 import { it } from 'vitest';
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import * as ort from 'onnxruntime-web';
-import { ortInfer, type InferStats } from '../../src/lib/omr/homr/ort';
+import { expandFp16Weights } from '../../src/lib/omr/homr/fp16w';
+import { ortInfer, stagedInfer, type InferStats, type SessionName } from '../../src/lib/omr/homr/ort';
 import { straighten } from '../../src/lib/omr/homr/page';
 import type { Quad } from '../../src/lib/omr/homr/protocol';
 import { readPage, pagesToMusicXml, type PageDump } from '../../src/lib/omr/homr/pipeline';
@@ -36,11 +38,10 @@ it('homr TypeScript port on the test set', { timeout: 24 * 3600 * 1000 }, async 
     return readFileSync(v.startsWith('/') ? v : join(MODELS, v));
   };
   const opt = { executionProviders: ['wasm'], graphOptimizationLevel: 'all' as const, enableCpuMemArena: false, enableMemPattern: false };
-  const sessions = {
-    segnet: await ort.InferenceSession.create(file('segnet'), opt),
-    encoder: await ort.InferenceSession.create(file('encoder'), opt),
-    decoder: await ort.InferenceSession.create(file('decoder'), opt),
-  };
+  // as the worker: float16-stored weights expanded first, the decoder on one thread
+  const create = (name: SessionName) => ort.InferenceSession.create(expandFp16Weights(new Uint8Array(file(name))), name === 'decoder' ? { ...opt, intraOpNumThreads: 1 } : opt);
+  const low = !!process.env.HOMR_LOW;
+  const sessions = low ? null : { segnet: await create('segnet'), encoder: await create('encoder'), decoder: await create('decoder') };
   for (const cat of CATS) {
     const dir = join(RAW, cat);
     mkdirSync(join(OUT, cat), { recursive: true });
@@ -58,7 +59,9 @@ it('homr TypeScript port on the test set', { timeout: 24 * 3600 * 1000 }, async 
         let page = { w, h, c: 3, d };
         const qf = join(QUADS, cat, `${name}.quad.json`);
         if (QUADS && existsSync(qf)) page = straighten(page, JSON.parse(readFileSync(qf, 'utf8')) as Quad);
-        const r = await readPage(page, ortInfer(ort, sessions, stats), { dump });
+        const infer = sessions ? ortInfer(ort, sessions, stats) : stagedInfer(ort, create, stats);
+        const r = await readPage(page, infer, { dump, segBatch: low ? 1 : undefined });
+        if ('release' in infer) await infer.release();
         xml = pagesToMusicXml([r.xml]);
         writeFileSync(join(OUT, cat, `${name}.musicxml`), xml);
       } catch (e) {
