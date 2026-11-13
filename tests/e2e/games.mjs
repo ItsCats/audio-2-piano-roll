@@ -4,7 +4,7 @@
  * CSP, COOP/COEP).
  *
  *   npx vite build --outDir /tmp/p2v-dist
- *   node tests/e2e/games.mjs --dist /tmp/p2v-dist [--port 5397] [--shots DIR] [--seconds 60] [--only iphone|desktop]
+ *   node tests/e2e/games.mjs --dist /tmp/p2v-dist [--port 5397] [--shots DIR] [--seconds 60] [--only iphone|desktop|landscape]
  *   node tests/e2e/games.mjs --dist /tmp/p2v-dist --perf [--runs 2] [--seconds 30] [--only desktop|iphone] [--throttle 4] [--dsf 1]
  *
  * Test (iPhone 14 and desktop 1440×900): a synthetic solo-piano WAV (made here) is imported with the
@@ -15,6 +15,9 @@
  * import (the model download made to fail after 22 s) says "The import failed" over the game. No
  * console errors, no CSP violations, the page stays cross-origin isolated, no sideways scroll, the
  * games' code is its own chunk loaded only when opened, and only new localStorage keys are written.
+ * iPhone also: the whole layer blocks double-tap zoom. Desktop also: Space hops after clicking a
+ * top-bar button. iPhone held sideways: Key Snake's board stays playable with the arrow pad beside it,
+ * and games closed before the import ends let it open the Studio by itself as before.
  *
  * --perf: the same file imported back to back without and with a game running (taps keep Note Hopper
  * going, restarting after each crash), alternating, in one browser context after a warm-up import
@@ -42,7 +45,7 @@ const seconds = Number(opt('seconds', perf ? '30' : '60'));
 const runs = Number(opt('runs', '2'));
 const throttle = Number(opt('throttle', '0'));
 if (!dist || !fs.existsSync(path.join(dist, 'index.html'))) {
-  console.error('usage: node tests/e2e/games.mjs --dist BUILD_DIR [--perf] [--port N] [--shots DIR] [--seconds N] [--only iphone|desktop]');
+  console.error('usage: node tests/e2e/games.mjs --dist BUILD_DIR [--perf] [--port N] [--shots DIR] [--seconds N] [--only iphone|desktop|landscape]');
   process.exit(2);
 }
 fs.mkdirSync(shots, { recursive: true });
@@ -112,6 +115,8 @@ const browser = await chromium.launch();
 const DEVICES = {
   desktop: { viewport: { width: 1440, height: 900 }, deviceScaleFactor: Number(opt('dsf', '2')) },
   iphone: { ...devices['iPhone 14'], deviceScaleFactor: 2 },
+  // held sideways: 844×390 screen, about 750×340 left for the page
+  'iphone-landscape': { ...devices['iPhone 14 landscape'], deviceScaleFactor: 2 },
 };
 
 async function newPage(contextOpts) {
@@ -225,6 +230,37 @@ async function scenario(dev) {
   await page.getByRole('button', { name: /Note Hopper/ }).click();
   await page.locator('[role="application"]').waitFor();
   await page.waitForTimeout(300);
+  if (dev === 'iphone') {
+    // no double-tap zoom or pinch anywhere: every point of the layer sits in something with touch-action set
+    const loose = await page.evaluate(() => {
+      const out = [];
+      for (let y = 5; y < innerHeight; y += 37)
+        for (let x = 3; x < innerWidth; x += 29) {
+          let el = document.elementFromPoint(x, y);
+          let ok = false;
+          for (; el; el = el.parentElement) {
+            if (/none|manipulation/.test(getComputedStyle(el).touchAction)) ok = true;
+            if (el.getAttribute('role') === 'dialog') break;
+          }
+          if (!ok) out.push([x, y]);
+        }
+      return out;
+    });
+    check(`${dev}: the whole layer blocks double-tap zoom (touch-action)`, loose.length === 0, loose.slice(0, 5));
+  } else {
+    // a mouse click on a top-bar button leaves the focus on the board: Space then hops (not that button again)
+    await page.getByRole('button', { name: 'Turn sound off' }).click();
+    await page.keyboard.press('Space');
+    await page.waitForTimeout(150);
+    const soundStillOff = (await page.getByRole('button', { name: 'Turn sound on' }).count()) === 1;
+    const hopped = (await page.getByText('Space, ↑ or click to hop').count()) === 0;
+    check(`${dev}: Space hops after clicking the sound button`, soundStillOff && hopped, { soundStillOff, hopped });
+    await page.getByRole('button', { name: 'Turn sound on' }).click();
+    await waitFor(async () => (await page.getByText('Game over').count()) > 0, 15000);
+    await page.waitForTimeout(700);
+    await page.getByRole('button', { name: 'Play again' }).click();
+    await page.waitForTimeout(200);
+  }
   const raf0 = await page.evaluate(() => window.__raf);
   await tapStage(page, dev, 6, 260);
   if (dev === 'iphone') await shot(page, 'note-hopper-phone');
@@ -307,6 +343,41 @@ async function scenario(dev) {
   check(`${dev}: the sound setting was kept`, lsAfter.includes('piano2vision-game-sound'));
   const csp = await page.evaluate(() => window.__csp);
   check(`${dev}: no CSP violations`, csp.length === 0, csp);
+  check(`${dev}: no console errors`, errors.length === 0, errors);
+  await ctx.close();
+}
+
+/**
+ * iPhone held sideways: Key Snake's board must stay playable (the arrow pad sits beside it); then the
+ * games are closed while the import still runs, and the finished import opens the Studio by itself as
+ * it did before games existed.
+ */
+async function landscapeScenario() {
+  const dev = 'iphone-landscape';
+  const { ctx, page, errors } = await newPage(DEVICES[dev]);
+  const t0 = await startImport(page);
+  await waitFor(async () => (await playBtn(page).count()) > 0, 30000);
+  await playBtn(page).click();
+  await page.getByRole('button', { name: /Key Snake/ }).click();
+  await page.locator('[role="application"]').waitFor();
+  await page.waitForTimeout(400);
+  const b = await stageBox(page);
+  const pad = await page.getByRole('button', { name: 'Right', exact: true }).boundingBox();
+  check(`${dev}: Key Snake's board is big enough to play`, b.height >= 180 && b.width >= 300, { width: Math.round(b.width), height: Math.round(b.height) });
+  check(`${dev}: the arrow pad sits beside the board`, !!pad && pad.x >= b.x + b.width, pad ?? undefined);
+  await swipe(page, { x: b.x + b.width / 2, y: b.y + b.height / 2 }, { x: b.x + b.width / 2, y: b.y + b.height / 2 - 60 });
+  await page.waitForTimeout(300);
+  check(`${dev}: a swipe starts Key Snake`, (await page.getByText('Swipe or use the arrows to steer').count()) === 0);
+  await page.getByRole('button', { name: 'Right', exact: true }).tap();
+  await page.waitForTimeout(300);
+  await shot(page, 'key-snake-phone-landscape');
+  check(`${dev}: no sideways scroll`, (await sideScroll(page)) <= 0);
+  // close while the import still runs → back on the card; when it finishes, off to the Studio as before
+  await page.getByRole('button', { name: 'Close games' }).first().click();
+  await page.waitForTimeout(500);
+  check(`${dev}: closing returns to the import card`, (await dialog(page).count()) === 0 && (await page.locator('[data-import-card]').count()) === 1);
+  const jumped = await waitFor(async () => /\/studio\//.test(page.url()), 10 * 60_000, 500);
+  check(`${dev}: games closed before the end → the finished import opens the Studio by itself`, !!jumped, { seconds: +((Date.now() - t0) / 1000).toFixed(1) });
   check(`${dev}: no console errors`, errors.length === 0, errors);
   await ctx.close();
 }
@@ -455,6 +526,7 @@ try {
     for (const dev of ['desktop', 'iphone']) if (!only || only === dev) await perfRuns(dev);
   } else {
     for (const dev of ['iphone', 'desktop']) if (!only || only === dev) await scenario(dev);
+    if (!only || only === 'iphone' || only === 'landscape') await landscapeScenario();
     if (!only || only === 'desktop') await failScenario();
   }
   check('server: no duplicate COOP/COEP headers', !/DUPLICATE/.test(serverLog));
