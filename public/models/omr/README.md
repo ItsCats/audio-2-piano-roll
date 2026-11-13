@@ -52,6 +52,33 @@ GrandStaff checkpoint trained for clean pages, so only it is shipped. With autom
 screen) the shipped pipeline reaches 0.83 on the made-up photos and 0.50 on the real photos (two of six get
 a wrong corner; the prototype: 0.68 over all photos), so the app lets people adjust the corners.
 
+### Held-out re-measurement after an independent review (2026-11-13)
+
+The numbers above come from the pages the reader was tuned on. An independent review generated 16 new
+pieces in code (B / D-flat / A-flat / E-flat major, f# / g / a / c# minor; 6/8, 12/8, 2/4, 2/2; 16th runs,
+chorale, ties across bars, triplets, octaves, left hand in treble clef, two voices, pickup, rests, ledger
+lines, two pages), engraved them with two programs (Verovio, as PNG and vector PDF; OSMD at non-default
+settings) and simulated photos of them. It found that **kern "spacer" lines (only `.`) were each taking a
+time step (pieces came out ~20% too long) and that the time-signature correction turned correct 3/4 and 4/4
+into wrong meters; both are fixed (src/lib/omr/kern.ts). Shipped pipeline after the fixes, notes F1 /
+rhythm F1, app defaults:
+
+| test set | notes / rhythm |
+|---|---|
+| new pieces, Verovio, vector PDF | 0.883 / 0.806 (was 0.714 rhythm) |
+| new pieces, Verovio, page images | 0.873 / 0.780 |
+| new pieces, OSMD | 0.896 / 0.827 |
+| new pieces, simulated phone photos, corners set | 0.869 / 0.768 |
+| new pieces, simulated photos, automatic corners | 0.763 / 0.679 (1 of 16: no music lines found) |
+| new pieces, harsh photos (page curl, blur, dim, JPEG q38–50), corners set | 0.318 / 0.185 |
+| tuning set: clean / real / photo / real photo | 0.926 / 0.840, 0.798 / 0.588, 0.909 / 0.835, 0.756 / 0.549 |
+| tuning set, automatic corners: photo / real photo | 0.834 / 0.742, 0.503 / 0.313 |
+
+Wrong time signatures on the 16 new PDFs: 6 before, 0 after. Known weak spots: notes on many ledger lines
+(F1 0.55–0.73 on the ledger-line piece), notes read twice (precision 0.84–0.88 against recall ~0.91),
+page curl (the staff finder splits curved systems), and a misread key signature (every sharp / flat a
+semitone off). Real phone photos have not been measured; the photo rows are simulations.
+
 Speed and memory (headless Chromium on a shared 4-core x86 box with other jobs running): a dense real page
 (4–5 systems, ~1400 model steps) takes 18–28 s with 3 threads and 31–36 s with 1 thread; a page of two
 systems 4–8 s. Almost all of it is the token-by-token decoder (~11–19 ms per step). The browser needs

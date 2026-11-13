@@ -198,6 +198,7 @@ function SheetReaderSection() {
       </h2>
       <p className="mb-3 max-w-3xl text-[12.5px] leading-relaxed text-ink-300">{SHEET_READER.intro}</p>
       <BeforeAfterTable rows={[...SHEET_READER.rows]} cols={['What was read', 'Notes right', 'Rhythm right']} even />
+      <Note>{SHEET_READER.metric}</Note>
       <Note>{SHEET_READER.speed}</Note>
       <Note>
         Songs read this way are labelled <b className="text-warn">Sheet music · Beta</b> in the Studio. Compare them with your page and fix mistakes in Edit

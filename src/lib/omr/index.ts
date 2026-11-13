@@ -383,14 +383,16 @@ async function pictureSize(file: Blob): Promise<{ w: number; h: number } | null>
 
 /**
  * Decodes a photo (JPEG / PNG / WebP / HEIC where the browser can), upright per its EXIF, as gray.
- * Large photos (48 MP phone pictures are 8000 × 6000) are decoded straight at the reading size, so the
- * full-size picture (~190 MB of pixels) is never held; browsers without createImageBitmap's resize
+ * Very large photos (48 MP phone pictures are 8000 × 6000) are decoded straight at the reading size, so
+ * the full-size picture (~190 MB of pixels) is never held; browsers without createImageBitmap's resize
  * options fall back to a full decode.
  */
 export async function loadPhoto(file: Blob, maxSide = PHOTO_MAX_SIDE): Promise<LoadedPhoto> {
   const size = await pictureSize(file).catch(() => null);
   let bmp: ImageBitmap | null = null;
-  if (size && Math.max(size.w, size.h) > maxSide) {
+  // only very large pictures take the resize path: up to twice the reading size (12 MP phone photos)
+  // the full decode is affordable and reads the same as it was measured
+  if (size && Math.max(size.w, size.h) > 2 * maxSide) {
     const fit = fitSize(size.w, size.h, maxSide);
     try {
       bmp = await createImageBitmap(file, { imageOrientation: 'from-image', resizeWidth: fit.w, resizeHeight: fit.h, resizeQuality: 'high' });

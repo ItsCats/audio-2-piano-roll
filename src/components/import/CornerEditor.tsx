@@ -155,7 +155,7 @@ export function CornerEditor({
           {label ?? 'Adjust the corners'}
         </p>
         <p className="text-[12.5px] text-ink-300">Drag the four dots onto the corners of the page, so only the music is inside.</p>
-        <p className="mt-0.5 text-[12px] text-ink-400">The page must lie flat and be sharp: a curved page or a blurry photo comes out wrong, even with the corners set.</p>
+        <p className="mt-0.5 text-[12px] text-ink-400">Lay the page flat and keep the photo sharp: curved pages and blurry photos come out wrong, even with the corners set.</p>
       </div>
       {/* side padding on phones: a dot at the photo's edge stays clear of the screen edge (the browser's back swipe) */}
       <div className="flex justify-center rounded-xl bg-black/40 px-5 py-2 select-none sm:px-2">
