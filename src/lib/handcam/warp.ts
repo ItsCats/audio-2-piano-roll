@@ -177,14 +177,20 @@ class GlWarper implements Warper {
     gl.clear(gl.COLOR_BUFFER_BIT);
   }
   dispose() {
-    try {
-      this.gl.deleteTexture(this.tex);
-      this.gl.deleteProgram(this.prog);
-      this.gl.getExtension('WEBGL_lose_context')?.loseContext();
-    } catch {
-      /* already gone */
-    }
     this.staging = null;
+    const gl = this.gl;
+    const { tex, prog } = this;
+    // released a moment later: it waits for the graphics process to finish its queue (seconds on a
+    // busy software GPU), and an export that was just canceled should show its buttons first
+    setTimeout(() => {
+      try {
+        gl.deleteTexture(tex);
+        gl.deleteProgram(prog);
+        gl.getExtension('WEBGL_lose_context')?.loseContext();
+      } catch {
+        /* already gone */
+      }
+    }, 50);
   }
 }
 
