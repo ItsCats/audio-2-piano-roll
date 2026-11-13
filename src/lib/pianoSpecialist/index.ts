@@ -14,6 +14,7 @@ import { isMemoryConstrained, isPhoneOrTablet, pageDeviceInfo, type DeviceInfo }
 import { wasmThreads } from '../isolation';
 import { PTI_CONSTRAINED_MAX_SECONDS, PTI_FPS, PTI_SAMPLE_RATE, planSegments, specialistMemoryMB } from './protocol';
 import type { ProgressStage, RunRequest, RunStats, WorkerResponse } from './protocol';
+import { watchWorker } from '../newVersion';
 
 export { PTI_SAMPLE_RATE, PTI_FPS, PTI_CONSTRAINED_MAX_SECONDS, specialistMemoryMB } from './protocol';
 export type { ProgressStage, RunStats } from './protocol';
@@ -201,7 +202,7 @@ function takeWorker(threads: number): Worker {
     warm = null;
     return w;
   }
-  return new Worker(new URL('./worker.ts', import.meta.url), { type: 'module', name: 'piano-specialist' });
+  return watchWorker(new Worker(new URL('./worker.ts', import.meta.url), { type: 'module', name: 'piano-specialist' }));
 }
 
 function parkWorker(worker: Worker, threads: number): void {

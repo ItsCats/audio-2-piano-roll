@@ -25,6 +25,7 @@ import { kernToMusicXml } from './musicxml';
 import { modelBytes, modelSpec } from './models';
 import { READER_STOPPED_MESSAGE } from './protocol';
 import type { ModelSpec, PageResult, RunRequest, RunStats, Stage, SystemResult, WorkerResponse } from './protocol';
+import { watchWorker } from '../newVersion';
 
 export type { Gray, Quad } from './image';
 export { detectPageQuad, orderQuad } from './page';
@@ -192,7 +193,7 @@ function takeWorker(threads: number): Worker {
     warm = null;
     return w;
   }
-  return new Worker(new URL('./worker.ts', import.meta.url), { type: 'module', name: 'sheet-reader' });
+  return watchWorker(new Worker(new URL('./worker.ts', import.meta.url), { type: 'module', name: 'sheet-reader' }));
 }
 
 function parkWorker(worker: Worker, threads: number): void {

@@ -35,6 +35,7 @@ import type { StoredPosteriors } from './posteriors';
 import { isMemoryConstrained, pageDeviceInfo } from './backendChoice';
 import { DRUM_ENV_FPS, longReason, separateStems, separationSupport, stemsFromBlobs, type SeparationResult } from '../separation';
 import { regressionToNotes, type RegressionOutputs } from '../pianoSpecialist/postprocess';
+import { watchWorker } from '../newVersion';
 // (protocol.ts is pure: the specialist's runtime itself is only loaded when it is used)
 
 /**
@@ -279,7 +280,7 @@ class TranscriberClient {
 
   private getWorker(): Worker {
     if (!this.worker) {
-      this.worker = new Worker(new URL('./inference.worker.ts', import.meta.url), { type: 'module' });
+      this.worker = watchWorker(new Worker(new URL('./inference.worker.ts', import.meta.url), { type: 'module' }));
       this.worker.onmessage = (ev: MessageEvent<WorkerResponse>) => this.handlers.get(ev.data.jobId)?.(ev.data);
       this.worker.onerror = (ev) => {
         const err: WorkerResponse = { type: 'error', jobId: -1, message: ev.message || 'Transcription worker crashed' };

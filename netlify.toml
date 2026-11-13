@@ -9,6 +9,26 @@
   directory = "netlify/functions"
   node_bundler = "esbuild"
 
+# Missing static files get a real, uncached 404 (netlify/functions/not-found.ts), not the app page.
+# These rules have no `force`, so files that exist are served as usual; they must stay ABOVE the
+# single-page-app rule. Test: tests/e2e/deploy-safe.mjs (tests/e2e/isolation.server.py follows them).
+[[redirects]]
+  from = "/assets/*"
+  to = "/.netlify/functions/not-found"
+  status = 200
+[[redirects]]
+  from = "/models/*"
+  to = "/.netlify/functions/not-found"
+  status = 200
+[[redirects]]
+  from = "/samples/*"
+  to = "/.netlify/functions/not-found"
+  status = 200
+[[redirects]]
+  from = "/pdfjs/*"
+  to = "/.netlify/functions/not-found"
+  status = 200
+
 # Single-page app routing
 [[redirects]]
   from = "/*"
