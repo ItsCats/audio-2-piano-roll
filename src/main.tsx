@@ -2,6 +2,10 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './index.css';
 import { App } from './App';
+import { installNewVersionReload } from './lib/newVersion';
+
+// an open tab from before a deploy reloads once when a part of the app it needs is gone
+installNewVersionReload();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

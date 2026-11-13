@@ -54,8 +54,8 @@ function BackendSettings() {
   return (
     <Section title="Processing server (optional)">
       <p className="text-[12.5px] leading-relaxed text-ink-300">
-        Transcription runs in your browser. A self-hosted processing server adds YouTube audio fetching and faster SCNet vocals &amp; drums
-        separation for full songs. See <code className="text-ink-100">server/README.md</code>.
+        Transcription runs in your browser. A self-hosted processing server adds faster SCNet vocals &amp; drums separation for full
+        songs. See <code className="text-ink-100">server/README.md</code>.
       </p>
       <div className="flex gap-2">
         <input
@@ -80,7 +80,7 @@ function BackendSettings() {
       {status.state === 'checking' && <p className="flex items-center gap-2 text-[12.5px] text-ink-300"><Loader2 size={14} className="animate-spin" /> Connecting…</p>}
       {status.state === 'ok' && status.health && (
         <p className="flex items-center gap-2 text-[12.5px] text-ok">
-          <CheckCircle2 size={14} /> Connected (v{status.health.version}) · YouTube {status.health.features.youtube ? '✓' : '✗'} · Separation{' '}
+          <CheckCircle2 size={14} /> Connected (v{status.health.version}) · Separation{' '}
           {status.health.features.separation ? (status.health.features.stems ? '✓ (SCNet stems)' : '✓ (old server without stems: update it)') : '✗'}
         </p>
       )}
@@ -213,7 +213,7 @@ export default function SettingsPage() {
               </Link>
             </p>
           </Section>
-          <Section title="Credits & licences">
+          <Section title="Credits & licenses">
             <ul className="flex flex-col gap-1 text-[12.5px] text-ink-300">
               <li>Basic Pitch note-detection model — Spotify (Apache-2.0)</li>
               <li>SCNet vocals &amp; drums separation model — Tong et al. (MIT)</li>
@@ -222,13 +222,23 @@ export default function SettingsPage() {
             </ul>
             <p className="mt-2 text-[12.5px] leading-relaxed text-ink-300">
               <Link to="/credits" className="text-accent-400 hover:text-accent-300">
-                All credits, licences and the test data we used →
+                All credits, licenses and the test data we used →
               </Link>
             </p>
             <p className="mt-1 text-[12.5px] leading-relaxed text-ink-300">
               <a href={SOURCE_CODE_URL} target="_blank" rel="noopener noreferrer" className="text-accent-400 hover:text-accent-300">
                 {SOURCE_CODE_LABEL}
               </a>
+            </p>
+          </Section>
+          <Section title="Privacy & terms">
+            <p className="text-[12.5px] leading-relaxed text-ink-300">
+              No account, no tracking: your songs stay on this device.
+            </p>
+            <p className="flex flex-wrap gap-x-4 gap-y-1 text-[12.5px]">
+              <Link to="/privacy" className="text-accent-400 hover:text-accent-300">Privacy</Link>
+              <Link to="/terms" className="text-accent-400 hover:text-accent-300">Terms of use</Link>
+              <Link to="/copyright" className="text-accent-400 hover:text-accent-300">Copyright</Link>
             </p>
           </Section>
         </div>

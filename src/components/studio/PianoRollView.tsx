@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { PracticeBadge } from './PracticeBadge';
 import { PianoRollRenderer, type EditOverlay } from '../../lib/render/renderer';
 import { midiAtX } from '../../lib/render/layout';
 import { useSettings } from '../../state/settingsStore';
@@ -390,6 +391,7 @@ export function PianoRollView() {
         aria-label="Piano roll"
         role="img"
       />
+      <PracticeBadge />
     </div>
   );
 }

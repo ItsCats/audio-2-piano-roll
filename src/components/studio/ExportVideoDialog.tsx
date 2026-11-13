@@ -10,6 +10,7 @@ import { effectiveRate, effectiveSound, exportTimeline, originalGain } from '../
 import { PianoRollRenderer } from '../../lib/render/renderer';
 import { VISUAL_THEMES, applyTheme } from '../../lib/render/settings';
 import { downloadBlob, safeFileName } from '../../lib/export/downloads';
+import { showExportNoticeOnce } from '../../lib/exportNotice';
 import { formatTime } from '../../lib/music/theory';
 import { getMedia, hasStoredAudio } from '../../lib/storage/db';
 import { newId } from '../../lib/storage/db';
@@ -25,7 +26,7 @@ const PHASE_LABEL: Record<ExportProgress['phase'], string> = {
   original: 'Loading the original song',
   audio: 'Rendering the sound',
   video: 'Rendering frames',
-  finalizing: 'Finalising file',
+  finalizing: 'Finalizing file',
 };
 
 const SOUND_LABEL: Record<ExportSound, string> = { piano: 'piano', original: 'original song', both: 'piano + original song' };
@@ -241,7 +242,7 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
                 <p className="text-[12px] text-warn">This browser couldn’t encode H.264, so the MP4 uses {result.videoCodec.toUpperCase()}. It plays in modern browsers, VLC and YouTube, but some older players may not support it.</p>
               )}
               <div className="flex gap-2">
-                <Button variant="primary" icon={<Download size={16} />} onClick={() => downloadBlob(result.blob, fileName)}>
+                <Button variant="primary" icon={<Download size={16} />} onClick={() => { downloadBlob(result.blob, fileName); showExportNoticeOnce(); }}>
                   Download {result.extension.toUpperCase()}
                 </Button>
                 <Button variant="ghost" onClick={() => { setResult(null); setProgress(null); }}>
@@ -477,7 +478,7 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
               ]}
             />
             <Toggle label="Note labels" checked={visual.labels.style !== 'none'} onChange={(on) => setLabels({ style: on ? 'letter' : 'none' })} />
-            <p className="text-[11.5px] leading-relaxed text-ink-400">Colours, effects, labels and backgrounds come from the Studio’s Look and Labels tabs.</p>
+            <p className="text-[11.5px] leading-relaxed text-ink-400">Colors, effects, labels and backgrounds come from the Studio’s Look and Labels tabs.</p>
           </div>
           <TitleCardPanel song={song} exportSettings={settings} visual={visual} />
         </div>

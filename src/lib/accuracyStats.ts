@@ -333,7 +333,7 @@ export const EXPECTATIONS: Expectation[] = [
 ];
 
 export const LIMITATIONS: { title: string; body: string }[] = [
-  { title: 'Rap and spoken parts', body: 'Rap has no steady pitch, so there is no tune to follow. The right hand may play scattered notes there, or switch to the instruments’ tune where the app recognises the section as spoken.' },
+  { title: 'Rap and spoken parts', body: 'Rap has no steady pitch, so there is no tune to follow. The right hand may play scattered notes there, or switch to the instruments’ tune where the app recognizes the section as spoken.' },
   { title: 'Backing vocals and harmonies', body: 'When several voices sing at once, or an instrument doubles the voice, the right hand can follow the wrong one. The worst song in our tests (a dense, loud mix) reached 34% against a best possible 56%.' },
   { title: 'Fast passages', body: 'Quick runs lose more notes than slow music (57% found vs 78%). “Sensitive” helps (68%) at the cost of a few more wrong notes. On solo piano, the high-accuracy piano model finds 94% of them (on the five pieces it was not trained on).' },
   { title: 'Very high and very low notes', body: 'The top octave is found less often (39%; 52% with “Sensitive”) and the lowest notes below C2 are mostly missed. The high-accuracy piano model finds most of both on solo piano (88% and 78%). On band songs, drum hits are sometimes written as low notes.' },

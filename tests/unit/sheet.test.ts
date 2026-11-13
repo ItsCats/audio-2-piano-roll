@@ -498,7 +498,10 @@ describe('sheet MusicXML', () => {
     });
   it('writes the required elements in order', () => {
     const xml = toMusicXml(small(), { title: 'Song', artist: 'Band', credits: true, date: '2026-01-01' });
-    const order = ['<!DOCTYPE score-partwise', '<score-partwise version="4.0">', '<work-title>Song</work-title>', '<identification>', '<creator type="composer">Band</creator>', '<rights>Transcribed with Piano2Vision</rights>', '<software>Piano2Vision</software>', '<credit page="1">', '<part-list>', '<part id="P1">', '<divisions>12</divisions>', '<key><fifths>0</fifths><mode>major</mode></key>', '<time><beats>4</beats><beat-type>4</beat-type></time>', '<staves>2</staves>', '<clef number="1"><sign>G</sign>', '<clef number="2"><sign>F</sign>', '<metronome', '<note>', '<bar-style>light-heavy</bar-style>'];
+    const order = ['<!DOCTYPE score-partwise', '<score-partwise version="4.0">', '<work-title>Song</work-title>', '<identification>', '<creator type="composer">Band</creator>', '<software>Transcribed with Piano2Vision</software>', '<credit page="1">', '<part-list>', '<part id="P1">', '<divisions>12</divisions>', '<key><fifths>0</fifths><mode>major</mode></key>', '<time><beats>4</beats><beat-type>4</beat-type></time>', '<staves>2</staves>', '<clef number="1"><sign>G</sign>', '<clef number="2"><sign>F</sign>', '<metronome', '<note>', '<bar-style>light-heavy</bar-style>'];
+    // the software credit is not a rights statement
+    expect(xml).not.toContain('<rights>');
+    expect(xml).not.toContain('<credit-type>rights</credit-type>');
     let at = -1;
     for (const o of order) {
       const i = xml.indexOf(o, at + 1);

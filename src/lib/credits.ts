@@ -94,13 +94,13 @@ export const CREDITS: CreditGroup[] = [
         license: 'MIT',
         licenseUrl: LIC.mit,
         url: 'https://github.com/antoniorv6/SMT',
-        note: 'The authors’ published checkpoint antoniorv6/smt-camera-grandstaff (huggingface.co), used for both PDFs and photos. Changed: we converted it to two ONNX files (image encoder; text decoder with a key/value cache) with 8-bit weights, split into pieces for hosting, and wrote our own page clean-up, staff finding, **kern reading and MusicXML output in TypeScript (see public/models/omr/README.md). The MIT licence and copyright notice (Copyright (c) 2023 Antonio Ríos-Vila) are served next to the model at /models/omr/LICENSE.',
+        note: 'The authors’ published checkpoint antoniorv6/smt-camera-grandstaff (huggingface.co), used for both PDFs and photos. Changed: we converted it to two ONNX files (image encoder; text decoder with a key/value cache) with 8-bit weights, split into pieces for hosting, and wrote our own page clean-up, staff finding, **kern reading and MusicXML output in TypeScript (see public/models/omr/README.md). The MIT license and copyright notice (Copyright (c) 2023 Antonio Ríos-Vila) are served next to the model at /models/omr/LICENSE.',
       },
       {
         name: 'GrandStaff and Camera-GrandStaff datasets',
         use: 'The printed piano music (and its camera-photo versions) the sheet-music reader was trained on by its authors. Not included in the app.',
         author: 'Antonio Ríos-Vila, David Rizo, José M. Iñesta, Jorge Calvo-Zaragoza (“End-to-end optical music recognition for pianoform sheet music”, IJDAR 2023)',
-        license: 'Training data of the model above (not shipped): GrandStaff is marked MIT on its dataset card; Camera-GrandStaff states no licence',
+        license: 'Training data of the model above (not shipped): GrandStaff is marked MIT on its dataset card; Camera-GrandStaff states no license',
         url: 'https://huggingface.co/datasets/antoniorv6/grandstaff',
         note: 'GrandStaff was made by its authors from the piano scores of KernScores (Scarlatti, Mozart, Beethoven, Hummel, Chopin, Joplin), digital encodings by Craig Stuart Sapp and CCARH (Center for Computer Assisted Research in the Humanities, Stanford), some of them under CC BY-NC-SA 4.0. None of that data is included in the app; we acknowledge it as the source of what the reader learned.',
       },
@@ -246,7 +246,7 @@ export const CREDITS: CreditGroup[] = [
         license: 'Apache-2.0',
         licenseUrl: LIC.apache,
         url: 'https://mozilla.github.io/pdf.js/',
-        note: 'pdfjs-dist 6.4.299. Includes image decoders compiled to WebAssembly: PDFium’s JBIG2 / CCITT decoder (BSD-3-Clause / Apache-2.0, The PDFium Authors), OpenJPEG (BSD-2-Clause) and qcms (MIT, Mozilla); their licence texts are served next to them in /pdfjs/wasm/.',
+        note: 'pdfjs-dist 6.4.299. Includes image decoders compiled to WebAssembly: PDFium’s JBIG2 / CCITT decoder (BSD-3-Clause / Apache-2.0, The PDFium Authors), OpenJPEG (BSD-2-Clause) and qcms (MIT, Mozilla); their license texts are served next to them in /pdfjs/wasm/.',
       },
       {
         name: 'fflate',
@@ -270,7 +270,7 @@ export const CREDITS: CreditGroup[] = [
   {
     id: 'server',
     title: 'Optional processing server',
-    intro: 'Only used if you run the self-hosted server for YouTube fetching or faster separation.',
+    intro: 'Only used if you run the self-hosted server for faster separation (its YouTube downloads are off by default and not used by the site).',
     items: [
       { name: 'yt-dlp', use: 'Fetching audio from YouTube links you have the rights to.', author: 'yt-dlp contributors', license: 'Unlicense', licenseUrl: LIC.unlicense, url: 'https://github.com/yt-dlp/yt-dlp' },
       { name: 'FFmpeg', use: 'Decoding and converting audio.', author: 'FFmpeg developers', license: 'LGPL-2.1+ (GPL for some builds)', licenseUrl: LIC.lgpl, url: 'https://ffmpeg.org' },

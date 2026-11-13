@@ -1,5 +1,5 @@
 /** Non-React shared state for things that change many times per second (read by the render loop). */
-export const liveKeys = new Map<number, string>(); // midi -> colour
+export const liveKeys = new Map<number, string>(); // midi -> color
 export const keyMarks = new Map<number, { kind: 'correct' | 'wrong'; until: number }>();
 
 export function flashKey(midi: number, kind: 'correct' | 'wrong', ms = 260): void {

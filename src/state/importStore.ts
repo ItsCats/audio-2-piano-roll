@@ -30,6 +30,7 @@ import type { Song, SongSource } from '../lib/music/types';
 import type { ParsedScore, ScoreMeta } from '../lib/score';
 import type { Gray, Quad, ReadProgress } from '../lib/omr';
 import { toast } from './toastStore';
+import { holdReload } from '../lib/newVersion';
 
 export type ImportStage = TranscriptionStage | 'downloading' | 'uploading' | 'done' | 'error';
 
@@ -144,6 +145,11 @@ interface ImportState {
   ) => Promise<string | null>;
   /** run an import that a killed tab left behind (see lib/storage/db.ts PendingImport) again */
   resumePending: (rec: PendingImport) => Promise<string | null>;
+  /**
+   * A YouTube link fetched by the processing server. Nothing in the app calls this since the
+   * YouTube tab was replaced by "Computer sound" (2026-11), and the server has YouTube off by
+   * default (ENABLE_YOUTUBE=0); kept until the server's YouTube job is removed too.
+   */
   importYouTubeViaServer: (
     videoUrl: string,
     videoId: string,
@@ -702,7 +708,7 @@ export const useImport = create<ImportState>((set, get) => {
     if (!url) throw new Error('No processing server is configured.');
     update({ stage: 'uploading', progress: null, detail: 'Uploading to your processing server' });
     const job = await createSeparationJob(url, blob, name);
-    if (signal.aborted) throw new DOMException('Cancelled', 'AbortError');
+    if (signal.aborted) throw new DOMException('Canceled', 'AbortError');
     const done = await waitForJob(
       url,
       job.id,
@@ -716,7 +722,7 @@ export const useImport = create<ImportState>((set, get) => {
     );
     update({ stage: 'downloading', progress: null, detail: 'Downloading the separated vocals and accompaniment' });
     const stems = await backendApi.fetchStems(url, job.id, signal);
-    if (signal.aborted) throw new DOMException('Cancelled', 'AbortError');
+    if (signal.aborted) throw new DOMException('Canceled', 'AbortError');
     return { ...stems, serverMs: done.separationMs ?? undefined };
   };
 
@@ -792,6 +798,8 @@ export const useImport = create<ImportState>((set, get) => {
       transcription: result.info,
       hasAudio: true,
       hasPosteriors: true,
+      // Medium and Hard: sustain pedal derived from the notes (switch in the Sound panel)
+      autoPedal: true,
     });
     update({ warnings: result.info.warnings, stage: 'saving', progress: null, detail: 'Saving to your library' });
     // the piano specialist's outputs are not stored: re-detection works on Basic Pitch posteriors only
@@ -1225,6 +1233,14 @@ if (typeof window !== 'undefined') {
     guarded = busy;
     if (busy) window.addEventListener('beforeunload', onBeforeUnload);
     else window.removeEventListener('beforeunload', onBeforeUnload);
+  });
+  // a new version going online must not reload the page under a running import, or throw away a
+  // recording that only lives in memory now (the error card's "Download recording")
+  holdReload(() => {
+    const st = useImport.getState();
+    if (importBusy(st.job)) return 'Reload when the import has finished.';
+    if (st.failed?.recording) return 'Download your recording first, then reload.';
+    return null;
   });
   // keep the screen on while an import runs (a locked phone suspends the page)
   const wake = createScreenWakeLock();

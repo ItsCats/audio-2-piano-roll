@@ -96,7 +96,7 @@ async function initBackend(preferred?: string, device?: DeviceInfo): Promise<str
       console.warn(`[transcribe] backend ${name} unavailable`, err);
     }
   }
-  throw new Error('No TensorFlow.js backend could be initialised in this browser.');
+  throw new Error('No TensorFlow.js backend could be initialized in this browser.');
 }
 
 async function ensureModel(modelUrl: string, preferredBackend?: string, device?: DeviceInfo): Promise<void> {

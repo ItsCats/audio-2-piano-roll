@@ -19,7 +19,8 @@ class Settings:
     max_upload_mb: int = int(os.environ.get("MAX_UPLOAD_MB", "200"))
     max_duration_sec: int = int(os.environ.get("MAX_DURATION_SEC", str(20 * 60)))
     job_ttl_sec: int = int(os.environ.get("JOB_TTL_SEC", "3600"))
-    enable_youtube: bool = _bool("ENABLE_YOUTUBE", True)
+    # off by default: the web app no longer offers YouTube links (YouTube's terms; see server/README.md)
+    enable_youtube: bool = _bool("ENABLE_YOUTUBE", False)
     enable_separation: bool = _bool("ENABLE_SEPARATION", True)
     # SCNet separation (see app/separation.py). SCNET_MODEL: path to scnet.int8.onnx (default DATA_DIR/models/...;
     # the Docker image bakes it in). Missing files are downloaded from the pinned URL and SHA-256-verified.

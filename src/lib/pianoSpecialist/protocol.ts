@@ -161,7 +161,7 @@ export function deframedLength(segments: number): number {
  */
 export function keptFrames(i: number, segments: number): { from: number; to: number; dest: number } {
   if (segments <= 1) return { from: 0, to: PTI_SEGMENT_FRAMES, dest: 0 };
-  const f = PTI_SEGMENT_FRAMES - 1; // 1000: the extra centred-STFT frame is dropped
+  const f = PTI_SEGMENT_FRAMES - 1; // 1000: the extra centered-STFT frame is dropped
   const q = f / 4;
   if (i === 0) return { from: 0, to: 3 * q, dest: 0 };
   const dest = 3 * q + (i - 1) * 2 * q;

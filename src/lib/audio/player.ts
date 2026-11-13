@@ -11,6 +11,7 @@ import { PianoEngine } from './pianoEngine';
 import { buildEvents, firstEventIndexAtOrAfter, pedalDownAt, type PlayEvent } from './events';
 import { scheduleClick } from './metronome';
 import type { AudioSettings } from './types';
+import { audioSessionForPlayback } from './audioSession';
 
 const LOOKAHEAD = 0.2;
 const TICK_MS = 25;
@@ -191,6 +192,7 @@ export class PlaybackController {
 
   async play(): Promise<void> {
     if (this.playing) return;
+    audioSessionForPlayback(); // iPhone: sound even with the silent switch on
     if (this.ctx.state !== 'running') await this.ctx.resume();
     if (!this.engine.loaded) await this.engine.load();
     let from = this.pausedAt;
@@ -215,6 +217,7 @@ export class PlaybackController {
 
   seek(t: number): void {
     const clamped = Math.max(0, Math.min(this.duration, t));
+    this.holdAt = null; // a seek ends a wait-mode freeze (practice holds again at the next note)
     if (this.playing) {
       this.engine.allNotesOff(this.ctx.currentTime);
       this.startFrom(clamped, false);
@@ -362,7 +365,10 @@ export class PlaybackController {
 
   /** Play a note immediately (MIDI keyboard / clicking the on-screen piano). */
   liveNoteOn(midi: number, vel: number): void {
-    if (this.ctx.state !== 'running') void this.ctx.resume();
+    if (this.ctx.state !== 'running') {
+      audioSessionForPlayback();
+      void this.ctx.resume();
+    }
     this.engine.noteOn(midi, vel, this.ctx.currentTime);
   }
   liveNoteOff(midi: number): void {

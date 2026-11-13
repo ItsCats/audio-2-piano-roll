@@ -7,6 +7,7 @@ import { useSettings } from '../../state/settingsStore';
 import { toast } from '../../state/toastStore';
 import { downloadBlob, safeFileName } from '../../lib/export/downloads';
 import { defaultPaper } from '../../lib/sheet/paper';
+import { showExportNoticeOnce } from '../../lib/exportNotice';
 
 export function SheetPdfDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const song = useStudio((s) => s.song);
@@ -33,6 +34,7 @@ export function SheetPdfDialog({ open, onClose }: { open: boolean; onClose: () =
         onProgress: (done, total) => setProgress(done / total),
       });
       downloadBlob(blob, `${safeFileName(song.title)} (${difficulty}).pdf`);
+      showExportNoticeOnce();
       toast.success('PDF ready', `${pages} ${pages === 1 ? 'page' : 'pages'}`);
       onClose();
     } catch (e) {

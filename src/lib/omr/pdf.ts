@@ -128,7 +128,7 @@ export async function renderPdfPages(bytes: Uint8Array, opts: RenderPdfOptions =
     const list = (opts.pages ?? all).filter((p) => p >= 1 && p <= doc.numPages).slice(0, opts.maxPages ?? 20);
     const out: Gray[] = [];
     for (let i = 0; i < list.length; i++) {
-      if (opts.signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
+      if (opts.signal?.aborted) throw new DOMException('Canceled', 'AbortError');
       out.push(await doc.render(list[i], opts.width));
       opts.onPage?.(i + 1, list.length);
     }

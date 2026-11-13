@@ -23,6 +23,7 @@ export default function LibraryPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
 
+  const hasYouTube = useMemo(() => songs.some((s) => s.source.kind === 'youtube'), [songs]);
   const shown = useMemo(() => {
     const needle = q.trim().toLowerCase();
     let list = songs.filter((s) => !needle || s.title.toLowerCase().includes(needle) || s.artist?.toLowerCase().includes(needle) || s.keyName?.toLowerCase().includes(needle));
@@ -108,7 +109,8 @@ export default function LibraryPage() {
               { value: 'all', label: 'All' },
               { value: 'favorites', label: '★' },
               { value: 'audio', label: 'Audio' },
-              { value: 'youtube', label: 'YouTube' },
+              // songs imported with the old YouTube tab (removed 2026-11) keep their own filter
+              ...(hasYouTube || filter === 'youtube' ? [{ value: 'youtube' as const, label: 'YouTube' }] : []),
               { value: 'midi', label: 'MIDI' },
               { value: 'score', label: 'Sheet music' },
             ]}
@@ -143,7 +145,7 @@ export default function LibraryPage() {
               <div key={s.id} className="group relative">
                 <SongCard song={s} />
                 <div className="absolute top-2 right-2 flex gap-1 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100">
-                  <button aria-label={s.favorite ? 'Unfavourite' : 'Favourite'} onClick={() => void toggleFavorite(s.id)} className={cn('rounded-md bg-black/60 p-1.5', s.favorite ? 'text-warn' : 'text-ink-100 hover:text-warn')}>
+                  <button aria-label={s.favorite ? 'Unfavorite' : 'Favorite'} onClick={() => void toggleFavorite(s.id)} className={cn('rounded-md bg-black/60 p-1.5', s.favorite ? 'text-warn' : 'text-ink-100 hover:text-warn')}>
                     <Star size={14} fill={s.favorite ? 'currentColor' : 'none'} />
                   </button>
                   <button aria-label="Delete" onClick={() => void del(s)} className="rounded-md bg-black/60 p-1.5 text-ink-100 hover:text-bad">
@@ -175,7 +177,7 @@ export default function LibraryPage() {
                   )}
                   <span className="hidden font-mono text-[12px] text-ink-300 sm:block">{formatTime(s.duration)}</span>
                   <span className="hidden text-[11.5px] text-ink-400 md:block">{new Date(s.createdAt).toLocaleDateString()}</span>
-                  <IconButton size="sm" label="Favourite" active={!!s.favorite} onClick={() => void toggleFavorite(s.id)}>
+                  <IconButton size="sm" label="Favorite" active={!!s.favorite} onClick={() => void toggleFavorite(s.id)}>
                     <Star size={15} fill={s.favorite ? 'currentColor' : 'none'} />
                   </IconButton>
                   <IconButton size="sm" label="Delete" onClick={() => void del(s)} className="hover:text-bad">

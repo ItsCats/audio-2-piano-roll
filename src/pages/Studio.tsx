@@ -45,6 +45,7 @@ import { ArrangementPanel } from '../components/studio/panels/ArrangementPanel';
 import { Badge, Button, EmptyState, IconButton, Modal, ProgressBar, Segmented, cn } from '../components/ui';
 import { getAudio } from '../lib/storage/db';
 import { downloadBlob, downloadMidi, downloadMusicXml, exportProject, renderWav, safeFileName } from '../lib/export/downloads';
+import { showExportNoticeOnce } from '../lib/exportNotice';
 import { midiInput, QWERTY_MAP } from '../lib/midiInput/webmidi';
 import type { Difficulty } from '../lib/music/types';
 import { toast } from '../state/toastStore';
@@ -121,6 +122,7 @@ function ExportMenu({ onVideo, onSheetPdf }: { onVideo: () => void; onSheetPdf: 
     setOpen(false);
     try {
       await downloadMusicXml(song, difficulty);
+      showExportNoticeOnce();
       toast.success('MusicXML saved', 'Opens in MuseScore, Sibelius and Finale');
     } catch (e) {
       toast.error('Couldn’t save the MusicXML', (e as Error).message);
@@ -137,6 +139,7 @@ function ExportMenu({ onVideo, onSheetPdf }: { onVideo: () => void; onSheetPdf: 
         onProgress: (progress) => setWav((w) => (w ? { ...w, progress } : w)),
       });
       downloadBlob(blob, `${safeFileName(song.title)} (${difficulty}).wav`);
+      showExportNoticeOnce();
       toast.success('WAV exported', `${(blob.size / 1024 / 1024).toFixed(1)} MB`);
     } catch (e) {
       if ((e as Error).name !== 'AbortError') toast.error('Audio export failed', (e as Error).message);
@@ -153,7 +156,7 @@ function ExportMenu({ onVideo, onSheetPdf }: { onVideo: () => void; onSheetPdf: 
         <div className="panel absolute top-10 right-0 z-30 w-60 p-1.5" role="menu">
           {[
             { icon: Film, label: 'Video (MP4 / WebM)…', onClick: () => { setOpen(false); onVideo(); } },
-            { icon: Music2, label: `MIDI file (${difficulty})`, onClick: () => { setOpen(false); downloadMidi(song, difficulty); } },
+            { icon: Music2, label: `MIDI file (${difficulty})`, onClick: () => { setOpen(false); downloadMidi(song, difficulty); showExportNoticeOnce(); } },
             { icon: FileText, label: `Sheet music PDF (${difficulty})…`, onClick: () => { setOpen(false); onSheetPdf(); } },
             { icon: FileMusic, label: `MusicXML (${difficulty})`, onClick: () => void exportMusicXml() },
             { icon: FileAudio, label: `Audio WAV (${difficulty})`, onClick: () => void exportWav() },

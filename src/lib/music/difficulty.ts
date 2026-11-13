@@ -46,6 +46,7 @@
  * (band-instrumental-1). Sung sections of vocal songs and Easy LH are unchanged.
  */
 import type { Arrangement, Difficulty, Note, PedalRange, TempoInfo } from './types';
+import { autoPedal } from './autoPedal';
 import { clusterOnsets } from './hands';
 import { beatPeriodAt, beatToTime, timeToBeat } from './beats';
 import { quantizeNotes } from './quantize';
@@ -137,6 +138,11 @@ export interface ArrangementOptions {
    * hands are guessed).
    */
   handsFromScore?: boolean;
+  /**
+   * Song made from audio with the automatic pedal on (Song.autoPedal): Medium and Hard get
+   * sustain pedal derived from their notes (music/autoPedal.ts) instead of `basePedal`.
+   */
+  autoPedal?: boolean;
 }
 
 export function generateHard(base: Note[], opts: ArrangementOptions = {}): Note[] {
@@ -569,7 +575,7 @@ export function generateArrangement(
   const notes = duration > 0 ? clampToDuration(generated, duration) : generated;
   return {
     notes,
-    pedal: difficulty === 'easy' ? [] : basePedal.map((p) => ({ ...p })),
+    pedal: difficulty === 'easy' ? [] : opts.autoPedal ? autoPedal(notes, tempo, duration > 0 ? duration : Infinity) : basePedal.map((p) => ({ ...p })),
     edited: false,
     generatedAt: Date.now(),
   };

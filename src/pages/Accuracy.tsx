@@ -202,7 +202,7 @@ function SheetReaderSection() {
       <Note>{SHEET_READER.metric}</Note>
       <Note>{SHEET_READER.speed}</Note>
       <Note>
-        Songs read this way are labelled <b className="text-warn">Sheet music · Beta</b> in the Studio. Compare them with your page and fix mistakes in Edit
+        Songs read this way are labeled <b className="text-warn">Sheet music · Beta</b> in the Studio. Compare them with your page and fix mistakes in Edit
         mode. Have the music as a MusicXML or MuseScore file? Import that instead — it is exact.
       </Note>
       <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -239,7 +239,7 @@ export default function AccuracyPage() {
           <div className="mt-4 flex gap-2.5 rounded-xl border border-warn/25 bg-warn/10 p-3.5 text-[13px] leading-relaxed text-ink-100">
             <AlertTriangle size={17} className="mt-0.5 shrink-0 text-warn" />
             <p>
-              Every song made from audio is labelled <b className="text-warn">AI transcription</b> in the Studio. Always compare it with the
+              Every song made from audio is labeled <b className="text-warn">AI transcription</b> in the Studio. Always compare it with the
               original before learning a piece note-for-note — and fix anything that sounds off in Edit mode.
             </p>
           </div>
@@ -600,7 +600,7 @@ export default function AccuracyPage() {
               'For songs with a singer, keep “Separate vocals & drums” on: the right hand then follows the singer.',
               'Use the cleanest recording you can — less reverb, crowd noise and background music means better notes.',
               'In the Studio, blend in the original recording (Sound tab → Original recording) to hear differences.',
-              'Re-tune detection in the Notes tab — it re-runs in seconds without re-analysing the audio.',
+              'Re-tune detection in the Notes tab — it re-runs in seconds without re-analyzing the audio.',
               'Fix remaining mistakes in Edit mode; your edits are saved per difficulty level.',
               'Have a MIDI file? Import that instead — it’s exact.',
               'Printed piano music? A PDF or photo can be read too (Beta) — check the notes afterwards.',
@@ -631,7 +631,7 @@ export default function AccuracyPage() {
                 <tr className="border-b border-ink-700 text-[11.5px] text-ink-400">
                   <th className="px-4 py-2.5 font-medium">Data or tool</th>
                   <th className="px-3 py-2.5 font-medium">Used for</th>
-                  <th className="px-4 py-2.5 font-medium">Licence</th>
+                  <th className="px-4 py-2.5 font-medium">License</th>
                 </tr>
               </thead>
               <tbody>
@@ -663,7 +663,7 @@ export default function AccuracyPage() {
           <p>Last updated {ACCURACY_UPDATED}. Numbers are rounded; the full report with every table is produced by the project’s accuracy scripts (tests/accuracy).</p>
           <p className="flex flex-wrap items-center gap-x-4 gap-y-1">
             <Link to="/credits" className="inline-flex items-center gap-1.5 text-accent-400 hover:text-accent-300">
-              <Heart size={13} /> Credits &amp; licences
+              <Heart size={13} /> Credits &amp; licenses
             </Link>
             <a href={SOURCE_CODE_URL} target="_blank" rel="noopener noreferrer" className="text-accent-400 hover:text-accent-300">
               {SOURCE_CODE_LABEL}

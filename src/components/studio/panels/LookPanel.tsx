@@ -331,7 +331,7 @@ export function LookPanel() {
             <ColorInput label="Left hand" value={v.leftColor} onChange={(leftColor) => setVisual({ leftColor })} />
           </>
         )}
-        {v.colorMode === 'single' && <ColorInput label="Note colour" value={v.singleColor} onChange={(singleColor) => setVisual({ singleColor })} />}
+        {v.colorMode === 'single' && <ColorInput label="Note color" value={v.singleColor} onChange={(singleColor) => setVisual({ singleColor })} />}
         <Slider label="Note speed (seconds visible)" min={0.8} max={10} step={0.1} value={v.lookahead} onChange={(lookahead) => setVisual({ lookahead })} format={(x) => `${x.toFixed(1)}s`} />
         <Slider label="Note width" min={0.4} max={1} value={v.noteWidth} onChange={(noteWidth) => setVisual({ noteWidth })} format={pct} />
         <Slider label="Opacity" min={0.2} max={1} value={v.noteOpacity} onChange={(noteOpacity) => setVisual({ noteOpacity })} format={pct} />
@@ -354,7 +354,7 @@ export function LookPanel() {
         />
         <Slider label="Glow when played" min={0} max={1} value={v.glow} onChange={(glow) => setVisual({ glow })} format={(x) => (x <= 0 ? 'Off' : pct(x))} />
         <Slider label="Border" min={0} max={3} step={0.5} value={v.borderWidth} onChange={(borderWidth) => setVisual({ borderWidth })} format={(x) => `${x}px`} />
-        {v.borderWidth > 0 && <ColorInput label="Border colour" value={v.borderColor} onChange={(borderColor) => setVisual({ borderColor })} />}
+        {v.borderWidth > 0 && <ColorInput label="Border color" value={v.borderColor} onChange={(borderColor) => setVisual({ borderColor })} />}
         <Toggle label="Gradient fill" checked={v.gradient} onChange={(gradient) => setVisual({ gradient })} />
         <Toggle label="Drop shadow" checked={v.shadow} onChange={(shadow) => setVisual({ shadow })} />
         <Toggle label="Highlight upcoming notes" checked={v.upcomingHighlight} onChange={(upcomingHighlight) => setVisual({ upcomingHighlight })} />
@@ -397,7 +397,7 @@ export function LookPanel() {
             <CoalescedSlider label="Size" min={0.25} max={3} value={decal.scale} onChange={(scale) => setDecal({ scale })} format={(x) => `${x.toFixed(2)}×`} />
             <CoalescedSlider label="Strength" min={0} max={1} value={decal.opacity} onChange={(opacity) => setDecal({ opacity })} format={pct} />
             {/* step matches the tint quantisation in decals.ts baked(), so no drag step is a wasted rebake */}
-            <CoalescedSlider label="Colour tint" min={0} max={1} step={0.02} value={decal.tint} onChange={(tint) => setDecal({ tint })} format={pct} />
+            <CoalescedSlider label="Color tint" min={0} max={1} step={0.02} value={decal.tint} onChange={(tint) => setDecal({ tint })} format={pct} />
             <Segmented
               size="sm"
               ariaLabel="Decal anchor"
@@ -425,7 +425,7 @@ export function LookPanel() {
             <Slider label="Dust amount" min={0.05} max={1} value={fx.dustAmount} onChange={(dustAmount) => setEffects({ dustAmount })} format={pct} />
           </SubControls>
         )}
-        <Toggle label="Light on keys" hint="Coloured light spills onto played keys" checked={fx.keyLight} onChange={(keyLight) => setEffects({ keyLight })} />
+        <Toggle label="Light on keys" hint="Colored light spills onto played keys" checked={fx.keyLight} onChange={(keyLight) => setEffects({ keyLight })} />
         {fx.keyLight && (
           <SubControls>
             <Slider label="Key light" min={0.05} max={1} value={fx.keyLightIntensity} onChange={(keyLightIntensity) => setEffects({ keyLightIntensity })} format={pct} />
@@ -488,7 +488,7 @@ export function LookPanel() {
             <ColorInput label="Key borders" value={v.keyBorderColor} onChange={(keyBorderColor) => setVisual({ keyBorderColor })} />
           </>
         )}
-        <Toggle label="Custom key highlight colour" checked={v.keyHighlight === 'custom'} onChange={(on) => setVisual({ keyHighlight: on ? 'custom' : 'hand' })} />
+        <Toggle label="Custom key highlight color" checked={v.keyHighlight === 'custom'} onChange={(on) => setVisual({ keyHighlight: on ? 'custom' : 'hand' })} />
         {v.keyHighlight === 'custom' && <ColorInput label="Highlight" value={v.keyHighlightColor} onChange={(keyHighlightColor) => setVisual({ keyHighlightColor })} />}
       </Section>
 
@@ -515,7 +515,7 @@ export function LookPanel() {
           onChange={(kind) => setBackground({ kind, mediaId: kind === bg.kind ? bg.mediaId : null })}
           options={[
             { value: 'preset', label: 'Scene' },
-            { value: 'color', label: 'Colour' },
+            { value: 'color', label: 'Color' },
             { value: 'image', label: 'Image' },
             { value: 'video', label: 'Video' },
           ]}
@@ -527,7 +527,7 @@ export function LookPanel() {
             ))}
           </div>
         )}
-        {bg.kind === 'color' && <ColorInput label="Colour" value={bg.color} onChange={(color) => setBackground({ color })} />}
+        {bg.kind === 'color' && <ColorInput label="Color" value={bg.color} onChange={(color) => setBackground({ color })} />}
         {(bg.kind === 'image' || bg.kind === 'video') && (
           <MediaPicker kind={bg.kind} purpose="background" what="background" selectedId={bg.mediaId} onSelect={(mediaId) => setBackground({ mediaId })} />
         )}
@@ -537,7 +537,7 @@ export function LookPanel() {
             <Slider label="Blur" min={0} max={30} step={1} value={bg.blur} onChange={(blur) => setBackground({ blur })} format={(x) => `${x}px`} />
             <Slider label="Contrast" min={0.4} max={1.6} value={bg.contrast} onChange={(contrast) => setBackground({ contrast })} format={pct} />
             <Slider label="Visibility" min={0.05} max={1} value={bg.opacity} onChange={(opacity) => setBackground({ opacity })} format={pct} />
-            <ColorInput label="Overlay colour" value={bg.overlayColor} onChange={(overlayColor) => setBackground({ overlayColor })} />
+            <ColorInput label="Overlay color" value={bg.overlayColor} onChange={(overlayColor) => setBackground({ overlayColor })} />
             <Slider label="Overlay strength" min={0} max={0.9} value={bg.overlayOpacity} onChange={(overlayOpacity) => setBackground({ overlayOpacity })} format={pct} />
             <Segmented
               size="sm"

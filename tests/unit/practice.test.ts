@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { PracticeScorer } from '../../src/lib/midiInput/practice';
-import { parseYouTubeId } from '../../src/lib/youtube/youtube';
 import { buildEvents } from '../../src/lib/audio/events';
 import type { Note } from '../../src/lib/music/types';
 
@@ -30,18 +29,6 @@ describe('practice scoring', () => {
     s.press(60, 1);
     expect(s.nextPending(1.2)).toEqual({ time: 2, midis: [64, 48] });
   });
-});
-
-describe('YouTube URLs', () => {
-  it.each([
-    ['https://www.youtube.com/watch?v=abcDEF12345', 'abcDEF12345'],
-    ['https://youtu.be/abcDEF12345?t=10', 'abcDEF12345'],
-    ['https://www.youtube.com/shorts/abcDEF12345', 'abcDEF12345'],
-    ['https://music.youtube.com/watch?v=abcDEF12345&list=x', 'abcDEF12345'],
-    ['youtube.com/embed/abcDEF12345', 'abcDEF12345'],
-    ['https://example.com/watch?v=abcDEF12345', null],
-    ['not a url', null],
-  ])('%s', (url, expected) => expect(parseYouTubeId(url)).toBe(expected));
 });
 
 describe('playback events', () => {

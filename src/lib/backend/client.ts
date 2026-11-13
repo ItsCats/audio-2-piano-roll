@@ -129,7 +129,7 @@ export async function waitForJob(
   signal?: AbortSignal,
 ): Promise<BackendJob> {
   for (;;) {
-    if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
+    if (signal?.aborted) throw new DOMException('Canceled', 'AbortError');
     const j = await getJob(url, id);
     onUpdate(j);
     if (j.status === 'done') return j;

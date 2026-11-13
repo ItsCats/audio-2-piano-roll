@@ -12,11 +12,10 @@ const jspdfStub = fileURLToPath(new URL('./src/lib/sheet/stub.ts', import.meta.u
 /**
  * Cross-origin isolation for the dev and preview servers, mirroring netlify.toml: the app routes'
  * documents (and every non-document response, e.g. worker scripts) get COOP same-origin + COEP
- * credentialless; the YouTube import route (it embeds the YouTube player; src/lib/isolation.ts)
- * and unknown paths don't. Test harness pages under /tests/ stay non-isolated (their measurements
+ * credentialless; unknown paths don't (src/lib/isolation.ts). Test harness pages under /tests/ stay non-isolated (their measurements
  * are single-threaded baselines) unless opened with ?coi=1.
  */
-const ISOLATED_ROUTES = [/^\/$/, /^\/import$/, /^\/studio$/, /^\/studio\/[^/]+$/, /^\/library$/, /^\/settings$/, /^\/accuracy$/, /^\/credits$/, /^\/index\.html$/];
+const ISOLATED_ROUTES = [/^\/$/, /^\/import$/, /^\/studio$/, /^\/studio\/[^/]+$/, /^\/library$/, /^\/settings$/, /^\/accuracy$/, /^\/credits$/, /^\/privacy$/, /^\/terms$/, /^\/copyright$/, /^\/index\.html$/];
 function crossOriginIsolation(): Plugin {
   const apply = (req: { url?: string; headers: Record<string, string | string[] | undefined> }, res: { setHeader(k: string, v: string): unknown }) => {
     const url = new URL(req.url ?? '/', 'http://x');

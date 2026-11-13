@@ -180,6 +180,12 @@ export interface Song {
   /** Model posteriors are stored so note detection can be re-tuned without re-running the model. */
   hasPosteriors: boolean;
   favorite?: boolean;
+  /**
+   * Songs from audio: Medium and Hard carry sustain pedal derived from their notes
+   * (music/autoPedal.ts). On for imports since 2026-11; songs saved before have no value (off)
+   * until it is switched on in the Sound panel. Never set for MIDI files or sheet music.
+   */
+  autoPedal?: boolean;
 }
 
 export type SongSummary = Pick<

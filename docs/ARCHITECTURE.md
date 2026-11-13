@@ -1,6 +1,6 @@
 # Architecture
 
-Piano2Vision is a **local-first single-page app**. The browser does the heavy lifting — neural transcription, sampled-piano synthesis, rendering and video encoding — so the site can be hosted as static files on Netlify with no per-user compute cost. An optional processing server adds what a browser cannot do legitimately on its own, fetching YouTube audio, and runs source separation faster: the same SCNet model also runs in the browser.
+Piano2Vision is a **local-first single-page app**. The browser does the heavy lifting — neural transcription, sampled-piano synthesis, rendering and video encoding — so the site can be hosted as static files on Netlify with no per-user compute cost. An optional processing server runs source separation faster: the same SCNet model also runs in the browser.
 
 ```
 ┌──────────────────────────── Browser ────────────────────────────┐
@@ -59,7 +59,7 @@ Note { id, midi, start, dur, vel (0..1), hand: 'L' | 'R' }
 
 IndexedDB stores: `songs`, `summaries` (fast library listing), `audio` (original file, for A/B listening), `posteriors` (8-bit quantised model output, for instant re-detection), `media` (background images/videos).
 
-## Timing & synchronisation
+## Timing & synchronization
 
 * The **audio clock** (`AudioContext.currentTime`) is the single source of truth. The renderer asks the player for the current song time every animation frame, so dropped frames never cause drift.
 * Notes are scheduled ~200 ms ahead by a 25 ms timer ("two clocks" pattern). Speed changes, seeks and loop wrap-around re-anchor the clock at an exact context time.
@@ -93,6 +93,6 @@ The Studio's view (piano roll or sheet music) goes full screen with **F** or its
 * **Transcription is an estimate.** On solo piano it is good (note-onset F1 ≈ 0.94 on our rendered benchmark); on dense full mixes it is noticeably worse — use the *Full song* preset with "Separate vocals & drums" (in the browser or on the processing server), or edit the result. The UI labels every audio transcription as AI-estimated.
 * Sustain pedal is not transcribed from audio (Basic Pitch doesn't predict it); note durations already include the ringing. MIDI imports keep their pedal.
 * Hand assignment and the Easy/Medium arrangements are heuristics — good starting points, not engraved editions. The same goes for sheet music written from audio: bar lines depend on the estimated beat and meter, and Hard keeps the performance's timing.
-* YouTube: browsers cannot legally/technically download YouTube media. Use the processing server (your responsibility to use it for content you have rights to) or record the embedded player's tab audio (Chrome/Edge desktop, real time).
+* Sound from other sites: the **Computer sound** tab records another tab's sound with the browser's screen-sharing dialog (Chrome / Edge on a computer, real time; `src/lib/audio/tabAudio.ts`). Phones can't share another app's sound with a website; there a screen recording uploaded as a video does the same. The YouTube tab (embedded player, server download) was removed in 2026-11.
 * Video export needs WebCodecs for the fast path; older browsers fall back to real-time WebM recording.
 * Web MIDI is unavailable in Safari; the computer keyboard and on-screen keys work everywhere.
