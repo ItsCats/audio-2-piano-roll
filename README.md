@@ -22,7 +22,7 @@ Everything runs in the browser. Audio is transcribed on the user's device by a n
 | **Sound** | Salamander Grand (5 real velocity layers, damper & pedal noises) and Upright Piano KW samples; Concert Grand / Bright Grand / Upright / Soft presets; true sustain-pedal model; convolution reverb (studio → church), chorus, tone, dynamics; limiter |
 | **Practice** | Speed 0.25×–2×, A–B looping, left/right/both hands, metronome, count-in, Web MIDI + computer-keyboard input, correct / wrong / missed scoring with timing, wait-for-me mode |
 | **Editing** | Select, marquee, move (time + pitch), resize, add, delete, hand assignment, velocity, transpose, quantize, snap grid, undo/redo, regenerate levels |
-| **Export** | Video MP4 (H.264/AAC) or WebM (VP9/Opus), 720p/1080p/1440p, 30/60 fps, 16:9 / 9:16 / 1:1, YouTube Ready & social presets, saved presets, section/full song, speed, volume, fades; MIDI; WAV; sheet music PDF (A4 / Letter, vector); MusicXML 4.0 (MuseScore, Sibelius, Finale); project file |
+| **Export** | Video MP4 (H.264/AAC) or WebM (VP9/Opus), 720p/1080p/1440p, 30/60 fps, 16:9 / 9:16 / 1:1, YouTube Ready & social presets, saved presets, section/full song, speed, volume, fades; a video of your hands under the falling notes (notes land on your real keys) or in a corner, with automatic sync; your watermark/link and logo; MIDI; WAV; sheet music PDF (A4 / Letter, vector); MusicXML 4.0 (MuseScore, Sibelius, Finale); project file |
 | **Library** | Local library with thumbnails, search, filters, sorting, favorites, project import/export |
 
 ## Quick start
@@ -64,6 +64,8 @@ npm run test:e2e     # browser benchmark: renders known pieces with the real pia
 ```
 
 Sheet-music reading (PDF / photo, beta): `node tests/e2e/omr.mjs` engraves a made-up piece with OSMD, reads it back as a page image, a PDF and a phone-like photo, and fails below notes F1 0.8 (0.7 for the photo); the model and its measurements are described in `public/models/omr/README.md`. The user flow: `node tests/e2e/omr-ui.mjs --dist <build> --photo <photo.jpg> [--photo2 <photo.jpg>]` (desktop and iPhone 14 under the production headers: the demo exported as a PDF and read back, a photo through the corner screen with touch dragging, two photos as two pages, Cancel, a HEIC photo the browser can't open, crash recovery with Try again, the Studio / Library labels and the Accuracy section).
+
+Hands video and watermark: `node tests/e2e/handcam.mjs --dist <build> [--out DIR]` (a synthetic camera video imported, set up, exported and checked frame by frame; auto-sync of a video added later) and `node tests/e2e/handcam-export.mjs` (dev server); see [docs/VIDEO_EXPORT.md](docs/VIDEO_EXPORT.md).
 
 Sheet music: `node tests/e2e/sheet.mjs --dist <build>` checks the sheet view, cursor, tap-to-seek, PDF/MusicXML downloads and drawing speed in Chromium under the production headers; `tests/sheet/export.mjs` + `tests/sheet/validate_musicxml.py` check the MusicXML against the official 4.0 schema and music21 (see the files for setup).
 

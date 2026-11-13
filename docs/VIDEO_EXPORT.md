@@ -72,3 +72,54 @@ Optional, off by default, videos only (the Studio is unchanged). In the dialog: 
 * **Checks.** `tests/unit/titleCard.test.ts`; `node tests/e2e/title-card.mjs` (every style × 16:9 / 9:16 / 1:1 × normal, long, CJK and one-long-word texts with the real fonts: fonts loaded, boxes and ink inside the safe area, measured widths match the ink); `node tests/e2e/title-export.mjs` (with a 2.5 s title page the first note is heard exactly 2.5 s later, roll frame N matches frame N + 75, lengths, a silent end card); `node tests/e2e/title-card-ui.mjs --dist DIR --out DIR` (the dialog on desktop and a 390 px phone against a production build with the site's headers).
 * **With the original song.** The original is mixed into the audio samples before they reach the wrapper, so it moves with the roll and is silent under the title page and the end card (an MP4 and a WebM with a title page, end card and the original, decoded with ffmpeg: every click lands on its note with 0 ms error and both cards are digital silence).
 * **Stalls and Cancel.** Each title page and end card frame and each piece of their silence goes through the same per-step time limit and Cancel as the roll's own frames; the title page frames are added before the first roll frame, which keeps its own limit. A stopped export also stops the real audio encoder, not just the wrapper around it.
+
+## Hands video ("hand cam")
+
+A video of your hands on a real keyboard, filmed from above, can be shown under the falling notes
+(the notes land on your real keys, the Studio keyboard is hidden) or as a picture-in-picture in a
+corner. Code: `src/lib/handcam/*`, UI: `src/components/handcam/*`.
+
+**Two ways to get one**
+
+- *Import a video of you playing* (Import > Audio / Video): the notes come from the video's sound and
+  the video is kept as the song's original recording (stored once, IndexedDB `audio` store), so it is
+  in sync by construction. The small difference between the browser's audio decoder and the video's
+  own timeline (AAC/Opus priming, edit lists) is measured at import by cross-correlating the two decodes
+  (`measureImportOffset`). Videos over 200 MB are decoded by streaming their sound; up to 4 GB on a
+  computer, 2 GB on a phone; a warning above 500 MB; the free space is checked first.
+- *Add a hands video* (Export video > Hands video) to any song: stored in the `handcam` store (database
+  version 3), then synced automatically: log-spectral-flux onset envelopes at 100 frames/s of the
+  video's sound (streamed at 8 kHz) and of the song's recording (or of its notes), FFT
+  cross-correlation over every lag, a confidence ratio (High / Medium / Low), GCC-PHAT refinement
+  against a recording (sub-millisecond), and a drift check (another performance can't be lined up with
+  one offset). A nudge slider (±5 s, 10 ms steps), ±10 ms buttons, a scrub preview and a Listen button
+  (the video's sound with a click on every note) fix the rest.
+
+**Setup** (Sync > Pick a frame > Corners > Keys > Framing, saved per song): drag the 4 corners onto the
+keys (auto-suggested from the long horizontal edge and the key pattern; a "Clean frame" median hides
+the hands; Turn 180° / Mirror), see the keyboard straightened by a perspective warp, pick 88 / 76 / 61
+keys or any range and match the lanes to the real keys (live overlay, Auto-match, 3× zoom), then set
+where the notes land, how much of the hands area shows and which keys are shown.
+
+**Export**: each output frame decodes the exact video frame for its time (mediabunny
+`VideoSampleSink.samplesAtTimestamps`: the last frame starting at or before that time, so variable
+frame rates, dropped frames, 60 FPS sources and rotation metadata are handled), uploads it as a
+`VideoFrame` to WebGL2 and closes it right away (a Canvas 2D mesh warp if WebGL2 is missing). Before
+the video starts and after it ends, its first / last frame is held (fading out at the end). Speed is
+100 %. Sound: piano, the video's sound (sample-exact, through the same mixing as the original
+recording), the song's recording, or mixes. Key light and sparkles are drawn at the real keys.
+
+## Watermark
+
+A text line (e.g. YOUTUBE.COM/YOURNAME, spaced capitals, the name after the last "/" brighter) in one
+of the title-page fonts, with size, color, opacity and position (bottom center by default), and an
+optional PNG/SVG logo (downscaled to 512 px, stored in the `media` store). Shown on every roll frame
+and, if chosen, on the title page and end card. Saved as your default (localStorage
+`piano2vision-watermark`). With "hands at the bottom" a band under the video is kept free for it.
+
+**Tests**: `tests/unit/handcam/*` (homography, lanes for 61/76/88 keys, output layout, auto-sync on
+synthetic signals at different sample rates, watermark layout, the v2 → v3 database upgrade);
+`node tests/e2e/handcam-export.mjs` (dev server: lanes, sync, watermark, length, PiP + WebM + title
+page); `node tests/e2e/handcam.mjs --dist <build> [--out DIR]` (the whole flow on the production build:
+import, setup by dragging, export, cancel, auto-sync of a video added later against a recording and
+against MIDI notes). Both need ffmpeg to make the synthetic camera video and check the output.
