@@ -2,7 +2,7 @@
  * The OpenCV / Pillow image operations homr's pipeline uses, ported to TypeScript with the same
  * arithmetic (fixed point where OpenCV uses it): BGR→gray (15-bit fixed point), CLAHE, Pillow's bicubic resize, OpenCV's
  * INTER_LINEAR resize, thresholds, erosion / dilation with OpenCV's structuring elements, box blur,
- * the noise filter, warpAffine and fillConvexPoly. No OpenCV.js: these few operations are small.
+ * the noise filter, warpAffine, fillPoly and fillConvexPoly. No OpenCV.js: these few operations are small.
  *
  * Derived from homr (AGPL-3.0, Copyright the homr contributors, https://github.com/liebharc/homr);
  * the algorithms follow OpenCV (Apache-2.0) and Pillow (MIT-CMU / HPND).
@@ -590,41 +590,288 @@ function bilinearTab(): Int32Array {
   return tab;
 }
 
-/** cv2.fillConvexPoly(mask, int points, value): the polygon including its outline. */
-export function fillConvexPoly(dst: Img, pts: [number, number][], value: number): void {
-  const { w, h } = dst;
-  let ymin = Infinity;
-  let ymax = -Infinity;
-  for (const [, y] of pts) (ymin = Math.min(ymin, y)), (ymax = Math.max(ymax, y));
-  const lo = new Float64Array(Math.max(0, ymax - ymin + 1)).fill(Infinity);
-  const hi = new Float64Array(Math.max(0, ymax - ymin + 1)).fill(-Infinity);
-  const mark = (x: number, y: number) => {
-    const i = y - ymin;
-    if (x < lo[i]) lo[i] = x;
-    if (x > hi[i]) hi[i] = x;
-  };
-  const n = pts.length;
-  for (let k = 0; k < n; k++) {
-    // the outline as 8-connected lines (Bresenham)
-    let [x0, y0] = pts[k];
-    const [x1, y1] = pts[(k + 1) % n];
-    const dx = Math.abs(x1 - x0);
-    const dy = -Math.abs(y1 - y0);
-    const sx = x0 < x1 ? 1 : -1;
-    const sy = y0 < y1 ? 1 : -1;
-    let err = dx + dy;
-    for (;;) {
-      mark(x0, y0);
-      if (x0 === x1 && y0 === y1) break;
-      const e2 = 2 * err;
-      if (e2 >= dy) (err += dy), (x0 += sx);
-      if (e2 <= dx) (err += dx), (y0 += sy);
+// ------------------------------------------------------------------ polygon filling (OpenCV 4.14 drawing.cpp)
+
+const XY_SHIFT = 16;
+const XY_ONE = 1 << XY_SHIFT;
+/** int64 >> XY_SHIFT (arithmetic shift = floor) for the values here (< 2^53) */
+const shr = (v: number) => Math.floor(v / XY_ONE);
+
+/** cv::clipLine(Size, Point&, Point&): clips the segment to the image; false if it is outside. */
+function clipLine(w: number, h: number, p: [number, number, number, number]): boolean {
+  const right = w - 1;
+  const bottom = h - 1;
+  if (w <= 0 || h <= 0) return false;
+  let [x1, y1, x2, y2] = p;
+  let c1 = +(x1 < 0) + +(x1 > right) * 2 + +(y1 < 0) * 4 + +(y1 > bottom) * 8;
+  let c2 = +(x2 < 0) + +(x2 > right) * 2 + +(y2 < 0) * 4 + +(y2 > bottom) * 8;
+  if ((c1 & c2) === 0 && (c1 | c2) !== 0) {
+    if (c1 & 12) {
+      const a = c1 < 8 ? 0 : bottom;
+      x1 += Math.trunc(((a - y1) * (x2 - x1)) / (y2 - y1));
+      y1 = a;
+      c1 = +(x1 < 0) + +(x1 > right) * 2;
+    }
+    if (c2 & 12) {
+      const a = c2 < 8 ? 0 : bottom;
+      x2 += Math.trunc(((a - y2) * (x2 - x1)) / (y2 - y1));
+      y2 = a;
+      c2 = +(x2 < 0) + +(x2 > right) * 2;
+    }
+    if ((c1 & c2) === 0 && (c1 | c2) !== 0) {
+      if (c1) {
+        const a = c1 === 1 ? 0 : right;
+        y1 += Math.trunc(((a - x1) * (y2 - y1)) / (x2 - x1));
+        x1 = a;
+        c1 = 0;
+      }
+      if (c2) {
+        const a = c2 === 1 ? 0 : right;
+        y2 += Math.trunc(((a - x2) * (y2 - y1)) / (x2 - x1));
+        x2 = a;
+        c2 = 0;
+      }
     }
   }
-  for (let y = Math.max(ymin, 0); y <= Math.min(ymax, h - 1); y++) {
-    const i = y - ymin;
-    const a = Math.max(0, lo[i]);
-    const b = Math.min(w - 1, hi[i]);
-    for (let x = a; x <= b; x++) dst.d[y * w + x] = value;
+  p[0] = x1;
+  p[1] = y1;
+  p[2] = x2;
+  p[3] = y2;
+  return (c1 | c2) === 0;
+}
+
+/** cv::Line with 8-connectivity (LineIterator, left to right) on a one-channel image. */
+function line8(dst: Img, ax: number, ay: number, bx: number, by: number, value: number): void {
+  const { w, h } = dst;
+  const p: [number, number, number, number] = [ax, ay, bx, by];
+  if ((ax < 0 || ax >= w || bx < 0 || bx >= w || ay < 0 || ay >= h || by < 0 || by >= h) && !clipLine(w, h, p)) return;
+  let [x, y, x2, y2] = p;
+  let dx = x2 - x;
+  let dy = y2 - y;
+  let sx = 1;
+  let sy = 1;
+  if (dx < 0) {
+    // leftToRight: start at the other end
+    dx = -dx;
+    dy = -dy;
+    x = x2;
+    y = y2;
+  }
+  if (dy < 0) {
+    dy = -dy;
+    sy = -1;
+  }
+  const vert = dy > dx;
+  if (vert) [dx, dy, sx, sy] = [dy, dx, sy, sx];
+  let err = dx - (dy + dy);
+  const plusDelta = dx + dx;
+  const minusDelta = -(dy + dy);
+  // minus step: along the major axis; plus step (err < 0): also along the minor axis
+  for (let i = 0; i <= dx; i++) {
+    dst.d[y * w + x] = value;
+    const plus = err < 0;
+    err += minusDelta + (plus ? plusDelta : 0);
+    if (vert) {
+      y += sx;
+      if (plus) x += sy;
+    } else {
+      x += sx;
+      if (plus) y += sy;
+    }
+  }
+}
+
+/** cv2.fillConvexPoly(mask, int32 points, value) (LINE_8, shift 0): outline lines + span filling. */
+export function fillConvexPoly(dst: Img, pts: [number, number][], value: number): void {
+  const npts = pts.length;
+  if (!npts) return;
+  const { w, h } = dst;
+  const delta1 = XY_ONE >> 1;
+  const delta2 = XY_ONE >> 1;
+  let imin = 0;
+  let xmin = pts[0][0];
+  let xmax = xmin;
+  let ymin = pts[0][1];
+  let ymax = ymin;
+  let p0 = pts[npts - 1];
+  for (let i = 0; i < npts; i++) {
+    const p = pts[i];
+    if (p[1] < ymin) (ymin = p[1]), (imin = i);
+    ymax = Math.max(ymax, p[1]);
+    xmax = Math.max(xmax, p[0]);
+    xmin = Math.min(xmin, p[0]);
+    line8(dst, p0[0], p0[1], p[0], p[1], value);
+    p0 = p;
+  }
+  if (npts < 3 || xmax < 0 || ymax < 0 || xmin >= w || ymin >= h) return;
+  ymax = Math.min(ymax, h - 1);
+  const edge = [
+    { idx: imin, di: 1, x: -XY_ONE, dx: 0, ye: ymin },
+    { idx: imin, di: npts - 1, x: -XY_ONE, dx: 0, ye: ymin },
+  ];
+  let edges = npts;
+  let y = ymin;
+  do {
+    for (let i = 0; i < 2; i++) {
+      if (y >= edge[i].ye) {
+        let idx0 = edge[i].idx;
+        const di = edge[i].di;
+        let idx = idx0 + di;
+        if (idx >= npts) idx -= npts;
+        for (; edges-- > 0; ) {
+          const ty = pts[idx][1];
+          if (ty > y) {
+            const xs = pts[idx0][0] * XY_ONE;
+            const xe = pts[idx][0] * XY_ONE;
+            edge[i].ye = ty;
+            edge[i].dx = Math.trunc(((xe - xs) * 2 + (ty - y)) / (2 * (ty - y)));
+            edge[i].x = xs;
+            edge[i].idx = idx;
+            break;
+          }
+          idx0 = idx;
+          idx += di;
+          if (idx >= npts) idx -= npts;
+        }
+      }
+    }
+    if (edges < 0) break;
+    if (y >= 0) {
+      const [l, r] = edge[0].x > edge[1].x ? [1, 0] : [0, 1];
+      let x1 = shr(edge[l].x + delta1);
+      let x2 = shr(edge[r].x + delta2);
+      if (x2 >= 0 && x1 < w) {
+        if (x1 < 0) x1 = 0;
+        if (x2 >= w) x2 = w - 1;
+        dst.d.fill(value, y * w + x1, y * w + x2 + 1);
+      }
+    }
+    edge[0].x += edge[0].dx;
+    edge[1].x += edge[1].dx;
+  } while (++y <= ymax);
+}
+
+interface PolyEdge {
+  y0: number;
+  y1: number;
+  x: number;
+  dx: number;
+  next: PolyEdge | null;
+}
+
+/** cv2.fillPoly(mask, [int32 points], value) for one contour (LINE_8, shift 0): CollectPolyEdges + FillEdgeCollection. */
+export function fillPoly(dst: Img, pts: [number, number][], value: number): void {
+  const { w, h } = dst;
+  const count = pts.length;
+  if (!count) return;
+  const edges: PolyEdge[] = [];
+  let pt0 = [pts[count - 1][0] * XY_ONE, pts[count - 1][1]];
+  for (let i = 0; i < count; i++) {
+    const pt1 = [pts[i][0] * XY_ONE, pts[i][1]];
+    const t: [number, number, number, number] = [shr(pt0[0] + (XY_ONE >> 1)), pt0[1], shr(pt1[0] + (XY_ONE >> 1)), pt1[1]];
+    line8(dst, t[0], t[1], t[2], t[3], value);
+    let c0y = pt0[1];
+    let c1y = pt1[1];
+    if (t[0] < 0 || t[0] >= w || t[2] < 0 || t[2] >= w || t[1] < 0 || t[1] >= h || t[3] < 0 || t[3] >= h) {
+      clipLine(w, h, t);
+      if (t[1] !== t[3]) (c0y = t[1]), (c1y = t[3]);
+    }
+    const c0x = t[0] * XY_ONE;
+    const c1x = t[2] * XY_ONE;
+    if (pt0[1] !== pt1[1]) {
+      const dx = Math.trunc((c1x - c0x) / (c1y - c0y));
+      if (pt0[1] < pt1[1]) edges.push({ y0: pt0[1], y1: pt1[1], x: c0x + (pt0[1] - c0y) * dx, dx, next: null });
+      else edges.push({ y0: pt1[1], y1: pt0[1], x: c1x + (pt1[1] - c1y) * dx, dx, next: null });
+    }
+    pt0 = pt1;
+  }
+  fillEdgeCollection(dst, edges, value);
+}
+
+function fillEdgeCollection(dst: Img, edges: PolyEdge[], value: number): void {
+  const { w, h } = dst;
+  const total = edges.length;
+  const delta = XY_ONE - 1;
+  if (total < 2) return;
+  let yMax = -Infinity;
+  let yMin = Infinity;
+  let xMax = -Infinity;
+  let xMin = Infinity;
+  for (const e1 of edges) {
+    const x1 = e1.x + (e1.y1 - e1.y0) * e1.dx;
+    yMin = Math.min(yMin, e1.y0);
+    yMax = Math.max(yMax, e1.y1);
+    xMin = Math.min(xMin, e1.x, x1);
+    xMax = Math.max(xMax, e1.x, x1);
+  }
+  if (yMax < 0 || yMin >= h || xMax < 0 || xMin >= w * XY_ONE) return;
+  // std::sort with CmpEdges (a strict order up to equal edges, so the sort's stability does not matter)
+  edges.sort((a, b) => (a.y0 !== b.y0 ? a.y0 - b.y0 : a.x !== b.x ? a.x - b.x : a.dx - b.dx));
+  const tmp: PolyEdge = { y0: Infinity, y1: 0, x: 0, dx: 0, next: null };
+  edges.push(tmp);
+  let i = 0;
+  let e = edges[0];
+  yMax = Math.min(yMax, h);
+  for (let y = e.y0; y < yMax; y++) {
+    let draw = false;
+    const clip = y < 0;
+    let prelast: PolyEdge = tmp;
+    let last = tmp.next;
+    let keep: PolyEdge;
+    while (last || e.y0 === y) {
+      if (last && last.y1 === y) {
+        prelast.next = last.next;
+        last = last.next;
+        continue;
+      }
+      keep = prelast;
+      if (last && (e.y0 > y || last.x < e.x)) {
+        prelast = last;
+        last = last.next;
+      } else if (i < total) {
+        prelast.next = e;
+        e.next = last;
+        prelast = e;
+        e = edges[++i];
+      } else break;
+      if (draw) {
+        if (!clip) {
+          let x1: number;
+          let x2: number;
+          if (keep.x > prelast.x) (x1 = shr(prelast.x + delta)), (x2 = shr(keep.x));
+          else (x1 = shr(keep.x + delta)), (x2 = shr(prelast.x));
+          if (x1 < w && x2 >= 0) {
+            if (x1 < 0) x1 = 0;
+            if (x2 >= w) x2 = w - 1;
+            if (x2 >= x1) dst.d.fill(value, y * w + x1, y * w + x2 + 1);
+          }
+        }
+        keep.x += keep.dx;
+        prelast.x += prelast.dx;
+      }
+      draw = !draw;
+    }
+    // bubble sort of the active edges by x
+    let keepPrelast: PolyEdge | null = null;
+    do {
+      prelast = tmp;
+      last = tmp.next;
+      let lastExchange: PolyEdge | null = null;
+      while (last !== keepPrelast && last && last.next) {
+        const te: PolyEdge = last.next;
+        if (last.x > te.x) {
+          prelast.next = te;
+          last.next = te.next;
+          te.next = last;
+          prelast = te;
+          lastExchange = prelast;
+        } else {
+          prelast = last;
+          last = te;
+        }
+      }
+      if (!lastExchange) break;
+      keepPrelast = lastExchange;
+    } while (keepPrelast !== tmp.next && keepPrelast !== tmp);
   }
 }

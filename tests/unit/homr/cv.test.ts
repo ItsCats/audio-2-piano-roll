@@ -76,8 +76,6 @@ describe('homr image operations vs cv2 / Pillow', () => {
     expect(diff(warpAffine(gray, w.m.flat(), w.w, w.h, 1).d, unpack(w.d)).max).toBe(0);
     const m = img(50, 40);
     fillConvexPoly(m, [[3, 2], [45, 9], [20, 37]], 255);
-    const d = diff(m.d, unpack(ops.fillconvex));
-    // the outline pixels may differ a little from OpenCV's line drawing
-    expect(d.share).toBeLessThan(0.02);
+    expect(diff(m.d, unpack(ops.fillconvex)).max).toBe(0);
   });
 });

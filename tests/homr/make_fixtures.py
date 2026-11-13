@@ -148,6 +148,35 @@ def main() -> None:
     print("wrote", os.path.join(out, "cv.json"), os.path.getsize(os.path.join(out, "cv.json")))
     subdiv_fixtures(out)
     touch_fixtures(out)
+    fill_fixtures(out)
+
+
+def fill_fixtures(out: str) -> None:
+    """cv2.fillPoly of convex hulls (homr autocrop) and cv2.fillConvexPoly of triangles (homr dewarping)."""
+    rng = np.random.default_rng(5)
+    rows = []
+    for k in range(160):
+        w, h = int(rng.integers(20, 90)), int(rng.integers(20, 90))
+        if k < 80:
+            n = int(rng.integers(3, 40))
+            # some points outside the image, some sheet-like quadrilaterals with long, steep edges
+            pts = rng.integers(-8, max(w, h) + 8, size=(n, 2)) if k % 4 == 0 else rng.integers(0, [w, h], size=(n, 2))
+            if k % 5 == 1:
+                pts = np.array([[rng.integers(0, 6), rng.integers(0, 6)], [w - 1 - rng.integers(0, 6), rng.integers(0, 6)], [w - 1 - rng.integers(0, 6), h - 1 - rng.integers(0, 6)], [rng.integers(0, 6), h - 1 - rng.integers(0, 6)]])
+            hull = cv2.convexHull(pts.astype(np.int32).reshape(-1, 1, 2))
+            mask = np.ones((h, w), np.uint8)
+            cv2.fillPoly(mask, [hull], 0)
+            rows.append({"op": "fillPoly", "w": w, "h": h, "pts": hull.reshape(-1, 2).tolist(), "d": b64(mask)})
+        else:
+            tri = rng.uniform(-3, [w + 3, h + 3], size=(3, 2)).astype(np.int32) if k % 3 == 0 else rng.uniform(0, [w, h], size=(3, 2)).astype(np.int32)
+            if k % 7 == 0:
+                tri[1] = tri[0]  # degenerate
+            mask = np.zeros((h, w), np.uint8)
+            cv2.fillConvexPoly(mask, tri, 255)
+            rows.append({"op": "fillConvexPoly", "w": w, "h": h, "pts": tri.tolist(), "d": b64(mask)})
+    with open(os.path.join(out, "fill.json"), "w") as fh:
+        json.dump(rows, fh, separators=(",", ":"))
+    print("wrote", os.path.join(out, "fill.json"), os.path.getsize(os.path.join(out, "fill.json")))
 
 
 def touch_fixtures(out: str) -> None:

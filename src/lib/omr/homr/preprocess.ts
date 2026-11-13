@@ -5,7 +5,7 @@
  *
  * Derived from homr (AGPL-3.0, Copyright the homr contributors, https://github.com/liebharc/homr).
  */
-import { boxBlur, clahe, dilate, erode, img, laplacianNoiseSum, rectKernel, resizePil, toGray, type Img } from './cv';
+import { boxBlur, clahe, dilate, erode, fillPoly, img, laplacianNoiseSum, rectKernel, resizePil, toGray, type Img } from './cv';
 import { boundingRect, contourArea, convexHullIndices, findContours } from './geom';
 import { median, pyRound } from './model';
 
@@ -23,9 +23,23 @@ function chroma(r: number, g: number, b: number): [number, number, number] {
   return [f(R / s), f(G / s), f(B / s)];
 }
 
+/** np.median of a float32 array (the middle values' mean in float32) */
+function medianF32(a: number[]): number {
+  const s = [...a].sort((x, y) => x - y);
+  const m = s.length >> 1;
+  return s.length % 2 ? s[m] : Math.fround(Math.fround(s[m - 1] + s[m]) / 2);
+}
+
 function medianChroma(pixels: number[][]): [number, number, number] {
   const cs = pixels.map(([r, g, b]) => chroma(r, g, b));
-  return [median(cs.map((c) => c[0])), median(cs.map((c) => c[1])), median(cs.map((c) => c[2]))];
+  return [medianF32(cs.map((c) => c[0])), medianF32(cs.map((c) => c[1])), medianF32(cs.map((c) => c[2]))];
+}
+
+/** np.abs(c - p).sum() <= 0.07 / > 0.07 in float32 (numpy 2 compares a float32 with a Python float in float32) */
+const MAX_CHROMA_DIFF_F32 = Math.fround(MAX_CHROMA_DIFF);
+function chromaDiff(c: [number, number, number], p: [number, number, number]): number {
+  const f = Math.fround;
+  return f(f(Math.abs(f(c[0] - p[0])) + Math.abs(f(c[1] - p[1]))) + Math.abs(f(c[2] - p[2])));
 }
 
 function isPaper(im: Img, x0: number, y0: number, x1: number, y1: number, paper: [number, number, number]): boolean {
@@ -37,30 +51,7 @@ function isPaper(im: Img, x0: number, y0: number, x1: number, y1: number, paper:
     }
   if (!px.length) return true;
   const c = medianChroma(px);
-  return Math.abs(c[0] - paper[0]) + Math.abs(c[1] - paper[1]) + Math.abs(c[2] - paper[2]) <= MAX_CHROMA_DIFF;
-}
-
-/** Fill a polygon (a convex hull) with 0 in a 0/1 mask. */
-function fillConvex(mask: Img, poly: number[]): void {
-  const n = poly.length / 2;
-  for (let y = 0; y < mask.h; y++) {
-    const xs: number[] = [];
-    for (let k = 0; k < n; k++) {
-      const ax = poly[2 * k];
-      const ay = poly[2 * k + 1];
-      const bx = poly[2 * ((k + 1) % n)];
-      const by = poly[2 * ((k + 1) % n) + 1];
-      if (ay === by) {
-        if (ay === y) xs.push(ax, bx);
-        continue;
-      }
-      if ((y >= ay && y <= by) || (y >= by && y <= ay)) xs.push(ax + ((y - ay) * (bx - ax)) / (by - ay));
-    }
-    if (!xs.length) continue;
-    const a = Math.max(0, Math.ceil(Math.min(...xs) - 1e-9));
-    const b = Math.min(mask.w - 1, Math.floor(Math.max(...xs) + 1e-9));
-    for (let x = a; x <= b; x++) mask.d[y * mask.w + x] = 0;
-  }
+  return chromaDiff(c, paper) <= MAX_CHROMA_DIFF_F32;
 }
 
 /**
@@ -134,8 +125,7 @@ export function autocrop(im: Img): { image: Img; x: number; y: number } {
     shifted[i] = big[i] - cx;
     shifted[i + 1] = big[i + 1] - cy;
   }
-  const hull = convexHullIndices(shifted).flatMap((i) => [shifted[2 * i], shifted[2 * i + 1]]);
-  fillConvex(beside, hull);
+  fillPoly(beside, convexHullIndices(shifted).map((i) => [shifted[2 * i], shifted[2 * i + 1]] as [number, number]), 0);
   const paperColor = [0, 1, 2].map((c) => median(paper.map((p) => p[c])));
   const smooth = boxBlur(crop, 7);
   const meanPaper = (paperColor[0] + paperColor[1] + paperColor[2]) / 3;
@@ -145,9 +135,8 @@ export function autocrop(im: Img): { image: Img; x: number; y: number } {
     const g = smooth.d[3 * i + 1];
     const b = smooth.d[3 * i + 2];
     const c = chroma(r, g, b);
-    const diff = Math.abs(c[0] - pc[0]) + Math.abs(c[1] - pc[1]) + Math.abs(c[2] - pc[2]);
     const bright = (r + g + b) / 3 > 0.25 * meanPaper;
-    bg.d[i] = beside.d[i] && bright && diff > MAX_CHROMA_DIFF ? 1 : 0;
+    bg.d[i] = beside.d[i] && bright && chromaDiff(c, pc) > MAX_CHROMA_DIFF_F32 ? 1 : 0;
   }
   const bgd = dilate(bg, rectKernel(5, 5));
   const pcol = paperColor.map((v) => Math.trunc(v));
