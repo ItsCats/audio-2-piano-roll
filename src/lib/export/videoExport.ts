@@ -166,8 +166,14 @@ function forceStopAudioEncoder(src: AudioSampleSource): void {
 }
 
 /** output.cancel() waits for encoders to flush; a stuck one never does, so don't wait long */
-async function cancelOutput(output: Output): Promise<void> {
-  await Promise.race([output.cancel().catch(() => {}), new Promise((r) => setTimeout(r, 3000))]);
+async function cancelOutput(output: Output): Promise<boolean> {
+  return Promise.race([
+    output.cancel().then(
+      () => true,
+      () => true,
+    ),
+    new Promise<boolean>((r) => setTimeout(() => r(false), 3000)),
+  ]);
 }
 
 /** Decodes the original recording at the export rate and keeps only the part this export can hear. */
@@ -702,9 +708,15 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
     progress({ phase: 'finalizing', fraction: 1 });
     return { blob, mime, extension: ext, videoCodec, audioCodec, width, height, duration: cards ? cards.total : duration, method: 'webcodecs', sound };
   } catch (err) {
-    // the real track, not the title-card wrapper (which has no encoder of its own)
-    forceStopAudioEncoder(audioTrack);
-    await cancelOutput(output);
+    // the real track, not the title-card wrapper (which has no encoder of its own). On a cancel the
+    // encoder is healthy: let it finish the few blocks it holds (otherwise their copies are never
+    // closed), and stop it by force only if that doesn't end in time. A stalled encoder is stopped first.
+    if (job.signal?.aborted && (err as Error)?.name === 'AbortError' && (await cancelOutput(output))) {
+      /* canceled cleanly */
+    } else {
+      forceStopAudioEncoder(audioTrack);
+      await cancelOutput(output);
+    }
     await cleanup();
     throw err;
   } finally {
