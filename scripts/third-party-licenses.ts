@@ -30,6 +30,12 @@ const BUNDLED_INSIDE: Record<string, string[]> = {
   'onnxruntime-web': ['onnxruntime-common'],
 };
 
+/** Extra notices for packages whose published files leave something out. */
+const EXTRA_NOTES: Record<string, string> = {
+  'onnxruntime-web':
+    'Its WebAssembly build (ort-wasm-*.wasm) also contains third-party code; their notices are in ONNX Runtime\'s\nThirdPartyNotices.txt: https://github.com/microsoft/onnxruntime/blob/main/ThirdPartyNotices.txt',
+};
+
 /** Package root ("…/node_modules/@scope/name" or "…/node_modules/name") of a file path or module id, or null. */
 export function packageRootOf(id: string): string | null {
   const path = id.replace(/^\0+/, '').split('?')[0].replace(/\\/g, '/');
@@ -106,6 +112,7 @@ function describe(root: string, loaded: Iterable<string>, needs: Set<string>): s
   const lines = [`${name}@${pkg.version ?? '?'}`, `License: ${license}`];
   if (author) lines.push(`Author: ${author}`);
   if (repo || pkg.homepage) lines.push(`Source: ${repo ?? pkg.homepage}`);
+  if (EXTRA_NOTES[name]) lines.push('', EXTRA_NOTES[name]);
   const files = licenseFiles(root);
   if (!files.length) {
     lines.push('', `(The package ships no licence file; it declares "${license}" in its package.json.)`);
