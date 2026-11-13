@@ -5,14 +5,15 @@
  * and pauses the game; the import page does not jump to the Studio while this is open.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, CheckCircle2, ChevronLeft, Loader2, Pause, Play, Volume2, VolumeX, X, XCircle } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, CheckCircle2, ChevronLeft, Hourglass, Pause, Play, Volume2, VolumeX, X, XCircle } from 'lucide-react';
 import { useImport } from '../../state/importStore';
 import { useSettings } from '../../state/settingsStore';
 import { isTouchDevice } from '../../lib/wakeLock';
 import { gameFps } from '../../lib/games/loop';
 import { createGameSynth, type GameSynth } from '../../lib/games/synth';
 import { loadBest, loadSoundOn, saveBest, saveSoundOn, type GameId } from '../../lib/games/offer';
-import { Button, ProgressBar, cn } from '../ui';
+import { Button, cn } from '../ui';
 import { GameStage, type StageHandle, type StageState } from './GameStage';
 import { createNoteHopper } from './noteHopperEngine';
 import { createKeySnake } from './keySnakeEngine';
@@ -141,6 +142,14 @@ export default function GameOverlay({ jobId, onClose, onOpenSong }: { jobId: num
   /** a pause only holds a run in progress; the import's notice holds everything */
   const held = (paused && playing) || !!notice;
 
+  // While open, the app underneath is not drawn at all (html.p2v-games-open #root: display none, see
+  // index.css): its spinners and progress bars would otherwise keep the compositor redrawing.
+  useEffect(() => {
+    const el = document.documentElement;
+    el.classList.add('p2v-games-open');
+    return () => el.classList.remove('p2v-games-open');
+  }, []);
+
   // a hidden page (app switch, locked screen) pauses a run
   useEffect(() => {
     const vis = () => {
@@ -213,7 +222,7 @@ export default function GameOverlay({ jobId, onClose, onOpenSong }: { jobId: num
   const songId = status === 'done' ? job?.songId : undefined;
   const info = game ? GAMES[game] : null;
 
-  return (
+  return createPortal(
     <div
       ref={root}
       role="dialog"
@@ -259,7 +268,7 @@ export default function GameOverlay({ jobId, onClose, onOpenSong }: { jobId: num
         <Picker touch={touch} onPick={pick} />
       ) : (
         <div className="flex min-h-0 flex-1 flex-col px-3 pt-2 pb-3 sm:px-6 sm:pb-6">
-          <div className="mx-auto flex w-full max-w-5xl items-baseline justify-between px-1 pb-2">
+          <div className="mx-auto flex w-full max-w-3xl items-baseline justify-between px-1 pb-2">
             <h2 className="text-[15px] font-semibold text-ink-50">{info.name}</h2>
             <p className="font-mono text-[13px] text-ink-200">
               <span className="sr-only">Score </span>
@@ -267,11 +276,11 @@ export default function GameOverlay({ jobId, onClose, onOpenSong }: { jobId: num
               <span className="ml-3 text-ink-300">Best {Math.max(best, stage.score)}</span>
             </p>
           </div>
-          <div className="relative mx-auto min-h-0 w-full max-w-5xl flex-1">
+          <div className="relative mx-auto min-h-0 w-full max-w-3xl flex-1 sm:max-h-[560px]">
             <GameStage
               engine={engine}
               paused={held}
-              fps={gameFps(touch)}
+              fps={gameFps(touch, status === 'running')}
               touch={touch}
               swipe={game === 'key-snake'}
               keyInput={game === 'key-snake' ? snakeKeys : hopperKeys}
@@ -322,7 +331,8 @@ export default function GameOverlay({ jobId, onClose, onOpenSong }: { jobId: num
           <ImportNotice status={notice} error={job?.id === jobId ? job.error : undefined} songId={songId} onOpenSong={onOpenSong} onBack={onClose} onKeepPlaying={keepPlaying} />
         </div>
       )}
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -359,12 +369,20 @@ function ImportLine({ status, title, progress, songId, onOpenSong }: { status: I
       {status === 'running' && (
         <>
           <p className="flex items-center gap-1.5 truncate text-[12.5px] text-ink-200">
-            <Loader2 size={13} className="shrink-0 animate-spin text-accent-400" />
+            {/* still (no spinner): anything moving up here makes the screen redraw beyond the game */}
+            <Hourglass size={13} className="shrink-0 text-accent-400" />
             <span className="truncate">Importing{title ? ` “${title}”` : ''}</span>
             {progress !== null && <span className="ml-auto shrink-0 font-mono text-[11.5px] text-ink-300">{Math.round(progress * 100)}%</span>}
           </p>
-          <div className="mt-1.5">
-            <ProgressBar value={progress} />
+          <div
+            className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-ink-700"
+            role="progressbar"
+            aria-label="Import progress"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={progress === null ? undefined : Math.round(progress * 100)}
+          >
+            <div className="h-full rounded-full bg-accent-500" style={{ width: `${Math.round(Math.max(0.02, progress ?? 0.02) * 100)}%` }} />
           </div>
         </>
       )}

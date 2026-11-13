@@ -4,7 +4,7 @@
  * page), and draws at most `fps` times a second.
  */
 import { useEffect, useRef } from 'react';
-import { canvasScale, frameDue } from '../../lib/games/loop';
+import { canvasScale, frameDue, frameWait } from '../../lib/games/loop';
 import { swipeDir } from '../../lib/games/keySnake';
 import type { GameEngine, GameInput, Phase } from './engine';
 
@@ -46,8 +46,8 @@ export function GameStage({
 }) {
   const wrap = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
-  const live = useRef({ paused, onState, keyInput });
-  live.current = { paused, onState, keyInput };
+  const live = useRef({ paused, onState, keyInput, fps });
+  live.current = { paused, onState, keyInput, fps };
   const kickRef = useRef<() => void>(() => undefined);
 
   useEffect(() => {
@@ -59,6 +59,7 @@ export function GameStage({
     let h = 0;
     let scale = 1;
     let raf = 0;
+    let timer = 0;
     let last = 0;
     let lastDraw = -1e9;
     let reported: StageState = { phase: engine.phase(), score: engine.score() };
@@ -81,17 +82,27 @@ export function GameStage({
     const tick = (now: number) => {
       raf = 0;
       if (!shouldRun()) return;
-      if (frameDue(now, lastDraw, fps)) {
+      if (frameDue(now, lastDraw, live.current.fps)) {
         const dt = now - last;
         last = now;
         lastDraw = now;
         if (engine.update(dt)) draw();
         report();
       }
-      if (shouldRun()) raf = requestAnimationFrame(tick);
+      if (shouldRun()) schedule();
+    };
+    // sleep until shortly before the next frame is due instead of waking on every display refresh
+    const schedule = () => {
+      const wait = frameWait(performance.now(), lastDraw, live.current.fps);
+      if (wait <= 0) raf = requestAnimationFrame(tick);
+      else
+        timer = window.setTimeout(() => {
+          timer = 0;
+          if (shouldRun()) raf = requestAnimationFrame(tick);
+        }, wait);
     };
     const kick = () => {
-      if (raf || !shouldRun()) return;
+      if (raf || timer || !shouldRun()) return;
       last = performance.now();
       lastDraw = -1e9;
       raf = requestAnimationFrame(tick);
@@ -102,7 +113,7 @@ export function GameStage({
       const r = box.getBoundingClientRect();
       const nw = Math.max(1, Math.floor(r.width));
       const nh = Math.max(1, Math.floor(r.height));
-      const ns = canvasScale(window.devicePixelRatio, touch);
+      const ns = canvasScale(window.devicePixelRatio, touch, nw, nh);
       if (nw === w && nh === h && ns === scale) return;
       w = nw;
       h = nh;
@@ -181,6 +192,7 @@ export function GameStage({
 
     return () => {
       if (raf) cancelAnimationFrame(raf);
+      if (timer) clearTimeout(timer);
       ro?.disconnect();
       window.removeEventListener('resize', resize);
       window.removeEventListener('keydown', key);
@@ -194,7 +206,7 @@ export function GameStage({
       cv.width = 0;
       cv.height = 0;
     };
-  }, [engine, fps, touch, swipe, handle]);
+  }, [engine, touch, swipe, handle]);
 
   // resuming restarts the loop
   useEffect(() => {

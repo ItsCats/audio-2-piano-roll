@@ -4,8 +4,8 @@
  * CSP, COOP/COEP).
  *
  *   npx vite build --outDir /tmp/p2v-dist
- *   node tests/e2e/games.mjs --dist /tmp/p2v-dist [--port 5397] [--shots DIR] [--seconds 150] [--only iphone|desktop]
- *   node tests/e2e/games.mjs --dist /tmp/p2v-dist --perf [--runs 2] [--seconds 60] [--only desktop|iphone] [--throttle 4]
+ *   node tests/e2e/games.mjs --dist /tmp/p2v-dist [--port 5397] [--shots DIR] [--seconds 60] [--only iphone|desktop]
+ *   node tests/e2e/games.mjs --dist /tmp/p2v-dist --perf [--runs 2] [--seconds 30] [--only desktop|iphone] [--throttle 4] [--dsf 1]
  *
  * Test (iPhone 14 and desktop 1440×900): a synthetic solo-piano WAV (made here) is imported with the
  * "High-accuracy piano model"; the "Play a game while you wait" button is not there at first and is by
@@ -105,7 +105,7 @@ await new Promise((r) => setTimeout(r, 800));
 const browser = await chromium.launch();
 
 const DEVICES = {
-  desktop: { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 },
+  desktop: { viewport: { width: 1440, height: 900 }, deviceScaleFactor: Number(opt('dsf', '2')) },
   iphone: { ...devices['iPhone 14'], deviceScaleFactor: 2 },
 };
 
@@ -318,15 +318,52 @@ async function failScenario() {
   await ctx.close();
 }
 
+/** CPU seconds used so far by the browser this script started (all its processes and threads; Linux /proc). */
+function browserCpuSeconds() {
+  try {
+    const kids = new Map();
+    const comm = new Map();
+    const cpu = new Map();
+    for (const d of fs.readdirSync('/proc')) {
+      if (!/^\d+$/.test(d)) continue;
+      try {
+        const st = fs.readFileSync(`/proc/${d}/stat`, 'utf8');
+        const close = st.lastIndexOf(')');
+        const f = st.slice(close + 2).split(' ');
+        const ppid = Number(f[1]);
+        comm.set(Number(d), st.slice(st.indexOf('(') + 1, close));
+        cpu.set(Number(d), (Number(f[11]) + Number(f[12])) / 100);
+        if (!kids.has(ppid)) kids.set(ppid, []);
+        kids.get(ppid).push(Number(d));
+      } catch {
+        /* exited */
+      }
+    }
+    let total = 0;
+    const stack = [...(kids.get(process.pid) ?? [])];
+    while (stack.length) {
+      const p = stack.pop();
+      if (!/python/.test(comm.get(p) ?? '')) total += cpu.get(p) ?? 0;
+      stack.push(...(kids.get(p) ?? []));
+    }
+    return total;
+  } catch {
+    return NaN;
+  }
+}
+
 /** Import duration of the same file without and with a game running, alternating. */
 async function perfRuns(dev) {
   const { ctx, page, errors } = await newPage(DEVICES[dev]);
-  if (throttle > 1) {
-    const cdp = await ctx.newCDPSession(page);
-    await cdp.send('Emulation.setCPUThrottlingRate', { rate: throttle });
-  }
+  const cdp = await ctx.newCDPSession(page);
+  if (throttle > 1) await cdp.send('Emulation.setCPUThrottlingRate', { rate: throttle });
+  await cdp.send('Performance.enable');
+  /** the page's main-thread busy time so far (s) */
+  const busy = async () => (await cdp.send('Performance.getMetrics')).metrics.find((m) => m.name === 'TaskDuration')?.value ?? 0;
   const once = async (withGame) => {
     const t0 = await startImport(page);
+    const busy0 = await busy();
+    const cpu0 = browserCpuSeconds();
     let raf0 = 0;
     let gameFrom = null;
     if (withGame) {
@@ -354,7 +391,9 @@ async function perfRuns(dev) {
       if (Date.now() - t0 > 20 * 60_000) throw new Error('import timed out');
     }
     const sec = (Date.now() - t0) / 1000;
-    const out = { withGame, seconds: +sec.toFixed(1) };
+    // share of the import's time the page's main thread was busy (the game, React, the harness's polling)
+    const out = { withGame, seconds: +sec.toFixed(1), mainThreadBusy: `${(((await busy()) - busy0) / sec * 100).toFixed(1)}%`, cpuSeconds: +(browserCpuSeconds() - cpu0).toFixed(1) };
+    out.browserCores = +(out.cpuSeconds / sec).toFixed(2);
     if (withGame) {
       const frames = (await page.evaluate(() => window.__raf)) - raf0;
       Object.assign(out, { gameFromSec: +gameFrom.toFixed(1), rafPerSec: +(frames / ((Date.now() - tGame) / 1000)).toFixed(1), taps });
@@ -378,7 +417,12 @@ async function perfRuns(dev) {
   const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
   const a = mean(results.filter((r) => !r.withGame).map((r) => r.seconds));
   const b = mean(results.filter((r) => r.withGame).map((r) => r.seconds));
+  const ca = mean(results.filter((r) => !r.withGame).map((r) => r.cpuSeconds));
+  const cb = mean(results.filter((r) => r.withGame).map((r) => r.cpuSeconds));
+  const gameSec = mean(results.filter((r) => r.withGame).map((r) => r.seconds - r.gameFromSec));
   console.log(`PERF ${dev}${throttle > 1 ? ` throttle ${throttle}×` : ''}: without game ${a.toFixed(1)} s, with game ${b.toFixed(1)} s → ${(((b - a) / a) * 100).toFixed(1)}% (${seconds} s of audio, high-accuracy model, ${runs} runs each)`);
+  // CPU time does not depend on how busy the machine is: the game's own cost, apart from contention
+  console.log(`PERF ${dev}: browser CPU per import without game ${ca.toFixed(1)} s, with game ${cb.toFixed(1)} s → the game used ~${((cb - ca) / gameSec).toFixed(2)} cores while open (${(((cb - ca) / ca) * 100).toFixed(1)}% of the import's CPU time)`);
   if (errors.length) console.log('console errors:', errors);
   await ctx.close();
 }

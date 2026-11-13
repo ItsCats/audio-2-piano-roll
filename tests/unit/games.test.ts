@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   HOPPER_DT,
   HOPPER_FLOOR,
@@ -29,7 +29,7 @@ import {
 } from '../../src/lib/games/keySnake';
 import { MELODIES, isBlackKey, melodyCursor, nextNote, noteName, whiteKeyIndex } from '../../src/lib/games/melodies';
 import { OFFER_AFTER_SEC, loadBest, loadSoundOn, offerGame, saveBest, saveSoundOn } from '../../src/lib/games/offer';
-import { canvasScale, frameDue, gameFps } from '../../src/lib/games/loop';
+import { canvasScale, frameDue, frameWait, gameFps } from '../../src/lib/games/loop';
 import { makeRng, nextRandom } from '../../src/lib/games/rng';
 
 describe('melodies', () => {
@@ -320,6 +320,8 @@ describe('offer, pacing, storage', () => {
   it('frame pacing and canvas scale', () => {
     expect(gameFps(true)).toBe(30);
     expect(gameFps(false)).toBe(60);
+    expect(gameFps(false, true)).toBe(30);
+    expect(gameFps(true, false)).toBe(30);
     expect(frameDue(1000, 1000 - 16.7, 60)).toBe(true);
     expect(frameDue(1000, 1000 - 16.7, 30)).toBe(false);
     expect(frameDue(1000, 1000 - 33.3, 30)).toBe(true);
@@ -327,6 +329,16 @@ describe('offer, pacing, storage', () => {
     expect(canvasScale(3, false)).toBe(2);
     expect(canvasScale(1, false)).toBe(1);
     expect(canvasScale(NaN, false)).toBe(1);
+    // a big board on a high-density screen: capped pixel count
+    expect(canvasScale(2, false, 896, 640)).toBeCloseTo(Math.sqrt(750_000 / (896 * 640)), 2);
+    expect(canvasScale(3, true, 300, 400)).toBe(1.5);
+    expect(canvasScale(3, true, 430, 700)).toBeCloseTo(Math.sqrt(450_000 / (430 * 700)), 2);
+    expect(canvasScale(2, false, 300, 200)).toBe(2);
+    expect(canvasScale(2, false, 4000, 4000)).toBe(0.5);
+    // 30 fps: drawn at 1000 → sleep until ~1019, then wait for the frame; late → ask now
+    expect(frameWait(1000, 1000, 30)).toBe(19);
+    expect(frameWait(1025, 1000, 30)).toBe(0);
+    expect(frameWait(1000, 1000, 60)).toBe(0);
   });
 
   it('random numbers are seeded', () => {
@@ -358,5 +370,94 @@ describe('offer, pacing, storage', () => {
     saveSoundOn(false);
     expect(loadSoundOn()).toBe(false);
     expect([...store.keys()].sort()).toEqual(['piano2vision-game-best-note-hopper', 'piano2vision-game-sound']);
+  });
+});
+
+describe('game synth', () => {
+  class FakeParam {
+    value = 0;
+    setValueAtTime() {}
+    exponentialRampToValueAtTime() {}
+  }
+  class FakeNode {
+    gain = new FakeParam();
+    frequency = new FakeParam();
+    type = '';
+    onended: (() => void) | null = null;
+    connect() {}
+    disconnect() {}
+    start() {}
+    stop() {}
+  }
+  class FakeCtx {
+    static made = 0;
+    state: 'running' | 'suspended' | 'closed' = 'running';
+    currentTime = 0;
+    destination = {};
+    oscillators = 0;
+    constructor() {
+      FakeCtx.made++;
+    }
+    createGain() {
+      return new FakeNode();
+    }
+    createOscillator() {
+      this.oscillators++;
+      return new FakeNode();
+    }
+    resume() {
+      this.state = 'running';
+      return Promise.resolve();
+    }
+    suspend() {
+      this.state = 'suspended';
+      return Promise.resolve();
+    }
+    close() {
+      this.state = 'closed';
+      return Promise.resolve();
+    }
+  }
+  const g = globalThis as { window?: unknown };
+  afterEach(() => {
+    delete g.window;
+    vi.useRealTimers();
+  });
+
+  it('makes no audio context until a tap, none while muted, sleeps when quiet, wakes to play', async () => {
+    vi.useFakeTimers();
+    let last: FakeCtx | null = null;
+    g.window = {
+      AudioContext: class extends FakeCtx {
+        constructor() {
+          super();
+          last = this;
+        }
+      },
+    };
+    const { createGameSynth, IDLE_SUSPEND_MS } = await import('../../src/lib/games/synth');
+    const muted = createGameSynth(true);
+    muted.unlock();
+    muted.play(60);
+    expect(last).toBeNull();
+    const s = createGameSynth(false);
+    s.play(60); // before a tap: nothing
+    expect(last).toBeNull();
+    s.unlock();
+    expect(last).not.toBeNull();
+    const ctx = last as unknown as FakeCtx;
+    s.play(60);
+    expect(ctx.oscillators).toBe(2);
+    vi.advanceTimersByTime(IDLE_SUSPEND_MS + 10);
+    expect(ctx.state).toBe('suspended');
+    s.play(64); // wakes and plays
+    expect(ctx.state).toBe('running');
+    expect(ctx.oscillators).toBe(4);
+    s.setMuted(true);
+    expect(ctx.state).toBe('suspended');
+    s.play(65);
+    expect(ctx.oscillators).toBe(4);
+    s.close();
+    expect(ctx.state).toBe('closed');
   });
 });
