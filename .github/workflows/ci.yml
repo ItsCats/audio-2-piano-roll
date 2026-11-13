@@ -1,0 +1,58 @@
+# Quick checks on every push and pull request: type check, unit tests and build for the web app,
+# and the tests of the optional processing server (server/). About two minutes.
+# The browser end-to-end and accuracy suites (tests/e2e, tests/accuracy) are slow and stay manual.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: Web app (types, tests, build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      # npm ci fails when package-lock.json is out of sync with package.json
+      - run: npm ci --no-audit --no-fund
+      - run: npx tsc -b --noEmit
+      - run: npm test
+      - run: npm run build
+
+  server:
+    name: Processing server (pytest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12' # same as server/Dockerfile
+          cache: pip
+          cache-dependency-path: |
+            server/requirements.txt
+            server/requirements-dev.txt
+      # the API tests decode and check audio with ffmpeg/ffprobe
+      - run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends ffmpeg
+      # SCNet (requirements-separation.txt) is not needed: the tests mock the model
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: python -m pytest tests -q
