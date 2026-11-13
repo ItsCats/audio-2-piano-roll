@@ -13,6 +13,7 @@ declare global {
     makePiece: (seed: number) => Promise<{ notes: number; png: string }>;
     readPage: (threads?: number) => Promise<unknown>;
     readAbort: () => Promise<unknown>;
+    readRaw: (url: string, w: number, h: number, threads?: number) => Promise<unknown>;
   }
 }
 
@@ -185,6 +186,21 @@ window.readAbort = async () => {
   } catch (e) {
     return { rejected: true, name: (e as Error).name, rejectAfterAbortMs: Math.round(performance.now() - (abortedAt || t0)) };
   }
+};
+
+/** Timing on a raw RGB page (tests/e2e/homr-bench.mjs): returns the MusicXML and the stats. */
+window.readRaw = async (url, w, h, threads) => {
+  const rgb = new Uint8Array(await (await fetch(url)).arrayBuffer());
+  const rgba = new Uint8ClampedArray(w * h * 4);
+  for (let i = 0, j = 0; i < w * h; i++, j += 4) {
+    rgba[j] = rgb[3 * i];
+    rgba[j + 1] = rgb[3 * i + 1];
+    rgba[j + 2] = rgb[3 * i + 2];
+    rgba[j + 3] = 255;
+  }
+  const t0 = performance.now();
+  const res = await homrEngine.readPages([new ImageData(rgba, w, h)], { threads });
+  return { seconds: +((performance.now() - t0) / 1000).toFixed(1), staves: res.staves, lines: res.lines, stats: res.stats, musicXml: res.musicXml };
 };
 
 log('ready');

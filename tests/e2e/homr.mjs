@@ -39,11 +39,24 @@ try {
   process.exit(2);
 }
 
-/** Resident memory (MB) of the browser's processes (Linux), sampled while reading. */
+/** Resident memory (MB) of the browser and all its descendant processes (Linux), sampled while reading. */
 function browserRssMB(pid) {
   try {
-    const out = execSync(`ps -o rss= --ppid ${pid} -p ${pid}`, { encoding: 'utf8' });
-    return out.split('\n').reduce((a, l) => a + (+l.trim() || 0), 0) / 1024;
+    const rows = execSync('ps -e -o pid=,ppid=,rss=', { encoding: 'utf8' })
+      .trim()
+      .split('\n')
+      .map((l) => l.trim().split(/\s+/).map(Number));
+    const kids = new Map();
+    for (const [p, pp] of rows) kids.set(pp, [...(kids.get(pp) ?? []), p]);
+    const rss = new Map(rows.map(([p, , r]) => [p, r]));
+    let total = 0;
+    const todo = [pid];
+    while (todo.length) {
+      const p = todo.pop();
+      total += rss.get(p) ?? 0;
+      todo.push(...(kids.get(p) ?? []));
+    }
+    return total / 1024;
   } catch {
     return 0;
   }
