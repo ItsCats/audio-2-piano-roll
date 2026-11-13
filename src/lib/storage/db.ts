@@ -46,9 +46,13 @@ export interface PendingImport {
   sheet?: PendingSheet;
 }
 
-export type PendingSheet =
+export type PendingSheet = (
   | { kind: 'pdf'; pages: number[] }
-  | { kind: 'photo'; photos: { blob: Blob; name: string; quad: [number, number][] | null }[] };
+  | { kind: 'photo'; photos: { blob: Blob; name: string; quad: [number, number][] | null }[] }
+) & {
+  /** this read is already a retry after a crash, in the slower low-memory mode (one thread) */
+  lowMemory?: boolean;
+};
 
 interface PVSchema extends DBSchema {
   songs: { key: string; value: Song };

@@ -23,6 +23,7 @@ import { detectPageQuad } from './page';
 import { parseKernSystems, soundingNotes, type KernPiece } from './kern';
 import { kernToMusicXml } from './musicxml';
 import { modelBytes, modelSpec } from './models';
+import { READER_STOPPED_MESSAGE } from './protocol';
 import type { ModelSpec, PageResult, RunRequest, RunStats, Stage, SystemResult, WorkerResponse } from './protocol';
 
 export type { Gray, Quad } from './image';
@@ -257,7 +258,7 @@ function runWorker(pages: SheetPage[], opts: ReadOptions): Promise<{ systems: Sy
         opts.onProgress?.({ stage: m.stage, progress: at, loaded: m.loaded, total: m.total, line: m.line, lines: m.lines, page: m.page, pages: m.pages, pageLine: m.pageLine, pageLines: m.pageLines });
       } else if (m.type === 'error') {
         finish(false);
-        reject(new SheetReadError(m.message));
+        reject(workerError(m.message, !!m.plain));
       } else {
         finish(true);
         resolve({ systems: m.systems, pages: m.pages, stats: m.stats });
@@ -266,7 +267,7 @@ function runWorker(pages: SheetPage[], opts: ReadOptions): Promise<{ systems: Sy
     worker.onerror = (e) => {
       if (settled) return;
       finish(false);
-      reject(new SheetReadError(`The sheet-music reader stopped${e.message ? ` (${e.message})` : ''}. Please try again.`));
+      reject(workerError(e.message || 'worker error', false));
     };
     const req: RunRequest = { type: 'run', jobId, kind: opts.kind, pages: input, model, threads, release, findPage: opts.findPage ?? opts.kind === 'photo' };
     worker.postMessage(
@@ -274,6 +275,17 @@ function runWorker(pages: SheetPage[], opts: ReadOptions): Promise<{ systems: Sy
       input.map((p) => p.data.buffer),
     );
   });
+}
+
+/**
+ * The error the user sees for a failed worker job: the worker's own plain messages (download failed,
+ * corrupted files) as they are; technical ones (onnxruntime, WASM out of memory, "no available
+ * backend") become one plain sentence, and their raw text goes to the console.
+ */
+export function workerError(message: string, plain: boolean): SheetReadError {
+  if (plain && message) return new SheetReadError(message);
+  console.warn('[sheet reader]', message);
+  return new SheetReadError(READER_STOPPED_MESSAGE);
 }
 
 /**
@@ -306,8 +318,12 @@ export function assemble(r: { systems: SystemResult[]; pages: PageResult[]; stat
   if (cut) warnings.push(`${cut === 1 ? 'One line' : `${cut} lines`} could not be read to the end; some notes may be missing there.`);
   const piece = parseKernSystems(r.systems.map((s) => s.kern));
   if (!soundingNotes(piece).length) throw new SheetReadError('No notes could be read. The reader works best on clear printed piano music.');
-  // a few over-full bars are normal for this reader; say so only when it is a large share
-  if (piece.overfullBars >= Math.max(3, 0.25 * piece.measures.length)) warnings.push(`${piece.overfullBars === 1 ? 'One bar has' : `${piece.overfullBars} bars have`} more beats than the time signature; ${piece.overfullBars === 1 ? 'it was' : 'they were'} lengthened so no note is lost. Check the rhythm there.`);
+  // an over-full bar is lengthened so no note is lost; the notes after it then come later than on the
+  // page (the piano roll's bar lines stop matching the printed bars). One is common; say so from two.
+  if (piece.overfullBars >= Math.max(2, 0.15 * piece.measures.length))
+    warnings.push(`${piece.overfullBars} bars had more beats than the time signature (often a note read twice), so they were made longer and the notes after them come a little later than on your page. Check the rhythm.`);
+  if (piece.keyMismatchSystems > 0)
+    warnings.push('The key signature (sharps and flats at the start of each line) was not read the same on every line. The most common one was used; check the sharps and flats.');
   const musicXml = kernToMusicXml(piece, { title: opts.title });
   return { musicXml, warnings, pages: nPages, lines: r.systems.length, pageInfo: r.pages, piece, systems: r.systems, stats: { ...r.stats, ms } };
 }
@@ -341,17 +357,62 @@ export interface LoadedPhoto {
   quad: Quad | null;
 }
 
-/** Decodes a photo (JPEG / PNG / WebP / HEIC where the browser can), upright per its EXIF, as gray. */
-export async function loadPhoto(file: Blob, maxSide = PHOTO_MAX_SIDE): Promise<LoadedPhoto> {
-  let bmp: ImageBitmap;
+/** Size to decode a w × h picture at so its longest side is at most maxSide. */
+export function fitSize(w: number, h: number, maxSide: number): { w: number; h: number } {
+  const s = Math.min(1, maxSide / Math.max(w, h));
+  return { w: Math.max(1, Math.round(w * s)), h: Math.max(1, Math.round(h * s)) };
+}
+
+/** Upright size of a picture without decoding all its pixels (<img> reads the header; EXIF applied). */
+async function pictureSize(file: Blob): Promise<{ w: number; h: number } | null> {
+  if (typeof document === 'undefined' || typeof Image === 'undefined') return null;
+  const url = URL.createObjectURL(file);
   try {
-    bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
-  } catch {
-    throw new SheetReadError('This image could not be opened. Please use a JPEG or PNG photo.');
+    const img = new Image();
+    img.decoding = 'async';
+    const ok = await new Promise<boolean>((res) => {
+      img.onload = () => res(true);
+      img.onerror = () => res(false);
+      img.src = url;
+    });
+    return ok && img.naturalWidth > 0 ? { w: img.naturalWidth, h: img.naturalHeight } : null;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+/**
+ * Decodes a photo (JPEG / PNG / WebP / HEIC where the browser can), upright per its EXIF, as gray.
+ * Large photos (48 MP phone pictures are 8000 × 6000) are decoded straight at the reading size, so the
+ * full-size picture (~190 MB of pixels) is never held; browsers without createImageBitmap's resize
+ * options fall back to a full decode.
+ */
+export async function loadPhoto(file: Blob, maxSide = PHOTO_MAX_SIDE): Promise<LoadedPhoto> {
+  const size = await pictureSize(file).catch(() => null);
+  let bmp: ImageBitmap | null = null;
+  if (size && Math.max(size.w, size.h) > maxSide) {
+    const fit = fitSize(size.w, size.h, maxSide);
+    try {
+      bmp = await createImageBitmap(file, { imageOrientation: 'from-image', resizeWidth: fit.w, resizeHeight: fit.h, resizeQuality: 'high' });
+      // a browser that ignored the resize options or the orientation: decode again the plain way
+      if (Math.abs(bmp.width / bmp.height - fit.w / fit.h) > 0.02) {
+        bmp.close();
+        bmp = null;
+      }
+    } catch {
+      bmp = null;
+    }
+  }
+  if (!bmp) {
+    try {
+      bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    } catch {
+      throw new SheetReadError('This image could not be opened. Please use a JPEG or PNG photo.');
+    }
   }
   try {
-    const s = Math.min(1, maxSide / Math.max(bmp.width, bmp.height));
-    const image = drawToGray(bmp, bmp.width, bmp.height, Math.round(bmp.width * s), Math.round(bmp.height * s));
+    const fit = fitSize(bmp.width, bmp.height, maxSide);
+    const image = drawToGray(bmp, bmp.width, bmp.height, fit.w, fit.h);
     return { image, quad: detectPageQuad(image) };
   } finally {
     bmp.close();

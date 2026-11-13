@@ -6,19 +6,25 @@
 import 'fake-indexeddb/auto';
 import { describe, expect, it } from 'vitest';
 import { interruptedNotice } from '../../src/state/interruptedImport';
-import { SHEET_PLAN, STAGE_LABELS, stageLabel } from '../../src/state/importStore';
+import { SHEET_PLAN, STAGE_LABELS, readScoreWarnings, sheetTitle, stageLabel } from '../../src/state/importStore';
 import { sourceLabel } from '../../src/components/SongCard';
 import { readFromSheet } from '../../src/components/studio/SheetReaderNotice';
 import type { PendingImport } from '../../src/lib/storage/db';
 
 describe('sheet-music reader: interrupted-import notice', () => {
   const pdf: Pick<PendingImport, 'title' | 'kind' | 'blob' | 'sheet'> = { title: 'Minuet', kind: 'score', blob: new Blob(['%PDF']), sheet: { kind: 'pdf', pages: [1, 2, 3] } };
-  it('a PDF: kept, Try again, advice to read fewer pages', () => {
+  it('a PDF: kept, Try again in the low-memory mode', () => {
     const n = interruptedNotice(pdf);
     expect(n.canRetry).toBe(true);
     expect(n.canSave).toBe(false);
     expect(n.body).toMatch(/^Reading “Minuet” was interrupted — your browser probably ran out of memory\. Your file was kept\./);
-    expect(n.body).toMatch(/read fewer pages at a time/);
+    expect(n.body).toMatch(/slower mode that uses less memory/);
+  });
+  it('a crash during the low-memory retry is not offered again (no crash loop)', () => {
+    const n = interruptedNotice({ ...pdf, sheet: { kind: 'pdf', pages: [1, 2, 3], lowMemory: true } });
+    expect(n.canRetry).toBe(false);
+    expect(n.title).toMatch(/stopped again/);
+    expect(n.body).toMatch(/one page at a time/);
   });
   it('one photo: "Your photo was kept", no page advice', () => {
     const blob = new Blob(['jpg']);
@@ -31,6 +37,7 @@ describe('sheet-music reader: interrupted-import notice', () => {
     const n = interruptedNotice({ title: 'Big', kind: 'score', blob: undefined });
     expect(n.canRetry).toBe(false);
     expect(n.body).toMatch(/Choose the file again/);
+    expect(interruptedNotice({ title: 'Big', kind: 'score', blob: undefined, sheet: { kind: 'pdf', pages: [1, 2] } }).body).toMatch(/read fewer pages at a time/);
   });
   it('audio records are unchanged', () => {
     expect(interruptedNotice({ title: 'song', kind: 'audio', blob: new Blob(['x']) }).body).toMatch(/^Your last import \(“song”\) was interrupted.*Your file was kept\.$/);
@@ -59,6 +66,26 @@ describe('sheet-music reader: interrupted-import notice', () => {
     expect(back?.source.reader).toBe('photo');
     await db.deletePending('omr1');
     await db.closeDb();
+  });
+});
+
+describe('sheet-music reader: titles and warnings', () => {
+  it('titles from file names: hyphens become spaces, first letter capital', () => {
+    expect(sheetTitle('demo-prelude.pdf')).toBe('Demo prelude');
+    expect(sheetTitle('Op. 28 - No. 4.pdf')).toBe('Op. 28 - No. 4');
+    expect(sheetTitle('minuet_in_g.pdf')).toBe('Minuet in g');
+  });
+  it('the score import\'s "notes are not affected" is not said for read music', () => {
+    const w = readScoreWarnings([
+      'From bar 7, the bar lines in the piano roll and in the sheet music view no longer match the original score (it changes time signature or has a shorter bar there). The notes are not affected.',
+      'This score changes key. The sheet music view uses the first key signature throughout; the notes are not affected.',
+      'Something else.',
+    ]);
+    expect(w[0]).toMatch(/^From bar 7, .* no longer match your page/);
+    expect(w[0]).toMatch(/Notes after it may come later than printed\.$/);
+    expect(w.join(' ')).not.toMatch(/not affected/);
+    expect(w[1]).toBe('This score changes key. The sheet music view uses the first key signature throughout.');
+    expect(w[2]).toBe('Something else.');
   });
 });
 

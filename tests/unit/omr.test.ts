@@ -11,7 +11,8 @@ import { frac, num } from '../../src/lib/omr/frac';
 import { gray, rotate, warpQuad, type Gray, type Quad } from '../../src/lib/omr/image';
 import { detectPageQuad, preparePage, skewAngle } from '../../src/lib/omr/page';
 import { findStaves, groupSystems, systemImage, MODEL_MIN_HEIGHT, MODEL_STAFF_SPACE } from '../../src/lib/omr/staves';
-import { assemble, sheetReaderSupport, SheetReadError } from '../../src/lib/omr';
+import { assemble, fitSize, sheetReaderSupport, SheetReadError, workerError } from '../../src/lib/omr';
+import { READER_STOPPED_MESSAGE } from '../../src/lib/omr/protocol';
 import { importMusicXml } from '../../src/lib/score';
 import { scoreNotes } from '../e2e/omrScore';
 
@@ -156,12 +157,13 @@ describe('parseKernSystems', () => {
     expect(q.measures[1].meter).toEqual({ beats: 2, beatType: 4 });
   });
 
-  it('trusts the bars over a misread time signature', () => {
-    const bar = [['=', '='], ['2C', '4c'], ['.', '4d'], ['2D', '4e'], ['.', '4f']];
-    const k = K([['**kern', '**kern'], ['*M3/4', '*M3/4'], ...bar, ...bar, ...bar, ...bar, ...bar, ...bar, ['*-', '*-']]);
+  it('trusts consistently shorter bars over a misread time signature', () => {
+    const bar = [['=', '='], ['2.C', '4c'], ['.', '4d'], ['.', '4e']];
+    const k = K([['**kern', '**kern'], ['*M4/4', '*M4/4'], ...bar, ...bar, ...bar, ...bar, ...bar, ...bar, ['*-', '*-']]);
     const p = parseKernSystems([k]);
-    expect(p.meter).toEqual({ beats: 4, beatType: 4 });
+    expect(p.meter).toEqual({ beats: 3, beatType: 4 });
     expect(p.overfullBars).toBe(0);
+    expect(soundingNotes(p).filter((n) => n.staff === 2).map((n) => n.onset)).toEqual([0, 3, 6, 9, 12, 15]);
     // a real 3/4 piece with a few wrong bars keeps its time signature
     const bar3 = [['=', '='], ['2.C', '2.c']];
     const odd = [['=', '='], ['1C', '1c']];
@@ -169,10 +171,36 @@ describe('parseKernSystems', () => {
     expect(q.meter).toEqual({ beats: 3, beatType: 4 });
   });
 
+  it('keeps the written time signature when bars are too long (extra notes), lengthening those bars', () => {
+    // regression: 3/4 pieces whose bars ran long (doubled notes) became 4/4 for the whole piece
+    const bar = [['=', '='], ['2C', '4c'], ['.', '4d'], ['2D', '4e'], ['.', '4f']];
+    const p = parseKernSystems([K([['**kern', '**kern'], ['*M3/4', '*M3/4'], ...bar, ...bar, ...bar, ...bar, ...bar, ...bar, ['*-', '*-']])]);
+    expect(p.meter).toEqual({ beats: 3, beatType: 4 });
+    expect(p.overfullBars).toBe(6);
+    expect(soundingNotes(p).filter((n) => n.staff === 2).length).toBe(12);
+  });
+
+  it('gives lines with only "." no time of their own (the model writes them as spacers)', () => {
+    // regression: each spacer line took a time step, so read pieces came out about 20% too long
+    // while the left hand holds a half note, a spacer line must not push the right hand to beat 3
+    const k = K([...HEAD, ['=1', '=1'], ['2C', '4c'], ['.', '.'], ['.', '4d'], ['2D', '4e'], ['.', '.'], ['.', '4f'], ['=2', '='], ['*-', '*-']]);
+    const p = parseKernSystems([k]);
+    expect(soundingNotes(p).map((n) => [n.midi, n.onset])).toEqual([
+      [48, 0], [60, 0], [62, 1], [50, 2], [64, 2], [65, 3],
+    ]);
+    expect(p.measures[0].length).toEqual(frac(4));
+    expect(p.overfullBars).toBe(0);
+    // a '.' in one spine next to a note is still a normal line
+    const q = parseKernSystems([K([...HEAD, ['=1', '=1'], ['2C', '4c'], ['.', '4d'], ['2D', '2e'], ['=2', '='], ['*-', '*-']])]);
+    expect(soundingNotes(q).filter((n) => n.staff === 1).map((n) => n.onset)).toEqual([0, 1, 2]);
+  });
+
   it('uses the most common key signature of the systems', () => {
     const sys = (k: string) => K([['**kern', '**kern'], [`*k[${k}]`, `*k[${k}]`], ['*M2/4', '*M2/4'], ['=', '='], ['2C', '2c'], ['*-', '*-']]);
     const p = parseKernSystems([sys('b-'), sys('b-e-'), sys('b-')]);
     expect(p.fifths).toBe(-1);
+    expect(p.keyMismatchSystems).toBe(1);
+    expect(parseKernSystems([sys('b-'), sys('b-')]).keyMismatchSystems).toBe(0);
     expect(p.measures.filter((m) => m.fifths !== undefined).length).toBe(1);
   });
 
@@ -402,6 +430,33 @@ describe('assemble + support', () => {
     expect(r.warnings.join(' ')).toMatch(/could not be read to the end/);
     const parsed = importMusicXml(r.musicXml);
     expect(scoreNotes([{ midi: 48, onset: 0 }, { midi: 60, onset: 0 }, { midi: 50, onset: 4 }, { midi: 62, onset: 4 }], parsed.notes.map((n) => ({ midi: n.midi, onset: n.start * (parsed.tempo.bpm / 60) }))).notesF1).toBe(1);
+  });
+  it('warns about lengthened bars and a key signature read differently on some lines', () => {
+    const sys = (k: string, bar: string[][]) => K([['**kern', '**kern'], [`*k[${k}]`, `*k[${k}]`], ['*M2/4', '*M2/4'], ...bar, ...bar, ['*-', '*-']]);
+    const over = [['=', '='], ['2C', '2c'], ['.', '4d']]; // the right hand has three beats in a 2/4 bar
+    const ok = [['=', '='], ['2C', '2c']];
+    const one = (kern: string) => ({ page: 0, kern, steps: 9, finished: true, box: { x0: 0, y0: 0, x1: 1, y1: 1 }, barlines: 2, ms: 1 });
+    const r = assemble({ systems: [one(sys('f#', over)), one(sys('', ok)), one(sys('f#', ok))], pages: [pageInfo], stats }, 1, { kind: 'pdf' });
+    expect(r.warnings.join(' ')).toMatch(/2 bars had more beats than the time signature/);
+    expect(r.warnings.join(' ')).toMatch(/key signature .* not read the same on every line/);
+    const clean = assemble({ systems: [one(sys('f#', ok)), one(sys('f#', ok))], pages: [pageInfo], stats }, 1, { kind: 'pdf' });
+    expect(clean.warnings).toEqual([]);
+  });
+  it('shows technical worker errors as one plain sentence (raw text only in the console)', () => {
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+      expect(workerError('RangeError: Array buffer allocation failed', false).message).toBe(READER_STOPPED_MESSAGE);
+      expect(workerError("no available backend found. ERR: [wasm] RuntimeError: Aborted(OOM)", false).message).not.toMatch(/backend|OOM|wasm/i);
+    } finally {
+      console.warn = warn;
+    }
+    expect(workerError('Could not download the sheet-music reader (24 MB). Check your internet connection and try again.', true).message).toMatch(/^Could not download/);
+  });
+  it('decodes large photos straight at the reading size', () => {
+    expect(fitSize(8000, 6000, 3000)).toEqual({ w: 3000, h: 2250 });
+    expect(fitSize(6000, 8000, 3000)).toEqual({ w: 2250, h: 3000 });
+    expect(fitSize(1200, 900, 3000)).toEqual({ w: 1200, h: 900 });
   });
   it('rejects pages with no music', () => {
     expect(() => assemble({ systems: [], pages: [{ ...pageInfo, staves: 0, systems: 0 }], stats }, 1, { kind: 'photo' })).toThrow(SheetReadError);

@@ -137,7 +137,7 @@ interface ImportState {
    */
   importMusicXml: (xml: string, meta?: ScoreMeta & { title?: string; source?: SongSource & { kind: 'score' } }) => Promise<string | null>;
   /** Read printed piano music from a PDF or photos (beta, lib/omr) and import it like a sheet-music file. */
-  importSheet: (input: SheetInput, opts?: { pendingId?: string }) => Promise<string | null>;
+  importSheet: (input: SheetInput, opts?: { pendingId?: string; lowMemory?: boolean }) => Promise<string | null>;
   importAudioBlob: (
     blob: Blob,
     meta: { title: string; artist?: string; source: SongSource; separate?: boolean } & ImportRunOptions,
@@ -926,17 +926,19 @@ export const useImport = create<ImportState>((set, get) => {
 
     importSheet: async (input, opts = {}) => {
       const fileName = input.fileName;
-      const title = input.title ?? titleFromFileName(fileName);
+      const title = input.title ?? sheetTitle(fileName);
       const ctx = start(title, 'score', SHEET_PLAN);
       ctx.update({ sheet: input.kind, detail: input.kind === 'pdf' ? 'Opening the PDF' : 'Opening the photos' });
       const { update, signal } = ctx;
       const nPages = input.kind === 'pdf' ? input.pages.length : input.photos.length;
       try {
         // keep the PDF / photos until this import ends, so "Try again" works after a crash (persistPending)
-        const sheet: PendingSheet =
-          input.kind === 'pdf'
-            ? { kind: 'pdf', pages: [...input.pages] }
-            : { kind: 'photo', photos: input.photos.map((p) => ({ blob: p.blob, name: p.name, quad: p.quad ? p.quad.map((q) => [q[0], q[1]] as [number, number]) : null })) };
+        const sheet: PendingSheet = {
+          ...(input.kind === 'pdf'
+            ? { kind: 'pdf' as const, pages: [...input.pages] }
+            : { kind: 'photo' as const, photos: input.photos.map((p) => ({ blob: p.blob, name: p.name, quad: p.quad ? p.quad.map((q) => [q[0], q[1]] as [number, number]) : null })) }),
+          ...(opts.lowMemory ? { lowMemory: true } : {}),
+        };
         const first = input.kind === 'pdf' ? input.file : input.photos[0]?.blob;
         const size = input.kind === 'pdf' ? input.file.size : input.photos.reduce((a, p) => a + p.blob.size, 0);
         const source: SongSource & { kind: 'score' } = { kind: 'score', reader: input.kind, fileName, pages: nPages, ...(first?.type ? { mimeType: first.type } : {}), fileSize: size };
@@ -995,7 +997,8 @@ export const useImport = create<ImportState>((set, get) => {
             update({ stage: 'analyzing', progress: Math.max(0, Math.min(1, (p.progress - 0.2) / 0.8)), detail: last || 'Reading the music' });
           }
         };
-        const result = await omr.readSheetImages(pages, { kind: input.kind, signal, title, onProgress });
+        // after a crash: one WASM thread (about half the memory) and the model freed right after
+        const result = await omr.readSheetImages(pages, { kind: input.kind, signal, title, onProgress, ...(opts.lowMemory ? { threads: 1, release: true } : {}) });
         pages.length = 0;
         if (signal.aborted) return null;
         // 3. the MusicXML goes through the normal score import
@@ -1003,12 +1006,12 @@ export const useImport = create<ImportState>((set, get) => {
         const { importMusicXml } = await import('../lib/score');
         const parsed = importMusicXml(result.musicXml, { fileName });
         return await finishScore(ctx, parsed, source, input.title ?? title, (song) => {
-          // the reader's notes are an estimate: its own notes first, then the score import's
-          song.transcription.warnings = [...result.warnings, ...song.transcription.warnings];
+          // the reader's notes are an estimate: its own notes first, then the score import's (reworded)
+          song.transcription.warnings = [...result.warnings, ...readScoreWarnings(song.transcription.warnings)];
           song.transcription.processingMs = Math.round(result.stats.ms);
         });
       } catch (err) {
-        return fail(ctx, err, { retry: () => get().importSheet(input) });
+        return fail(ctx, err, { retry: () => get().importSheet(input, { lowMemory: opts.lowMemory }) });
       }
     },
 
@@ -1053,9 +1056,12 @@ export const useImport = create<ImportState>((set, get) => {
         const sheet = rec.sheet;
         if (!sheet) return null;
         const fileName = rec.fileName || rec.source.fileName || 'Sheet music';
-        if (sheet.kind === 'pdf') return get().importSheet({ kind: 'pdf', file: rec.blob, fileName, pages: sheet.pages, title: rec.title }, { pendingId: rec.id });
+        // the tab most likely ran out of memory: read again in the low-memory mode (interruptedNotice
+        // says so; a second crash in that mode is not offered again)
+        const again = { pendingId: rec.id, lowMemory: true };
+        if (sheet.kind === 'pdf') return get().importSheet({ kind: 'pdf', file: rec.blob, fileName, pages: sheet.pages, title: rec.title }, again);
         const photos: SheetPhoto[] = sheet.photos.map((p) => ({ blob: p.blob, name: p.name, quad: p.quad && p.quad.length === 4 ? (p.quad as Quad) : null }));
-        return get().importSheet({ kind: 'photo', photos, fileName, title: rec.title }, { pendingId: rec.id });
+        return get().importSheet({ kind: 'photo', photos, fileName, title: rec.title }, again);
       }
       const presetId = (['piano', 'mix', 'sensitive', 'custom'] as PresetId[]).includes(rec.presetId as PresetId) ? (rec.presetId as PresetId) : undefined;
       // a separation that crashed the tab has already been switched off for this preset (checkCrashedSeparation)
@@ -1233,6 +1239,29 @@ if (typeof window !== 'undefined') {
         .then(() => resolve());
     }, 0),
   );
+}
+
+/**
+ * A song title from a sheet-music file name: "demo-prelude.pdf" → "Demo prelude" (file names often
+ * use hyphens for spaces); names that already have spaces keep their hyphens ("Op. 28 - No. 4").
+ */
+export function sheetTitle(fileName: string): string {
+  let t = titleFromFileName(fileName);
+  if (!/\s/.test(t)) t = t.replace(/-+/g, ' ').trim() || t;
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
+
+/**
+ * The score import's warnings, reworded for music read from a PDF or photo: there, bar lines stop
+ * matching the page because the reader made a bar longer, and the notes after it DO come later than
+ * printed (for a MusicXML file the notes are exact, hence "the notes are not affected").
+ */
+export function readScoreWarnings(warnings: string[]): string[] {
+  return warnings.map((w) => {
+    const bar = /^From bar (\S+), the bar lines in the piano roll and in the sheet music view no longer match the original score/.exec(w);
+    if (bar) return `From bar ${bar[1]}, the bar lines in the piano roll and in the sheet music view no longer match your page: a bar was read with too many beats. Notes after it may come later than printed.`;
+    return w.replace(/;? ?the notes are not affected\.?$/i, '.').replace(/\.\.$/, '.');
+  });
 }
 
 /** Timeline labels for the sheet-music reader's stages (the rest as in STAGE_LABELS). */

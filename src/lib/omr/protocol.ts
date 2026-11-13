@@ -119,7 +119,19 @@ export interface ErrorMessage {
   type: 'error';
   jobId: number;
   message: string;
+  /** the message is written for the user (download failed, files corrupted); otherwise it is a raw
+   * technical error (onnxruntime, WASM out of memory) that the page logs and replaces with a plain one */
+  plain?: boolean;
 }
+
+/** An error whose message is meant for the user (the worker passes it on as it is). */
+export class PlainError extends Error {
+  readonly plain = true;
+}
+
+/** What the user sees for any technical failure of the reader (its raw text goes to the console). */
+export const READER_STOPPED_MESSAGE =
+  'The sheet-music reader stopped, most likely because it ran out of memory. Close other tabs and apps, or read fewer pages, and try again.';
 
 export type WorkerResponse = ProgressMessage | ResultMessage | ErrorMessage;
 

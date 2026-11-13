@@ -15,7 +15,7 @@ import ortWasmUrl from 'onnxruntime-web/ort-wasm-simd-threaded.wasm?url';
 import { preparePage } from './page';
 import { findStaves, groupSystems, modelInput, systemImage } from './staves';
 import { bekernToKern } from './kern';
-import { MAX_STEPS, downloadFailedMessage } from './protocol';
+import { MAX_STEPS, PlainError, downloadFailedMessage } from './protocol';
 import type { ModelFile, ModelSpec, PageResult, ProgressMessage, RunRequest, SystemResult, WorkerRequest, WorkerResponse } from './protocol';
 import type { Gray } from './image';
 
@@ -29,7 +29,16 @@ async function sha256Hex(buf: ArrayBuffer): Promise<string> {
   return Array.from(d, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-/** Model files from the Cache API (stored whole, sha256-checked) or the network, with byte progress. */
+/** Is this model file in the cache (no download needed)? */
+async function cached(file: ModelFile, cache: Cache | null): Promise<boolean> {
+  return !!(cache && (await cache.match(file.url).catch(() => undefined)));
+}
+
+/**
+ * Model files from the Cache API (stored whole, sha256-checked) or the network, with byte progress.
+ * The network fetch bypasses the HTTP cache (`no-store`): the Cache API copy is the one that is kept and
+ * checked, and the parts would otherwise be stored a second time (netlify.toml marks them immutable).
+ */
 async function loadFile(file: ModelFile, cache: Cache | null, onBytes: (n: number) => void): Promise<{ bytes: ArrayBuffer; fromCache: boolean }> {
   const hit = cache ? await cache.match(file.url).catch(() => undefined) : undefined;
   if (hit) {
@@ -46,18 +55,18 @@ async function loadFile(file: ModelFile, cache: Cache | null, onBytes: (n: numbe
   for (const u of urls) {
     let res: Response;
     try {
-      res = await fetch(u);
+      res = await fetch(u, { cache: 'no-store' });
     } catch (err) {
-      throw new Error(downloadFailedMessage(file.bytes), { cause: err });
+      throw new PlainError(downloadFailedMessage(file.bytes), { cause: err });
     }
-    if (!res.ok || !res.body) throw new Error(`Could not download the sheet-music reader (HTTP ${res.status}). Try again later.`);
+    if (!res.ok || !res.body) throw new PlainError(`Could not download the sheet-music reader (error ${res.status}). Try again later.`);
     const reader = res.body.getReader();
     for (;;) {
       let step: ReadableStreamReadResult<Uint8Array>;
       try {
         step = await reader.read();
       } catch (err) {
-        throw new Error(downloadFailedMessage(file.bytes), { cause: err });
+        throw new PlainError(downloadFailedMessage(file.bytes), { cause: err });
       }
       if (step.done) break;
       chunks.push(step.value);
@@ -67,7 +76,7 @@ async function loadFile(file: ModelFile, cache: Cache | null, onBytes: (n: numbe
   }
   const bytes = await new Blob(chunks as BlobPart[]).arrayBuffer();
   chunks.length = 0;
-  if (file.sha256 && (await sha256Hex(bytes)) !== file.sha256) throw new Error('The sheet-music reader download was corrupted. Please try again.');
+  if (file.sha256 && (await sha256Hex(bytes)) !== file.sha256) throw new PlainError('The sheet-music reader download was corrupted. Please try again.');
   if (cache) await cache.put(file.url, new Response(bytes, { headers: { 'content-type': 'application/octet-stream' } })).catch(() => undefined);
   return { bytes, fromCache: false };
 }
@@ -113,13 +122,16 @@ async function getModel(req: RunRequest, progress: (m: Omit<ProgressMessage, 'ty
   const total = files.reduce((a, f) => a + f.bytes, 0);
   const done = [0, 0, 0];
   let last = 0;
-  progress({ stage: 'loading-model', progress: 0, loaded: 0, total });
+  // total 0 = nothing to download (the page then says "Starting", not "Downloading", while the cached
+  // copy is checked)
+  const allCached = (await Promise.all(files.map((f) => cached(f, cache)))).every(Boolean);
+  progress({ stage: 'loading-model', progress: 0, loaded: 0, total: allCached ? 0 : total });
   const report = () => {
     const now = performance.now();
     if (now - last < 100) return;
     last = now;
     const got = done.reduce((a, b) => a + b, 0);
-    progress({ stage: 'loading-model', progress: 0.9 * Math.min(1, got / total), loaded: got, total });
+    progress({ stage: 'loading-model', progress: 0.9 * Math.min(1, got / total), loaded: got, total: allCached ? 0 : total });
   };
   let fromCache = true;
   const out: ArrayBuffer[] = [];
@@ -132,24 +144,33 @@ async function getModel(req: RunRequest, progress: (m: Omit<ProgressMessage, 'ty
     // drop entries of older model versions
     const keep = new Set(files.map((f) => new URL(f.url, self.location.href).href));
     for (const r of await cache.keys().catch(() => [] as Request[])) if (!keep.has(r.url)) await cache.delete(r).catch(() => false);
+    // and caches of models this app no longer uses (a renamed or replaced reader; if MODEL_FOR ever
+    // ships two models at once, keep both names here)
+    for (const name of await caches.keys().catch(() => [] as string[])) if (name.startsWith(CACHE_PREFIX) && name !== cacheName) await caches.delete(name).catch(() => false);
   }
   const t1 = performance.now();
-  progress({ stage: 'loading-model', progress: 0.92, loaded: total, total });
+  progress({ stage: 'loading-model', progress: 0.92, loaded: total, total: allCached ? 0 : total });
   const vocab = JSON.parse(new TextDecoder().decode(out[0])) as string[];
+  // hand each model's bytes over and drop our reference before the next session is created, so the
+  // download and the WASM copy of both models are never all in memory at once (phones)
+  let encBytes: Uint8Array | null = new Uint8Array(out[1]);
+  let decBytes: Uint8Array | null = new Uint8Array(out[2]);
+  out.length = 0;
   const opts: ort.InferenceSession.SessionOptions = {
     executionProviders: ['wasm'],
     graphOptimizationLevel: 'all',
     enableCpuMemArena: false,
     enableMemPattern: false,
   };
-  const enc = await ort.InferenceSession.create(new Uint8Array(out[1]), opts);
-  const dec = await ort.InferenceSession.create(new Uint8Array(out[2]), opts);
-  out.length = 0;
-  const t2 = performance.now();
-  progress({ stage: 'loading-model', progress: 1, loaded: total, total });
   const bos = vocab.indexOf('<bos>');
   const eos = vocab.indexOf('<eos>');
-  if (bos < 0 || eos < 0) throw new Error('The sheet-music reader files do not match.');
+  if (bos < 0 || eos < 0) throw new PlainError('The sheet-music reader files do not match. Reload the page and try again.');
+  const enc = await ort.InferenceSession.create(encBytes, opts);
+  encBytes = null;
+  const dec = await ort.InferenceSession.create(decBytes, opts);
+  decBytes = null;
+  const t2 = performance.now();
+  progress({ stage: 'loading-model', progress: 1, loaded: total, total: allCached ? 0 : total });
   loaded = { key, enc, dec, vocab, bos, eos, threads: Math.max(1, ort.env.wasm.numThreads ?? wanted) };
   return { m: loaded, fromCache, reused: false, loadMs: t1 - t0, createMs: t2 - t1 };
 }
@@ -297,7 +318,7 @@ if (!(self.name ?? '').startsWith('em-pthread')) {
     queue = queue.then(() =>
       run(req).catch(async (err) => {
         await releaseSessions();
-        post({ type: 'error', jobId: req.jobId, message: err instanceof Error ? err.message : String(err) });
+        post({ type: 'error', jobId: req.jobId, message: err instanceof Error ? err.message : String(err), plain: err instanceof PlainError });
       }),
     );
   };

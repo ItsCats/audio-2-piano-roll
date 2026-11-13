@@ -72,6 +72,8 @@ export interface KernPiece {
   warnings: string[];
   /** bars whose notes add up to more than the time signature */
   overfullBars: number;
+  /** lines of music (systems) whose key signature was read differently from the piece's usual one */
+  keyMismatchSystems: number;
 }
 
 /** bekern token stream (as the model writes it) → plain **kern text. */
@@ -261,7 +263,10 @@ function readSystem(text: string, system: number, warn: (w: string) => void): Ra
       cols = next;
       continue;
     }
-    // a data line at time t
+    // a data line at time t. A line of nothing but '.' would take a time step of its own (the next
+    // line starts when the first sounding spine is free); the model writes such lines as spacers, and
+    // counting them made read pieces about a fifth longer than printed (and bars over-full).
+    if (f.every((x) => !x || x === '.')) continue;
     if (f.length !== C.length) {
       if (f.length > C.length && C.length) warn('extra-fields');
       while (f.length < C.length) f.push('.');
@@ -316,9 +321,9 @@ const meterFromQuarters = (q: number): Meter | null =>
   Number.isInteger(q) && q >= 1 && q <= 12 ? { beats: q, beatType: 4 } : Number.isInteger(2 * q) && q > 0 && q <= 6 ? { beats: 2 * q, beatType: 8 } : null;
 
 /**
- * The model sometimes misreads the time signature itself (3/4 for 4/4). When most full bars agree on
- * one length and hardly any match the written time signature, the bars win: every occurrence of that
- * time signature is replaced (pickup and last bar left out of the vote).
+ * The model sometimes misreads the time signature itself (4/4 for 3/4). When most full bars agree on
+ * one shorter length and hardly any match the written time signature, the bars win: every occurrence
+ * of that time signature is replaced (pickup and last bar left out of the vote).
  */
 function fixMisreadMeter(raw: RawBar[]): void {
   const declared = raw.find((b) => b.meter)?.meter;
@@ -337,7 +342,10 @@ function fixMisreadMeter(raw: RawBar[]): void {
   const want = barLength(declared).n / barLength(declared).d;
   const agree = counts.get(want) ?? 0;
   const fixed = meterFromQuarters(mode);
-  if (!fixed || Math.abs(mode - want) < 1e-9 || modeCount < 0.5 * inner.length || agree > 0.25 * inner.length) return;
+  // only towards shorter bars: bars that are consistently too long mostly come from extra notes the
+  // model wrote (they are lengthened anyway; a "fixed" 4/4 → 5/4 was wrong on new pages), while bars
+  // that are consistently too short would otherwise all be padded with rests
+  if (!fixed || mode >= want - 1e-9 || modeCount < 0.5 * inner.length || agree > 0.25 * inner.length) return;
   for (const b of raw) if (b.meter && sameMeter(b.meter, declared)) b.meter = fixed;
 }
 
@@ -460,7 +468,9 @@ export function parseKernSystems(systems: string[], opts: KernOptions = {}): Ker
     m0.clefs = { 1: { sign: 'G', line: 2 }, 2: { sign: 'F', line: 4 }, ...firstClefs(measures) };
     if (firstFifths === undefined) m0.fifths = 0;
   }
-  const out: KernPiece = { measures, fifths: firstFifths ?? 0, warnings: [...warnings], overfullBars };
+  let keyMismatchSystems = 0;
+  for (const [k, n] of keyVotes) if (k !== usualFifths) keyMismatchSystems += n;
+  const out: KernPiece = { measures, fifths: firstFifths ?? 0, warnings: [...warnings], overfullBars, keyMismatchSystems };
   if (firstMeter) out.meter = firstMeter;
   return out;
 }
