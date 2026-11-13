@@ -143,7 +143,15 @@ export interface FontResult {
 
 /** Loads the faces a title page needs; resolves within `timeoutMs` whatever happens. */
 export async function ensureTitleFonts(look: ResolvedLook, texts: TitleText[], timeoutMs = 8000): Promise<FontResult> {
-  const needs = neededFonts(look, texts);
+  return loadNeeds(neededFonts(look, texts), timeoutMs);
+}
+
+/** Loads one face (e.g. the watermark's); resolves within `timeoutMs` whatever happens. */
+export async function ensureFont(font: FontKey, weight: number, text: string, timeoutMs = 8000): Promise<FontResult> {
+  return loadNeeds([{ font, weight: nearestWeight(font, weight), ext: NEEDS_EXT.test(text) }], timeoutMs);
+}
+
+async function loadNeeds(needs: FontNeed[], timeoutMs: number): Promise<FontResult> {
   const set = fontSet();
   if (!set || typeof FontFace === 'undefined') return { ok: false, missing: needs.map((n) => familyName(n.font)) };
   let fresh = false;
