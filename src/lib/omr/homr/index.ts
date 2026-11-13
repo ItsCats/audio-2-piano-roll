@@ -300,7 +300,9 @@ export async function readSheetImages(pages: HomrPage[], opts: ReadOptions = {})
   if (opts.signal?.aborted) throw abortError();
   const prev = queue;
   let done!: () => void;
-  queue = new Promise<void>((r) => (done = r));
+  const mine = new Promise<void>((r) => (done = r));
+  // the next job waits for this one and for everything before it (also when this one is cancelled while waiting)
+  queue = Promise.all([prev, mine]).then(() => undefined);
   try {
     // waiting for an earlier job: a cancel still takes effect at once
     const signal = opts.signal;

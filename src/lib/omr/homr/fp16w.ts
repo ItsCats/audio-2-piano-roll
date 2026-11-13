@@ -5,9 +5,10 @@
  *
  * The shipped segmentation model keeps its large weights as float16 (half the download) and casts them
  * to float32 inside the graph (tests/homr/convert_models.py fp16_storage: initializer `X__fp16` +
- * node `Cast(X__fp16) -> X`). Measured in onnxruntime-web 1.31 (Node, 1 thread, two 320 px windows):
- * such a model raises the WASM heap's high-water mark by ~450 MB, the float32 file by ~290 MB, because
- * the folding of the casts keeps both copies alive while the session is built. Rewriting the model here
+ * node `Cast(X__fp16) -> X`). Measured in onnxruntime-web 1.31 (Node, 1 thread, session + two runs of
+ * two 320 px windows): that model raised the process's peak memory by 425–449 MB, the float32 file (and
+ * this rewrite of the float16 file) by 288 MB; onnxruntime folds the casts into new float32 constants
+ * while the float16 ones are still loaded. Rewriting the model here
  * (float16 → float32 initializers under the original names, casts removed) gives exactly the float32
  * graph with the float16-rounded weights: the same numbers as running the casts, at the float32 file's
  * memory. Only plain protobuf is touched; anything unexpected returns the model unchanged.
