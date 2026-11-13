@@ -198,7 +198,10 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
   };
 
   const onFiles = (files: File[]) => {
-    if (busy) return;
+    if (busy) {
+      setError('Another import is still running — wait for it to finish (progress is shown above).');
+      return;
+    }
     setError(null);
     const pdfs = files.filter(isPdfFile);
     const images = files.filter((f) => !isPdfFile(f) && isImageFile(f));
@@ -271,9 +274,6 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
 
   return (
     <div className="flex flex-col gap-4">
-      {/* hidden pickers: photos from the camera (phones) or from files */}
-      <input ref={cameraInput} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => (e.target.files?.length && void addPhotos([...e.target.files]), (e.target.value = ''))} />
-      <input ref={photoInput} type="file" accept="image/*,.heic,.heif" multiple className="hidden" onChange={(e) => (e.target.files?.length && void addPhotos([...e.target.files]), (e.target.value = ''))} />
 
       {mode === 'pick' && (
         <>
@@ -475,6 +475,10 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
           <p className="text-[12px] text-ink-400">From other notation apps, save or export as MusicXML — it is exact, unlike reading a PDF.</p>
         </>
       )}
+
+      {/* hidden pickers (after the drop zone's own file input): photos from the camera (phones) or from files */}
+      <input ref={cameraInput} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => (e.target.files?.length && void addPhotos([...e.target.files]), (e.target.value = ''))} />
+      <input ref={photoInput} type="file" accept="image/*,.heic,.heif" multiple className="hidden" onChange={(e) => (e.target.files?.length && void addPhotos([...e.target.files]), (e.target.value = ''))} />
     </div>
   );
 }
