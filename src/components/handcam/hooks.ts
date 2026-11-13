@@ -57,10 +57,8 @@ export function useVideoFrame(frames: PreviewFrames | null, t: number | null, de
       void frames.frameAt(t).then((c) => {
         if (my !== seq.current || !c) return;
         // copy: the sink may reuse its canvases
-        const copy = document.createElement('canvas');
-        copy.width = c.width;
-        copy.height = c.height;
-        copy.getContext('2d')!.drawImage(c as CanvasImageSource, 0, 0);
+        const { canvas: copy, ctx } = cpuCanvas(c.width, c.height);
+        ctx.drawImage(c as CanvasImageSource, 0, 0);
         setImg({ canvas: copy, w: c.width, h: c.height, t });
       });
     }, delay);
@@ -87,4 +85,61 @@ export function useLogo(mediaId: string | null | undefined): ImageBitmap | null 
     };
   }, [mediaId]);
   return mediaId && bmp?.id === mediaId ? bmp.bmp : null;
+}
+
+/**
+ * An image URL (blob:) of a canvas `make` draws, encoded in the background with toBlob: encoding a
+ * frame synchronously (toDataURL) while rendering blocks the page, for seconds when the graphics
+ * process is busy. The previous URL stays shown until the new one is ready, and is then released.
+ */
+export function useCanvasUrl(make: () => HTMLCanvasElement | null, deps: unknown[], quality = 0.85): string | null {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    const c = make();
+    if (!c) {
+      setUrl(null);
+      return;
+    }
+    let alive = true;
+    c.toBlob(
+      (b) => {
+        if (!alive || !b) return;
+        setUrl(URL.createObjectURL(b));
+      },
+      'image/jpeg',
+      quality,
+    );
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+  // release each URL once a newer one replaces it (and on unmount)
+  useEffect(() => () => {
+    if (url) URL.revokeObjectURL(url);
+  }, [url]);
+  return url;
+}
+
+/** A canvas in ordinary memory (pixels read back cheaply: toBlob, getImageData). */
+export function cpuCanvas(w: number, h: number): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(w));
+  canvas.height = Math.max(1, Math.round(h));
+  return { canvas, ctx: canvas.getContext('2d', { willReadFrequently: true })! };
+}
+
+/** A frame as an image URL, at most `maxW` wide (made in the background). */
+export function useFrameUrl(img: FrameImage | null, maxW = 960, quality = 0.8): string | null {
+  return useCanvasUrl(
+    () => {
+      if (!img) return null;
+      const k = Math.min(1, maxW / Math.max(1, img.w));
+      const { canvas, ctx } = cpuCanvas(img.w * k, img.h * k);
+      ctx.drawImage(img.canvas, 0, 0, canvas.width, canvas.height);
+      return canvas;
+    },
+    [img, maxW],
+    quality,
+  );
 }

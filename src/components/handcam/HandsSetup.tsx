@@ -34,7 +34,7 @@ import { formatTime } from '../../lib/music/theory';
 import type { VisualSettings } from '../../lib/render/settings';
 import type { ExportSettings } from '../../lib/export/types';
 import type { WatermarkSettings } from '../../lib/watermark/types';
-import { useHandFrames, useVideoFrame, type FrameImage } from './hooks';
+import { cpuCanvas, useCanvasUrl, useFrameUrl, useHandFrames, useVideoFrame, type FrameImage } from './hooks';
 import { PreviewPainter } from './previewPainter';
 import { QuadEditor } from './QuadEditor';
 
@@ -45,10 +45,7 @@ const LEVEL_LABEL = { high: 'High', medium: 'Medium', low: 'Low' };
 
 /** the frame as the user sees it (turned / mirrored), as a canvas */
 function orientCanvas(src: CanvasImageSource, w: number, h: number, cal: Pick<KeyboardCalibration, 'turn' | 'mirror'>): HTMLCanvasElement {
-  const c = document.createElement('canvas');
-  c.width = w;
-  c.height = h;
-  const ctx = c.getContext('2d')!;
+  const { canvas: c, ctx } = cpuCanvas(w, h);
   ctx.translate(w / 2, h / 2);
   if (cal.turn === 180) ctx.rotate(Math.PI);
   if (cal.mirror) ctx.scale(-1, 1);
@@ -148,7 +145,8 @@ export function HandsSetup({ song, difficulty, visual, settings, watermark, logo
   const [clean, setClean] = useState<HTMLCanvasElement | null>(null);
   const [cleaning, setCleaning] = useState(false);
   const shown = useVideoFrame(frames, cal.frameTime, 60);
-  const display = clean && !shown ? null : clean ? { canvas: clean, w: clean.width, h: clean.height, t: cal.frameTime } : shown;
+  const cleanImage = useMemo<FrameImage | null>(() => (clean ? { canvas: clean, w: clean.width, h: clean.height, t: 0 } : null), [clean]);
+  const display = clean && !shown ? null : (cleanImage ?? shown);
   const still = display;
   const notes = song.arrangements[difficulty].notes;
   const aspect = hv.displayW / Math.max(1, hv.displayH);
@@ -230,11 +228,7 @@ export function HandsSetup({ song, difficulty, visual, settings, watermark, logo
   useEffect(() => () => void listen.current?.close().catch(() => {}), []);
 
   // ---------- frame & corners ----------
-  const orientedUrl = useMemo(() => {
-    if (!still) return null;
-    return orientCanvas(still.canvas, still.w, still.h, cal).toDataURL('image/jpeg', 0.85);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [still, cal.turn, cal.mirror]);
+  const orientedUrl = useCanvasUrl(() => (still ? orientCanvas(still.canvas, still.w, still.h, cal) : null), [still, cal.turn, cal.mirror]);
   const [detectMsg, setDetectMsg] = useState<string | null>(null);
   const detect = (silent = false) => {
     if (!still) return;
@@ -348,6 +342,7 @@ export function HandsSetup({ song, difficulty, visual, settings, watermark, logo
       logo,
     });
   }, [step, calibrated, song, difficulty, visual, settings, songT, draftHv, syncFrame, watermark, logo]);
+  const syncUrl = useFrameUrl(step === 'sync' && !calibrated ? syncFrame : null);
   // before calibration: a flash dot on the frame when a note starts
   const noteNow = notes.some((x) => Math.abs(x.start - songT) < 0.06);
 
@@ -366,7 +361,7 @@ export function HandsSetup({ song, difficulty, visual, settings, watermark, logo
           <canvas ref={previewRef} className="mx-auto block max-h-[52vh] max-w-full rounded-md" style={{ aspectRatio: `${outW} / ${outH}` }} aria-label="Preview with the notes falling onto your video" />
         ) : (
           <div className="relative mx-auto max-w-full" style={{ aspectRatio: String(aspect), maxHeight: '52vh' }}>
-            {syncFrame && <img alt="Your video at this point of the song" className="h-full w-full rounded-md object-contain" src={(syncFrame.canvas as HTMLCanvasElement).toDataURL('image/jpeg', 0.8)} />}
+            {syncFrame && <img alt="Your video at this point of the song" className="h-full w-full rounded-md object-contain" src={syncUrl ?? ''} />}
             <span className={cn('absolute top-3 right-3 h-6 w-6 rounded-full border-2 border-white transition-colors', noteNow ? 'bg-accent-400 shadow-[0_0_18px_6px_rgba(140,160,255,0.8)]' : 'bg-black/40')} aria-label={noteNow ? 'A note starts here' : undefined} />
           </div>
         );
@@ -591,7 +586,7 @@ export function HandsSetup({ song, difficulty, visual, settings, watermark, logo
   })();
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-stretch justify-center bg-black/70 backdrop-blur-sm sm:items-center sm:p-5" role="dialog" aria-modal="true" aria-label="Set up your hands video" data-testid="hands-setup">
+    <div className="fixed inset-0 z-[60] flex items-stretch justify-center bg-black/80 sm:items-center sm:p-5" role="dialog" aria-modal="true" aria-label="Set up your hands video" data-testid="hands-setup">
       <div className="panel flex h-full w-full flex-col overflow-hidden sm:h-auto sm:max-h-[94dvh] sm:max-w-6xl">
         <header className="flex items-center justify-between gap-3 border-b border-ink-700 px-4 py-3">
           <div className="min-w-0">

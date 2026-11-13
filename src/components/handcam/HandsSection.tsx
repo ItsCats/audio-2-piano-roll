@@ -14,7 +14,7 @@ import { HEVC_MESSAGE, handVideoFrom, probeVideo } from '../../lib/handcam/media
 import { deleteHandVideoBlob, requestPersistence, saveHandVideoBlob, storageEstimate } from '../../lib/storage/db';
 import { isMemoryConstrained, pageDeviceInfo } from '../../lib/transcription/backendChoice';
 import { checkVideoForKeeping } from '../import/HandsVideoImport';
-import { useHandFrames, useVideoFrame } from './hooks';
+import { useFrameUrl, useHandFrames, useVideoFrame } from './hooks';
 import { formatTime } from '../../lib/music/theory';
 
 const LEVEL_LABEL = { high: 'High', medium: 'Medium', low: 'Low' } as const;
@@ -44,7 +44,7 @@ function Thumb({ song }: { song: Song }) {
   const hv = song.handVideo!;
   const t = hv.calibration?.frameTime ?? Math.min(hv.duration / 2, 2);
   const img = useVideoFrame(frames, t, 0);
-  const url = img ? (img.canvas as HTMLCanvasElement).toDataURL('image/jpeg', 0.7) : null;
+  const url = useFrameUrl(img, 192, 0.75);
   return (
     <div className="flex h-[54px] w-[96px] shrink-0 items-center justify-center overflow-hidden rounded-md bg-black ring-1 ring-white/10">
       {url ? <img src={url} alt="Your hands video" className="h-full w-full object-cover" /> : error ? <Video size={16} className="text-ink-400" /> : <Loader2 size={14} className="animate-spin text-ink-400" />}

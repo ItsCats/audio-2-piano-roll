@@ -239,7 +239,10 @@ async function saveSetup(page) {
 let page = null;
 const errors = [];
 try {
-  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2, acceptDownloads: true });
+  // reduced motion: headless Chromium draws with a software GPU, and endless CSS animations (e.g. the Studio's pulsing
+  // sound-loading icon) under the dialog's blurred backdrop keep it so busy that reading a
+  // frame back (the setup screen's pictures) takes many seconds
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2, acceptDownloads: true, reducedMotion: 'reduce' });
   page = await ctx.newPage();
   page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
   page.on('pageerror', (e) => errors.push(e.message));

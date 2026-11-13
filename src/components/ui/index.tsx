@@ -300,6 +300,7 @@ export function Modal({
   children,
   wide,
   footer,
+  hidden,
 }: {
   open: boolean;
   onClose: () => void;
@@ -307,6 +308,8 @@ export function Modal({
   children: ReactNode;
   wide?: boolean;
   footer?: ReactNode;
+  /** kept mounted but not drawn (another full-screen step is on top of it) */
+  hidden?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -327,7 +330,7 @@ export function Modal({
   }, [open, onClose]);
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm sm:items-center sm:p-6" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className={cn('fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm sm:items-center sm:p-6', hidden && 'invisible')} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div
         ref={ref}
         tabIndex={-1}
