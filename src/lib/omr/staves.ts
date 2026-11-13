@@ -196,7 +196,10 @@ const LINE_CONTRAST = 12;
 export function findStaves(page: Gray): StaffFinding {
   const { w, h } = page;
   const ink = binarize(page, 31, STAFF_C);
-  const { thickness, gap } = runLengths(ink, w, h);
+  // line thickness and spacing from long horizontal ink runs only: paper noise in photos makes many
+  // short black and white runs that would otherwise win the vote
+  let { thickness, gap } = runLengths(horizontalRuns(ink, w, h, Math.max(20, Math.round(w / 50))), w, h);
+  if (gap < 3) ({ thickness, gap } = runLengths(ink, w, h));
   const space0 = gap + thickness;
   const minRun = Math.max(8, Math.round(2.5 * space0));
   // thin dark horizontal lines: darker than the pixels a little above and below (faint lines in photos

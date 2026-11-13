@@ -7,6 +7,7 @@
  * not use, and pdf.js 6 no longer compiles anything with eval / new Function (its old isEvalSupported
  * option is gone), so the app's CSP without 'unsafe-eval' is enough.
  */
+import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { grayFromRGBA, type Gray } from './image';
 
 /** Width a page is rendered at (the reader straightens pages to 1654 px; a little more keeps lines crisp). */
@@ -17,8 +18,8 @@ let lib: Promise<PdfJs> | null = null;
 
 async function pdfjs(): Promise<PdfJs> {
   lib ??= (async () => {
-    const [mod, worker] = await Promise.all([import('pdfjs-dist'), import('pdfjs-dist/build/pdf.worker.min.mjs?url')]);
-    mod.GlobalWorkerOptions.workerSrc = worker.default;
+    const mod = await import('pdfjs-dist');
+    mod.GlobalWorkerOptions.workerSrc = new URL(pdfWorkerUrl, location.href).href;
     return mod;
   })();
   try {
