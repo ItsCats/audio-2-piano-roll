@@ -218,7 +218,12 @@ async function waitExport(dlg, label) {
   }
   return dl;
 }
+/** closes the toasts (the one-time copyright note after the first export sits over the bottom-right buttons) */
+async function dismissToasts(page) {
+  for (const b of await page.getByRole('button', { name: 'Dismiss' }).all()) await b.click({ timeout: 2000 }).catch(() => {});
+}
 async function saveSetup(page) {
+  await dismissToasts(page);
   for (let i = 0; i < 6; i++) {
     const save = setup(page).getByRole('button', { name: 'Save' });
     if (await save.isVisible().catch(() => false)) break;
@@ -324,6 +329,7 @@ try {
   await render.waitFor({ timeout: 60000 });
   check('cancel stops the export (Render is back)', await render.isEnabled());
   const tExp = Date.now();
+  await dismissToasts(page);
   await render.click();
   const dl = await waitExport(dlg, 'export');
   const [download] = await Promise.all([page.waitForEvent('download'), dl.click()]);
@@ -408,6 +414,7 @@ try {
 
   // a short good-looking export (every effect on) for the eyes
   if (out) {
+    await dismissToasts(page);
     await dlg.getByRole('button', { name: 'Back to settings' }).click();
     await hs.getByRole('switch', { name: 'Light up the keys in the video' }).click();
     await hs.getByRole('switch', { name: 'Sparkles' }).click();
@@ -415,6 +422,7 @@ try {
     await setRange(dlg.getByLabel('Start', { exact: true }).first(), 4);
     await setRange(dlg.getByLabel('End', { exact: true }).first(), 7.5);
     await dlg.getByLabel('Resolution').selectOption('1080');
+    await dismissToasts(page);
     await dlg.getByRole('button', { name: 'Render video' }).click();
     const dl2 = await waitExport(dlg, 'export (look)');
     const [d2] = await Promise.all([page.waitForEvent('download'), dl2.click()]);
@@ -422,6 +430,7 @@ try {
     await d2.saveAs(fileC);
     execFileSync('ffmpeg', ['-v', 'error', '-y', '-ss', '3.62', '-i', fileC, '-frames:v', '1', path.join(out, 'export-frame.png')]);
     fs.rmSync(fileC, { force: true });
+    await dismissToasts(page);
     await dlg.getByRole('button', { name: 'Back to settings' }).click();
     await dlg.getByRole('radio', { name: 'Full song' }).click();
   }
