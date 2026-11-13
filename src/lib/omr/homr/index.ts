@@ -82,10 +82,16 @@ export class SheetReadError extends Error {}
 export const ENGINE_ID = 'homr';
 /** Most pages read in one go. */
 export const MAX_PAGES = 20;
-/** Extra tab memory while reading, MB (sessions + one page): measured, see public/models/homr/README.md. */
-export const HOMR_EXTRA_MB = 700;
-/** Measured seconds per page (about 4–8 staffs) by WASM threads (index = threads), desktop Chromium. */
-const SECONDS_PER_PAGE = [90, 90, 55, 40, 35];
+/**
+ * Extra browser memory while reading, MB: measured +1,010 MB on the first page in headless Chromium
+ * (download, sessions, one page; public/models/homr/README.md).
+ */
+export const HOMR_EXTRA_MB = 1000;
+/**
+ * Seconds per page of 3–4 systems by WASM threads (index = threads), headless Chromium on a shared
+ * 4-core machine: 1 thread 48–80 s, 3 threads 32–59 s for pages of 2–5 systems.
+ */
+const SECONDS_PER_PAGE = [65, 65, 55, 45, 40];
 /** Phones are assumed ~3x slower than one desktop thread. */
 export const PHONE_SLOWDOWN = 3;
 /** How long an idle worker keeps its loaded models (desktops). */

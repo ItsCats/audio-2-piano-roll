@@ -39,7 +39,7 @@ try {
   process.exit(2);
 }
 
-/** Resident memory (MB) of the browser and all its descendant processes (Linux), sampled while reading. */
+/** Resident memory (MB) of the processes this script started (the browser and its children; Linux), sampled while reading. */
 function browserRssMB(pid) {
   try {
     const rows = execSync('ps -e -o pid=,ppid=,rss=', { encoding: 'utf8' })
@@ -50,7 +50,7 @@ function browserRssMB(pid) {
     for (const [p, pp] of rows) kids.set(pp, [...(kids.get(pp) ?? []), p]);
     const rss = new Map(rows.map(([p, , r]) => [p, r]));
     let total = 0;
-    const todo = [pid];
+    const todo = [...(kids.get(pid) ?? [])];
     while (todo.length) {
       const p = todo.pop();
       total += rss.get(p) ?? 0;
@@ -65,7 +65,7 @@ function browserRssMB(pid) {
 const server = await createServer({ root, configFile: path.join(root, 'vite.config.ts'), server: { port, strictPort: true }, logLevel: 'error' });
 await server.listen();
 const browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
-const browserPid = browser.process?.()?.pid;
+const browserPid = process.platform === 'linux' ? process.pid : 0;
 let failed = false;
 const check = (ok, label, detail) => {
   failed ||= !ok;

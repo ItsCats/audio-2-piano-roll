@@ -132,7 +132,10 @@ async function getSessions(req: RunRequest, progress: (m: Omit<ProgressMessage, 
       const r = await loadFile(files[i], cache, (n) => ((done[i] = n), report()));
       fromCache &&= r.fromCache;
       const tb = performance.now();
-      sessions[names[i]] = await ort.InferenceSession.create(new Uint8Array(r.bytes), opts);
+      // the decoder steps one token at a time (tiny matrix products): extra threads only cost
+      // synchronisation there (measured: 33 s with one thread vs 41 s with three on a 5-system page)
+      const o = names[i] === 'decoder' ? { ...opts, intraOpNumThreads: 1 } : opts;
+      sessions[names[i]] = await ort.InferenceSession.create(new Uint8Array(r.bytes), o);
       loadMs += tb - ta;
       createMs += performance.now() - tb;
     }
