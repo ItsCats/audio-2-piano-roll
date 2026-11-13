@@ -4,12 +4,12 @@ Piano2Vision's own code is Copyright (C) 2026 Jack Anderson and licensed under t
 License, version 3 or later (`AGPL-3.0-or-later`, see [LICENSE](LICENSE)). Source code:
 <https://github.com/ItsCats/audio-2-piano-roll>.
 
-The parts below were made by other people and keep their own licences. Being bundled with Piano2Vision does not
-change their licence. The in-app Credits page (`src/lib/credits.ts`) lists the same works for users.
+The parts below were made by other people and keep their own licenses. Being bundled with Piano2Vision does not
+change their license. The in-app Credits page (`src/lib/credits.ts`) lists the same works for users.
 
 ## 1. Files in this repository
 
-| Path | Work | Copyright / author | Licence | Changes |
+| Path | Work | Copyright / author | License | Changes |
 | --- | --- | --- | --- | --- |
 | `public/models/basic-pitch/` (`model.json`, `group1-shard1of1.bin`) | Basic Pitch TF.js model, from npm `@spotify/basic-pitch` 1.0.1 | Copyright 2022 Spotify AB | Apache-2.0 ([LICENSE](public/models/basic-pitch/LICENSE), [README](public/models/basic-pitch/README.md)) | none |
 | `src/lib/transcription/noteExtraction.ts`, `constants.ts`, `inference.worker.ts` | note extraction, model constants and windowing derived from [spotify/basic-pitch](https://github.com/spotify/basic-pitch) | Copyright 2022 Spotify AB; changes by the Piano2Vision authors | Apache-2.0 (the derived parts) and AGPL-3.0-or-later (the Piano2Vision changes) | rewritten in TypeScript; each file says so in its header |
@@ -18,6 +18,8 @@ change their licence. The in-app Credits page (`src/lib/credits.ts`) lists the s
 | `public/models/scnet/scnet.int8.onnx` | [SCNet](https://github.com/starrytong/SCNet) source-separation model (MUSDB18-HQ checkpoint via ZFTurbo's Music-Source-Separation-Training), int8 ONNX export by [audiojs](https://huggingface.co/audiojs/scnet) | Copyright (c) 2024 starrytong | MIT ([LICENSE](public/models/scnet/LICENSE), [README](public/models/scnet/README.md); redistribution of converted weights confirmed in [starrytong/SCNet#35](https://github.com/starrytong/SCNet/issues/35)) | none (served as published by audiojs) |
 | `src/lib/separation/dsp.ts` | STFT and segmenting written to match SCNet's preprocessing and the `demix()` procedure of [ZFTurbo/Music-Source-Separation-Training](https://github.com/ZFTurbo/Music-Source-Separation-Training) (MIT) | Piano2Vision authors | AGPL-3.0-or-later | own implementation, credited for the method |
 | `public/models/crepe/crepe-tiny.onnx` | CREPE "tiny" pitch model ([marl/crepe](https://github.com/marl/crepe)), PyTorch weights from torchcrepe 0.0.24 | Copyright (c) 2018 Jong Wook Kim; Copyright (c) 2020 Max Morrison | MIT ([LICENSE](public/models/crepe/LICENSE), [README](public/models/crepe/README.md)) | converted to ONNX |
+| `public/models/omr/` (`smt-camera-grandstaff/*.bin`, `vocab.json`) | Sheet Music Transformer checkpoint [antoniorv6/smt-camera-grandstaff](https://huggingface.co/antoniorv6/smt-camera-grandstaff) (Ríos-Vila, Calvo-Zaragoza, Paquet, ICDAR 2024) | the SMT authors | MIT ([LICENSE](public/models/omr/LICENSE), [README](public/models/omr/README.md)); training data GrandStaff / Camera-GrandStaff (not shipped) | converted to ONNX (encoder + decoder with key/value cache), 8-bit weights, split into 3 files |
+| `public/pdfjs/wasm/` (`jbig2.wasm`, `openjpeg.wasm`, `qcms_bg.wasm`) | image decoders shipped with pdfjs-dist 6.4.299 | PDFium authors; OpenJPEG authors; qcms authors; Mozilla | BSD-3-Clause / Apache-2.0, BSD-2-Clause, MIT (license files next to them) | none |
 | `public/samples/grand/` | Salamander Grand Piano V3 | Alexander Holm | CC BY 3.0 ([LICENSE](public/samples/LICENSE), [README](public/samples/README.md)) | 5 of 16 velocity layers, trimmed, faded, MP3 |
 | `public/samples/upright/` | Upright Piano KW (FreePats) | FreePats project | CC0 1.0 ([LICENSE](public/samples/LICENSE), [README](public/samples/README.md)) | one of 2 velocity layers, trimmed, faded, MP3 |
 | `public/favicon.svg`, icons, decal patterns, title-page ornaments | original work (`scripts/make-icons.mjs` and the renderer code) | Piano2Vision authors | AGPL-3.0-or-later | – |
@@ -26,9 +28,9 @@ change their licence. The in-app Credits page (`src/lib/credits.ts`) lists the s
 
 These are not stored in this repository; `npm install` downloads them and `npm run build` bundles them into
 `dist/`. The build also writes `dist/THIRD_PARTY_LICENSES.txt` (by `scripts/third-party-licenses.ts`), which
-holds the licence text of every package below, so the deployed site carries the notices.
+holds the license text of every package below, so the deployed site carries the notices.
 
-**Permissive licences** (MIT, ISC, BSD-3-Clause, Apache-2.0, MIT AND Zlib):
+**Permissive licenses** (MIT, ISC, BSD-3-Clause, Apache-2.0, MIT AND Zlib):
 react, react-dom, scheduler, react-router, react-router-dom, cookie, set-cookie-parser (MIT); zustand (MIT);
 idb (ISC); lucide-react (ISC); @tonejs/midi, midi-file (MIT); fflate (MIT); jspdf with @babel/runtime, fast-png,
 iobuffer (MIT) and pako (MIT AND Zlib); svg2pdf.js with svgpath, cssesc, specificity, font-family-papandreou
@@ -46,7 +48,7 @@ Google LLC) with long (Apache-2.0) and seedrandom (MIT); array-flatten (MIT).
   libavutil), licensed under the GNU LGPL 2.1 or later, built without GPL, version 3 or nonfree parts, from FFmpeg
   commit [`60a2818f76dcd1fee3155b1791304af104a0fc1b`](https://github.com/FFmpeg/FFmpeg/commit/60a2818f76dcd1fee3155b1791304af104a0fc1b),
   unmodified. The build steps are in the package README (<https://github.com/Vanilagy/mediabunny>,
-  `packages/aac-encoder`); FFmpeg's licence files ship in the package (`licenses/ffmpeg`) and in
+  `packages/aac-encoder`); FFmpeg's license files ship in the package (`licenses/ffmpeg`) and in
   `dist/THIRD_PARTY_LICENSES.txt`. You may replace the encoder with a modified FFmpeg build by rebuilding the
   package as described there.
 
@@ -78,7 +80,7 @@ root response and `/api/health` link to its source code (`SOURCE_CODE_URL`).
 
 ## 4. Used only to measure accuracy (not included, not distributed)
 
-| Work | Licence | Note |
+| Work | License | Note |
 | --- | --- | --- |
 | [MAESTRO v3](https://magenta.tensorflow.org/datasets/maestro) (Google Magenta) | CC BY-NC-SA 4.0 | concert performances with exact MIDI; numbers on the Accuracy page come from them. No MAESTRO files are in this repository. |
 | [ASAP dataset](https://github.com/fosfrancesco/asap-dataset) | CC BY-NC-SA 4.0 | an aligned score, used for an earlier measurement |

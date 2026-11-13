@@ -12,7 +12,7 @@ export default function CreditsPage() {
           <h1 className="mt-2 text-[28px] font-semibold tracking-tight text-ink-50 md:text-[32px]">Made possible by</h1>
           <p className="mt-3 max-w-3xl text-[14.5px] leading-relaxed text-ink-300">
             Piano2Vision is built on AI models, piano recordings, fonts and open-source software shared by other people. Thank you to everyone
-            below. Each item links to its project and licence.
+            below. Each item links to its project and license.
           </p>
           <nav className="mt-4 flex flex-wrap gap-2" aria-label="Sections">
             {CREDITS.map((g) => (
@@ -36,7 +36,7 @@ export default function CreditsPage() {
                       <ExternalLink size={13} className="text-ink-400 group-hover:text-accent-300" />
                     </a>
                     {c.licenseUrl ? (
-                      <a href={c.licenseUrl} target="_blank" rel="noopener noreferrer" className="focus-ring rounded-md" title="Read the licence">
+                      <a href={c.licenseUrl} target="_blank" rel="noopener noreferrer" className="focus-ring rounded-md" title="Read the license">
                         <Badge tone="accent">{c.license}</Badge>
                       </a>
                     ) : (
@@ -85,11 +85,11 @@ export default function CreditsPage() {
             <a href={SOURCE_CODE_URL} target="_blank" rel="noopener noreferrer" className="text-accent-400 hover:text-accent-300">
               {SOURCE_CODE_LABEL}
             </a>
-            . The models, piano sounds, fonts and libraries above keep their own licences.
+            . The models, piano sounds, fonts and libraries above keep their own licenses.
           </p>
           <p>
-            Piano2Vision is not affiliated with YouTube, Spotify, Google, ByteDance, Rousseau or any other project or person listed here. The YouTube player is
-            embedded under YouTube’s Terms of Service; you are responsible for having the rights to the music you import. See also{' '}
+            Piano2Vision is not affiliated with YouTube, Spotify, Google, ByteDance, Rousseau or any other project or person listed here. You are responsible for having
+            the rights to the music you import. See also{' '}
             <Link to="/accuracy" className="text-accent-400 hover:text-accent-300">
               how accurate is it?
             </Link>

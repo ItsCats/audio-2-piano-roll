@@ -22,8 +22,8 @@ Cross-Origin-Opener-Policy: same-origin
 Cross-Origin-Embedder-Policy: credentialless
 ```
 
-* **Not** on `/import/youtube`: the YouTube player iframe sends no COEP header, so an isolated page cannot
-  embed it. The app reloads the page when entering or leaving that route (`src/lib/isolation.ts`).
+* Unknown paths get no isolation headers; the app reloads the page once when moving on from one
+  (`src/lib/isolation.ts`). The old `/import/youtube` address redirects to `/import?tab=computer`.
 * Each route must receive exactly one copy of each header (overlapping rules can send two, which browsers
   treat as invalid). `tests/e2e/isolation.mjs app` checks every route against `netlify.toml`.
 * The route list lives in `src/lib/isolation.ts` (`ISOLATED_ROUTES`) and in `netlify.toml`; keep them in sync.
@@ -33,14 +33,14 @@ falls back to one thread (about 2–3× slower).
 
 ## Optional processing server
 
-Needed only for YouTube fetching and for faster source separation. Transcription never needs it, and the
+Needed only for faster source separation. Transcription never needs it, and the
 "Separate vocals & drums" import option also runs in the browser (SCNet, about 2–3× real time single-threaded);
 a server runs the same SCNet model on several cores (about 0.4–0.6× real time) and returns the same two stems:
 the vocals and the accompaniment without drums.
 
 ### Security model
 
-* The browser calls `/.netlify/functions/backend-token`, which returns a 10-minute HMAC token signed with `PROCESSING_SHARED_SECRET` (requests from other origins are refused).
+* The browser calls `/.netlify/functions/backend-token`, which returns a 10-minute HMAC token signed with `PROCESSING_SHARED_SECRET` (requests without an Origin header naming this site are refused).
 * The server verifies the token with the same secret (`SHARED_SECRET`), restricts CORS to `ALLOWED_ORIGINS`, rate-limits jobs per IP, limits upload size and duration, validates media with ffprobe, only accepts YouTube hosts (no SSRF), and deletes job files after `JOB_TTL_SEC`.
 * This keeps random sites and bots off your server; it does not make a public deployment safe from a determined user of your own site — keep the rate limit sensible.
 
@@ -48,7 +48,7 @@ the vocals and the accompaniment without drums.
 
 | Option | Good for | Approximate cost* |
 | --- | --- | --- |
-| **Your own computer** (`docker run …` or `uvicorn`) | Personal use. **The only option that reliably works for YouTube**, because YouTube blocks most cloud/datacenter IPs (verified: HTTP 403 from a cloud VM). | Free |
+| **Your own computer** (`docker run …` or `uvicorn`) | Personal use. | Free |
 | **Google Cloud Run** (CPU, scale to zero, 2–4 vCPU/4 GB, concurrency 1) | Occasional separation jobs | Pay per use; a 4-minute song ≈ 3–5 vCPU-minutes ≈ a few US cents. Free tier covers light use. |
 | **Fly.io / Railway / Render** (2–4 shared vCPU, 3–4 GB RAM) | Always-on small server | ~US$10–30 per month always-on; less with auto-stop |
 
@@ -80,7 +80,7 @@ docker run -p 8000:8000 -e SHARED_SECRET=$(openssl rand -hex 32) -e ALLOWED_ORIG
 The build downloads the SCNet model from a pinned Hugging Face revision and verifies its SHA-256. Build with
 `--build-arg WITH_SEPARATION=0` for a YouTube-only image without onnxruntime and the model.
 
-Then in Netlify set `PROCESSING_SHARED_SECRET` (same value) and optionally `VITE_PROCESSING_URL=https://your-server.example`, and redeploy. Users can also enter a server URL under **Settings → Processing server**.
+Then in Netlify set `PROCESSING_SHARED_SECRET` (same value) and optionally `VITE_PROCESSING_URL=https://your-server.example`, and redeploy. Users can also enter a server URL under **Settings → Processing server**. With `VITE_PROCESSING_URL` set, imports use that server by default and the Privacy page (/privacy) says so and names its host; read that page once after the deploy to check it still matches how you run the server.
 
 ### Local development with the server
 

@@ -1,5 +1,5 @@
 import { useNavigate, Link } from 'react-router-dom';
-import { Sparkles, SquarePlay, Music2, Keyboard, ArrowRight, Wand2, Gauge, Film } from 'lucide-react';
+import { Sparkles, MonitorSpeaker, Music2, Keyboard, ArrowRight, Wand2, Gauge, Film } from 'lucide-react';
 import { Dropzone } from '../components/import/Dropzone';
 import { SongCard } from '../components/SongCard';
 import { useLibrary } from '../state/libraryStore';
@@ -33,7 +33,7 @@ export function HomePage() {
         }
       },
     },
-    { icon: SquarePlay, title: 'Paste a YouTube link', text: 'Turn a video you have rights to into a piano roll.', onClick: () => navigate('/import/youtube') },
+    { icon: MonitorSpeaker, title: 'Record what’s playing', text: 'Record a song playing in another tab on your computer.', onClick: () => navigate('/import?tab=computer') },
     { icon: Music2, title: 'Import MIDI or sheet music', text: 'MIDI, MusicXML or MuseScore files: exact notes, no transcription needed.', onClick: () => navigate('/import?tab=midi') },
     { icon: Keyboard, title: 'Connect a MIDI keyboard', text: 'Practice along and get scored on accuracy and timing.', onClick: () => navigate('/settings#midi') },
   ];

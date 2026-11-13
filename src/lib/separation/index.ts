@@ -17,6 +17,7 @@ import { DRUM_HIT_RULE } from '../music/cleanup';
 
 export { DRUM_ENV_FPS };
 import type { WorkerResponse, WorkerStats } from './protocol';
+import { watchWorker } from '../newVersion';
 
 export interface VocalPresence {
   activeFraction: number;
@@ -176,7 +177,7 @@ export function measureVocalPresence(vocals: Float32Array, mix: Float32Array, sa
   return vocalPresence(vocals, mix, sampleRate);
 }
 
-const abortError = () => new DOMException('Separation cancelled', 'AbortError');
+const abortError = () => new DOMException('Separation canceled', 'AbortError');
 
 export interface RawSeparation {
   vocals: Float32Array;
@@ -205,7 +206,7 @@ export function separateStereo44k(
   const modelUrl = new URL(opts.modelUrl ?? `${import.meta.env.BASE_URL}${SCNET_MODEL_PATH}?v=${SCNET_MODEL_SHA256.slice(0, 8)}`, location.href).href;
   const segments = planSegments(left.length, opts.step ?? DEFAULT_STEP).starts.length;
   return new Promise<RawSeparation>((resolve, reject) => {
-    const worker = new Worker(new URL('./scnet.worker.ts', import.meta.url), { type: 'module', name: 'scnet-separation' });
+    const worker = watchWorker(new Worker(new URL('./scnet.worker.ts', import.meta.url), { type: 'module', name: 'scnet-separation' }));
     let settled = false;
     const finish = () => {
       settled = true;

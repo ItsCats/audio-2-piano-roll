@@ -1,5 +1,6 @@
-import type { Difficulty, Note, PedalRange, Song, SongSource, TempoInfo, TranscriptionInfo, KeyInfo } from './music/types';
+import { DIFFICULTIES, type Difficulty, type Note, type PedalRange, type Song, type SongSource, type TempoInfo, type TranscriptionInfo, type KeyInfo } from './music/types';
 import { generateAllArrangements, generateArrangement, type ArrangementOptions } from './music/difficulty';
+import { autoPedal, isAudioSong } from './music/autoPedal';
 import { detectKey } from './music/theory';
 import { songDuration } from './music/cleanup';
 import { newId } from './storage/db';
@@ -44,10 +45,27 @@ export function makeThumbnail(notes: Note[], duration: number, colors = { R: '#4
   return c.toDataURL('image/webp', 0.8);
 }
 
-/** Arrangement options for a song (Hard keeps hands that come from the score). */
-export function arrangementOptions(song: { transcription: TranscriptionInfo }): ArrangementOptions {
+/**
+ * Arrangement options for a song (Hard keeps hands that come from the score; songs from audio
+ * with the automatic pedal on get pedal on Medium and Hard).
+ */
+export function arrangementOptions(song: { transcription: TranscriptionInfo; autoPedal?: boolean }): ArrangementOptions {
   const t = song.transcription;
-  return { handsFromScore: t.handsFromScore === true || t.method === 'demo' };
+  return { handsFromScore: t.handsFromScore === true || t.method === 'demo', autoPedal: song.autoPedal === true && isAudioSong(song) };
+}
+
+/**
+ * Turns the automatic pedal of a song from audio on or off. Medium and Hard get pedal derived
+ * from their current notes (hand edits are kept); off clears it. Easy has none either way.
+ */
+export function withAutoPedal(song: Song, on: boolean): Song {
+  const arrangements = { ...song.arrangements };
+  for (const d of DIFFICULTIES) {
+    if (d === 'easy') continue;
+    const a = arrangements[d];
+    arrangements[d] = { ...a, pedal: on ? autoPedal(a.notes, song.tempo, song.duration > 0 ? song.duration : Infinity) : song.basePedal.map((p) => ({ ...p })) };
+  }
+  return { ...song, autoPedal: on, arrangements, updatedAt: Date.now() };
 }
 
 interface BuildInput {
@@ -62,6 +80,8 @@ interface BuildInput {
   transcription: TranscriptionInfo;
   hasAudio: boolean;
   hasPosteriors: boolean;
+  /** songs from audio: sustain pedal derived from the notes on Medium and Hard (Song.autoPedal) */
+  autoPedal?: boolean;
 }
 
 export function buildSong(input: BuildInput): Song {
@@ -84,6 +104,7 @@ export function buildSong(input: BuildInput): Song {
     thumbnail: makeThumbnail(input.notes, duration),
     hasAudio: input.hasAudio,
     hasPosteriors: input.hasPosteriors,
+    ...(input.autoPedal !== undefined && isAudioSong(input) ? { autoPedal: input.autoPedal } : {}),
   };
 }
 

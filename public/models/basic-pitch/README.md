@@ -8,7 +8,7 @@ transcription model of Piano2Vision. They run in the browser (TensorFlow.js) in
 |---|---|
 | Work | Basic Pitch, by Spotify (Rachel Bittner, Juan José Bosch, David Rubinstein, Gabriel Meseguer-Brocal, Sebastian Ewert) |
 | Copyright | Copyright 2022 Spotify AB |
-| Licence | Apache License 2.0 (full text in `LICENSE` next to this file) |
+| License | Apache License 2.0 (full text in `LICENSE` next to this file) |
 | Source | npm package `@spotify/basic-pitch` 1.0.1, folder `model/` (https://github.com/spotify/basic-pitch-ts) |
 | Changes | none: the files are copied unmodified by `npm run copy:model` (`scripts/copy-model.mjs`) |
 | `model.json` | 174,537 bytes, SHA-256 `1ed1aaee3409ec1dc098c8b01f430c0911f6fe9412e7af8086750f9e8f302f68` |

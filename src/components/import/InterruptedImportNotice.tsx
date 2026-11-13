@@ -55,7 +55,7 @@ export function InterruptedImportNotice() {
               return;
             }
             if (importBusy(useImport.getState().job)) return false;
-            navigate(rec.kind === 'capture' ? '/import?tab=record' : '/import');
+            navigate(rec.kind === 'capture' ? '/import?tab=record' : rec.kind === 'score' ? '/import?tab=midi' : '/import');
             void useImport.getState().resumePending(rec);
           },
         });

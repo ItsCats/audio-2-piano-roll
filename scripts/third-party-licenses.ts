@@ -115,11 +115,11 @@ function describe(root: string, loaded: Iterable<string>, needs: Set<string>): s
   if (EXTRA_NOTES[name]) lines.push('', EXTRA_NOTES[name]);
   const files = licenseFiles(root);
   if (!files.length) {
-    lines.push('', `(The package ships no licence file; it declares "${license}" in its package.json.)`);
+    lines.push('', `(The package ships no license file; it declares "${license}" in its package.json.)`);
     const notices = copyrightLines(loaded);
     if (notices.length) lines.push('', 'Copyright notices found in its code:', ...notices.map((n) => `  ${n}`));
     const section = readmeLicense(root);
-    if (section) lines.push('', '----- licence section of its README -----', section);
+    if (section) lines.push('', '----- license section of its README -----', section);
     if (/^MIT$/i.test(license)) {
       if (!section?.includes('Permission is hereby granted')) lines.push('', '----- MIT License -----', MIT_TEXT);
     } else if (!section) needs.add(license);
@@ -160,7 +160,7 @@ export function thirdPartyLicenses(options: { fileName?: string; header?: string
           if (isWorker) return;
           const header =
             options.header ??
-            'Third-party software bundled into this website, with its licences. The site itself is licensed separately (see LICENSE in its source).';
+            'Third-party software bundled into this website, with its licenses. The site itself is licensed separately (see LICENSE in its source).';
           for (const root of [...roots.keys()]) {
             for (const dep of BUNDLED_INSIDE[root.split('/node_modules/').pop()!] ?? []) {
               const dir = [join(root, 'node_modules', dep), join(projectRoot, 'node_modules', dep)].find((d) => existsSync(join(d, 'package.json')));

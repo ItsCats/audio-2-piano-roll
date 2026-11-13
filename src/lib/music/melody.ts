@@ -106,7 +106,7 @@ export const DEFAULT_MELODY: MelodyOptions = {
   jumpCost: 0.003,
   octaveJumpCost: 0.2,
   minDur: 0.07,
-  registerLow: 57, // A3: a line centred on B♭3–C4 stays where it is (no octave flip at the boundary)
+  registerLow: 57, // A3: a line centered on B♭3–C4 stays where it is (no octave flip at the boundary)
   registerHigh: 79, // G5
   speech: DEFAULT_SPEECH,
 };
@@ -395,7 +395,7 @@ export function extractMelody(vocalNotes: Note[], opts: Partial<MelodyOptions> =
   let line = reduceToLine(vocalNotes, o);
   line = smoothLine(line, o);
   line = fixOctaveOutliers(line);
-  line = smoothLine(line, o); // octave fixes can create new same-pitch neighbours
+  line = smoothLine(line, o); // octave fixes can create new same-pitch neighbors
   line = dropIsolatedHolds(line);
   const speech = o.speech ? speechSections(line, vocalNotes, o.speech) : [];
   line = dropSections(line, speech);

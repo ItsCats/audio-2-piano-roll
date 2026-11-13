@@ -583,7 +583,7 @@ async function exportWithMediaRecorder(job: ExportJob): Promise<ExportResult> {
       const frame = () => {
         if (signal?.aborted) {
           rec.stop();
-          reject(new DOMException('Export cancelled', 'AbortError'));
+          reject(new DOMException('Export canceled', 'AbortError'));
           return;
         }
         const o = ac.currentTime - startCtx;

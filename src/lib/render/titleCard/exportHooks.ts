@@ -103,7 +103,7 @@ export interface TitleCardHooks {
 }
 
 function aborted(signal?: AbortSignal) {
-  if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
+  if (signal?.aborted) throw new DOMException('Export canceled', 'AbortError');
 }
 
 export const CARDS_FAILED = 'The title page couldn’t be added to this video.';

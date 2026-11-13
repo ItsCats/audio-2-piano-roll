@@ -24,16 +24,18 @@ import { BP_FPS, BP_MIDI_OFFSET, BP_N_PITCHES, BP_SAMPLE_RATE, frameToTime, time
 import type { NoteExtractionOptions, RawNoteEvent } from './noteExtraction';
 import type { TranscriptionStage, WorkerRequest, WorkerResponse } from './workerProtocol';
 import { analyzeLevel, decodeToRate, mixToMono } from './decode';
-import { DRUM_HIT_RULE, RESTRIKE, TAIL_GATE, mergeContinuations, mergeFragments, newNoteId, removeShortQuiet, removeTailGhosts, sortNotes, suppressDrumHits, suppressHarmonics } from '../music/cleanup';
+import { BASS_FOLD, DRUM_HIT_RULE, RESTRIKE, TAIL_GATE, mergeContinuations, mergeFragments, newNoteId, removeShortQuiet, removeTailGhosts, sortNotes, suppressDrumHits, suppressHarmonics, foldBassRestrikes } from '../music/cleanup';
 import { assignHands } from '../music/hands';
 import { estimateTempo } from '../music/beats';
 import { detectKey } from '../music/theory';
 import { extractMelodyLine, mergeMelody } from '../music/melody';
 import { recoverLead } from '../music/leadRecovery';
+import { sustainTuneLine } from '../music/sustain';
 import type { StoredPosteriors } from './posteriors';
 import { isMemoryConstrained, pageDeviceInfo } from './backendChoice';
 import { DRUM_ENV_FPS, longReason, separateStems, separationSupport, stemsFromBlobs, type SeparationResult } from '../separation';
 import { regressionToNotes, type RegressionOutputs } from '../pianoSpecialist/postprocess';
+import { watchWorker } from '../newVersion';
 // (protocol.ts is pure: the specialist's runtime itself is only loaded when it is used)
 
 /**
@@ -278,7 +280,7 @@ class TranscriberClient {
 
   private getWorker(): Worker {
     if (!this.worker) {
-      this.worker = new Worker(new URL('./inference.worker.ts', import.meta.url), { type: 'module' });
+      this.worker = watchWorker(new Worker(new URL('./inference.worker.ts', import.meta.url), { type: 'module' }));
       this.worker.onmessage = (ev: MessageEvent<WorkerResponse>) => this.handlers.get(ev.data.jobId)?.(ev.data);
       this.worker.onerror = (ev) => {
         const err: WorkerResponse = { type: 'error', jobId: -1, message: ev.message || 'Transcription worker crashed' };
@@ -316,7 +318,7 @@ class TranscriberClient {
       const onAbort = () => {
         worker.postMessage({ type: 'cancel', jobId } satisfies WorkerRequest);
         this.handlers.delete(jobId);
-        reject(new DOMException('Transcription cancelled', 'AbortError'));
+        reject(new DOMException('Transcription canceled', 'AbortError'));
       };
       if (signal?.aborted) return onAbort();
       signal?.addEventListener('abort', onAbort, { once: true });
@@ -348,6 +350,8 @@ function modelUrl(): string {
 export interface CleanContext {
   /** frame posteriors the events were extracted from (nFrames x 88; 8-bit stored or float) */
   frames?: Uint8Array | Float32Array;
+  /** onset posteriors of the same model run (same layout as `frames`): lead recovery's attack test */
+  onsets?: Uint8Array | Float32Array;
   nFrames?: number;
   /** onset strength of the separated drums stem (8-bit, DRUM_ENV_FPS): drops drum-hit false low notes */
   drums?: Uint8Array;
@@ -401,6 +405,55 @@ export function noteActivation(frames: Uint8Array | Float32Array, nFrames: numbe
   own /= e - s0 + 1;
   const scale = frames instanceof Uint8Array ? 1 / 255 : 1;
   return { mean: (sum / (s1 - s0 + 1)) * scale, spread: own > 0 ? nb / own : nb > 0 ? Infinity : 0 };
+}
+
+/**
+ * Strongest onset posterior of a note's pitch from 2 frames before to 5 frames after its start
+ * (≈ -25..+60 ms): how clearly the model heard a new attack there.
+ */
+export function onsetPeak(onsets: Uint8Array | Float32Array, nFrames: number, n: Note): number {
+  const f = n.midi - BP_MIDI_OFFSET;
+  if (f < 0 || f >= BP_N_PITCHES || nFrames < 1) return 0;
+  const s0 = Math.min(nFrames - 1, timeToFrame(n.start));
+  let m = 0;
+  for (let t = Math.max(0, s0 - 2); t <= Math.min(nFrames - 1, s0 + 5); t++) m = Math.max(m, onsets[t * BP_N_PITCHES + f]);
+  return onsets instanceof Uint8Array ? m / 255 : m;
+}
+
+/** Posterior thresholds of heldEnd (music/sustain.ts): the "off" level and a new attack's onset. */
+export const HOLD = { low: 0.2, restrike: 0.75 };
+
+/**
+ * End (s) of a note held while its pitch's frame posterior (median of 5 frames) stays at `low` or
+ * above, scanning from its detected end to at most `limit`; a new attack of the pitch (onset
+ * posterior at `restrike` or above, past the first 2 frames) stops it. The note's own end when it
+ * is not held.
+ */
+export function heldEnd(
+  frames: Uint8Array | Float32Array,
+  onsets: Uint8Array | Float32Array | undefined,
+  nFrames: number,
+  n: Note,
+  limit: number,
+  rule = HOLD,
+): number {
+  const f = n.midi - BP_MIDI_OFFSET;
+  const end = n.start + n.dur;
+  if (f < 0 || f >= BP_N_PITCHES || nFrames < 1) return end;
+  const P = BP_N_PITCHES;
+  const fs = frames instanceof Uint8Array ? 255 : 1;
+  const os = onsets instanceof Uint8Array ? 255 : 1;
+  const low = rule.low * fs;
+  const at = (t: number) => frames[Math.max(0, Math.min(nFrames - 1, t)) * P + f];
+  const med = (t: number) => {
+    const w = [at(t - 2), at(t - 1), at(t), at(t + 1), at(t + 2)].sort((a, b) => a - b);
+    return w[2];
+  };
+  const t0 = Math.min(nFrames - 1, timeToFrame(end + ONSET_LATENCY));
+  const tMax = Math.min(nFrames - 1, timeToFrame(limit + ONSET_LATENCY));
+  let t = t0;
+  while (t < tMax && med(t) >= low && !(onsets && t > t0 + 2 && onsets[t * P + f] >= rule.restrike * os)) t++;
+  return t > t0 ? Math.min(limit, frameToTime(t) - ONSET_LATENCY) : end;
 }
 
 /**
@@ -464,6 +517,8 @@ export interface LeadContext {
  * music/leadRecovery.ts) in `notes`. Shared by import and re-detection.
  *
  * The recovered notes are always Hard-only (role 'lead': Easy and Medium are built without them).
+ * (A main note of the tune line the lead pass shows re-struck is split in two; those pieces are main
+ * notes, so all levels get them: music/leadRecovery.ts splitRestrikes.)
  * Letting Easy and Medium use them was measured and is not worth it: without separation it filled
  * the singer's pauses of the 5 sung test songs (Easy voicing-counted accuracy 0.533 -> 0.491, Easy
  * LH bass 0.648 -> 0.639); with singing it doubled the instrumental-gap tune (vocal-1 62 -> 112
@@ -482,16 +537,45 @@ export function accompFromRaw(
 ): { notes: Note[]; main: Note[] } {
   const melody = lead.melody ?? [];
   const main = cleanNotes(raw, rms, params, duration, ctx);
+  // everything below is the "Full song" preset's (ExtractionParams.leadPass); it does not depend on
+  // the extra pass having run (a re-detection with a more sensitive main pass has none)
+  if (!params.leadPass) return { notes: main, main };
+  const { frames, onsets, nFrames } = ctx;
+  const rise = frames && nFrames ? (n: Note) => frameRise(frames, nFrames, timeToFrame(n.start + ONSET_LATENCY), n.midi) : undefined;
+  // one bass note the kick drum chopped into several (music/cleanup.ts foldBassRestrikes)
+  let notes = rise && BASS_FOLD.enabled ? foldBassRestrikes(main, rise) : main;
   const leadParams = leadPassParams(params);
-  if (!leadParams || !leadRaw?.length) return { notes: main, main };
-  const candidates = cleanNotes(leadRaw, rms, leadParams, duration, ctx);
-  const { frames, nFrames } = ctx;
-  const notes = recoverLead(main, candidates, duration, {
-    ...(frames && nFrames ? { evidence: (n: Note) => noteActivation(frames, nFrames, n) } : {}),
-    ...(melody.length ? { exclude: sungRanges(melody) } : {}),
-    hardOnly: true,
+  if (leadParams && leadRaw?.length) {
+    const candidates = cleanNotes(leadRaw, rms, leadParams, duration, ctx);
+    notes = recoverLead(notes, candidates, duration, {
+      ...(frames && nFrames && rise
+        ? {
+            evidence: (n: Note) => ({
+              ...noteActivation(frames, nFrames, n),
+              rise: rise(n),
+              ...(onsets ? { onset: onsetPeak(onsets, nFrames, n) } : {}),
+            }),
+          }
+        : {}),
+      ...(melody.length ? { exclude: sungRanges(melody) } : {}),
+      hardOnly: true,
+    });
+  }
+  // With a sung line the singer carries the tune: nothing is held (holding the instruments' tune in
+  // the singer's pauses lowered the 5 sung test songs' voicing-counted Easy / Medium accuracy).
+  // Without separation there is no vocal stem to tell a sung song from an instrumental, so a sung
+  // song's instruments are held as well (accepted: on the 5 sung test songs without separation Easy
+  // / Medium right-hand chroma accuracy rose, 0.236 -> 0.247 / 0.225 -> 0.242, and the
+  // voicing-counted accuracy fell, 0.533 -> 0.526 / 0.571 -> 0.556, held notes running into the
+  // singer's rests).
+  if (!frames || !nFrames || !rise || melody.length) return { notes, main };
+  // the tune line's notes held while the model still hears them (music/sustain.ts)
+  const held = sustainTuneLine(notes, duration, {
+    heldEnd: (n, limit) => heldEnd(frames, onsets, nFrames, n, limit),
+    ...(onsets ? { onset: (n: Note) => onsetPeak(onsets, nFrames, n) } : {}),
+    rise,
   });
-  return { notes, main };
+  return { notes: held, main };
 }
 
 /** Turn raw model note events into cleaned, hand-assigned notes. */
@@ -549,7 +633,7 @@ export function melodyFromRaw(raw: RawNoteEvent[], rms: Float32Array, duration: 
   return line.length >= MIN_MELODY_NOTES ? line : [];
 }
 
-const aborted = () => new DOMException('Transcription cancelled', 'AbortError');
+const aborted = () => new DOMException('Transcription canceled', 'AbortError');
 
 /**
  * Whether the separated vocal stem goes back into the audio the accompaniment pass transcribes:
@@ -747,7 +831,7 @@ async function transcribeAudioOnce(
 
   onProgress({ stage: 'arranging', progress: null, detail: melody.length ? 'Fitting the vocal melody, assigning hands, tracking beats' : 'Cleaning notes, assigning hands, tracking beats' });
   const drums = sep?.drumOnsets;
-  const accomp = accompFromRaw(result.notes, result.leadNotes, result.rms, params, duration, { frames: result.frames, nFrames: result.nFrames, drums }, { melody });
+  const accomp = accompFromRaw(result.notes, result.leadNotes, result.rms, params, duration, { frames: result.frames, onsets: result.onsets, nFrames: result.nFrames, drums }, { melody });
   const accompNotes = accomp.notes;
   const notes = mergeMelody(accompNotes, melody, duration);
   if (result.backend === 'cpu') {
@@ -956,9 +1040,14 @@ export async function redetectNotes(
   return { notes, tempo: transcriptionTempo(main, notes, duration) };
 }
 
+/** The clean context of stored posteriors (re-detection): the same evidence an import passes to accompFromRaw. */
+export function storedContext(post: StoredPosteriors): CleanContext {
+  return { frames: post.frames, onsets: post.onsets, nFrames: post.nFrames, drums: post.drums };
+}
+
 async function reextract(post: StoredPosteriors, params: ExtractionParams, duration: number, opts: ReextractOptions): Promise<{ main: Note[]; notes: Note[] }> {
   const raw = await extractRaw(post, params);
   const melody = (opts.melody ?? []).filter((n) => n.role === 'melody').map((n) => ({ ...n, hand: 'R' as const }));
-  const accomp = accompFromRaw(raw.notes, raw.leadNotes, post.rms, params, duration, { frames: post.frames, nFrames: post.nFrames, drums: post.drums }, { melody });
+  const accomp = accompFromRaw(raw.notes, raw.leadNotes, post.rms, params, duration, storedContext(post), { melody });
   return { main: accomp.main, notes: mergeMelody(accomp.notes, melody, duration) };
 }

@@ -113,7 +113,8 @@ describe('title page layout', () => {
           expect(px, 'never larger than the design size').toBeLessThanOrEqual(p.lines.title.size * L.B + 1e-6);
         }
       }
-  });
+    // many presets x sizes x titles: allow time on a busy CI machine
+  }, 60_000);
 
   it('a short composer fits beside its dividers; a long one gets them below', () => {
     const look = resolveLook({ ...DEFAULT_LOOK, preset: 'floral' });

@@ -4,12 +4,16 @@ import type { ReverbType } from '../../../lib/audio/types';
 import { Section, Segmented, Slider, Toggle, cn } from '../../ui';
 import { getPlayer, useAudioStatus } from '../../../state/playback';
 import { useStudio } from '../../../state/studioStore';
+import { isAudioSong } from '../../../lib/music/autoPedal';
+import { withAutoPedal } from '../../../lib/songs';
 
 export function SoundPanel() {
   const a = useSettings((s) => s.audio);
   const setAudio = useSettings((s) => s.setAudio);
   const status = useAudioStatus();
   const hasAudio = useStudio((s) => s.song?.hasAudio);
+  const fromAudio = useStudio((s) => !!s.song && isAudioSong(s.song));
+  const autoPedal = useStudio((s) => s.song?.autoPedal === true);
   return (
     <div>
       <Section title="Piano">
@@ -70,6 +74,20 @@ export function SoundPanel() {
       </Section>
       <Section title="Pedal & mechanics">
         <Toggle label="Sustain pedal" hint="Play the arrangement's pedal markings (and your MIDI pedal)" checked={a.pedalEnabled} onChange={(pedalEnabled) => setAudio({ pedalEnabled })} />
+        {fromAudio && (
+          <Toggle
+            label="Automatic pedal"
+            hint="Adds pedal to Medium and Hard so the notes join up (also in MIDI and video)."
+            checked={autoPedal}
+            disabled={!a.pedalEnabled}
+            onChange={(on) => {
+              const song = useStudio.getState().song;
+              if (!song) return;
+              const next = withAutoPedal(song, on);
+              useStudio.getState().updateSong({ autoPedal: next.autoPedal, arrangements: next.arrangements });
+            }}
+          />
+        )}
         <Toggle label="Damper & pedal noises" hint="Subtle key-release and pedal mechanics from the Salamander recordings" checked={a.mechanicalNoise} onChange={(mechanicalNoise) => setAudio({ mechanicalNoise })} />
       </Section>
     </div>

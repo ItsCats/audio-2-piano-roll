@@ -14,7 +14,7 @@ It was trained on solo piano recordings (MAESTRO) only, so it does not help with
 | Source checkpoint | `CRNN_note_F1=0.9677_pedal_F1=0.9186.pth`, Zenodo record 4034264 (https://zenodo.org/records/4034264, DOI 10.5281/zenodo.4034264), 171,966,578 bytes, md5 `22b961b77c1878239fec963362097045` (as listed by Zenodo), sha256 `c3fa9730725bf4a762f1c14bc80cd5986eacda01b026f5a4a2525cd607876141` |
 | Model code | `piano_transcription_inference` 0.0.6 (PyPI, MIT, Qiuqiang Kong): `Regress_onset_offset_frame_velocity_CRNN`; front end from torchlibrosa 0.1.0 (MIT). Training code: https://github.com/bytedance/piano_transcription (Apache-2.0 per its README; no code from it is shipped) |
 | Export | `server/.venv/bin/python tests/accuracy/pti_export.py CKPT OUT/piano-note.fp16.onnx --split 5` (torch 2.15 `torch.onnx.export`, opset 17, then float16 storage; ~5 min). Parity: `tests/accuracy/pti_export_check.py`, browser: `tests/accuracy/pti_export_browser.mjs` |
-| Licence | weights CC BY 4.0, architecture code MIT; see [LICENSE](LICENSE) |
+| License | weights CC BY 4.0, architecture code MIT; see [LICENSE](LICENSE) |
 
 ## What was changed
 
@@ -32,7 +32,7 @@ It was trained on solo piano recordings (MAESTRO) only, so it does not help with
 
 Input `audio` [1, 160000] float32: 10 s of 16 kHz mono (the package's `segment_samples`). Outputs `frame`,
 `onset`, `offset`, `velocity`, each [1, 1001, 88] float32 at 100 frames/s, pitch 0 = MIDI 21 (`onset` / `offset`
-are the regression outputs `reg_onset_output` / `reg_offset_output`). The log-mel front end (centred STFT with
+are the regression outputs `reg_onset_output` / `reg_offset_output`). The log-mel front end (centered STFT with
 reflect padding, n_fft 2048, hop 160, 229 mel bins 30–8000 Hz, power to dB) is inside the graph. Segmenting
 follows `PianoTranscription.transcribe`: zero-pad to a multiple of 10 s, windows every 5 s, drop each window's
 last frame and keep the middle halves (all 1001 frames for a single window), `src/lib/pianoSpecialist/protocol.ts`.

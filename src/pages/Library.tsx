@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Search, Star, Trash2, Upload, LayoutGrid, List, FileJson, Library as LibraryIcon } from 'lucide-react';
 import { useLibrary } from '../state/libraryStore';
 import { Badge, Button, EmptyState, IconButton, Segmented, Select, cn } from '../components/ui';
-import { SongCard, sourceIcon } from '../components/SongCard';
+import { SongCard, sourceIcon, sourceLabel } from '../components/SongCard';
 import { formatTime } from '../lib/music/theory';
 import type { SongSummary } from '../lib/music/types';
 import { getSong, saveSong } from '../lib/storage/db';
@@ -23,6 +23,7 @@ export default function LibraryPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
 
+  const hasYouTube = useMemo(() => songs.some((s) => s.source.kind === 'youtube'), [songs]);
   const shown = useMemo(() => {
     const needle = q.trim().toLowerCase();
     let list = songs.filter((s) => !needle || s.title.toLowerCase().includes(needle) || s.artist?.toLowerCase().includes(needle) || s.keyName?.toLowerCase().includes(needle));
@@ -108,7 +109,8 @@ export default function LibraryPage() {
               { value: 'all', label: 'All' },
               { value: 'favorites', label: '★' },
               { value: 'audio', label: 'Audio' },
-              { value: 'youtube', label: 'YouTube' },
+              // songs imported with the old YouTube tab (removed 2026-11) keep their own filter
+              ...(hasYouTube || filter === 'youtube' ? [{ value: 'youtube' as const, label: 'YouTube' }] : []),
               { value: 'midi', label: 'MIDI' },
               { value: 'score', label: 'Sheet music' },
             ]}
@@ -143,7 +145,7 @@ export default function LibraryPage() {
               <div key={s.id} className="group relative">
                 <SongCard song={s} />
                 <div className="absolute top-2 right-2 flex gap-1 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100">
-                  <button aria-label={s.favorite ? 'Unfavourite' : 'Favourite'} onClick={() => void toggleFavorite(s.id)} className={cn('rounded-md bg-black/60 p-1.5', s.favorite ? 'text-warn' : 'text-ink-100 hover:text-warn')}>
+                  <button aria-label={s.favorite ? 'Unfavorite' : 'Favorite'} onClick={() => void toggleFavorite(s.id)} className={cn('rounded-md bg-black/60 p-1.5', s.favorite ? 'text-warn' : 'text-ink-100 hover:text-warn')}>
                     <Star size={14} fill={s.favorite ? 'currentColor' : 'none'} />
                   </button>
                   <button aria-label="Delete" onClick={() => void del(s)} className="rounded-md bg-black/60 p-1.5 text-ink-100 hover:text-bad">
@@ -164,13 +166,18 @@ export default function LibraryPage() {
                   <Link to={`/studio/${s.id}`} className="min-w-0 flex-1">
                     <p className="truncate text-[13.5px] font-medium text-ink-50">{s.title}</p>
                     <p className="flex items-center gap-1.5 text-[11.5px] text-ink-300">
-                      <Icon size={12} /> {s.artist || s.source.fileName || s.source.kind} · {s.noteCount} notes · {Math.round(s.bpm)} BPM {s.keyName && `· ${s.keyName}`}
+                      <Icon size={12} /> {s.artist || (s.source.reader ? sourceLabel(s.source.kind, s.source.reader) : s.source.fileName || s.source.kind)} · {s.noteCount} notes · {Math.round(s.bpm)} BPM {s.keyName && `· ${s.keyName}`}
                     </p>
                   </Link>
                   {s.estimated && <Badge tone="warn">AI</Badge>}
+                  {s.source.kind === 'score' && s.source.reader && (
+                    <Badge tone="warn" title={`${sourceLabel(s.source.kind, s.source.reader)} by the sheet-music reader (Beta) — check the notes`}>
+                      Beta
+                    </Badge>
+                  )}
                   <span className="hidden font-mono text-[12px] text-ink-300 sm:block">{formatTime(s.duration)}</span>
                   <span className="hidden text-[11.5px] text-ink-400 md:block">{new Date(s.createdAt).toLocaleDateString()}</span>
-                  <IconButton size="sm" label="Favourite" active={!!s.favorite} onClick={() => void toggleFavorite(s.id)}>
+                  <IconButton size="sm" label="Favorite" active={!!s.favorite} onClick={() => void toggleFavorite(s.id)}>
                     <Star size={15} fill={s.favorite ? 'currentColor' : 'none'} />
                   </IconButton>
                   <IconButton size="sm" label="Delete" onClick={() => void del(s)} className="hover:text-bad">

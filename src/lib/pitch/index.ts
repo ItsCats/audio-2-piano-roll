@@ -16,6 +16,7 @@ import type { Note } from '../music/types';
 import { CREPE_RATE, medianFilter } from './crepe';
 import type { TrackStats, WorkerResponse } from './protocol';
 import { DEFAULT_SEGMENT, f0ToNotes, type SegmentOptions } from './segment';
+import { watchWorker } from '../newVersion';
 
 export { f0ToNotes, DEFAULT_SEGMENT } from './segment';
 export type { SegmentOptions } from './segment';
@@ -71,7 +72,7 @@ export interface PitchTrackDetail extends PitchTrack {
   stats: TrackStats & { totalMs: number };
 }
 
-const abortError = () => new DOMException('Pitch tracking cancelled', 'AbortError');
+const abortError = () => new DOMException('Pitch tracking canceled', 'AbortError');
 
 /** Voicing gate: median-filtered periodicity >= threshold and RMS within `loudnessDb` of the 95th percentile. */
 export function voicingMask(periodicity: Float32Array, rms: Float32Array, threshold: number, loudnessDb: number): Uint8Array {
@@ -99,7 +100,7 @@ export function trackVocalPitchDetailed(
   const modelUrl = new URL(o.modelUrl ?? `${import.meta.env.BASE_URL}${CREPE_MODEL_PATH}?v=${CREPE_MODEL_SHA256.slice(0, 8)}`, location.href).href;
   const audio = vocals22k.slice();
   return new Promise<PitchTrackDetail>((resolve, reject) => {
-    const worker = new Worker(new URL('./crepe.worker.ts', import.meta.url), { type: 'module', name: 'crepe-pitch' });
+    const worker = watchWorker(new Worker(new URL('./crepe.worker.ts', import.meta.url), { type: 'module', name: 'crepe-pitch' }));
     let settled = false;
     const finish = () => {
       settled = true;

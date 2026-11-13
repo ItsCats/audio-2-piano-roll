@@ -1,0 +1,28 @@
+{
+  "model": "smt-camera-grandstaff",
+  "variant": "int8",
+  "encoder": {
+    "file": "encoder.int8.onnx",
+    "bytes": 6935635,
+    "sha256": "4538160e18f240c2fd44dee6165a23c2c0a1960725a0b34e87b6b05ddafbdf28",
+    "parts": [
+      "models/omr/smt-camera-grandstaff/encoder.int8.part1.bin"
+    ],
+    "partBytes": [
+      6935635
+    ]
+  },
+  "decoder": {
+    "file": "decoder.int8.onnx",
+    "bytes": 16405521,
+    "sha256": "568f78b6bedaa3b807a1418c1ffa19b3f97d6fb9873224598a8bc127db5ad217",
+    "parts": [
+      "models/omr/smt-camera-grandstaff/decoder.int8.part1.bin",
+      "models/omr/smt-camera-grandstaff/decoder.int8.part2.bin"
+    ],
+    "partBytes": [
+      8202761,
+      8202760
+    ]
+  }
+}

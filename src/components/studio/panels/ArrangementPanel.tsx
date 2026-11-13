@@ -1,4 +1,5 @@
 import { resolveMeter } from '../../../lib/sheet/grid';
+import { readFromSheet, readerWhat } from '../SheetReaderNotice';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, Wand2 } from 'lucide-react';
@@ -109,7 +110,21 @@ export function ArrangementPanel() {
   return (
     <div>
       <Section title="Transcription">
-        {estimated ? (
+        {readFromSheet(song) ? (
+          <div className="flex gap-2 rounded-lg border border-warn/25 bg-warn/10 p-3 text-[12.5px] leading-relaxed text-ink-100">
+            <AlertTriangle size={16} className="mt-0.5 shrink-0 text-warn" />
+            <div>
+              <p className="font-medium text-warn">Read from {readerWhat(song)} (Beta)</p>
+              <p className="mt-0.5 text-ink-200">
+                The sheet-music reader estimated these notes from the page. Wrong rhythms and missing sharps or flats are the most common
+                mistakes: compare with your page, then fix notes in Edit mode.{' '}
+                <Link to="/accuracy#sheet-reader" className="text-accent-400 hover:text-accent-300">
+                  How accurate is it?
+                </Link>
+              </p>
+            </div>
+          </div>
+        ) : estimated ? (
           <div className="flex gap-2 rounded-lg border border-warn/25 bg-warn/10 p-3 text-[12.5px] leading-relaxed text-ink-100">
             <AlertTriangle size={16} className="mt-0.5 shrink-0 text-warn" />
             <div>

@@ -93,13 +93,16 @@ export function PracticePanel({ computerKeys, setComputerKeys }: { computerKeys:
             Start practice
           </Button>
         )}
-        <p className="text-[11.5px] leading-relaxed text-ink-400">The computer plays the other hand. Slow the speed down in the transport bar — timing is judged relative to the playback speed.</p>
+        <p className="text-[11.5px] leading-relaxed text-ink-400">The computer plays the other hand. Slow the speed down in the transport bar — timing is judged relative to the playback speed. With a loop, each time round is scored as a new pass.</p>
       </Section>
       {stats && (
         <Section title="Score">
           <div className="flex items-end gap-2">
             <span className="text-[34px] leading-none font-semibold text-ink-50 tabular-nums">{stats.accuracy}%</span>
-            <span className="pb-1 text-[12px] text-ink-300">accuracy</span>
+            <span className="pb-1 text-[12px] text-ink-300">
+              accuracy · pass {stats.pass}
+              {stats.bestAccuracy !== null && ` · best ${stats.bestAccuracy}%`}
+            </span>
           </div>
           <div className="grid grid-cols-3 gap-2 text-center">
             <div className="rounded-lg bg-ok/10 py-2">

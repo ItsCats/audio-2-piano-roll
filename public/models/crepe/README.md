@@ -11,16 +11,16 @@
 | Source weights | `torchcrepe/assets/tiny.pth` from torchcrepe 0.0.24 (PyPI, https://github.com/maxrmorrison/torchcrepe), sha256 `d4993eea36ed1a0ad9ac549c740dae5265b049ce72004f00c2f59e01c0be8432` |
 | Origin of those weights | the "tiny" model of CREPE by Jong Wook Kim et al. (https://github.com/marl/crepe, `model-tiny.h5`), converted to PyTorch by the torchcrepe author with MMdnn |
 | Export | `server/.venv/bin/python tests/accuracy/crepe_export.py public/models/crepe/crepe-tiny.onnx` (opset 17; the (k, 1) Conv2d layers rewritten as Conv1d — identical maths; max abs difference to torchcrepe 3e-7, same argmax on every test frame) |
-| Licence | MIT — Copyright (c) 2018 Jong Wook Kim (CREPE) and Copyright (c) 2020 Max Morrison (torchcrepe); see [LICENSE](LICENSE) |
+| License | MIT — Copyright (c) 2018 Jong Wook Kim (CREPE) and Copyright (c) 2020 Max Morrison (torchcrepe); see [LICENSE](LICENSE) |
 
-Licence check (2026-11-11): marl/crepe is MIT (LICENSE in the repository, `license='MIT'` in its
+License check (2026-11-11): marl/crepe is MIT (LICENSE in the repository, `license='MIT'` in its
 setup.py, which downloads the weight files from the same repository's `models` branch); torchcrepe is
 MIT (its LICENSE, PyPI metadata "License :: OSI Approved :: MIT License") and ships the converted
-weights inside the MIT-licensed package. Neither project states a separate licence for the weights, so
-they are distributed under the repositories' MIT licences. CREPE was trained on MIR-1K, Bach10,
+weights inside the MIT-licensed package. Neither project states a separate license for the weights, so
+they are distributed under the repositories' MIT licenses. CREPE was trained on MIR-1K, Bach10,
 RWC-Synth, MedleyDB, MDB-STEM-Synth and NSynth (Kim et al. 2018).
 
-Graph: input `frames` [N, 1024] float32 — 1024-sample frames of 16 kHz audio, each mean-centred and
+Graph: input `frames` [N, 1024] float32 — 1024-sample frames of 16 kHz audio, each mean-centered and
 divided by its (unbiased) standard deviation; output `probs` [N, 360] float32 — sigmoid activations of
 360 pitch bins, 20 cents apart, bin 0 = 1997.38 cents above 10 Hz (≈ 31.7 Hz). Resampling, framing,
 Viterbi decoding (torchcrepe's transition matrix) and the voicing gate run in TypeScript

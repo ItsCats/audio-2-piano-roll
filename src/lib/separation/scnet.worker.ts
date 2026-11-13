@@ -63,7 +63,7 @@ if (!(self.name ?? '').startsWith('em-pthread')) self.onmessage = async (e: Mess
   try {
     const t0 = performance.now();
     ort.env.wasm.wasmPaths = { wasm: new URL(ortWasmUrl, self.location.href).href };
-    // threads need cross-origin isolation (SharedArrayBuffer), enabled on every route except /import/youtube (src/lib/isolation.ts)
+    // threads need cross-origin isolation (SharedArrayBuffer), enabled on every app route (src/lib/isolation.ts)
     ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1)) : 1;
     ort.env.wasm.proxy = false;
     const { bytes, fromCache } = await loadModel(req.modelUrl, req.modelSha256);

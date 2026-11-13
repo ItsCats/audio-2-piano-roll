@@ -7,12 +7,11 @@ exports[`sheet MusicXML > matches the snapshot 1`] = `
 <work><work-title>Snapshot</work-title></work>
 <identification>
 <creator type="composer">Tester</creator>
-<rights>Transcribed with Piano2Vision</rights>
-<encoding><software>Piano2Vision</software><encoding-date>2026-01-01</encoding-date></encoding>
+<encoding><software>Transcribed with Piano2Vision</software><encoding-date>2026-01-01</encoding-date></encoding>
 </identification>
 <credit page="1"><credit-type>title</credit-type><credit-words justify="center" valign="top" font-size="20">Snapshot</credit-words></credit>
 <credit page="1"><credit-type>composer</credit-type><credit-words justify="right" valign="top" font-size="11">Tester</credit-words></credit>
-<credit page="1"><credit-type>rights</credit-type><credit-words justify="center" valign="bottom" font-size="8">Transcribed with Piano2Vision</credit-words></credit>
+<credit page="1"><credit-words justify="center" valign="bottom" font-size="8">Transcribed with Piano2Vision</credit-words></credit>
 <part-list><score-part id="P1"><part-name print-object="no">Piano</part-name><score-instrument id="P1-I1"><instrument-name>Piano</instrument-name></score-instrument><midi-instrument id="P1-I1"><midi-channel>1</midi-channel><midi-program>1</midi-program></midi-instrument></score-part></part-list>
 <part id="P1">
 <measure number="1">

@@ -12,10 +12,10 @@ melody, bass + other (no drums, no vocals) is transcribed as the accompaniment. 
 | Revision | `e71bcdb42bce1d62b7fae25ba90fcbcf90f73f46` of huggingface.co/audiojs/scnet |
 | Model | SCNet by starrytong, https://github.com/starrytong/SCNet (MIT), checkpoint `scnet_checkpoint_musdb18.ckpt` as distributed by ZFTurbo/Music-Source-Separation-Training v.1.0.6 (MIT) |
 | ONNX export / int8 compaction | audiojs (https://github.com/audiojs/neural, `@audio/neural-separate`) |
-| Licence | MIT, Copyright (c) 2024 starrytong; see [LICENSE](LICENSE) |
+| License | MIT, Copyright (c) 2024 starrytong; see [LICENSE](LICENSE) |
 
 Graph: input `mix_spec` [1, 4, 2049, 476] (STFT of 11 s of 44.1 kHz stereo: n_fft 4096, hop 1024, no window,
-scaled by 1/sqrt(4096), centred with reflect padding; L re, L im, R re, R im), output `stems_spec`
+scaled by 1/sqrt(4096), centered with reflect padding; L re, L im, R re, R im), output `stems_spec`
 [1, 16, 2049, 476] (drums, bass, other, vocals x L/R x re/im). The STFT/iSTFT and segmenting run in JavaScript.
 
 Redistribution: the weights' author confirmed in https://github.com/starrytong/SCNet/issues/35 (2026-07-17):

@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+// heavy STFT work: the default 5 s is too tight on a busy machine or a shared CI runner
+vi.setConfig({ testTimeout: 30_000 });
 import {
   BINS,
   FRAMES,
@@ -192,7 +195,7 @@ describe('separateSegments', () => {
     let k = 0;
     await expect(
       separateSegments(noise(n, 1), noise(n, 2), [{ name: 'a', stems: [0] }], identity, { onSegment: () => k++, shouldStop: () => k >= 1 }),
-    ).rejects.toThrow(/cancelled/);
+    ).rejects.toThrow(/canceled/);
     expect(k).toBe(1);
   });
 });

@@ -4,7 +4,7 @@
 
 ## Samples
 
-| Library | Source | Licence | What we ship |
+| Library | Source | License | What we ship |
 | --- | --- | --- | --- |
 | Salamander Grand Piano V3 (Yamaha C5) | Alexander Holm, via freepats.zenvoid.org | CC-BY 3.0 | 30 pitches (every minor third, A0–C8) × **5 velocity layers** (of 16: pp, p, mf, f, ff), 88 key-release (damper) noises, pedal down/up noises |
 | Upright Piano KW | freepats.zenvoid.org | CC0 | 26 pitches, one layer |
@@ -41,7 +41,7 @@ voices ─► voice bus ─► low shelf ─► high shelf ─► presence ─�
 noises ─┘                                                            └─► convolution reverb ─┘
 ```
 
-* **Reverb**: impulse responses are synthesised (decorrelated stereo noise, −60 dB decay at the room's RT60, frequency-dependent damping, early reflections, deterministic seed) for Studio (0.9 s), Room (1.5 s), Hall (2.8 s) and Church (5 s).
+* **Reverb**: impulse responses are synthesized (decorrelated stereo noise, −60 dB decay at the room's RT60, frequency-dependent damping, early reflections, deterministic seed) for Studio (0.9 s), Room (1.5 s), Hall (2.8 s) and Church (5 s).
 * **Glue compressor + limiter** keep dense chords from clipping. Each `DynamicsCompressorNode` has a fixed 6 ms look-ahead; the resulting 12 ms is compensated everywhere (visuals, metronome, original-audio A/B, offline renders), verified by rendering a single note at 500 ms and measuring its onset at exactly 500 ms.
 
 ## Presets

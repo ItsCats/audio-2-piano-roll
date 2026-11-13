@@ -60,7 +60,7 @@ export interface KeyInfo {
   fifths?: number;
 }
 
-/** 'score': a sheet-music file (MusicXML, .mxl, MuseScore); also what PDF / photo recognition will produce. */
+/** 'score': a sheet-music file (MusicXML, .mxl, MuseScore), or a PDF / photo read by the sheet-music reader (SongSource.reader). */
 export type SourceKind = 'audio' | 'midi' | 'youtube' | 'capture' | 'demo' | 'score';
 
 export interface SongSource {
@@ -70,6 +70,13 @@ export interface SongSource {
   fileSize?: number;
   youtubeId?: string;
   url?: string;
+  /**
+   * 'score' songs read from a PDF or a photo by the sheet-music reader (beta, src/lib/omr): the notes
+   * are the reader's estimate and should be checked (absent: a sheet-music file, notes as written).
+   */
+  reader?: 'pdf' | 'photo';
+  /** pages read (sheet-music reader) */
+  pages?: number;
 }
 
 /** Parameters of the note-extraction stage (can be re-run without re-running the model). */
@@ -173,6 +180,12 @@ export interface Song {
   /** Model posteriors are stored so note detection can be re-tuned without re-running the model. */
   hasPosteriors: boolean;
   favorite?: boolean;
+  /**
+   * Songs from audio: Medium and Hard carry sustain pedal derived from their notes
+   * (music/autoPedal.ts). On for imports since 2026-11; songs saved before have no value (off)
+   * until it is switched on in the Sound panel. Never set for MIDI files or sheet music.
+   */
+  autoPedal?: boolean;
 }
 
 export type SongSummary = Pick<

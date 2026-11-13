@@ -16,7 +16,8 @@
     "test:e2e": "node tests/e2e/run.mjs",
     "test:e2e:specialist": "node tests/e2e/specialist.mjs",
     "test:e2e:export": "node tests/e2e/export-sync.mjs",
-    "test:e2e:keys": "node tests/e2e/studio-keys.mjs"
+    "test:e2e:keys": "node tests/e2e/studio-keys.mjs",
+    "test:e2e:privacy": "node tests/e2e/privacy.mjs"
   },
   "engines": {
     "node": ">=20"
@@ -43,6 +44,7 @@
     "mediabunny": "^1.65.2",
     "onnxruntime-web": "1.31.1",
     "opensheetmusicdisplay": "2.2.1",
+    "pdfjs-dist": "6.4.299",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-router-dom": "^7.18.5",

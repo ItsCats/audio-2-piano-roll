@@ -9,12 +9,13 @@
  *   # min(4, cores - 1) rule), dev server
  *   node tests/e2e/isolation.mjs bench --audio excerpt.mp3 [--runs single,isolated] [--port 5392]
  *
- * `app` checks: crossOriginIsolated on every app route and NOT on /import/youtube; full page loads
- * when entering/leaving the YouTube route (and none between other routes); the legacy
- * /import?tab=youtube link; back/forward; no console errors on any page; demo playback; an audio
- * import with "Separate vocals & drums" (timed, peak RSS); a short video export; a background
- * image upload; the YouTube tab UI; Back across the YouTube route during an import asks first
- * (beforeunload) instead of silently ending it. Audio and images are passed by path (never copied into the
+ * `app` checks: crossOriginIsolated on every app route (also /privacy, /terms, /copyright) and NOT
+ * on an unknown path; one full page load when moving on from an unknown path (and none between app
+ * routes); old links to the removed YouTube tab (/import/youtube, /import?tab=youtube) land on the
+ * isolated "Computer sound" tab; back/forward; no console errors on any page; demo playback; an
+ * audio import with "Separate vocals & drums" (timed, peak RSS); a short video export; a background
+ * image upload; Back across a document boundary during an import asks first (beforeunload) instead
+ * of silently ending it. Audio and images are passed by path (never copied into the
  * repo; songs may be copyrighted). Prints one PASS/FAIL line per check and a JSON summary.
  *
  * `bench` reports the thread count the worker really used (Chromium's hardware-concurrency
@@ -139,84 +140,81 @@ async function appMode() {
 
     page.on('worker', (w) => verbose && console.error(`[worker] ${w.url().slice(-60)}`));
     // 1. every route: isolation state and a clean render
-    const routes = ['/', '/import', '/studio', '/library', '/settings', '/accuracy', '/credits', '/import/youtube', '/studio/does-not-exist'];
+    const routes = ['/', '/import', '/import?tab=computer', '/studio', '/library', '/settings', '/accuracy', '/credits', '/privacy', '/terms', '/copyright', '/studio/does-not-exist', '/no-such-page'];
     for (const r of onlyImport ? [] : routes) {
       await page.goto(base + r);
       await settle();
       const isolated = await coi();
-      const want = r !== '/import/youtube';
+      const want = r !== '/no-such-page';
       const errs = takeErrors();
       check(`route ${r}: crossOriginIsolated=${isolated}`, isolated === want && errs.length === 0, errs.join(' | '));
     }
     summary.headers = {};
-    for (const r of ['/', '/import/youtube', '/studio/x', '/assets/none.js']) {
+    for (const r of ['/', '/privacy', '/studio/x', '/no-such-page', '/assets/none.js']) {
       const h = (await fetch(base + r)).headers;
-      summary.headers[r] = { coop: h.get('cross-origin-opener-policy'), coep: h.get('cross-origin-embedder-policy'), csp: !!h.get('content-security-policy'), xfo: h.get('x-frame-options'), cache: h.get('cache-control') };
+      summary.headers[r] = { coop: h.get('cross-origin-opener-policy'), coep: h.get('cross-origin-embedder-policy'), csp: h.get('content-security-policy'), xfo: h.get('x-frame-options'), cache: h.get('cache-control') };
+    }
+    {
+      const res = await fetch(base + '/import/youtube', { redirect: 'manual' });
+      check('/import/youtube redirects (301) to /import?tab=computer', res.status === 301 && res.headers.get('location') === '/import?tab=computer', { status: res.status, location: res.headers.get('location') });
+      check('the security policy allows no YouTube (or other) frames and scripts', /frame-src 'none'/.test(summary.headers['/'].csp ?? '') && !/youtube|ytimg/.test(summary.headers['/'].csp ?? ''), summary.headers['/'].csp);
     }
     check('no duplicate header rules in netlify.toml for any tested path', !/DUPLICATE/.test(serverErr), serverErr.trim());
 
     if (!onlyImport) {
-    // 2. entering / leaving the YouTube route
+    // 2. tabs of the Import page, old YouTube links, and leaving an unknown path
     await page.goto(base + '/import');
     await settle();
     await mark();
     const shotDir = opt('shots', null);
     if (shotDir) await page.screenshot({ path: path.join(shotDir, 'import-audio.png') });
-    await page.getByRole('tab', { name: 'YouTube' }).click();
-    await page.waitForURL(/\/import\/youtube$/);
+    await page.getByRole('tab', { name: 'Computer sound' }).click();
+    await page.waitForURL(/\/import\?tab=computer$/);
     await settle();
-    check('Import → YouTube tab is a full page load, not isolated', !(await sameDoc()) && !(await coi()));
-    await page.waitForSelector('input#yt', { timeout: 15000 }).catch(() => undefined);
-    const ytUi = await page.evaluate(() => ({
+    check('Import → Computer sound tab: no page load, isolated', (await sameDoc()) && (await coi()));
+    const csUi = await page.evaluate(() => ({
       tabs: [...document.querySelectorAll('[role=tab]')].map((t) => `${t.textContent?.trim()}${t.getAttribute('aria-selected') === 'true' ? '*' : ''}`),
-      urlField: !!document.querySelector('input#yt'),
+      start: [...document.querySelectorAll('button')].some((b) => b.textContent?.includes('Start recording')),
+      rights: !!document.querySelector('label input[type=checkbox]'),
       heading: document.querySelector('h1')?.textContent,
-      separation: !!document.querySelector('input[type=checkbox]'),
+      iframe: !!document.querySelector('iframe'),
     }));
-    check('YouTube tab UI renders (tabs, URL field, heading, options)', ytUi.urlField && ytUi.tabs.length === 4 && ytUi.tabs[1].endsWith('*') && ytUi.heading === 'Import music', ytUi);
-    if (shotDir) await page.screenshot({ path: path.join(shotDir, 'import-youtube.png') });
-    await mark();
-    await page.getByRole('tab', { name: 'MIDI' }).click();
-    await page.waitForURL(/\/import\?tab=midi$/);
+    check('Computer sound tab UI renders (tabs, rights box, Start recording, no player)', csUi.start && csUi.rights && !csUi.iframe && csUi.tabs.length === 4 && csUi.tabs[1] === 'Computer sound*' && csUi.heading === 'Import music', csUi);
+    if (shotDir) await page.screenshot({ path: path.join(shotDir, 'import-computer.png') });
+    for (const old of ['/import/youtube', '/import/youtube?url=x', '/import?tab=youtube']) {
+      await page.goto(base + old);
+      await page.waitForURL(/\/import\?tab=computer/);
+      await settle();
+      check(`old link ${old} lands on the Computer sound tab, isolated`, (await coi()) && (await page.getByRole('tab', { name: 'Computer sound' }).getAttribute('aria-selected')) === 'true', page.url());
+    }
+    await page.goto(base + '/no-such-page');
     await settle();
-    check('YouTube → MIDI tab is a full page load, isolated again', !(await sameDoc()) && (await coi()));
-    await page.goBack();
-    await page.waitForURL(/\/import\/youtube$/);
-    await settle();
-    check('Back to the YouTube route: not isolated', !(await coi()));
-    await page.goForward();
-    await page.waitForURL(/tab=midi$/);
-    await settle();
-    check('Forward to MIDI: isolated', await coi());
+    check('unknown path: not isolated', !(await coi()));
     await mark();
     await page.getByRole('link', { name: 'My Library' }).first().click();
     await page.waitForURL(/\/library$/);
     await settle();
-    check('Import → Library stays a single-page navigation (no reload), isolated', (await sameDoc()) && (await coi()));
-    await page.goto(base + '/import?tab=youtube');
-    await page.waitForURL(/\/import\/youtube$/);
+    check('unknown path → Library is one full page load, isolated', !(await sameDoc()) && (await coi()));
+    await page.goBack();
+    await page.waitForURL(/\/no-such-page$/);
     await settle();
-    check('legacy /import?tab=youtube ends on /import/youtube, not isolated', !(await coi()));
+    check('Back to the unknown path: not isolated', !(await coi()));
+    await page.goForward();
+    await page.waitForURL(/\/library$/);
+    await settle();
+    check('Forward to Library: isolated', await coi());
     await mark();
+    await page.getByRole('link', { name: 'Settings' }).first().click();
+    await page.waitForURL(/\/settings/);
+    await settle();
+    await page.getByRole('link', { name: 'Privacy', exact: true }).first().click();
+    await page.waitForURL(/\/privacy$/);
+    await settle();
     await page.getByRole('link', { name: 'Piano Studio' }).first().click();
     await page.waitForURL(/\/studio/);
     await settle();
-    check('YouTube route → Studio (sidebar) is a full page load, isolated', !(await sameDoc()) && (await coi()));
+    check('Library → Settings → Privacy → Studio: single-page navigation (no reload), isolated', (await sameDoc()) && (await coi()));
     check('navigation steps: no console errors', true, takeErrors().join(' | ') || '');
-
-    // 3. YouTube tab with a link: the real player needs youtube.com (no network in this sandbox)
-    await page.goto(base + '/import/youtube');
-    await settle();
-    await page.fill('input#yt', 'https://www.youtube.com/watch?v=aqz-KE-bpKQ');
-    await page.waitForTimeout(6000);
-    const yt = await page.evaluate(() => ({
-      iframe: !!document.querySelector('iframe[src*="youtube"]'),
-      text: document.querySelector('.text-bad')?.textContent ?? null,
-      rights: !!document.querySelector('label input[type=checkbox]'),
-    }));
-    const ytErrors = takeErrors();
-    summary.youtube = { ...yt, consoleErrors: ytErrors };
-    check('YouTube link: UI shows rights box and player area', yt.rights, yt);
 
     // 4. demo playback
     await page.goto(base + '/');
@@ -299,55 +297,13 @@ async function appMode() {
       check('audio import with separation reaches the studio, isolated', /\/studio\//.test(page.url()) && (await coi()) && errs.length === 0, { ...summary.import, errs });
     }
 
-    // 8. YouTube tab opened while an import runs: no reload (it would cancel the import), so the
-    //    document stays isolated and the tab offers to load the player once the import is done
+    // 8. Back across a document boundary (to a page loaded on an unknown path) while an import runs:
+    //    that is a page load, which would end the import, so the browser asks first (beforeunload);
+    //    staying keeps it
     if (audio) {
-      await page.goto(base + '/import');
+      await page.goto(base + '/no-such-page');
       await settle();
-      const sepBox = page.getByRole('checkbox', { name: /Separate vocals/ });
-      const was = await sepBox.isChecked().catch(() => false);
-      if (was) await sepBox.uncheck(); // quicker import; restored below
-      await page.setInputFiles('input[type=file]', audio);
-      await page.waitForSelector('[aria-live=polite]');
-      await mark();
-      await page.getByRole('tab', { name: 'YouTube' }).click();
-      await page.waitForURL(/\/import\/youtube$/);
-      await page.fill('input#yt', 'https://www.youtube.com/watch?v=aqz-KE-bpKQ');
-      const btn = page.getByRole('button', { name: 'Load the video player' });
-      await btn.waitFor({ timeout: 10000 });
-      const during = { sameDoc: await sameDoc(), isolated: await coi(), disabled: await btn.isDisabled(), iframe: await page.evaluate(() => !!document.querySelector('iframe')) };
-      check('YouTube tab during an import: same document, player deferred', during.sameDoc && during.isolated && during.disabled && !during.iframe, during);
-      await page.waitForFunction(() => !document.querySelector('[aria-live=polite]') || /complete|failed/i.test(document.querySelector('[aria-live=polite]')?.textContent ?? ''), null, { timeout: 600000 });
-      await page.waitForTimeout(1500); // an import started on the Import page jumps to its song when done
-      if (/\/import\/youtube/.test(page.url())) {
-        await btn.click();
-        await page.waitForLoadState('load');
-        await settle();
-        const after = { sameDoc: await sameDoc(), isolated: await coi(), url: await page.inputValue('input#yt').catch(() => null) };
-        check('after the import: "Load the video player" reloads without isolation, keeps the link', !after.sameDoc && !after.isolated && after.url?.includes('aqz-KE-bpKQ'), after);
-      } else {
-        await settle();
-        check('after the import: jumped to the new song, isolated', /\/studio\/.+/.test(page.url()) && (await coi()), page.url());
-      }
-      if (was) {
-        await page.goto(base + '/import');
-        await settle();
-        await page.getByRole('checkbox', { name: /Separate vocals/ }).check();
-      }
-      const errs = takeErrors();
-      check('busy-import YouTube steps: no console errors', errs.length === 0, errs.join(' | '));
-    }
-
-    // 9. Back across the YouTube route's document boundary while an import runs: that is a page
-    //    load, which would end the import, so the browser asks first (beforeunload); staying keeps it
-    if (audio) {
-      await page.goto(base + '/import');
-      await settle();
-      await page.getByRole('tab', { name: 'YouTube' }).click();
-      await page.waitForURL(/\/import\/youtube$/);
-      await settle();
-      await page.getByRole('tab', { name: 'Audio / Video' }).click();
-      await page.waitForURL(/tab=audio$/);
+      await page.goto(base + '/import?tab=audio');
       await settle();
       const sepBox = page.getByRole('checkbox', { name: /Separate vocals/ });
       const was = await sepBox.isChecked().catch(() => false);
@@ -362,16 +318,17 @@ async function appMode() {
         void d.dismiss(); // "stay on this page"
       };
       page.on('dialog', onDialog);
-      await page.goBack({ timeout: 5000 }).catch(() => undefined);
-      await page.waitForTimeout(1000);
-      const stayed = { dialogs: [...dialogs], url: page.url(), sameDoc: await sameDoc().catch(() => false), running: await page.evaluate(() => !!document.querySelector('[aria-live=polite]') && !/complete|failed/i.test(document.querySelector('[aria-live=polite]')?.textContent ?? '')).catch(() => false) };
+      // (short: the import must still be running when this is checked)
+      await page.goBack({ timeout: 2000 }).catch(() => undefined);
+      await page.waitForTimeout(500);
+      const stayed = { dialogs: [...dialogs], url: await page.evaluate(() => location.href).catch(() => page.url()), pwUrl: page.url(), sameDoc: await sameDoc().catch(() => false), running: await page.evaluate(() => !!document.querySelector('[aria-live=polite]') && !/complete|failed/i.test(document.querySelector('[aria-live=polite]')?.textContent ?? '')).catch(() => false) };
       check('Back during an import: the browser asks first, staying keeps the import', stayed.dialogs.includes('beforeunload') && /tab=audio$/.test(stayed.url) && stayed.sameDoc && stayed.running, stayed);
       await page.waitForFunction(() => /\/studio\//.test(location.pathname) || /complete|failed/i.test(document.querySelector('[aria-live=polite]')?.textContent ?? ''), null, { timeout: 600000 });
       await settle();
       dialogs.length = 0;
-      await page.goto(base + '/import/youtube');
+      await page.goto(base + '/no-such-page');
       await settle();
-      check('after the import: leaving the page does not ask', dialogs.length === 0 && /\/import\/youtube$/.test(page.url()), { dialogs, url: page.url() });
+      check('after the import: leaving the page does not ask', dialogs.length === 0 && /\/no-such-page$/.test(page.url()), { dialogs, url: page.url() });
       page.off('dialog', onDialog);
       if (was) {
         await page.goto(base + '/import');
