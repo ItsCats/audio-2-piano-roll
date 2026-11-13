@@ -383,17 +383,22 @@ try {
     }
     check('sound: every tone at its note time (< 3 ms)', toneErr.every((e) => Math.abs(e) < 0.003), toneErr.map((e) => (e * 1000).toFixed(1)).join(' ') + ' ms');
     check('picture: every camera frame on its output frame (sound and picture within one frame)', picErr.every((e) => Math.abs(e) <= 1), picErr.join(' '));
-    // (c) the watermark under the video band
+    // (c) the watermark under the video band: text pixels in the middle of the band, none at its left end
     const f = frames.get(mid);
-    let lit = 0;
-    let all = 0;
-    for (let y = Math.ceil(g.yTop + g.bandH + 1); y < H; y++)
-      for (let x = Math.round(W * 0.25); x < W * 0.75; x++) {
-        const i = (y * W + x) * 3;
-        if (f[i] + f[i + 1] + f[i + 2] > 3 * 110) lit++;
-        all++;
-      }
-    check('watermark drawn in its band under the video', band > 0 && lit / Math.max(1, all) > 0.01, `${((lit / Math.max(1, all)) * 100).toFixed(1)}% bright pixels, band ${band}px`);
+    const brightShare = (xa, xb) => {
+      let lit = 0;
+      let all = 0;
+      for (let y = Math.ceil(g.yTop + g.bandH + 1); y < H; y++)
+        for (let x = Math.round(xa); x < xb; x++) {
+          const i = (y * W + x) * 3;
+          if (f[i] + f[i + 1] + f[i + 2] > 3 * 110) lit++;
+          all++;
+        }
+      return lit / Math.max(1, all);
+    };
+    const inText = brightShare(W * 0.25, W * 0.75);
+    const outside = brightShare(0, W * 0.1);
+    check('watermark drawn in its band under the video', band > 0 && inText > 0.003 && outside < 0.0005, `${(inText * 100).toFixed(2)}% bright pixels in the middle, ${(outside * 100).toFixed(2)}% at the left, band ${band}px`);
     // (d) length
     const tail = 1.5;
     const d = probeDuration(fileA);
@@ -407,8 +412,8 @@ try {
     await hs.getByRole('switch', { name: 'Light up the keys in the video' }).click();
     await hs.getByRole('switch', { name: 'Sparkles' }).click();
     await dlg.getByRole('radio', { name: 'Custom' }).click();
-    await setRange(dlg.getByLabel('Start'), 4);
-    await setRange(dlg.getByLabel('End'), 7.5);
+    await setRange(dlg.getByLabel('Start', { exact: true }).first(), 4);
+    await setRange(dlg.getByLabel('End', { exact: true }).first(), 7.5);
     await dlg.getByLabel('Resolution').selectOption('1080');
     await dlg.getByRole('button', { name: 'Render video' }).click();
     const dl2 = await waitExport(dlg, 'export (look)');

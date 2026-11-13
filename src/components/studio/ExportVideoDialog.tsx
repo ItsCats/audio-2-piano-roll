@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Download, Film, Loader2, Save, Trash2, SquarePlay, Smartphone, Square, Zap, AlertTriangle } from 'lucide-react';
 import { Button, Modal, ProgressBar, Segmented, Select, Slider, Toggle, Badge, cn } from '../ui';
 import { useSettings } from '../../state/settingsStore';
@@ -557,5 +558,6 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
 
 function HandsSetupHost(props: Omit<Parameters<typeof HandsSetup>[0], 'logo'>) {
   const logo = useLogo(props.watermark?.logo?.mediaId);
-  return <HandsSetup {...props} logo={logo} />;
+  // on the page itself: inside the dialog (which animates with a transform) "fixed" would not cover the screen
+  return createPortal(<HandsSetup {...props} logo={logo} />, document.body);
 }
