@@ -718,8 +718,10 @@ export class PianoRollRenderer {
     const rad = size * 0.62;
     const top = Math.max(r.y, 0);
     const bottom = labelTop ?? Math.min(r.y + r.h, hitY) - 3 * sc;
-    const cy = bottom - rad - 2 * sc;
-    if (r.w < rad * 1.6 || cy - rad < top + 1 * sc) return;
+    let cy = bottom - rad - 2 * sc;
+    // a short note (a staccato 16th): the number sits just above it instead of inside
+    if (cy - rad < top + 1 * sc) cy = r.y - rad - 3 * sc;
+    if (r.w < rad * 1.2 || cy - rad < 0 || cy > hitY) return;
     const cx = r.x + r.w / 2;
     ctx.save();
     ctx.globalAlpha = alpha;
