@@ -803,59 +803,68 @@ export function intersectConvexConvexArea(p1: Pt[], p2: Pt[]): number {
   return subject.length >= 3 ? Math.abs(orient(subject)) / 2 : 0;
 }
 
-/** Corners of a RotatedRect in double precision (as rotatedRectangleIntersection uses them). */
-function cornersD(r: RotatedRect): Pt[] {
-  const [[cx, cy], [w, h], angle] = r;
+/** RotatedRect::points in float32 (the corners rotatedRectangleIntersection works with). */
+function cornersf(cx: number, cy: number, w: number, h: number, angle: number): Pt[] {
   const t = (angle * Math.PI) / 180;
-  const b = Math.cos(t) * 0.5;
-  const a = Math.sin(t) * 0.5;
-  const p0: Pt = [cx - a * h - b * w, cy + b * h - a * w];
-  const p1: Pt = [cx + a * h - b * w, cy - b * h - a * w];
-  return [p0, p1, [2 * cx - p0[0], 2 * cy - p0[1]], [2 * cx - p1[0], 2 * cy - p1[1]]];
+  const b = f(f(Math.cos(t)) * 0.5);
+  const a = f(f(Math.sin(t)) * 0.5);
+  const p0: Pt = [f(f(cx - f(a * h)) - f(b * w)), f(f(cy + f(b * h)) - f(a * w))];
+  const p1: Pt = [f(f(cx + f(a * h)) - f(b * w)), f(f(cy - f(b * h)) - f(a * w))];
+  return [p0, p1, [f(f(2 * cx) - p0[0]), f(f(2 * cy) - p0[1])], [f(f(2 * cx) - p1[0]), f(f(2 * cy) - p1[1])]];
 }
 
 /**
- * cv2.rotatedRectangleIntersection(r1, r2)[0] != INTERSECT_NONE. The OpenCV homr runs on (4.14) works
- * in double precision here and reports no intersection for an empty rectangle; touching counts.
+ * cv2.rotatedRectangleIntersection(r1, r2)[0] != INTERSECT_NONE, ported from OpenCV 4.14
+ * (modules/imgproc/src/intersection.cpp) with its float32 arithmetic: both rectangles are moved by
+ * their average centre, then edge crossings and corners inside the other rectangle are searched.
+ * Touching counts, so float32 rounding decides for rectangles that just touch (a bar line next to
+ * the end of a staff line). An empty rectangle intersects nothing.
  */
 export function rotatedRectsIntersect(r1: RotatedRect, r2: RotatedRect): boolean {
-  if (!(r1[1][0] > 0 && r1[1][1] > 0 && r2[1][0] > 0 && r2[1][1] > 0)) return false;
-  const p1 = cornersD(r1);
-  const p2 = cornersD(r2);
+  const w1 = f(r1[1][0]);
+  const h1 = f(r1[1][1]);
+  const w2 = f(r2[1][0]);
+  const h2 = f(r2[1][1]);
+  if (!(w1 > 0 && h1 > 0 && w2 > 0 && h2 > 0)) return false;
+  const c1x = f(r1[0][0]);
+  const c1y = f(r1[0][1]);
+  const c2x = f(r2[0][0]);
+  const c2y = f(r2[0][1]);
+  const ax = f(f(c1x + c2x) / 2);
+  const ay = f(f(c1y + c2y) / 2);
+  const p1 = cornersf(f(c1x - ax), f(c1y - ay), w1, h1, f(r1[2]));
+  const p2 = cornersf(f(c2x - ax), f(c2y - ay), w2, h2, f(r2[2]));
+  const eps = f(f(1e-6) * Math.max(f(w1 * h1), f(w2 * h2)));
+  let same = true;
+  for (let i = 0; i < 4 && same; i++) if (Math.abs(f(p1[i][0] - p2[i][0])) > eps || Math.abs(f(p1[i][1] - p2[i][1])) > eps) same = false;
+  if (same) return true;
   const v1: Pt[] = [];
   const v2: Pt[] = [];
   for (let i = 0; i < 4; i++) {
-    v1.push([p1[(i + 1) % 4][0] - p1[i][0], p1[(i + 1) % 4][1] - p1[i][1]]);
-    v2.push([p2[(i + 1) % 4][0] - p2[i][0], p2[(i + 1) % 4][1] - p2[i][1]]);
+    v1.push([f(p1[(i + 1) % 4][0] - p1[i][0]), f(p1[(i + 1) % 4][1] - p1[i][1])]);
+    v2.push([f(p2[(i + 1) % 4][0] - p2[i][0]), f(p2[(i + 1) % 4][1] - p2[i][1])]);
   }
   for (let i = 0; i < 4; i++) {
     for (let j = 0; j < 4; j++) {
-      const x21 = p2[j][0] - p1[i][0];
-      const y21 = p2[j][1] - p1[i][1];
+      const x21 = f(p2[j][0] - p1[i][0]);
+      const y21 = f(p2[j][1] - p1[i][1]);
       const [vx1, vy1] = v1[i];
       const [vx2, vy2] = v2[j];
-      const det = vx2 * vy1 - vx1 * vy2;
+      const det = f(f(vx2 * vy1) - f(vx1 * vy2));
       if (Math.abs(det) < 1e-12) continue;
-      const t1 = (vx2 * y21 - vy2 * x21) / det;
-      const t2 = (vx1 * y21 - vy1 * x21) / det;
+      const inv = f(1 / det);
+      const t1 = f(f(f(vx2 * y21) - f(vy2 * x21)) * inv);
+      const t2 = f(f(f(vx1 * y21) - f(vy1 * x21)) * inv);
       if (!Number.isFinite(t1) || !Number.isFinite(t2)) continue;
       if (t1 >= 0 && t1 <= 1 && t2 >= 0 && t2 <= 1) return true;
     }
   }
+  // corners of one rectangle on the same side of all four edges of the other (_isOnPositiveSide)
   const inside = (pts: Pt[], vec: Pt[], other: Pt[]) => {
-    for (let i = 0; i < 4; i++) {
+    for (const [x, y] of pts) {
       let pos = 0;
-      let neg = 0;
-      const [x, y] = pts[i];
-      for (let j = 0; j < 4; j++) {
-        const A = -vec[j][1];
-        const B = vec[j][0];
-        const C = -(A * other[j][0] + B * other[j][1]);
-        const s = A * x + B * y + C;
-        if (s >= 0) pos++;
-        else neg++;
-      }
-      if (pos === 4 || neg === 4) return true;
+      for (let j = 0; j < 4; j++) if (f(vec[j][1] * f(other[j][0] - x)) >= f(vec[j][0] * f(other[j][1] - y))) pos++;
+      if (pos === 4 || pos === 0) return true;
     }
     return false;
   };

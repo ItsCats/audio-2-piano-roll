@@ -80,6 +80,9 @@ it('homr TypeScript port on the test set', { timeout: 24 * 3600 * 1000 }, async 
           boxes: dump.boxes ? Object.fromEntries(Object.entries(dump.boxes).map(([k, v]) => [k, v.map(box)])) : undefined,
           tokens: dump.tokens,
           voices: dump.voices,
+          staffExtents: dump.staffExtents,
+          staffGrids: dump.staffGrids,
+          detectedStaffs: dump.detectedStaffs,
         }),
       );
       if (process.env.HOMR_DUMP_IMAGES && dump.classes) {

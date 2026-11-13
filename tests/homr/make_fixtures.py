@@ -147,6 +147,32 @@ def main() -> None:
         json.dump({"cases": cases, "rects": rects, "ops": ops}, fh, separators=(",", ":"))
     print("wrote", os.path.join(out, "cv.json"), os.path.getsize(os.path.join(out, "cv.json")))
     subdiv_fixtures(out)
+    touch_fixtures(out)
+
+
+def touch_fixtures(out: str) -> None:
+    """cv2.rotatedRectangleIntersection on rectangles that touch or almost touch (float32 rounding decides)."""
+    rng = np.random.default_rng(77)
+    cases = [
+        # a bar line moved next to the end of a staff-line fragment (seen on a real page)
+        [((1821.5, 345.0), (5.0, 68.0), 0.0), ((1768.5, 359.9999694824219), (100.99998474121094, 3.999999523162842), 0.0)],
+    ]
+    for _ in range(400):
+        cx, cy = float(rng.uniform(0, 2500)), float(rng.uniform(0, 3500))
+        w1, h1 = float(rng.integers(2, 12)) + float(rng.choice([0, 0.5, -1.5e-5, 1e-5])), float(rng.integers(20, 90))
+        w2, h2 = float(rng.uniform(5, 200)), float(rng.choice([3.0, 4.0, 3.999999523162842, 5.0]))
+        gap = float(rng.choice([0.0, 1e-6, -1e-6, 1e-5, -1e-5, 1e-4, -1e-4, 3e-3, -3e-3, 0.5]))
+        side = 1 if rng.random() < 0.5 else -1
+        x2 = cx + side * (w1 / 2 + w2 / 2 + gap)
+        y2 = cy + float(rng.uniform(-h1 / 2, h1 / 2))
+        a2 = float(rng.choice([0.0, 0.0, -26.565052032470703, float(rng.uniform(-3, 3)), 90.0]))
+        cases.append([((cx, cy), (w1, h1), 0.0), ((x2, y2), (w2, h2), a2)])
+    rows = []
+    for r1, r2 in cases:
+        rows.append({"r1": rr(r1), "r2": rr(r2), "intersect": bool(cv2.rotatedRectangleIntersection(r1, r2)[0] != cv2.INTERSECT_NONE)})
+    with open(os.path.join(out, "touch.json"), "w") as fh:
+        json.dump(rows, fh, separators=(",", ":"))
+    print("wrote", os.path.join(out, "touch.json"), sum(r["intersect"] for r in rows), "of", len(rows), "intersect")
 
 
 def subdiv_fixtures(out: str) -> None:

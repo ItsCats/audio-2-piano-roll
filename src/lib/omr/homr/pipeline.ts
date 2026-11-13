@@ -50,6 +50,11 @@ export interface PageDump {
   staffCount?: number;
   systems?: string[];
   staffImages?: Img[];
+  /** per staff image: the staff's minX, minY, maxX, maxY, average unit size and grid points */
+  staffExtents?: number[][];
+  staffGrids?: number[][][];
+  /** the staffs as detected (before braces and grand staffs): grid points x, y..., angle */
+  detectedStaffs?: number[][][];
   tokens?: string[][];
   voices?: string[][];
 }
@@ -155,6 +160,7 @@ export function findSystems(predIn: Predictions, dump?: PageDump): FoundSystems 
   const staffs = detectStaff(pred.staff, fragments, clefs, barLines, pred.symbols);
   if (!staffs.length) throw new NoMusicError('No staffs found');
   if (dump) dump.staffCount = staffs.length;
+  if (dump) dump.detectedStaffs = staffs.map((st) => st.grid.map((g) => [g.x, ...g.y, g.angle]));
   const braceDot = createRotatedBoundingBoxes(prepareBraceDotImage(pred.symbols, pred.staff), { skipMerging: true, maxSize: [100, -1] });
   addNotesToStaffs(staffs, withStems, pred.notehead);
   let multi = findBracesBracketsAndGrandStaffLines(staffs, braceDot);
@@ -258,7 +264,11 @@ async function parseStaffs(staffsIn: MultiStaff[], page: Img, infer: HomrInfer, 
       checkAbort(opts.signal);
       const staff = staffs[si].staffs[parts[si].indexOf(voice)];
       const image = prepareStaffImage(staff, page, regions);
-      if (opts.dump) (opts.dump.staffImages ??= []).push(image);
+      if (opts.dump) {
+        (opts.dump.staffImages ??= []).push(image);
+        (opts.dump.staffExtents ??= []).push([staff.minX, staff.minY, staff.maxX, staff.maxY, staff.averageUnitSize]);
+        (opts.dump.staffGrids ??= []).push(staff.grid.map((g) => [g.x, ...g.y, g.angle]));
+      }
       let symbols = decodeTokens(await infer.transcribe(encoderInput(image, input), MAX_SEQ_LEN, EOS));
       if (!staff.isGrandstaff) symbols = symbols.filter((s) => isUpperOrNoPosition(s.position));
       if (opts.dump) (opts.dump.tokens ??= []).push(symbols.map(String));

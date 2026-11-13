@@ -110,8 +110,17 @@ function staffForAnchor(anchor: StaffAnchor, staffs: RawStaff[]): RawStaff | nul
   return null;
 }
 
+/**
+ * Python's list.remove: drops the first element EQUAL to x, and homr's boxes compare equal by their
+ * rotated rectangle, so this can be another staff with the same rectangle than x itself.
+ */
+function removeFirstEqual(list: RawStaff[], x: RawStaff): void {
+  const i = list.findIndex((s) => s.equals(x));
+  if (i >= 0) list.splice(i, 1);
+}
+
 function findRawStaffs(anchors: StaffAnchor[], fragments: RotatedBoundingBox[]): RawStaff[] {
-  let staffs: RawStaff[] = [];
+  const staffs: RawStaff[] = [];
   let id = 0;
   for (const anchor of anchors) {
     const existing = staffForAnchor(anchor, staffs);
@@ -124,7 +133,7 @@ function findRawStaffs(anchors: StaffAnchor[], fragments: RotatedBoundingBox[]):
       else lines.push(al);
     }
     if (existing) {
-      staffs = staffs.filter((s) => s !== existing);
+      removeFirstEqual(staffs, existing);
       staffs.push(existing.mergeStaff(new RawStaff(id, lines, [anchor])));
     } else staffs.push(new RawStaff(id, lines, [anchor]));
     id++;
@@ -198,7 +207,7 @@ function mergeStaffsInSameRow(staffs: RawStaff[], ink: Img): RawStaff[] {
       continue;
     }
     const merged = result[i].mergeStaff(right);
-    result.splice(result.indexOf(right), 1);
+    removeFirstEqual(result, right);
     result[i] = merged;
   }
   return result;
