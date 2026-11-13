@@ -44,8 +44,9 @@ export interface HomrPage {
  * Progress, in the Sheet Music Transformer reader's terms (src/lib/omr/index.ts ReadProgress on its
  * branch), so its import screen can show either reader: `progress` is 0–0.15 while loading the models
  * and 0.2–1 while reading the pages; `total` 0 means the models come from the cache (nothing to
- * download). One difference: homr reads page by page, so `line`/`lines` count the staffs of the
- * current page (a piano system has two), the same as `pageLine`/`pageLines`.
+ * download). One difference: homr reads page by page, so `line`/`lines` count within the current page,
+ * the same as `pageLine`/`pageLines`: the staff images homr transcribes (a piano grand staff is normally
+ * one image, so for piano music these are the lines of music; a part on its own staff is one more).
  */
 export interface ReadProgress {
   stage: Stage;
@@ -57,7 +58,7 @@ export interface ReadProgress {
   /** the page being read (0-based, as the SMT reader) / pages */
   page?: number;
   pages?: number;
-  /** reading: the staff being read on this page (1-based) / staffs on it */
+  /** reading: the staff image being read on this page (1-based) / staff images on it */
   line?: number;
   lines?: number;
   pageLine?: number;

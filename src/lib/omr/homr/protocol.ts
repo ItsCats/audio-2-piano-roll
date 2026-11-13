@@ -81,7 +81,7 @@ export interface ProgressMessage {
   /** page index (0-based) / pages */
   page?: number;
   pages?: number;
-  /** reading: the staff being read (1-based) / staffs of the page (a grand staff counts as two) */
+  /** reading: the staff image being read (1-based) / staff images of the page (a piano grand staff is normally one image) */
   line?: number;
   lines?: number;
 }

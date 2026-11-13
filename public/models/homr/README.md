@@ -125,7 +125,31 @@ core (four cores at a quarter speed, a phone estimate): 123–141 s for pages of
 850 MB on later pages; the peak was 1.7 GB for the whole browser. The first page downloads 108 MB
 (93 MB models, 15 MB onnxruntime WASM shared with the app's other readers).
 
-**Memory**: the browser's resident memory grew by 1,010 MB while reading the first page (model download,
-the three sessions, one page) and by 390 MB for later pages with the sessions kept; the worker is
-terminated after the job on phones and small-memory devices and after a minute idle elsewhere (a WASM
-memory never shrinks while its worker lives). Pages are sent to the worker one at a time.
+**Memory** (re-measured 2026-11-13 after the memory changes, production build, headless Chromium,
+models from the cache except on the first page; other jobs used 0–2 of the 4 cores):
+
+| mode | first page: whole-browser PSS | tab's renderer process peak (idle: ~100 MB) | after the job |
+|---|---|---|---|
+| desktop, 3 threads, networks kept loaded | +970 MB | 975–1,100 MB | ~900–1,100 MB until the idle worker ends (1 min) |
+| desktop, 1 thread, networks kept loaded | +1,035 MB | 1,047–1,089 MB | same |
+| low-memory mode (phones), 1 thread | +1,079 MB (with the download) | 928–1,025 MB | the worker ends at once |
+| low-memory mode, 3 threads | +972 MB (with the download) | 867–979 MB | the worker ends at once |
+
+What changed: the float16 weights are expanded before onnxruntime builds the segmentation session
+(`src/lib/omr/homr/fp16w.ts`; the segmentation step's peak in Node fell from +425–449 MB to +288 MB,
+identical outputs), and in low-memory mode (default on phones, tablets and devices reporting 4 GB or
+less, and for the import screen's retry after a crash) only the current step's networks exist: the
+segmentation session is released before the encoder and decoder are created, segmentation runs one
+320 px window at a time, one WASM thread is used, and the worker ends right after the job. In Node that
+lowers a page's peak only from +712 to +627–698 MB, and in Chromium the renderer's peak by about 2–15 %,
+because the encoder + decoder step alone needs ~500 MB of WASM memory (session creation and the
+decoder's key/value cache) and the WASM heap does not shrink. So a phone tab needs roughly 1 GB more
+while reading, which is close to what iOS allows a Safari tab; not measured on a real phone yet. The
+reader also refuses more than 5 pages per job on phones and tablets (20 elsewhere), scales input images
+down to 4000 px on the longer side (a 48-megapixel photo took 40 s and 2 GB in the paper-cropping step
+before), and does not read images more than three times taller than wide (a long screenshot would have
+become a 1920 x 16,000 px page). Pages are sent to the worker one at a time.
+
+The changes do not alter the results: on 8 test pages (two per category) the production build gives
+byte-identical MusicXML before and after them, with all three networks kept loaded and in low-memory mode;
+the paper cropping gives identical crops and pixels on all 18 photo and real pages.
