@@ -14,7 +14,7 @@ import { createServer } from 'vite';
 import { execFileSync, spawn } from 'node:child_process';
 import { appendFileSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { makeHandsVideo, makeNotes, sourceFrameTimes, QUAD } from './handcam-video.mjs';
+import { makeHandsVideo, makeNotes, sourceFrameTimes, toneOnset, QUAD } from './handcam-video.mjs';
 
 const args = process.argv.slice(2);
 const keep = args.includes('--keep') ? args[args.indexOf('--keep') + 1] : null;
@@ -61,28 +61,7 @@ const pcm = (file) => {
   const b = execFileSync('ffmpeg', ['-v', 'error', '-i', file, '-f', 'f32le', '-ac', '1', '-ar', String(SR), '-'], { maxBuffer: 1 << 30 });
   return new Float32Array(b.buffer, b.byteOffset, b.byteLength / 4);
 };
-/**
- * A tone's start near time t: the first 1 ms block whose level jumps well above the level 15 ms before
- * (the previous note may still be ringing, so a plain threshold would fire early).
- */
-const onsetNear = (x, t) => {
-  const B = SR / 1000;
-  const level = (k) => {
-    let m = 0;
-    for (let i = k * B; i < (k + 1) * B; i++) m = Math.max(m, Math.abs(x[i] ?? 0));
-    return m;
-  };
-  for (let k = Math.round((t - 0.1) * 1000); k < (t + 0.1) * 1000; k++) {
-    const before = level(k - 15);
-    const now = level(k + 2);
-    if (now > 0.05 && now > 1.6 * before + 0.03) {
-      // refine inside the block: the first sample over half the jump
-      for (let i = k * B; i < (k + 3) * B; i++) if (Math.abs(x[i]) > before + 0.5 * (now - before) * 0.3) return i / SR;
-      return k / 1000;
-    }
-  }
-  return null;
-};
+const onsetNear = (x, t) => toneOnset(x, SR, t);
 const duration = (file) => Number(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file]).toString().trim());
 /** x centroid of green-lit pixels on row y of an RGB frame */
 const green = (f, W, y, x0 = 0, x1 = W) => {

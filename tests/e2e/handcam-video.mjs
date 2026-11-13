@@ -233,3 +233,27 @@ function run(args, feed) {
     if (feed) feed(p.stdin).catch(reject);
   });
 }
+
+/**
+ * Where a tone starts near time t (s) in mono samples `x`: the first point where the peak level of the
+ * next 4 ms clearly jumps over the peak level of the 20 ms before it (windows longer than a low note's
+ * period, so a zero crossing never looks like silence), refined to the first sample over 15 % of the
+ * jump. null when nothing starts within ±0.1 s.
+ */
+export function toneOnset(x, sr, t) {
+  const peak = (a, b) => {
+    let m = 0;
+    for (let i = Math.max(0, Math.round(a)); i < Math.min(x.length, Math.round(b)); i++) m = Math.max(m, Math.abs(x[i]));
+    return m;
+  };
+  const step = sr / 2000;
+  for (let i = Math.round((t - 0.1) * sr); i < (t + 0.1) * sr; i += step) {
+    const before = peak(i - 0.02 * sr, i - 0.001 * sr);
+    const now = peak(i, i + 0.004 * sr);
+    if (now > 0.03 && now > 1.6 * before + 0.02) {
+      for (let k = Math.round(i - step); k < i + 0.004 * sr; k++) if (Math.abs(x[k]) > before + 0.15 * (now - before)) return k / sr;
+      return i / sr;
+    }
+  }
+  return null;
+}
