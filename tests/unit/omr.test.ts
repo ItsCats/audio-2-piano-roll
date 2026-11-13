@@ -345,6 +345,32 @@ describe('staff and system finding', () => {
     expect(groupSystems(pg, f).length).toBe(2);
   });
 
+  it('finds a page corner lost in shadow where the two sides meet', () => {
+    const W = 1000;
+    const H = 1300;
+    const photo = gray(W, H, 60);
+    const quad: Quad = [
+      [120, 100],
+      [880, 140],
+      [900, 1200],
+      [100, 1180],
+    ];
+    // paper inside the quad (point-in-convex-polygon), with the bottom-right corner in deep shadow
+    const inside = (x: number, y: number) =>
+      quad.every((a, i) => {
+        const b = quad[(i + 1) % 4];
+        return (b[0] - a[0]) * (y - a[1]) - (b[1] - a[1]) * (x - a[0]) >= 0;
+      });
+    for (let y = 0; y < H; y++)
+      for (let x = 0; x < W; x++) if (inside(x, y)) photo.d[y * W + x] = x + y > 1880 ? 70 : 235;
+    const q = detectPageQuad(photo);
+    expect(q).not.toBeNull();
+    q!.forEach((p, i) => {
+      expect(Math.abs(p[0] - quad[i][0])).toBeLessThan(15);
+      expect(Math.abs(p[1] - quad[i][1])).toBeLessThan(15);
+    });
+  });
+
   it('finds nothing on an empty page', () => {
     const f = findStaves(gray(800, 1100));
     expect(f.staves).toEqual([]);

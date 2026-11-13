@@ -81,16 +81,118 @@ export function detectPageQuad(img: Gray): Quad | null {
   }
   // a region running along most of the image border is the whole photo, not a page on a table
   if (touches > 1.2 * (w + h)) return null;
+  // the page's sides as lines through its outline: a corner lost in shadow (or cut by the image edge)
+  // is then still where two sides meet, which the diagonal extremes above miss
+  const sides = quadFromOutline(label, best, w, h);
+  const corners = sides ?? [tl, tr, br, bl];
   const q: Quad = [
-    [tl[0] * s, tl[1] * s],
-    [tr[0] * s, tr[1] * s],
-    [br[0] * s, br[1] * s],
-    [bl[0] * s, bl[1] * s],
+    [corners[0][0] * s, corners[0][1] * s],
+    [corners[1][0] * s, corners[1][1] * s],
+    [corners[2][0] * s, corners[2][1] * s],
+    [corners[3][0] * s, corners[3][1] * s],
   ];
   // reject degenerate shapes (a very thin or self-crossing outline)
   const area = Math.abs(shoelace(q));
   if (area < 0.2 * img.w * img.h) return null;
   return q;
+}
+
+/** Convex hull (monotone chain), counter-clockwise in image coordinates' sense of the cross product. */
+function convexHull(pts: number[][]): number[][] {
+  const p = [...pts].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  if (p.length < 3) return p;
+  const cross = (o: number[], a: number[], b: number[]) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lower: number[][] = [];
+  for (const q of p) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], q) <= 0) lower.pop();
+    lower.push(q);
+  }
+  const upper: number[][] = [];
+  for (let i = p.length - 1; i >= 0; i--) {
+    const q = p[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], q) <= 0) upper.pop();
+    upper.push(q);
+  }
+  return lower.slice(0, -1).concat(upper.slice(0, -1));
+}
+
+/**
+ * Four page corners from the outline of region `id`: the convex hull's edges are merged into straight
+ * runs, the four longest runs are taken as the page's sides and neighbouring sides are intersected.
+ * Null when the outline is not a plausible quadrilateral.
+ */
+export function quadFromOutline(label: Int32Array, id: number, w: number, h: number): number[][] | null {
+  const pts: number[][] = [];
+  for (let y = 0; y < h; y++) {
+    let a = -1;
+    let b = -1;
+    for (let x = 0; x < w; x++) if (label[y * w + x] === id) (a < 0 && (a = x), (b = x));
+    if (a >= 0) pts.push([a, y + 0.5], [b + 1, y + 0.5]);
+  }
+  for (let x = 0; x < w; x++) {
+    let a = -1;
+    let b = -1;
+    for (let y = 0; y < h; y++) if (label[y * w + x] === id) (a < 0 && (a = y), (b = y));
+    if (a >= 0) pts.push([x + 0.5, a], [x + 0.5, b + 1]);
+  }
+  const hull = convexHull(pts);
+  if (hull.length < 4) return null;
+  // merge consecutive hull edges that keep (almost) the same direction
+  interface Run {
+    a: number[];
+    b: number[];
+    len: number;
+    order: number;
+  }
+  const runs: Run[] = [];
+  const n = hull.length;
+  const ang = (a: number[], b: number[]) => Math.atan2(b[1] - a[1], b[0] - a[0]);
+  const turn = (x: number, y: number) => Math.abs(((x - y + 3 * Math.PI) % (2 * Math.PI)) - Math.PI);
+  // start after the sharpest turn so no run wraps around the start
+  let start = 0;
+  let sharpest = -1;
+  for (let i = 0; i < n; i++) {
+    const t = turn(ang(hull[(i - 1 + n) % n], hull[i]), ang(hull[i], hull[(i + 1) % n]));
+    if (t > sharpest) (sharpest = t), (start = i);
+  }
+  let cur: Run | null = null;
+  let curAng = 0;
+  for (let k = 0; k < n; k++) {
+    const a = hull[(start + k) % n];
+    const b = hull[(start + k + 1) % n];
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const an = ang(a, b);
+    if (cur && turn(an, curAng) < (8 * Math.PI) / 180) {
+      cur.b = b;
+      cur.len += len;
+      curAng = ang(cur.a, cur.b);
+    } else {
+      cur = { a, b, len, order: runs.length };
+      curAng = an;
+      runs.push(cur);
+    }
+  }
+  if (runs.length < 4) return null;
+  const top = [...runs].sort((x, y) => y.len - x.len).slice(0, 4).sort((x, y) => x.order - y.order);
+  const perimeter = runs.reduce((acc, r) => acc + r.len, 0);
+  if (top.reduce((acc, r) => acc + r.len, 0) < 0.75 * perimeter) return null;
+  const corners: number[][] = [];
+  for (let i = 0; i < 4; i++) {
+    const r1 = top[i];
+    const r2 = top[(i + 1) % 4];
+    const d1 = [r1.b[0] - r1.a[0], r1.b[1] - r1.a[1]];
+    const d2 = [r2.b[0] - r2.a[0], r2.b[1] - r2.a[1]];
+    const den = d1[0] * d2[1] - d1[1] * d2[0];
+    // neighbouring sides must not be (nearly) parallel
+    if (Math.abs(den) < Math.sin((30 * Math.PI) / 180) * Math.hypot(...d1) * Math.hypot(...d2)) return null;
+    const t = ((r2.a[0] - r1.a[0]) * d2[1] - (r2.a[1] - r1.a[1]) * d2[0]) / den;
+    const c = [r1.a[0] + t * d1[0], r1.a[1] + t * d1[1]];
+    // a corner far outside the photo means the sides were not the page's
+    if (c[0] < -0.15 * w || c[0] > 1.15 * w || c[1] < -0.15 * h || c[1] > 1.15 * h) return null;
+    corners.push(c);
+  }
+  const o = orderQuad(corners);
+  return o.map((p) => [p[0], p[1]]);
 }
 
 function shoelace(q: Quad): number {
