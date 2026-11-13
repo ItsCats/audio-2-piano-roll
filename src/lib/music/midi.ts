@@ -102,12 +102,48 @@ export function parseMidi(data: ArrayBuffer): ParsedMidi {
   };
 }
 
-export function exportMidi(notes: Note[], pedal: PedalRange[], tempo: TempoInfo, title: string): Uint8Array {
+/** Key, time-signature and tempo changes (in song seconds) written as MIDI meta events (lib/sheet/midiMeta.ts). */
+export interface MidiMeta {
+  keys: { time: number; fifths: number; mode: 'major' | 'minor' }[];
+  meters: { time: number; beatsPerBar: number; beatUnit: number }[];
+  /** Quarter notes per minute from that time on. */
+  tempos: { time: number; qpm: number }[];
+}
+
+const KEY_NAMES = ['Cb', 'Gb', 'Db', 'Ab', 'Eb', 'Bb', 'F', 'C', 'G', 'D', 'A', 'E', 'B', 'F#', 'C#'];
+
+export function exportMidi(notes: Note[], pedal: PedalRange[], tempo: TempoInfo, title: string, meta?: MidiMeta): Uint8Array {
   const midi = new Midi();
   midi.name = title;
   midi.header.setTempo(tempo.bpm);
   midi.header.timeSignatures.push({ ticks: 0, timeSignature: [tempo.beatsPerBar, tempo.beatUnit ?? 4], measures: 0 });
   midi.header.update();
+  if (meta) {
+    const h = midi.header;
+    // tempo changes one by one: each one's tick follows from the tempos before it
+    for (const t of [...meta.tempos].sort((a, b) => a.time - b.time)) {
+      if (!(t.qpm > 0) || !Number.isFinite(t.time)) continue;
+      const ticks = h.secondsToTicks(t.time);
+      if (ticks <= 0) h.tempos = h.tempos.filter((x) => x.ticks > 0);
+      h.tempos = h.tempos.filter((x) => x.ticks !== ticks);
+      h.tempos.push({ ticks, bpm: t.qpm });
+      h.tempos.sort((a, b) => a.ticks - b.ticks);
+      h.update();
+    }
+    for (const m of meta.meters) {
+      const ticks = h.secondsToTicks(m.time);
+      h.timeSignatures = h.timeSignatures.filter((x) => x.ticks !== ticks);
+      h.timeSignatures.push({ ticks, timeSignature: [m.beatsPerBar, m.beatUnit] });
+    }
+    h.timeSignatures.sort((a, b) => a.ticks - b.ticks);
+    for (const k of meta.keys) {
+      const ticks = h.secondsToTicks(k.time);
+      h.keySignatures = h.keySignatures.filter((x) => x.ticks !== ticks);
+      h.keySignatures.push({ ticks, key: KEY_NAMES[k.fifths + 7] ?? 'C', scale: k.mode });
+    }
+    h.keySignatures.sort((a, b) => a.ticks - b.ticks);
+    h.update();
+  }
   const rh = midi.addTrack();
   rh.name = 'Right Hand';
   rh.channel = 0;
@@ -126,5 +162,44 @@ export function exportMidi(notes: Note[], pedal: PedalRange[], tempo: TempoInfo,
     rh.addCC({ number: 64, value: 1, time: p.start });
     rh.addCC({ number: 64, value: 0, time: p.end });
   }
-  return midi.toArray();
+  const bytes = midi.toArray();
+  return meta?.keys.length ? fixKeySignatures(bytes) : bytes;
+}
+
+/**
+ * @tonejs/midi 2.0.28 writes a key signature's sharps/flats byte 14 too high (it adds 7 to an index
+ * that is already offset by 7), so the file would read back wrong everywhere. Walks the first
+ * track (tempo, time and key events only) and puts the right value in each FF 59 event.
+ */
+function fixKeySignatures(bytes: Uint8Array): Uint8Array {
+  const b = new Uint8Array(bytes);
+  const u32 = (i: number) => ((b[i] << 24) | (b[i + 1] << 16) | (b[i + 2] << 8) | b[i + 3]) >>> 0;
+  let i = 8 + u32(4); // after the MThd chunk
+  if (String.fromCharCode(b[i], b[i + 1], b[i + 2], b[i + 3]) !== 'MTrk') return bytes;
+  const end = i + 8 + u32(i + 4);
+  i += 8;
+  const varint = () => {
+    let v = 0;
+    for (let k = 0; k < 4 && i < end; k++) {
+      const c = b[i++];
+      v = (v << 7) | (c & 0x7f);
+      if (!(c & 0x80)) break;
+    }
+    return v;
+  };
+  while (i < end) {
+    varint(); // delta time
+    const status = b[i++];
+    if (status === 0xff) {
+      const type = b[i++];
+      const len = varint();
+      if (type === 0x59 && len === 2) {
+        // every key event here was written by tonejs (7…21 for −7…7)
+        b[i] = (((b[i] << 24) >> 24) - 14) & 0xff;
+      }
+      i += len;
+    } else if (status === 0xf0 || status === 0xf7) i += varint();
+    else return b; // channel messages: not in the tempo track
+  }
+  return b;
 }

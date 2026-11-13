@@ -156,7 +156,7 @@ function ExportMenu({ onVideo, onSheetPdf }: { onVideo: () => void; onSheetPdf: 
         <div className="panel absolute top-10 right-0 z-30 w-60 p-1.5" role="menu">
           {[
             { icon: Film, label: 'Video (MP4 / WebM)…', onClick: () => { setOpen(false); onVideo(); } },
-            { icon: Music2, label: `MIDI file (${difficulty})`, onClick: () => { setOpen(false); downloadMidi(song, difficulty); showExportNoticeOnce(); } },
+            { icon: Music2, label: `MIDI file (${difficulty})`, onClick: () => { setOpen(false); void downloadMidi(song, difficulty).catch((e) => console.error(e)); showExportNoticeOnce(); } },
             { icon: FileText, label: `Sheet music PDF (${difficulty})…`, onClick: () => { setOpen(false); onSheetPdf(); } },
             { icon: FileMusic, label: `MusicXML (${difficulty})`, onClick: () => void exportMusicXml() },
             { icon: FileAudio, label: `Audio WAV (${difficulty})`, onClick: () => void exportWav() },

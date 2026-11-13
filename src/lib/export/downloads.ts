@@ -22,9 +22,11 @@ export function downloadBlob(blob: Blob, name: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
-export function downloadMidi(song: Song, difficulty: Difficulty): void {
+export async function downloadMidi(song: Song, difficulty: Difficulty): Promise<void> {
   const arr = song.arrangements[difficulty];
-  const bytes = exportMidi(arr.notes, arr.pedal, song.tempo, song.title);
+  // key, time and tempo changes placed on the sheet go in as meta events (songs without: unchanged)
+  const meta = song.sheet ? (await import('../sheet/midiMeta')).sheetMidiMeta(song, difficulty) : undefined;
+  const bytes = exportMidi(arr.notes, arr.pedal, song.tempo, song.title, meta);
   downloadBlob(new Blob([bytes as BlobPart], { type: 'audio/midi' }), `${safeFileName(song.title)} (${difficulty}).mid`);
 }
 
