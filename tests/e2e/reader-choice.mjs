@@ -16,9 +16,11 @@
  * page image and the PDF's first page are read with it (notes F1 >= 0.95 each, progress names the
  * accurate reader and its download), the song opens in the Studio without the Beta labels; then the
  * Quick reader is picked (remembered across a reload) and reads both again (F1 printed; >= 0.6);
- * crash recovery: the page is reloaded during an accurate read and the notice's "Use the Quick reader"
- * reads the kept PDF with the quick reader. iPhone 14: the Quick reader is the default, the Accurate
- * reader shows "May be too heavy for this phone…", and picking it is remembered.
+ * crash recovery: the page is reloaded during an accurate read; the notice's "Try the Accurate reader
+ * again" reads the kept PDF with the accurate reader (low-memory mode), and after a second reload "Use
+ * the Quick reader" reads it with the quick reader (the remembered pick stays on a computer).
+ * iPhone 14: the Quick reader is the default, the Accurate reader shows "May be too heavy for this
+ * phone…", and picking it is remembered.
  * Both: cross-origin isolated, no CSP violations, no console errors, no sideways scroll.
  * Screenshots (deviceScaleFactor 2): reader-choice-desktop.png, reader-choice-phone.png,
  * reading-accurate.png, result-studio.png and more, in --shots.
@@ -271,7 +273,7 @@ try {
     check(`${dev}: the Accurate reader is chosen by default`, (await checked(page, 'accurate')) && !(await checked(page, 'quick')));
     const accText = await page.getByTestId('reader-accurate').textContent();
     const quickText = await page.getByTestId('reader-quick').textContent();
-    check(`${dev}: the Accurate reader's line`, /Accurate reader/.test(accText) && /Recommended/.test(accText) && /About 98% of notes right · 93 MB download once · about (a minute|\d+ (seconds|minutes)) per page/.test(accText), accText);
+    check(`${dev}: the Accurate reader's line`, /Accurate reader/.test(accText) && /Recommended/.test(accText) && /About 98% of notes right · 93 MB download once · about a minute per page/.test(accText), accText);
     check(`${dev}: the Quick reader's line`, /Quick reader/.test(quickText) && /Beta/.test(quickText) && /Smaller download, less accurate/.test(quickText) && /About 88% of notes right · 24 MB download once/.test(quickText), quickText);
     check(`${dev}: no "too heavy" warning on a computer`, !(await page.getByTestId('reader-heavy').count()));
     check(`${dev}: nothing of the readers downloaded yet`, await page.evaluate(() => !performance.getEntriesByType('resource').some((e) => /models\/(homr|omr)\//.test(e.name))));
@@ -294,22 +296,40 @@ try {
     check(`${dev} accurate pdf: notes F1 >= 0.95`, !!f1b && f1b.f1 >= 0.95, { ...f1b, s: a2.s, seen: a2.seen });
     check(`${dev} accurate pdf: models from the cache the second time`, !a2.seen.some((s) => /Downloading/.test(s)), a2.seen);
 
-    // ---- crash recovery: reload during an accurate read; the notice offers the quick reader
-    await readOne(page, 'pdf', files, {
-      beforeRead: () => page.waitForFunction(() => /Reading|Finding/.test(document.querySelector('.panel[aria-live="polite"]')?.textContent ?? ''), null, { timeout: 180000 }),
-    });
-    page.once('dialog', (d) => void d.accept());
-    await page.reload();
-    await page.getByText('Your last import was interrupted').waitFor({ timeout: 20000 });
-    await page.waitForTimeout(400);
-    await shot(page, 'desktop-interrupted-accurate');
-    check(`${dev}: the notice offers the Quick reader`, (await page.getByText(/with the Accurate reader was interrupted/).isVisible()) && (await page.getByRole('button', { name: 'Use the Quick reader' }).isVisible()));
-    const nBefore = (await songs(page)).length;
+    // ---- crash recovery: reload during an accurate read; the notice offers the quick reader and, on a
+    // computer, the accurate one again (low-memory mode). First: the accurate one again.
+    const crash = async (name) => {
+      await readOne(page, 'pdf', files, {
+        beforeRead: () => page.waitForFunction(() => /Reading|Finding/.test(document.querySelector('.panel[aria-live="polite"]')?.textContent ?? ''), null, { timeout: 180000 }),
+      });
+      page.once('dialog', (d) => void d.accept());
+      await page.reload();
+      await page.getByText('Your last import was interrupted').waitFor({ timeout: 20000 });
+      await page.waitForTimeout(400);
+      if (name) await shot(page, name);
+    };
+    await crash('desktop-interrupted-accurate');
+    check(
+      `${dev}: the notice offers the Quick reader and the Accurate reader again`,
+      (await page.getByText(/with the Accurate reader was interrupted/).isVisible()) &&
+        (await page.getByRole('button', { name: 'Use the Quick reader' }).isVisible()) &&
+        (await page.getByRole('button', { name: 'Try the Accurate reader again' }).isVisible()),
+    );
+    let nBefore = (await songs(page)).length;
+    await page.getByRole('button', { name: 'Try the Accurate reader again' }).click();
+    const ra = await readUntilStudio(page);
+    const again = (await songs(page)).slice(nBefore)[0];
+    const f1c = again && notesF1(demo.notes, again.notes);
+    check(`${dev}: "Try the Accurate reader again" read the kept PDF with the accurate reader`, again?.source.sheetReader === 'accurate' && !!f1c && f1c.f1 >= 0.95 && ra.seen.some((s) => /accurate sheet-music reader/.test(s)), { source: again?.source, f1: f1c?.f1, seen: ra.seen });
+    check(`${dev}: and the pick is unchanged`, (await prefs(page)).sheetReader !== 'quick', await prefs(page));
+    // then the quick reader
+    await crash();
+    nBefore = (await songs(page)).length;
     await page.getByRole('button', { name: 'Use the Quick reader' }).click();
     const rc = await readUntilStudio(page);
     const resumed = (await songs(page)).slice(nBefore)[0];
     check(`${dev}: "Use the Quick reader" read the kept PDF with the quick reader`, resumed?.source.sheetReader === 'quick' && rc.seen.some((s) => /quick sheet-music reader/.test(s)), { source: resumed?.source, seen: rc.seen });
-    check(`${dev}: and the Quick reader is now picked`, (await prefs(page)).sheetReader === 'quick');
+    check(`${dev}: a computer keeps its pick after one crash (Accurate is still the default)`, (await prefs(page)).sheetReader !== 'quick', await prefs(page));
 
     // ---- quick: picked by hand, remembered across a reload
     await openTab(page);

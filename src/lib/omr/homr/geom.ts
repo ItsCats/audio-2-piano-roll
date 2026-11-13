@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only AND BSD-3-Clause
 // Modified (TypeScript port of homr 0.7.1) by the Piano2Vision contributors, 2026; see README.md here.
-// Ports of OpenCV functions: copyright notices and licence in LICENSE-OpenCV.txt here.
+// Ports of OpenCV functions: copyright notices and license in LICENSE-OpenCV.txt here.
 /**
  * The OpenCV geometry functions homr uses, ported to TypeScript with OpenCV's own algorithms and
  * (where it decides results) its float32 arithmetic: findContours (Suzuki-Abe border following,

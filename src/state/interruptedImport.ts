@@ -6,7 +6,8 @@
  */
 import { deletePending, getPending, listPending, type PendingImport } from '../lib/storage/db';
 import { PENDING_LOCK_PREFIX } from './importStore';
-import { readerOf } from '../lib/omr/readers';
+import { quickStaysAfterCrash, readerOf } from '../lib/omr/readers';
+import { isMemoryConstrained, pageDeviceInfo, type DeviceInfo } from '../lib/transcription/backendChoice';
 
 /** When this document started loading (records written by this page are newer). */
 export const PAGE_LOADED_AT = typeof performance !== 'undefined' && performance.timeOrigin ? Math.round(performance.timeOrigin) : Date.now();
@@ -32,6 +33,11 @@ export interface InterruptedNotice {
   canSave: boolean;
   /** the Try again button's label when it does something other than the same again */
   retryLabel?: string;
+  /**
+   * a second retry button (the accurate sheet-music reader on a computer: read once more with it, in
+   * its low-memory mode; importStore resumePending(rec, { reader: 'accurate' }))
+   */
+  retryAccurateLabel?: string;
 }
 
 /**
@@ -42,22 +48,34 @@ export interface InterruptedNotice {
 export function interruptedNotice(
   rec: Pick<PendingImport, 'title' | 'kind' | 'blob'> & { transcriber?: string; sheet?: PendingImport['sheet']; source?: { sheetReader?: unknown } },
   retryWith?: 'basic-pitch' | 'piano-specialist',
+  device: DeviceInfo | undefined = pageDeviceInfo(),
 ): InterruptedNotice {
-  // sheet-music reader (beta): a PDF or photos, read again from the kept copy
+  // a sheet-music reader (Accurate or Quick): a PDF or photos, read again from the kept copy
   if (rec.kind === 'score') {
     const kept = !!rec.blob && !!rec.sheet;
     const n = rec.sheet ? (rec.sheet.kind === 'pdf' ? rec.sheet.pages.length : rec.sheet.photos.length) : 0;
     const what = rec.sheet?.kind === 'photo' ? (n > 1 ? 'Your photos were kept.' : 'Your photo was kept.') : 'Your file was kept.';
     if (readerOf(rec.source) === 'accurate') {
-      // the accurate reader needs about 1 GB more memory: offer the quick reader (importStore resumePending)
+      // the accurate reader needs about 1 GB more memory: offer the quick reader (importStore
+      // resumePending), and on a computer also the accurate one again in its low-memory mode (one crash
+      // there may just have been a reload)
+      const again = rec.sheet?.lowMemory;
+      const offerAccurate = kept && !again && !(device && isMemoryConstrained(device));
+      const remember = quickStaysAfterCrash(again, device) ? ' The Quick reader is then picked for next time (you can switch back on the Sheet music tab).' : '';
+      const why = again ? 'stopped again, even in the slower mode that uses less memory' : 'was interrupted — it probably needed more memory than this device had free';
       return {
-        title: 'Your last import was interrupted',
-        body: `Reading “${rec.title}” with the Accurate reader was interrupted — it probably needed more memory than this device had free. ${
-          kept ? `${what} The Quick reader needs much less memory: read it with that one, or close other tabs and apps first.` : 'Choose the file again and pick the Quick reader, which needs much less memory.'
+        title: again ? 'Reading the sheet music stopped again' : 'Your last import was interrupted',
+        body: `Reading “${rec.title}” with the Accurate reader ${why}. ${
+          !kept
+            ? 'Choose the file again and pick the Quick reader, which needs much less memory.'
+            : offerAccurate
+              ? `${what} Read it with the Quick reader, which needs much less memory, or close other tabs and apps and try the Accurate reader again in a slower mode that uses less memory.`
+              : `${what} The Quick reader needs much less memory: read it with that one, after closing other tabs and apps.${remember}`
         }`,
         canRetry: kept,
         canSave: false,
         retryLabel: 'Use the Quick reader',
+        ...(offerAccurate ? { retryAccurateLabel: 'Try the Accurate reader again' } : {}),
       };
     }
     if (rec.sheet?.lowMemory) {

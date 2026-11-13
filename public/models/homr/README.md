@@ -3,9 +3,9 @@
 Piano2Vision reads printed sheet music from PDFs and photos with a TypeScript port of **homr**
 (https://github.com/liebharc/homr) by Christian Liebhardt and the homr contributors. homr's code and
 its model weights are licensed under the **GNU Affero General Public License v3.0** — see
-[LICENSE](LICENSE) (homr's licence file, unchanged). The files here are homr's networks; the port of its
+[LICENSE](LICENSE) (homr's license file, unchanged). The files here are homr's networks; the port of its
 program is `src/lib/omr/homr/` (see the README there for what was changed). Both are published with this
-app's source code under the same licence.
+app's source code under the same license.
 
 The models are downloaded only when someone first reads a PDF or a photo, then kept in the browser's
 Cache API (`src/lib/omr/homr/worker.ts`, sha256-checked).
@@ -45,7 +45,7 @@ onnxruntime-web (113 s instead of 24 s per page, Node, 3 threads), so the float1
 
 ## Training data (from homr's LICENSE_FAQ.md, checked by homr's authors October 2026)
 
-| Network | Training data | Licence as stated by the source |
+| Network | Training data | License as stated by the source |
 |---|---|---|
 | Segmentation | DeepScoresV2 | CC BY 4.0 |
 | Transformer | OpenScore Lieder, OpenScore String Quartets | CC0 |
@@ -153,6 +153,7 @@ become a 1920 x 16,000 px page). Pages are sent to the worker one at a time.
 The changes do not alter the results: on 8 test pages (two per category) the production build gives
 byte-identical MusicXML before and after them, with all three networks kept loaded and in low-memory mode;
 the paper cropping gives identical crops and pixels on all 18 photo and real pages.
+
 **Held-out pieces, compared with the Quick reader** (2026-11-13, production build, `tests/e2e/homr-prod.mjs`,
 3 threads, corners given for the photos): the 16 pieces an independent review generated for the Sheet Music
 Transformer reader (`public/models/omr/README.md`, "Held-out re-measurement"; keys, meters and textures the

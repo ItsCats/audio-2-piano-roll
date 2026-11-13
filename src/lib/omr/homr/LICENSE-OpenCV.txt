@@ -13,8 +13,8 @@ that homr calls through opencv-python (the same algorithms and arithmetic, so th
   color_rgb.simd.hpp (BGR to gray).
 
 Those source files carry the copyright notices below. Files added to OpenCV since 4.5 (such as
-color.cpp) are under the Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0, the licence
-of OpenCV as a whole since 4.5); the older files keep the 3-clause BSD licence that follows.
+color.cpp) are under the Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0, the license
+of OpenCV as a whole since 4.5); the older files keep the 3-clause BSD license that follows.
 
 Copyright (C) 2000-2008, 2017, 2018, Intel Corporation, all rights reserved.
 Copyright (C) 2008-2011, Willow Garage Inc., all rights reserved.

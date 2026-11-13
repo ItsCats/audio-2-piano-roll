@@ -10,7 +10,7 @@ import { titleFromFileName } from '../../lib/songs';
 import type { Gray, PdfDocument, SheetReaderSupport } from '../../lib/omr';
 // small: sizes and estimates only (the accurate reader's code loads when it reads)
 import { homrReaderSupport, type ReaderSupport } from '../../lib/omr/homr/support';
-import { aboutTime, readerFacts, readerMayBeTooHeavy, sheetReaderChoice, SHEET_READER_INFO, type SheetReaderId } from '../../lib/omr/readers';
+import { readerFacts, readerTime, readerMayBeTooHeavy, sheetReaderChoice, SHEET_READER_INFO, type SheetReaderId } from '../../lib/omr/readers';
 import { pageDeviceInfo } from '../../lib/transcription/backendChoice';
 
 /** Most pages read in one go from this screen (the reader takes up to 20; this keeps waits sensible). */
@@ -102,7 +102,7 @@ let photoSeq = 1;
 
 /**
  * The "MIDI / Sheet music" tab: sheet-music files and MIDI as before, plus PDFs and photos of
- * printed piano music read by the sheet-music reader (beta). PDFs: pick the pages. Photos: one page
+ * printed piano music read by a sheet-music reader (Accurate or Quick). PDFs: pick the pages. Photos: one page
  * per photo, each checked on the corner screen.
  */
 export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean; onScoreFile: (f: File) => void; onStarted: () => void }) {
@@ -335,7 +335,7 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
   };
 
   const nPages = mode === 'pdf' ? (pdf?.selected.length ?? 0) : photos.length;
-  const estimate = chosen && nPages ? aboutTime(nPages * chosen.estSecondsPerPage) : null;
+  const estimate = chosen && nPages ? readerTime(reader, nPages * chosen.estSecondsPerPage) : null;
   const busyNote = busy ? 'Another import is still running — wait for it to finish (progress is shown above).' : null;
 
   return (

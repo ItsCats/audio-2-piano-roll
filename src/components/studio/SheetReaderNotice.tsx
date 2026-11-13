@@ -7,7 +7,7 @@ import { useSettings } from '../../state/settingsStore';
 import { Badge, Button, IconButton, Modal } from '../ui';
 import { isTouchDevice } from '../../lib/wakeLock';
 
-/** Songs read from a PDF or photo by the sheet-music reader (beta): the notes are its estimate. */
+/** Songs read from a PDF or photo by a sheet-music reader (the Quick one is Beta): the notes are its estimate. */
 export const readFromSheet = (song: Pick<Song, 'source'>): boolean => song.source.kind === 'score' && !!song.source.reader;
 
 export const readerWhat = (song: Pick<Song, 'source'>): string => (song.source.reader === 'photo' ? 'a photo' : 'a PDF');

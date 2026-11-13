@@ -29,7 +29,7 @@ import { isMemoryConstrained, pageDeviceInfo } from '../lib/transcription/backen
 import type { Song, SongSource } from '../lib/music/types';
 import type { ParsedScore, ScoreMeta } from '../lib/score';
 import type { Gray, Quad, ReadProgress } from '../lib/omr';
-import { isSheetReaderId, readerOf, sheetReaderChoice, type SheetReaderId } from '../lib/omr/readers';
+import { isSheetReaderId, quickStaysAfterCrash, readerOf, sheetReaderChoice, type SheetReaderId } from '../lib/omr/readers';
 import { toast } from './toastStore';
 import { holdReload } from '../lib/newVersion';
 
@@ -95,7 +95,7 @@ export interface SheetPhoto {
   quad: Quad | null;
 }
 
-/** What the sheet-music reader (beta) reads: chosen pages of a PDF, or photos in page order (one page each). */
+/** What a sheet-music reader (Accurate or Quick) reads: chosen pages of a PDF, or photos in page order (one page each). */
 export type SheetInput =
   | { kind: 'pdf'; file: Blob; fileName: string; pages: number[]; title?: string }
   | { kind: 'photo'; photos: SheetPhoto[]; fileName: string; title?: string };
@@ -156,7 +156,11 @@ interface ImportState {
     meta: { title: string; artist?: string; source: SongSource; separate?: boolean } & ImportRunOptions,
   ) => Promise<string | null>;
   /** run an import that a killed tab left behind (see lib/storage/db.ts PendingImport) again */
-  resumePending: (rec: PendingImport) => Promise<string | null>;
+  /**
+   * Resume an import a killed tab left behind. `reader` (sheet music read by the accurate reader only):
+   * 'accurate' reads it once more with that reader in its low-memory mode; otherwise the quick reader.
+   */
+  resumePending: (rec: PendingImport, opts?: { reader?: SheetReaderId }) => Promise<string | null>;
   /**
    * A YouTube link fetched by the processing server. Nothing in the app calls this since the
    * YouTube tab was replaced by "Computer sound" (2026-11), and the server has YouTube off by
@@ -1008,7 +1012,7 @@ export const useImport = create<ImportState>((set, get) => {
             const image = p.image ?? (await omr.loadPhoto(p.blob)).image;
             // the accurate reader was measured on the photo in color (its page cropping looks at the paper's
             // color): the photo itself, scaled like the gray image the corners were set on
-            const bmp = homr ? await photoBitmap(p.blob, image).catch(() => null) : null;
+            const bmp = homr ? await photoBitmap(p.blob, image, await omr.pictureSize(p.blob).catch(() => null)).catch(() => null) : null;
             if (bmp) bitmaps.push(bmp);
             const s = bmp ? bmp.width / image.w : 1;
             pages.push({ image: bmp ?? image, quad: p.quad && s !== 1 ? (p.quad.map(([x, y]) => [x * s, y * s]) as Quad) : p.quad });
@@ -1060,13 +1064,8 @@ export const useImport = create<ImportState>((set, get) => {
       } catch (err) {
         return fail(ctx, err, {
           retry: () => get().importSheet(input, { lowMemory: opts.lowMemory, reader }),
-          retryQuick:
-            reader === 'accurate'
-              ? () => {
-                  get().setSheetReaderPref('quick');
-                  return get().importSheet(input, { reader: 'quick' });
-                }
-              : undefined,
+          // just this once (the remembered pick stays: a failed read is not a sign of too little memory)
+          retryQuick: reader === 'accurate' ? () => get().importSheet(input, { reader: 'quick' }) : undefined,
         });
       } finally {
         for (const b of bitmaps) b.close();
@@ -1108,19 +1107,25 @@ export const useImport = create<ImportState>((set, get) => {
       }
     },
 
-    resumePending: async (rec) => {
+    resumePending: async (rec, resumeOpts = {}) => {
       if (!rec.blob) return null;
       if (rec.kind === 'score') {
         const sheet = rec.sheet;
         if (!sheet) return null;
         const fileName = rec.fileName || rec.source.fileName || 'Sheet music';
         // the tab most likely ran out of memory (interruptedNotice says so). The accurate reader: read
-        // with the quick one, which needs less memory (and pick it for next time; the choice can be
-        // changed back). The quick reader: again in the low-memory mode (a second crash in that mode is
-        // not offered again).
+        // with the quick one, which needs less memory (remembered for next time only where memory is the
+        // likely reason: quickStaysAfterCrash, and the notice says so), or, when asked, with the accurate
+        // one again in its low-memory mode. The quick reader: again in the low-memory mode (a second crash
+        // in that mode is not offered again).
         const crashedAccurate = readerOf(rec.source) === 'accurate';
-        if (crashedAccurate) get().setSheetReaderPref('quick');
-        const again = crashedAccurate ? { pendingId: rec.id, reader: 'quick' as const } : { pendingId: rec.id, lowMemory: true, reader: 'quick' as const };
+        const accurateAgain = crashedAccurate && resumeOpts.reader === 'accurate';
+        if (crashedAccurate && !accurateAgain && quickStaysAfterCrash(sheet.lowMemory)) get().setSheetReaderPref('quick');
+        const again = accurateAgain
+          ? { pendingId: rec.id, lowMemory: true, reader: 'accurate' as const }
+          : crashedAccurate
+            ? { pendingId: rec.id, reader: 'quick' as const }
+            : { pendingId: rec.id, lowMemory: true, reader: 'quick' as const };
         if (sheet.kind === 'pdf') return get().importSheet({ kind: 'pdf', file: rec.blob, fileName, pages: sheet.pages, title: rec.title }, again);
         const photos: SheetPhoto[] = sheet.photos.map((p) => ({ blob: p.blob, name: p.name, quad: p.quad && p.quad.length === 4 ? (p.quad as Quad) : null }));
         return get().importSheet({ kind: 'photo', photos, fileName, title: rec.title }, again);
@@ -1318,17 +1323,31 @@ const READER_NAME: Record<SheetReaderId, string> = { accurate: 'accurate sheet-m
 const HOMR_INPUT_SIDE = 4000;
 
 /**
- * A photo decoded in color for the accurate reader, upright per its EXIF, about the size of `gray` (the
- * gray image the corners were set on, at most 3000 px) or a little larger, never over 4000 px; a 48 MP
- * photo is decoded straight at that size.
+ * The size to decode a photo at for the accurate reader: about the size of `gray` (the gray image the
+ * corners were set on, at most 3000 px), or, for a photo that was larger than that, its own size up to
+ * 4000 px (never larger than the photo itself: no scaling up). null: decode at the photo's own size.
+ * `original`: the photo's upright size, when known.
  */
-async function photoBitmap(blob: Blob, gray: { w: number; h: number }): Promise<ImageBitmap> {
-  // gray images at the gray size limit came from a larger photo: decode at up to 4000 px instead
+export function photoDecodeSize(gray: { w: number; h: number }, original: { w: number; h: number } | null): { w: number; h: number } | null {
+  // gray images at the gray size limit came from a larger photo
   const big = Math.max(gray.w, gray.h) >= 2990;
-  if (!big) return createImageBitmap(blob, { imageOrientation: 'from-image' });
-  const s = HOMR_INPUT_SIDE / Math.max(gray.w, gray.h);
-  const bmp = await createImageBitmap(blob, { imageOrientation: 'from-image', resizeWidth: Math.round(gray.w * s), resizeHeight: Math.round(gray.h * s), resizeQuality: 'high' });
-  // a browser that ignored the orientation or the resize: not the picture the corners were set on
+  if (!big) return null;
+  const side = Math.min(HOMR_INPUT_SIDE, original ? Math.max(original.w, original.h) : HOMR_INPUT_SIDE);
+  const s = side / Math.max(gray.w, gray.h);
+  return { w: Math.round(gray.w * s), h: Math.round(gray.h * s) };
+}
+
+/**
+ * A photo decoded in color for the accurate reader, upright per its EXIF, at photoDecodeSize; a 48 MP
+ * photo is decoded straight at that size. Throws when the browser decoded a different picture shape
+ * than the gray one (orientation or resize ignored): the corners would be misplaced, and the caller
+ * falls back to the gray image.
+ */
+async function photoBitmap(blob: Blob, gray: { w: number; h: number }, original: { w: number; h: number } | null): Promise<ImageBitmap> {
+  const size = photoDecodeSize(gray, original);
+  const bmp = size
+    ? await createImageBitmap(blob, { imageOrientation: 'from-image', resizeWidth: size.w, resizeHeight: size.h, resizeQuality: 'high' })
+    : await createImageBitmap(blob, { imageOrientation: 'from-image' });
   if (Math.abs(bmp.width / bmp.height - gray.w / gray.h) > 0.02) {
     bmp.close();
     throw new Error('photo decoded differently');

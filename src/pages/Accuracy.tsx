@@ -607,7 +607,7 @@ export default function AccuracyPage() {
               'Re-tune detection in the Notes tab — it re-runs in seconds without re-analyzing the audio.',
               'Fix remaining mistakes in Edit mode; your edits are saved per difficulty level.',
               'Have a MIDI file? Import that instead — it’s exact.',
-              'Printed piano music? A PDF or photo can be read too (Beta) — check the notes afterwards.',
+              'Printed piano music? A PDF or photo can be read too — check the notes afterwards.',
             ].map((t, i) => (
               <li key={t} className="flex gap-3">
                 <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent-500/20 text-[11px] font-semibold text-accent-300">{i + 1}</span>

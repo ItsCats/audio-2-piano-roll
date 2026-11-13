@@ -1,6 +1,6 @@
 /**
- * Sheet-music reading (beta): PDF pages and photos of printed piano music → MusicXML, which then goes
- * through the normal score import (src/lib/score importMusicXml → songFromScore).
+ * The Quick sheet-music reader (Beta): PDF pages and photos of printed piano music → MusicXML, which
+ * then goes through the normal score import (src/lib/score importMusicXml → songFromScore).
  *
  * Pipeline: page images (pdf.ts renders PDF pages; photos are decoded by loadPhoto) → worker.ts
  * (straighten and clean the page, find the piano systems, read each with the Sheet Music Transformer
@@ -365,7 +365,7 @@ export function fitSize(w: number, h: number, maxSide: number): { w: number; h: 
 }
 
 /** Upright size of a picture without decoding all its pixels (<img> reads the header; EXIF applied). */
-async function pictureSize(file: Blob): Promise<{ w: number; h: number } | null> {
+export async function pictureSize(file: Blob): Promise<{ w: number; h: number } | null> {
   if (typeof document === 'undefined' || typeof Image === 'undefined') return null;
   const url = URL.createObjectURL(file);
   try {

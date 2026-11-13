@@ -2,23 +2,23 @@
 
 This directory is derived from **homr** (https://github.com/liebharc/homr), an optical music
 recognition program by Christian Liebhardt and the homr contributors, licensed under the
-**GNU Affero General Public License v3.0** (AGPL-3.0; licence text: `public/models/homr/LICENSE`).
+**GNU Affero General Public License v3.0** (AGPL-3.0; license text: `public/models/homr/LICENSE`).
 It is a port of homr 0.7.1's inference pipeline from Python to TypeScript, so it is a modified version
 of homr and is itself licensed under the AGPL-3.0. Copyright of the original work: the homr
 contributors. Changes: Copyright the Piano2Vision contributors, 2026, also AGPL-3.0.
 
-## Licences of the files here
+## Licenses of the files here
 
 homr is licensed under the AGPL **version 3 only** (its `pyproject.toml` says `AGPL-3.0`; neither its
 README nor its LICENSE offers "any later version"). So:
 
-| Files | Licence (SPDX, as in each file's first line) |
+| Files | License (SPDX, as in each file's first line) |
 |---|---|
 | ports of homr modules: `boxes.ts`, `model.ts`, `ort.ts`, `pipeline.ts`, `preprocess.ts`, `staffDetection.ts`, `staffImage.ts`, `symbols.ts`, `systemRepair.ts`, `triplets.ts`, `vocabulary.ts` | `AGPL-3.0-only` |
 | `musicxml.ts` (homr's writer, and its page joining based on relieur) | `AGPL-3.0-only AND Apache-2.0` |
 | `geom.ts`, `subdiv2d.ts` (OpenCV functions homr calls) | `AGPL-3.0-only AND BSD-3-Clause` |
 | `cv.ts` (OpenCV and Pillow image operations homr calls) | `AGPL-3.0-only AND BSD-3-Clause AND Apache-2.0 AND MIT-CMU` |
-| new code written for Piano2Vision: `index.ts`, `worker.ts`, `protocol.ts`, `page.ts`, `xml.ts`, `fp16w.ts`, `manifest.ts` | `AGPL-3.0-or-later` |
+| new code written for Piano2Vision: `index.ts`, `support.ts`, `worker.ts`, `protocol.ts`, `page.ts`, `xml.ts`, `fp16w.ts`, `manifest.ts` | `AGPL-3.0-or-later` |
 | the model files in `public/models/homr/` | AGPL-3.0 (homr's weights; see the README there) |
 
 Every ported file says in its first lines that it was modified (a TypeScript port of homr 0.7.1) by the
@@ -26,7 +26,7 @@ Piano2Vision contributors in 2026, and which homr module it follows.
 
 ## Third-party notices
 
-| Component | Used for | Copyright | Licence |
+| Component | Used for | Copyright | License |
 |---|---|---|---|
 | homr 0.7.1 (https://github.com/liebharc/homr) | the whole pipeline (ported) and the three networks | Christian Liebhardt and the homr contributors | AGPL-3.0 (`public/models/homr/LICENSE`, unchanged); homr has no NOTICE file |
 | relieur (https://github.com/papoteur-mga/relieur) | joining pages (via homr's `relieur.py`, ported in `musicxml.ts`) | Papoteur and contributors | Apache-2.0 (no NOTICE file upstream) |
@@ -79,7 +79,7 @@ Known differences from Python homr (measured, see `public/models/homr/README.md`
 
 Source of the original: https://github.com/liebharc/homr (PyPI package `homr` 0.7.1).
 
-## Before the reader goes live (licence checklist for the merge)
+## Before the reader goes live (license checklist for the merge)
 
 Status (wired in as the "Accurate reader", src/lib/omr/readers.ts): items 2–6 are done — `package.json`
 says `(AGPL-3.0-or-later AND AGPL-3.0-only)`, the README, Terms, Credits footer and
@@ -101,7 +101,7 @@ branch, not here, and must ship together with the reader:
    `"AGPL-3.0-or-later AND AGPL-3.0-only"`, and in the README, Terms and Credits: "version 3 or later;
    the homr sheet-music reader is version 3 only").
 3. A visible source-code link in the app (AGPL section 13), and a copyright line (e.g. in the Credits
-   footer or Terms) next to the existing warranty disclaimer and licence name.
+   footer or Terms) next to the existing warranty disclaimer and license name.
 4. `THIRD_PARTY_NOTICES.md`: rows for this directory (homr port, AGPL-3.0-only), `public/models/homr/`
    (homr's weights, AGPL-3.0, converted by `tests/homr/convert_models.py` and `package_models.py`,
    training data incl. Camera-PrIMuS CC BY-NC 4.0), relieur (Apache-2.0), OpenCV (BSD-3-Clause /

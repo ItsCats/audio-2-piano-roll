@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only AND BSD-3-Clause
 // Modified (TypeScript port of homr 0.7.1) by the Piano2Vision contributors, 2026; see README.md here.
-// Port of OpenCV's Subdiv2D: copyright notices and licence in LICENSE-OpenCV.txt here.
+// Port of OpenCV's Subdiv2D: copyright notices and license in LICENSE-OpenCV.txt here.
 /**
  * OpenCV's Subdiv2D Delaunay triangulation (quad-edge structure, incremental insertion with edge flips,
  * getTriangleList), ported so that homr's dewarping mesh gets the same triangles in the same order as

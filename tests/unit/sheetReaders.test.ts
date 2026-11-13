@@ -28,6 +28,7 @@ const quickRead = vi.fn(async (_pages: unknown, _opts: unknown) => ({ musicXml: 
 const accurateRead = vi.fn(async (_pages: unknown, _opts: unknown) => ({ musicXml: XML, warnings: ['accurate'], stats: { ms: 20 } }));
 vi.mock('../../src/lib/omr', () => ({
   renderPdfPages: vi.fn(async () => [page]),
+  pictureSize: vi.fn(async () => ({ w: 4, h: 4 })),
   loadPhoto: vi.fn(async () => ({ image: page, quad: null })),
   sheetReaderSupport: () => ({ available: true, recommended: true, downloadMB: 24, memoryMB: 800, estSecondsPerPage: 30, threads: 3, phone: false }),
   readSheetImages: (pages: unknown, opts: unknown) => quickRead(pages, opts),
@@ -38,7 +39,7 @@ vi.mock('../../src/lib/omr/homr', () => ({
 }));
 
 const readers = await import('../../src/lib/omr/readers');
-const { useImport, parsePrefs } = await import('../../src/state/importStore');
+const { useImport, parsePrefs, photoDecodeSize } = await import('../../src/state/importStore');
 const { interruptedNotice } = await import('../../src/state/interruptedImport');
 const { readByBeta } = await import('../../src/components/studio/SheetReaderNotice');
 const { homrReaderSupport } = await import('../../src/lib/omr/homr/support');
@@ -92,6 +93,15 @@ describe('which reader by default', () => {
     const phone = homrReaderSupport(iphone, 4, { worker: true, simd: true });
     expect(phone.threads).toBe(1);
     expect(readers.readerFacts('accurate', phone)).toMatch(/about 3 minutes per page$/);
+    // a many-core computer (4 threads, ~40 s estimated): still "about a minute" (measured 32–73 s), not a
+    // "40 seconds" that would sound like the quick reader
+    const fast = homrReaderSupport(desktop, 4, { worker: true, simd: true });
+    expect(fast.estSecondsPerPage).toBeLessThan(45);
+    expect(readers.readerFacts('accurate', fast)).toMatch(/about a minute per page$/);
+    expect(readers.readerTime('accurate', 3 * fast.estSecondsPerPage)).toBe('about 2 minutes');
+    // the quick reader keeps its seconds (its phone estimate stays "about 50 seconds")
+    expect(readers.readerTime('quick', 45)).toBe('about 50 seconds');
+    expect(readers.readerTime('quick', 55)).toBe('about a minute');
     expect(readers.SHEET_READER_INFO.quick.beta).toBe(true);
     expect(readers.SHEET_READER_INFO.accurate.beta).toBe(false);
   });
@@ -158,14 +168,15 @@ describe('importSheet runs the chosen reader', () => {
     expect(accurateRead).toHaveBeenCalledTimes(1);
   });
 
-  it('a failed accurate read offers the quick reader (and picks it for next time)', async () => {
+  it('a failed accurate read offers the quick reader (just this once: the pick stays)', async () => {
     accurateRead.mockRejectedValueOnce(new Error('The sheet-music reader stopped.'));
     await useImport.getState().importSheet(pdf());
     const failed = useImport.getState().failed;
     expect(failed?.retryQuick).toBeTypeOf('function');
     await failed!.retryQuick!();
     expect(quickRead).toHaveBeenCalledTimes(1);
-    expect(useImport.getState().prefs.sheetReader).toBe('quick');
+    expect(useImport.getState().prefs.sheetReader).toBeUndefined();
+    expect(vi.mocked(db.saveSong).mock.calls.at(-1)?.[0].source.sheetReader).toBe('quick');
     // a failed quick read has nothing else to offer
     quickRead.mockRejectedValueOnce(new Error('No music lines were found in this PDF.'));
     await useImport.getState().importSheet(pdf());
@@ -190,25 +201,108 @@ describe('importSheet runs the chosen reader', () => {
     expect(quickRead).toHaveBeenCalledTimes(1);
     // the quick reader in its normal mode (it needs much less memory), not the one-thread retry
     expect(quickRead.mock.calls[0][1]).not.toMatchObject({ threads: 1 });
-    expect(useImport.getState().prefs.sheetReader).toBe('quick');
+    // a computer (one crash may just have been a reload): the pick is not changed
+    expect(useImport.getState().prefs.sheetReader).toBeUndefined();
     // a quick read that took the tab down: once more in the low-memory mode, still with the quick reader
     await useImport.getState().resumePending({ ...rec, source: { ...rec.source, sheetReader: 'quick' } });
     expect(accurateRead).not.toHaveBeenCalled();
     expect(quickRead.mock.calls[1][1]).toMatchObject({ threads: 1, release: true });
+  });
+
+  const crashed = (over: { lowMemory?: boolean } = {}) => ({
+    id: 'p2',
+    title: 'Prelude',
+    kind: 'score' as const,
+    source: { kind: 'score' as const, reader: 'pdf' as const, sheetReader: 'accurate' as const, fileName: 'prelude.pdf' },
+    blob: new Blob(['%PDF']),
+    mimeType: 'application/pdf',
+    fileName: 'prelude.pdf',
+    separate: false,
+    startedAt: 1,
+    sheet: { kind: 'pdf' as const, pages: [1], ...over },
+  });
+
+  it('"Try the Accurate reader again": the accurate reader once more, in its low-memory mode', async () => {
+    await useImport.getState().resumePending(crashed(), { reader: 'accurate' });
+    expect(quickRead).not.toHaveBeenCalled();
+    expect(accurateRead).toHaveBeenCalledTimes(1);
+    expect(accurateRead.mock.calls[0][1]).toMatchObject({ threads: 1, release: true });
+    // the crash-recovery record says so (a second crash then offers only the quick reader)
+    expect(vi.mocked(db.savePending).mock.calls.at(-1)?.[0]).toMatchObject({ id: 'p2', source: { sheetReader: 'accurate' }, sheet: { lowMemory: true } });
+    expect(vi.mocked(db.saveSong).mock.calls.at(-1)?.[0].source.sheetReader).toBe('accurate');
+    expect(useImport.getState().prefs.sheetReader).toBeUndefined();
+  });
+
+  it('the quick reader becomes the pick only where memory is the likely reason', async () => {
+    // a second crash, already in the low-memory mode
+    await useImport.getState().resumePending(crashed({ lowMemory: true }));
+    expect(quickRead).toHaveBeenCalledTimes(1);
+    expect(useImport.getState().prefs.sheetReader).toBe('quick');
+    // a phone
+    useImport.setState({ prefs: { separate: {}, sheetReader: 'accurate' } });
+    vi.stubGlobal('navigator', { userAgent: iphone.ua, maxTouchPoints: 5 });
+    try {
+      await useImport.getState().resumePending(crashed());
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(quickRead).toHaveBeenCalledTimes(2);
+    expect(useImport.getState().prefs.sheetReader).toBe('quick');
+  });
+
+  it('photos for the accurate reader: the gray image when the color photo cannot be decoded the same way', async () => {
+    const photo = { kind: 'photo' as const, photos: [{ blob: new Blob(['x'], { type: 'image/jpeg' }), name: 'p.jpg', quad: null }], fileName: 'p.jpg' };
+    await useImport.getState().importSheet(photo);
+    expect(accurateRead).toHaveBeenCalledTimes(1);
+    // (no createImageBitmap here: the gray page is read)
+    expect((accurateRead.mock.calls[0][0] as { image: unknown }[])[0].image).toBe(page);
+  });
+});
+
+describe('the photo size for the accurate reader', () => {
+  it('the gray size for photos up to 3000 px, the photo itself up to 4000 px for larger ones, never scaled up', () => {
+    expect(photoDecodeSize({ w: 2000, h: 1500 }, { w: 2000, h: 1500 })).toBeNull();
+    expect(photoDecodeSize({ w: 3000, h: 2250 }, { w: 8000, h: 6000 })).toEqual({ w: 4000, h: 3000 });
+    // slightly over 3000 px: its own size, not 4000
+    expect(photoDecodeSize({ w: 3000, h: 2250 }, { w: 3200, h: 2400 })).toEqual({ w: 3200, h: 2400 });
+    expect(photoDecodeSize({ w: 2250, h: 3000 }, { w: 2400, h: 3200 })).toEqual({ w: 2400, h: 3200 });
+    // size unknown: up to 4000
+    expect(photoDecodeSize({ w: 3000, h: 2000 }, null)).toEqual({ w: 4000, h: 2667 });
   });
 });
 
 describe('the interrupted-import notice', () => {
   const base = { title: 'Prelude', kind: 'score' as const, blob: new Blob(['x']), sheet: { kind: 'pdf' as const, pages: [1] } };
 
-  it('after the accurate reader: offers the quick reader', () => {
-    const n = interruptedNotice({ ...base, source: { sheetReader: 'accurate' } });
+  it('after the accurate reader on a computer: offers the quick reader and the accurate one again', () => {
+    const n = interruptedNotice({ ...base, source: { sheetReader: 'accurate' } }, undefined, desktop);
     expect(n.canRetry).toBe(true);
     expect(n.retryLabel).toBe('Use the Quick reader');
-    expect(n.body).toMatch(/Accurate reader/);
-    expect(n.body).toMatch(/Quick reader needs much less memory/);
+    expect(n.retryAccurateLabel).toBe('Try the Accurate reader again');
+    expect(n.body).toMatch(/with the Accurate reader was interrupted/);
+    expect(n.body).toMatch(/Quick reader, which needs much less memory/);
+    expect(n.body).toMatch(/try the Accurate reader again in a slower mode/);
+    expect(n.body).not.toMatch(/picked for next time/);
+  });
+
+  it('after the accurate reader on a phone, or a second time: only the quick reader, and says it stays picked', () => {
+    for (const [rec, device] of [
+      [{ ...base, source: { sheetReader: 'accurate' } }, iphone],
+      [{ ...base, sheet: { ...base.sheet, lowMemory: true }, source: { sheetReader: 'accurate' } }, desktop],
+    ] as const) {
+      const n = interruptedNotice(rec, undefined, device);
+      expect(n.canRetry).toBe(true);
+      expect(n.retryLabel).toBe('Use the Quick reader');
+      expect(n.retryAccurateLabel).toBeUndefined();
+      expect(n.body).toMatch(/Quick reader needs much less memory/);
+      expect(n.body).toMatch(/The Quick reader is then picked for next time \(you can switch back on the Sheet music tab\)/);
+    }
+    const again = interruptedNotice({ ...base, sheet: { ...base.sheet, lowMemory: true }, source: { sheetReader: 'accurate' } }, undefined, desktop);
+    expect(again.title).toBe('Reading the sheet music stopped again');
+    expect(again.body).toMatch(/stopped again, even in the slower mode/);
     // the file was not kept: still names the quick reader
-    const lost = interruptedNotice({ ...base, blob: undefined, sheet: undefined, source: { sheetReader: 'accurate' } });
+    const lost = interruptedNotice({ ...base, blob: undefined, sheet: undefined, source: { sheetReader: 'accurate' } }, undefined, desktop);
+    expect(lost.retryAccurateLabel).toBeUndefined();
     expect(lost.canRetry).toBe(false);
     expect(lost.body).toMatch(/pick the Quick reader/);
   });

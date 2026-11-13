@@ -59,9 +59,19 @@ export const readerOf = (src: { sheetReader?: unknown } | undefined | null): She
 
 /** "about a minute" for a number of seconds */
 export function aboutTime(sec: number): string {
-  if (sec < 45) return `about ${Math.max(10, Math.round(sec / 10) * 10)} seconds`;
+  if (sec < 50) return `about ${Math.max(10, Math.round(sec / 10) * 10)} seconds`;
   const m = Math.round(sec / 60);
   return m <= 1 ? 'about a minute' : `about ${m} minutes`;
+}
+
+/**
+ * How long a reader takes for `sec` seconds of estimated work. The accurate reader's times are given in
+ * whole minutes (at least "about a minute"): its measured pages took 32–73 s on a shared computer, so a
+ * "40 seconds" estimate from a many-core machine would promise more than it keeps (and sound like the
+ * quick reader's). The quick reader's times keep their seconds.
+ */
+export function readerTime(id: SheetReaderId, sec: number): string {
+  return id === 'accurate' ? aboutTime(Math.max(60, sec)) : aboutTime(sec);
 }
 
 /**
@@ -69,5 +79,15 @@ export function aboutTime(sec: number): string {
  * page".
  */
 export function readerFacts(id: SheetReaderId, s: { downloadMB: number; estSecondsPerPage: number }): string {
-  return `About ${SHEET_READER_INFO[id].notesRight}% of notes right · ${s.downloadMB} MB download once · ${aboutTime(s.estSecondsPerPage)} per page`;
+  return `About ${SHEET_READER_INFO[id].notesRight}% of notes right · ${s.downloadMB} MB download once · ${readerTime(id, s.estSecondsPerPage)} per page`;
+}
+
+/**
+ * After the accurate reader took the tab down and the user reads the kept file with the quick reader:
+ * does the quick reader become the remembered pick? Only where memory is the likely reason (a phone,
+ * tablet or low-memory device, or a second crash in the low-memory mode); on a computer one crash is as
+ * likely an accidental reload, so the pick stays as it was. The notice says when it changes.
+ */
+export function quickStaysAfterCrash(lowMemory: boolean | undefined, device: DeviceInfo | undefined = pageDeviceInfo()): boolean {
+  return !!lowMemory || (!!device && isMemoryConstrained(device));
 }
