@@ -570,6 +570,10 @@ export function accompFromRaw(
 ): { notes: Note[]; main: Note[] } {
   const melody = lead.melody ?? [];
   let main = cleanNotes(raw, rms, params, duration, ctx);
+  // the notes the beat is tracked on (the returned `main`): from before the bass-line swap below,
+  // so the tempo and beat grid stay as without it (on vocal-3 the cleaner bass line moved the
+  // estimate to double time, 85.7 -> 171.4 BPM)
+  const tempoNotes = main;
   // the bass stem read as one bass line in place of the low notes it explains (bassLine.ts)
   const bassLine = ctx.bass ? decodeBassLine(ctx.bass) : [];
   if (ctx.bass && bassLine.length) main = mergeBassLine(main, bassLine, ctx.bass);
@@ -577,7 +581,7 @@ export function accompFromRaw(
   if (pitch && STEM_PITCH.tag) main = tagTune(main, pitch);
   // everything below is the "Full song" preset's (ExtractionParams.leadPass); it does not depend on
   // the extra pass having run (a re-detection with a more sensitive main pass has none)
-  if (!params.leadPass) return { notes: main, main };
+  if (!params.leadPass) return { notes: main, main: tempoNotes };
   const { frames, onsets, nFrames } = ctx;
   const rise = frames && nFrames ? (n: Note) => frameRise(frames, nFrames, timeToFrame(n.start + ONSET_LATENCY), n.midi) : undefined;
   // one bass note the kick drum chopped into several (music/cleanup.ts foldBassRestrikes)
@@ -620,7 +624,7 @@ export function accompFromRaw(
   // / Medium right-hand chroma accuracy rose, 0.236 -> 0.247 / 0.225 -> 0.242, and the
   // voicing-counted accuracy fell, 0.533 -> 0.526 / 0.571 -> 0.556, held notes running into the
   // singer's rests).
-  if (!frames || !nFrames || !rise || melody.length) return { notes, main };
+  if (!frames || !nFrames || !rise || melody.length) return { notes, main: tempoNotes };
   // the tune line's notes held while the model still hears them (music/sustain.ts)
   const held = sustainTuneLine(notes, duration, {
     // ...and, on separated songs, while the stem's pitch track stays at their pitch class (stemPitch.ts)
@@ -637,7 +641,7 @@ export function accompFromRaw(
         }
       : {}),
   });
-  return { notes: held, main };
+  return { notes: held, main: tempoNotes };
 }
 
 /** Turn raw model note events into cleaned, hand-assigned notes. */
