@@ -104,13 +104,19 @@ export const MAX_PAGES = 20;
 /** Most pages in one go on a phone or tablet (2–4.5 minutes each there). */
 export const MAX_PAGES_PHONE = 5;
 /**
- * Extra browser memory while reading, MB (desktops: all three networks loaded). Measured in headless
- * Chromium (whole-browser PSS, public/models/homr/README.md): +0.93–1.08 GB on the first page, up to
- * +1.36 GB on a synthetic photo; less since the float16 weights are expanded before session creation.
+ * Extra browser memory while reading, MB (desktops: all three networks kept loaded). Measured
+ * 2026-11-13 in headless Chromium on a production build (public/models/homr/README.md): the whole
+ * browser's PSS grows by 0.97–1.08 GB on the first page (download included), the tab's renderer process
+ * (which holds the worker) peaks 0.9–1.0 GB above its idle size; an earlier run saw +1.36 GB on one
+ * synthetic photo.
  */
-export const HOMR_EXTRA_MB = 1400;
-/** The same in low-memory mode (phones: one network at a time, one thread). */
-export const HOMR_EXTRA_MB_LOW = 700;
+export const HOMR_EXTRA_MB = 1200;
+/**
+ * The same in low-memory mode (phones: one network at a time, one thread, one window per run): the
+ * renderer's peak is only ~2–15 % lower (the encoder + decoder step alone needs ~500 MB of WASM memory),
+ * but the memory goes back right after the job.
+ */
+export const HOMR_EXTRA_MB_LOW = 1100;
 /**
  * Seconds per page of 3–4 systems by WASM threads (index = threads), headless Chromium on a shared
  * 4-core machine: 1 thread 48–80 s, 3 threads 32–59 s for pages of 2–5 systems.
@@ -269,6 +275,9 @@ export function pagePixels(src: PageSource): Omit<PageInput, 'quad'> & { scale: 
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(s, 0, 0, w, h);
   const d = ctx.getImageData(0, 0, w, h);
+  // drop the canvas's own pixels now (the page's memory, not the GC's timing, matters on phones)
+  canvas.width = 0;
+  canvas.height = 0;
   return { w, h, channels: 4, data: new Uint8Array(d.data.buffer), scale: w / s.width };
 }
 
