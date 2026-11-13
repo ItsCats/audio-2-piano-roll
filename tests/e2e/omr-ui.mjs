@@ -1,5 +1,5 @@
 /**
- * The sheet-music reader (beta) as a user meets it, in Playwright Chromium on a production build served
+ * The Quick sheet-music reader (Beta; tests/e2e/reader-choice.mjs covers the Accurate reader and the choice) as a user meets it, in Playwright Chromium on a production build served
  * with the exact netlify.toml headers (tests/e2e/isolation.server.py: CSP without 'unsafe-eval', COOP/COEP).
  *
  *   npx vite build --outDir /tmp/p2v-dist
@@ -69,6 +69,12 @@ const DEVICES = {
 async function newPage(contextOpts) {
   const ctx = await browser.newContext({ acceptDownloads: true, ...contextOpts });
   await ctx.addInitScript(() => {
+    // this test is about the Quick reader: picked once, like a user would (the Accurate reader is the default on desktop)
+    try {
+      const k = 'piano2vision-import-prefs';
+      const p = JSON.parse(localStorage.getItem(k) || '{"separate":{}}');
+      if (!p.sheetReader) localStorage.setItem(k, JSON.stringify({ ...p, sheetReader: 'quick' }));
+    } catch {}
     window.__csp = [];
     document.addEventListener('securitypolicyviolation', (e) => window.__csp.push(`${e.violatedDirective} ${e.blockedURI}`));
   });
@@ -91,7 +97,7 @@ async function readUntilStudio(page, tag, { midShot = true } = {}) {
   const t0 = Date.now();
   while (!/\/studio\//.test(page.url())) {
     const t = await cardText(page).catch(() => '');
-    const m = t.match(/(Preparing[^·]*|Downloading the sheet-music reader[^·]*|Starting the sheet-music reader[^·]*|Finding the lines[^·]*|Reading (page \d+ of \d+, )?line \d+ of \d+[^·]*)/);
+    const m = t.match(/(Preparing[^·]*|Downloading the (?:quick |accurate )?sheet-music reader[^·]*|Starting the (?:quick |accurate )?sheet-music reader[^·]*|Finding the lines[^·]*|Reading (page \d+ of \d+, )?line \d+ of \d+[^·]*)/);
     if (m) seen.add(m[1].replace(/….*$/, '…').trim());
     if (midShot && !shotTaken && /Reading (page|line)/.test(t)) {
       shotTaken = true;
@@ -226,7 +232,7 @@ try {
     await page.waitForTimeout(500);
     await shot(page, `${dev}-tab`, true);
     check(`${dev}: page is cross-origin isolated`, await page.evaluate(() => crossOriginIsolated));
-    check(`${dev}: Beta badge and its line`, (await page.getByText('Beta', { exact: true }).first().isVisible()) && (await page.getByText('Works best with clear printed piano music. Check the notes afterwards.').isVisible()));
+    check(`${dev}: Beta badge and its line`, (await page.getByText('Beta', { exact: true }).first().isVisible()) && (await page.getByText('Works best with clear printed music. Check the notes afterwards.').isVisible()));
     check(`${dev}: no "coming soon"`, !(await page.getByText(/coming soon/i).count()));
     const takePhoto = page.getByRole('button', { name: 'Take a photo of sheet music' });
     check(`${dev}: "Take a photo" ${phone ? 'shown' : 'hidden'}`, (await takePhoto.isVisible().catch(() => false)) === phone);
@@ -249,7 +255,7 @@ try {
     check(`${dev} pdf: side scroll with thumbnails`, (await sideScroll(page)) <= 0);
     await page.getByRole('button', { name: new RegExp(`^Read ${want} page`) }).click();
     const r1 = await readUntilStudio(page, `${dev}-pdf`);
-    check(`${dev} pdf: progress said what it does`, r1.seen.some((s) => /Downloading the sheet-music reader \(once, \d+ MB\)/.test(s)) && r1.seen.some((s) => /Reading (page 1 of 2, )?line 1 of \d+/.test(s)), r1);
+    check(`${dev} pdf: progress said what it does`, r1.seen.some((s) => /Downloading the quick sheet-music reader \(once, \d+ MB\)/.test(s)) && r1.seen.some((s) => /Reading (page 1 of 2, )?line 1 of \d+/.test(s)), r1);
     if (want > 1) check(`${dev} pdf: progress names the page`, r1.seen.some((s) => /Reading page 2 of 2, line \d+ of \d+/.test(s)));
     await studioChecks(page, dev, 'pdf');
     const read = (await songs(page)).find((s) => s.source.reader === 'pdf');

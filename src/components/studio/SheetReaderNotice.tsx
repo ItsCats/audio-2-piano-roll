@@ -107,7 +107,9 @@ export function SheetReaderBadge({ song }: { song: Song }) {
         className="focus-ring rounded-md"
         title={`Read from ${readerWhat(song)} by the ${readByBeta(song) ? 'Quick sheet-music reader (Beta)' : 'Accurate sheet-music reader'} — check the notes`}
       >
-        <Badge tone="warn">{readByBeta(song) ? 'Sheet music · Beta' : 'Read from sheet music'}</Badge>
+        <span className="whitespace-nowrap">
+          <Badge tone="warn">{readByBeta(song) ? 'Sheet music · Beta' : `Read from ${song.source.reader === 'photo' ? 'photo' : 'PDF'}`}</Badge>
+        </span>
       </button>
       <TipsModal open={open} onClose={() => setOpen(false)} song={song} />
     </>

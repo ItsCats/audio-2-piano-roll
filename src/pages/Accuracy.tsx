@@ -15,6 +15,7 @@ import {
   PLAYABILITY,
   SEPARATION_EFFECT,
   SHEET_READER,
+  readerScoreText,
   SONG_ROWS,
   SONG_SUMMARY,
   SPECIALIST,
@@ -190,20 +191,23 @@ function BeforeAfterTable({ rows, cols = ['What we measured', 'Before', 'Now'], 
   );
 }
 
-/** Sheet music from PDFs and photos (Beta): measured numbers and limits. */
+/** Sheet music from PDFs and photos: both readers' measured numbers and limits. */
 function SheetReaderSection() {
+  const rows = SHEET_READER.rows.map((r) => ({ what: r.what, note: r.note, before: readerScoreText(r.accurate), after: readerScoreText(r.quick) }));
   return (
     <section id="sheet-reader" className="scroll-mt-6">
       <h2 className="mb-1 flex flex-wrap items-center gap-2 text-[15px] font-semibold text-ink-50">
-        <ScanLine size={16} className="text-accent-400" /> Sheet music from PDFs and photos <Badge tone="warn">Beta</Badge>
+        <ScanLine size={16} className="text-accent-400" /> Sheet music from PDFs and photos
       </h2>
       <p className="mb-3 max-w-3xl text-[12.5px] leading-relaxed text-ink-300">{SHEET_READER.intro}</p>
-      <BeforeAfterTable rows={[...SHEET_READER.rows]} cols={['What was read', 'Notes right', 'Rhythm right']} even />
+      <p className="mb-1.5 text-[11.5px] text-ink-400">Notes right / rhythm right</p>
+      <BeforeAfterTable rows={rows} cols={['What was read', 'Accurate reader', 'Quick reader (Beta)']} even />
       <Note>{SHEET_READER.metric}</Note>
       <Note>{SHEET_READER.speed}</Note>
       <Note>
-        Songs read this way are labeled <b className="text-warn">Sheet music · Beta</b> in the Studio. Compare them with your page and fix mistakes in Edit
-        mode. Have the music as a MusicXML or MuseScore file? Import that instead — it is exact.
+        Songs read by the Quick reader are labeled <b className="text-warn">Sheet music · Beta</b> in the Studio, those read by the Accurate reader{' '}
+        <b className="text-warn">Read from sheet music</b>. Compare them with your page and fix mistakes in Edit mode. Have the music as a MusicXML or
+        MuseScore file? Import that instead — it is exact.
       </Note>
       <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {SHEET_READER.limits.map((l) => (
