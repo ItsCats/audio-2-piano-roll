@@ -150,7 +150,9 @@ const heads = (page) =>
         const r = e.getBoundingClientRect();
         return { ids: e.getAttribute('data-note-ids'), x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height };
       })
-      .filter((h) => h.ids && h.y > sc.top + 70 && h.y < sc.bottom - 30 && h.x > sc.left + 10 && h.x < sc.right - 10);
+      .filter((h) => h.ids && h.y > sc.top + 70 && h.y < sc.bottom - 30 && h.x > sc.left + 10 && h.x < sc.right - 10)
+      // not under a toast or a toolbar
+      .filter((h) => !!document.elementFromPoint(h.x, h.y)?.closest('[data-testid="sheet-music"]'));
   });
 const selectedIds = (page) => page.evaluate(() => [...new Set([...document.querySelectorAll('.sheet-sel')].flatMap((e) => (e.getAttribute('data-note-ids') || '').split(',').filter(Boolean)))].sort());
 async function download(page, action) {

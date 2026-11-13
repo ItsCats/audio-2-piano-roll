@@ -46,8 +46,8 @@ export function retime(song: Song, pos0In: number, qpm: number): { patch: Retime
     if (i >= lock.beats.length - 1 && tb > endT + 4 * (60 / qpm) * qPerBeat * 8 && beats.length >= 2) break;
     if (beats.length >= 200000) break;
   }
-  const after = Number.isFinite(pos1) ? lock.bpm : Math.min(400, Math.max(20, qpm / qPerBeat));
-  const grid: SheetGridLock = { ...lock, beats, db: lock.db - iFirst, bpm: after };
+  // the beats run past the end, so the extrapolation tempo stays (it is also the sheet's first tempo mark)
+  const grid: SheetGridLock = { ...lock, beats, db: lock.db - iFirst };
 
   const mapNote = (n: Note): Note => {
     const start = f(n.start);

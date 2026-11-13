@@ -108,7 +108,8 @@ const heads = (page) =>
         const r = e.getBoundingClientRect();
         return { ids: e.getAttribute('data-note-ids'), x: r.left + r.width / 2, y: r.top + r.height / 2 };
       })
-      .filter((h) => h.ids && h.y > sc.top + 60 && h.y < sc.bottom - 20);
+      .filter((h) => h.ids && h.y > sc.top + 60 && h.y < sc.bottom - 20)
+      .filter((h) => !!document.elementFromPoint(h.x, h.y)?.closest('[data-testid="sheet-music"]'));
   });
 /** Single-note heads of one hand grouped into lines (document order), as note ids. */
 const handLines = (page, hand) =>
@@ -325,7 +326,7 @@ try {
     // the drawn sheet
     const texts = await svgTexts(page);
     const n3 = (arr) => arr.filter((t) => t === '3').length;
-    check('drawn: fingering 3, mf and f, the words "dolce", the tempo mark', n3(texts) > n3(texts0) && texts.includes('mf') && texts.includes('f') && texts.includes('dolce') && texts.some((t) => /=\s*90/.test(t)), { threes: [n3(texts0), n3(texts)], some: texts.filter((t) => !/^\d+$/.test(t)).slice(0, 12) });
+    check('drawn: fingering 3, mf and f, the words "dolce", the tempo mark (the first bars keep ♩ = 66)', n3(texts) > n3(texts0) && texts.includes('mf') && texts.includes('f') && texts.includes('dolce') && texts.some((t) => /=\s*90/.test(t)) && /=\s*66/.test(texts.find((t) => /=\s*\d+/.test(t)) ?? ''), { threes: [n3(texts0), n3(texts)], some: texts.filter((t) => !/^\d+$/.test(t)).slice(0, 12) });
 
     // MusicXML download
     const xml = await musicXml(page);

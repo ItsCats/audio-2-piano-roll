@@ -59,6 +59,18 @@ describe('retime', () => {
     expect(s1.measureCount).toBe(score0.measureCount);
   });
 
+  it('the tempo marks before the change stay; the new one shows from its bar', () => {
+    const song = locked(GOLDEN_SONGS[0][1]());
+    const t = buildSheet(song, 'hard').time;
+    const before = buildSheet(song, 'hard').tempoMarks;
+    const pos = t.measureStart(4);
+    const withMark: Song = { ...song, sheet: { ...song.sheet!, tempos: [{ pos, bpm: 90, unit: 'q', retimed: true }] } };
+    const after = buildSheet({ ...withMark, ...retime(withMark, pos, 90).patch }, 'hard').tempoMarks;
+    expect(after[0]).toEqual(before[0]);
+    expect(after.filter((m) => m.measure < 4)).toEqual(before.filter((m) => m.measure < 4));
+    expect(after.at(-1)).toMatchObject({ measure: 4, bpm: 90 });
+  });
+
   it('is refused with a recording or a hands video', () => {
     const s = GOLDEN_SONGS[0][1]();
     expect(canRetime(s)).toBe(true);
