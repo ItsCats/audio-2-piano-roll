@@ -102,6 +102,11 @@ let serverLog = '';
 server.stderr.on('data', (d) => (serverLog += d));
 const base = `http://127.0.0.1:${port}`;
 await new Promise((r) => setTimeout(r, 800));
+if (server.exitCode !== null) {
+  // e.g. the port is taken by another server: don't test someone else's build
+  console.error(`the test server did not start on port ${port}:\n${serverLog}`);
+  process.exit(2);
+}
 const browser = await chromium.launch();
 
 const DEVICES = {
@@ -195,6 +200,10 @@ async function scenario(dev) {
   const shown = await waitFor(async () => (await playBtn(page).count()) > 0, 30000);
   const shownAt = (Date.now() - t0) / 1000;
   check(`${dev}: "Play a game while you wait" shown by 20 s`, !!shown && shownAt <= 22, { seconds: +shownAt.toFixed(1) });
+  if (!shown) {
+    await shot(page, `debug-no-game-button-${dev}`);
+    console.log('import card:', await page.evaluate(() => document.querySelector('[data-import-card]')?.textContent ?? '(none)'), errors);
+  }
   if (dev === 'iphone') await shot(page, 'import-card-phone');
   await playBtn(page).click();
   await dialog(page).waitFor();
