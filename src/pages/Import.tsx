@@ -16,6 +16,7 @@ import { toast } from '../state/toastStore';
 import { createScreenWakeLock, isTouchDevice } from '../lib/wakeLock';
 import { saveBlobAs } from '../lib/saveBlob';
 import { YOUTUBE_IMPORT_PATH, documentIsolated, isYouTubeImportPath, switchDocument } from '../lib/isolation';
+import { audioSessionForRecording } from '../lib/audio/audioSession';
 
 type Tab = 'audio' | 'youtube' | 'midi' | 'record';
 
@@ -473,7 +474,7 @@ function RecordTab({ busy }: { busy: boolean }) {
     return () => clearInterval(t);
   }, [rec]);
   // leaving the tab mid-recording: stop the microphone (nothing is imported) and let the screen lock
-  const live = useRef<{ r: MediaRecorder; stream: MediaStream } | null>(null);
+  const live = useRef<{ r: MediaRecorder; stream: MediaStream; endSession: () => void } | null>(null);
   useEffect(
     () => () => {
       const l = live.current;
@@ -486,6 +487,7 @@ function RecordTab({ busy }: { busy: boolean }) {
           /* already stopped */
         }
         l.stream.getTracks().forEach((t) => t.stop());
+        l.endSession();
       }
       chunks.current = [];
       void wake.hold(false);
@@ -495,6 +497,8 @@ function RecordTab({ busy }: { busy: boolean }) {
   const start = async () => {
     // asked for inside the tap (some browsers only grant it with a user gesture); never throws
     void wake.hold(true);
+    // iPhone: the microphone needs the 'play-and-record' audio session (back to playback when stopped)
+    const endSession = audioSessionForRecording();
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
       const r = new MediaRecorder(stream);
@@ -503,6 +507,7 @@ function RecordTab({ busy }: { busy: boolean }) {
       r.onstop = () => {
         live.current = null;
         stream.getTracks().forEach((t) => t.stop());
+        endSession();
         const blob = new Blob(chunks.current, { type: r.mimeType || 'audio/webm' });
         // the Blob holds the data now: don't keep a second reference to every chunk
         chunks.current = [];
@@ -512,9 +517,10 @@ function RecordTab({ busy }: { busy: boolean }) {
         void wake.hold(false);
       };
       r.start(500);
-      live.current = { r, stream };
+      live.current = { r, stream, endSession };
       setRec({ r, start: Date.now(), stream });
     } catch (e) {
+      endSession();
       void wake.hold(false);
       toast.error('Microphone unavailable', (e as Error).message);
     }
