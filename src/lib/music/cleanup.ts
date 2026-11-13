@@ -361,3 +361,44 @@ export function songDuration(notes: Note[]): number {
   for (const n of notes) end = Math.max(end, n.start + n.dur);
   return end;
 }
+
+/**
+ * Same-pitch bass re-detections without a new attack, for the "Full song" preset. In a band mix the
+ * kick drum fires Basic Pitch's onset head on a held bass note, so one bass note comes out as
+ * several (with separation the drum-less stem still keeps the kick's low body): a note below
+ * `below` that starts at most `gap` s after the previous note of its pitch ends, and whose frame
+ * activation rises by less than `rise` at its start (frameRise: the bass pitch was not struck
+ * again), continues that note. mergeContinuations cannot do this: the model onset there is strong.
+ * Measured offline on the six band songs (stored posteriors, with / without separation): Hard
+ * drum-suspect low notes 10.75 -> 10.42 / 14.72 -> 13.98 per minute, Hard chopped notes 16.1 ->
+ * 14.6 % / 16.9 -> 15.8 %, Hard and Easy left-hand bass chroma accuracy unchanged (0.785 / 0.673;
+ * 0.676 / 0.623). Folding a very low note into a louder note an octave up as well lowered the bass
+ * accuracy (band-instrumental-1 0.717 -> 0.713, vocal-4 0.761 -> 0.754) and is not done.
+ */
+export const BASS_FOLD = { enabled: true, below: 48, gap: 0.15, rise: 0.1 };
+
+export function foldBassRestrikes(notes: Note[], rise: (n: Note) => number, rule = BASS_FOLD): Note[] {
+  const byPitch = new Map<number, Note[]>();
+  for (const n of sortNotes(notes)) {
+    if (n.midi >= rule.below) continue;
+    let a = byPitch.get(n.midi);
+    if (!a) byPitch.set(n.midi, (a = []));
+    a.push(n);
+  }
+  const drop = new Set<number>();
+  const end = new Map<number, number>();
+  for (const arr of byPitch.values()) {
+    let prev: Note | undefined;
+    for (const n of arr) {
+      const prevEnd = prev ? (end.get(prev.id) ?? prev.start + prev.dur) : 0;
+      if (prev && n.start > prev.start && n.start - prevEnd <= rule.gap && rise(n) < rule.rise) {
+        end.set(prev.id, Math.max(prevEnd, n.start + n.dur));
+        drop.add(n.id);
+        continue;
+      }
+      prev = n;
+    }
+  }
+  if (!drop.size) return notes;
+  return notes.filter((n) => !drop.has(n.id)).map((n) => (end.has(n.id) ? { ...n, dur: end.get(n.id)! - n.start } : n));
+}
