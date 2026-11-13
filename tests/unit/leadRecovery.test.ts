@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LEAD_RECOVERY, capDensity, freshCandidates, overtoneCandidates, recoverLead, splitRestrikes } from '../../src/lib/music/leadRecovery';
+import { LEAD_RECOVERY, capDensity, freshCandidates, octaveAttacks, overtoneCandidates, recoverLead, splitRestrikes } from '../../src/lib/music/leadRecovery';
 import { mergeMelody } from '../../src/lib/music/melody';
 import { generateAllArrangements, withoutHardOnly } from '../../src/lib/music/difficulty';
 import { EXTRACTION_PRESETS, LEAD_PASS, accompFromRaw, heldEnd, leadPassParams, leadWorkerOptions, onsetPeak, sungRanges, withLeadPass } from '../../src/lib/transcription/pipeline';
@@ -154,6 +154,44 @@ describe('lead recovery', () => {
     expect(splitRestrikes([held], [again], LEAD_RECOVERY, () => ({ mean: 0.5, spread: 0, onset: 0.8, rise: 0.3 }), [[0.4, 0.6]])).toEqual([held]);
   });
 
+  it('recoverLead drops an overtone of a sounding main note', () => {
+    const base = [note(48, 0, 4, 0.6), note(72, 0, 0.4), note(64, 0.5, 1.2), note(77, 1.5, 0.4), note(79, 2, 0.4)];
+    const up = note(76, 1, 0.4, 0.6); // an octave above the sounding E4
+    const evidence = (n: Note) => ({ mean: n.midi === 64 ? 0.7 : 0.3, spread: 0, onset: 0.8 });
+    expect(recoverLead(base, [up], 4, { evidence }).some((n) => n.midi === 76)).toBe(false);
+    expect(recoverLead(base, [up], 4, { evidence, rule: { overtoneRatio: 0, octaveAttackRatio: 0 } }).some((n) => n.midi === 76)).toBe(true);
+  });
+
+  it('an octave-above shadow of an attack: replaced by the lower candidate, or dropped under a main note', () => {
+    const base = [note(48, 0, 4, 0.6), note(72, 0, 0.4), note(74, 0.5, 0.4), note(77, 1.5, 0.4), note(79, 2, 0.4)];
+    const up = note(88, 1, 0.3, 0.6);
+    const low = note(76, 0.98, 0.3, 0.6);
+    const evidence = (n: Note) => ({ mean: n === up ? 0.25 : 0.4, spread: 0, onset: 0.8 });
+    const out = recoverLead(base, [up, low], 4, { evidence, hardOnly: true });
+    expect(out.filter((n) => n.role === 'lead').map((n) => n.midi)).toEqual([76]);
+    // comparable strength: an octave-doubled tune, the top is kept
+    const same = recoverLead(base, [up, low], 4, { evidence: () => ({ mean: 0.4, spread: 0, onset: 0.8 }), hardOnly: true });
+    expect(same.filter((n) => n.role === 'lead').map((n) => n.midi)).toEqual([88]);
+    // the lower note is a main note attacked with it: kept by default (measured: as many real top
+    // notes as shadows would go), dropped with octaveAttackMain
+    const withMain = [...base, note(76, 1.01, 0.3)];
+    const mainEv = (n: Note) => ({ mean: n === up ? 0.25 : 0.45, spread: 0, onset: 0.8 });
+    expect(recoverLead(withMain, [up], 4, { evidence: mainEv }).some((n) => n.midi === 88)).toBe(true);
+    expect(recoverLead(withMain, [up], 4, { evidence: mainEv, rule: { octaveAttackMain: true } }).some((n) => n.midi === 88)).toBe(false);
+    expect([...octaveAttacks([up], [], [low], 0.67, 0.06, (n) => (n === up ? 0.25 : 0.4)).entries()]).toEqual([[up, low]]);
+    expect(octaveAttacks([up], [], [note(76, 1.2, 0.3)], 0.67, 0.06, () => 0.2).size).toBe(0); // not together
+  });
+
+  it('recoverLead splits re-struck notes of the tune line only', () => {
+    const tune = note(79, 0, 1);
+    const inner = note(67, 0, 1, 0.5);
+    const base = [note(48, 0, 4, 0.6), tune, inner, note(77, 1.5, 0.4)];
+    const cands = [note(79, 0.5, 0.3), note(67, 0.5, 0.3)];
+    const out = recoverLead(base, cands, 4, { evidence: () => ({ mean: 0.5, spread: 0, onset: 0.8, rise: 0.3 }) });
+    expect(out.filter((n) => n.midi === 79)).toHaveLength(2);
+    expect(out.filter((n) => n.midi === 67)).toEqual([inner]);
+  });
+
   it('reads the onset peak and holds a note while its frame posterior stays above the off level', () => {
     const n = 300;
     const frames = new Float32Array(n * BP_N_PITCHES);
@@ -171,7 +209,9 @@ describe('lead recovery', () => {
     const end = heldEnd(frames, onsets, n, g, 3);
     expect(end).toBeGreaterThan(1.9);
     expect(end).toBeLessThan(2.05);
-    expect(heldEnd(frames, onsets, n, g, 1.6)).toBeLessThanOrEqual(1.6); // capped
+    const capped = heldEnd(frames, onsets, n, g, 1.6); // held up to the cap (to the frame)
+    expect(capped).toBeGreaterThan(1.58);
+    expect(capped).toBeLessThanOrEqual(1.6);
     // a new attack of the pitch ends the hold there
     const ra = timeToFrame(1.6);
     onsets[ra * BP_N_PITCHES + f] = 0.9;
