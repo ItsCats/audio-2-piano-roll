@@ -215,6 +215,7 @@ export class PlaybackController {
 
   seek(t: number): void {
     const clamped = Math.max(0, Math.min(this.duration, t));
+    this.holdAt = null; // a seek ends a wait-mode freeze (practice holds again at the next note)
     if (this.playing) {
       this.engine.allNotesOff(this.ctx.currentTime);
       this.startFrom(clamped, false);
