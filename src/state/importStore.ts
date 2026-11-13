@@ -792,6 +792,8 @@ export const useImport = create<ImportState>((set, get) => {
       transcription: result.info,
       hasAudio: true,
       hasPosteriors: true,
+      // Medium and Hard: sustain pedal derived from the notes (switch in the Sound panel)
+      autoPedal: true,
     });
     update({ warnings: result.info.warnings, stage: 'saving', progress: null, detail: 'Saving to your library' });
     // the piano specialist's outputs are not stored: re-detection works on Basic Pitch posteriors only
