@@ -13,7 +13,7 @@ export { toMusicXml, CREDIT_LINE } from './musicxml';
 export { systemBreaks, lineBudget } from './layout';
 export type { Score } from './types';
 
-const cache = new WeakMap<Arrangement, { tempo: Song['tempo']; key: Song['key']; duration: number; score: Score }>();
+const cache = new WeakMap<Arrangement, { tempo: Song['tempo']; key: Song['key']; duration: number; sheet: Song['sheet']; score: Score }>();
 const tempoCache = new WeakMap<Song['tempo'], Song['tempo']>();
 
 /**
@@ -31,9 +31,17 @@ export function songSheetTempo(song: Song): Song['tempo'] {
 export function buildSheet(song: Song, difficulty: Difficulty): Score {
   const arr = song.arrangements[difficulty];
   const hit = cache.get(arr);
-  if (hit && hit.tempo === song.tempo && hit.key === song.key && hit.duration === song.duration) return hit.score;
-  const score = buildScore({ notes: arr.notes, tempo: songSheetTempo(song), key: song.key, duration: song.duration, level: difficulty });
-  cache.set(arr, { tempo: song.tempo, key: song.key, duration: song.duration, score });
+  if (hit && hit.tempo === song.tempo && hit.key === song.key && hit.duration === song.duration && hit.sheet === song.sheet) return hit.score;
+  const score = buildScore({
+    notes: arr.notes,
+    tempo: songSheetTempo(song),
+    key: song.key,
+    duration: song.duration,
+    level: difficulty,
+    lock: song.sheet?.grid,
+    bars: song.sheet?.bars,
+  });
+  cache.set(arr, { tempo: song.tempo, key: song.key, duration: song.duration, sheet: song.sheet, score });
   return score;
 }
 

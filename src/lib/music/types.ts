@@ -20,6 +20,20 @@ export interface Note {
    * Easy's left hand follows it where it sounds.
    */
   role?: 'melody' | 'lead' | 'bass';
+  /**
+   * Where the note is written on the sheet, set by sheet edits (lib/sheet/edit.ts): positions on the
+   * song's locked grid (Song.sheet). Valid only while `start === t && dur === d`: a piano-roll edit
+   * that moves or resizes the note releases it back to the normal quantizing.
+   */
+  pin?: NotePin;
+}
+
+/** A written position on Song.sheet.grid (divisions, 12 per quarter) and the seconds it was set at. */
+export interface NotePin {
+  on: number;
+  off: number;
+  t: number;
+  d: number;
 }
 
 /** Sustain pedal held from `start` to `end` (seconds). */
@@ -199,6 +213,36 @@ export interface Song {
    * and when none was added; the file is in IndexedDB (see HandVideo.store).
    */
   handVideo?: HandVideo;
+  /** Sheet edits: the locked beat grid (absent in older songs and until the sheet is first edited). */
+  sheet?: SongSheet;
+}
+
+/**
+ * The beat grid the sheet is written on, frozen at the first sheet edit (lib/sheet/lock.ts), so later
+ * edits never re-bar the piece: the effective sheet beats (after grid.ts sheetTempo and the halving
+ * or doubling of an estimated tempo), the downbeat, the extrapolation tempo, the meter, the origin
+ * and the pickup.
+ */
+export interface SheetGridLock {
+  /** Seconds, strictly increasing, at least 2. */
+  beats: number[];
+  /** Downbeat index into `beats`. */
+  db: number;
+  bpm: number;
+  beatsPerBar: number;
+  beatUnit: 2 | 4 | 8;
+  /** Quarters from the downbeat to the start of measure 0. */
+  originQ: number;
+  /** Divisions of an implicit pickup measure (0 = none). */
+  pickup: number;
+}
+
+/** Sheet-music data of a song (absent until the sheet is first edited). */
+export interface SongSheet {
+  v: 1;
+  grid: SheetGridLock;
+  /** At least this many measures are written (the sheet's "Add bar"). */
+  bars?: number;
 }
 
 export type SongSummary = Pick<

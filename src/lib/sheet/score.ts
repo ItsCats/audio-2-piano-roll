@@ -1,19 +1,26 @@
 /** Builds the notation Score of an arrangement: grid → quantize → voices → clefs/octave marks → tempo marks. */
-import type { Difficulty, KeyInfo, Note, TempoInfo } from '../music/types';
+import type { Difficulty, KeyInfo, Note, SheetGridLock, TempoInfo } from '../music/types';
 import { chooseClefs, findOttavas } from './clefs';
-import { buildGrid } from './grid';
+import { buildGrid, gridFromLock } from './grid';
 import { quantize, type RawNote } from './quantize';
 import { keyFifths } from './spelling';
 import { DIV, LEVEL_RULES, type ClefSign, type Score, type StaffVoices, type TempoMark, type TimeMap } from './types';
 import { assignVoices } from './voices';
 
 export interface ScoreInput {
-  notes: Pick<Note, 'midi' | 'start' | 'dur' | 'hand'>[];
+  notes: (Pick<Note, 'midi' | 'start' | 'dur' | 'hand'> & Partial<Pick<Note, 'id' | 'pin'>>)[];
   tempo: TempoInfo;
   key?: Pick<KeyInfo, 'tonic' | 'mode'> | null;
   duration: number;
   level: Difficulty;
+  /** The song's locked grid (Song.sheet.grid): measures come from it, and note pins are used. */
+  lock?: SheetGridLock;
+  /** At least this many measures (Song.sheet.bars). */
+  bars?: number;
 }
+
+/** Whether a note's pin still holds: set by a sheet edit and the note not moved or resized since. */
+export const pinValid = (n: Partial<Pick<Note, 'pin' | 'start' | 'dur'>>): boolean => !!n.pin && n.pin.t === n.start && n.pin.d === n.dur;
 
 function tempoMarks(time: TimeMap, measureStartTimes: number[], measureCount: number): TempoMark[] {
   const qPerBeat = 4 / time.beatUnit;
@@ -49,7 +56,7 @@ function tempoMarks(time: TimeMap, measureStartTimes: number[], measureCount: nu
 export function buildScore(input: ScoreInput): Score {
   const { tempo, duration, level } = input;
   const notes = input.notes.filter((n) => Number.isFinite(n.start) && Number.isFinite(n.dur) && n.midi >= 0 && n.midi <= 127);
-  const time = buildGrid(tempo, duration, notes);
+  const time = input.lock ? gridFromLock(input.lock, tempo.source) : buildGrid(tempo, duration, notes);
   const base = LEVEL_RULES[level];
   // compound meters (6/8 …): no triplets, rests on the dotted-quarter beat (Easy) or 8ths, and a
   // lone 8th stays an 8th (the quarter grid is not a unit there)
@@ -61,6 +68,8 @@ export function buildScore(input: ScoreInput): Score {
     on: time.toPos(n.start),
     off: time.toPos(n.start + Math.max(0.01, n.dur)),
     staff: n.hand === 'R' ? 1 : n.hand === 'L' ? 2 : n.midi >= 60 ? 1 : 2,
+    ids: n.id !== undefined ? [n.id] : [],
+    ...(input.lock && pinValid(n) && n.pin!.off > n.pin!.on ? { pin: { on: n.pin!.on, off: n.pin!.off } } : {}),
   }));
   const q = quantize(raw, rules);
   const vctx = {
@@ -73,7 +82,7 @@ export function buildScore(input: ScoreInput): Score {
   ) as [StaffVoices, StaffVoices];
   let end = 0;
   for (const sv of staves) for (const v of sv.voices) for (const c of v) end = Math.max(end, c.off);
-  const measureCount = Math.max(1, time.measureOf(Math.max(0, end - 1)) + 1);
+  const measureCount = Math.max(1, time.measureOf(Math.max(0, end - 1)) + 1, input.lock ? Math.min(10000, input.bars ?? 0) : 0);
   const measureStartTimes: number[] = [];
   for (let m = 0; m <= measureCount; m++) measureStartTimes.push(time.posToTime(time.measureStart(m)));
 

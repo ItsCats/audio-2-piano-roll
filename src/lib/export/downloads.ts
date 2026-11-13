@@ -1,3 +1,4 @@
+import { sanitizeSheetData } from '../sheet/sanitize';
 import type { Difficulty, Song } from '../music/types';
 import { exportMidi } from '../music/midi';
 import { renderOfflineChunks } from '../audio/offlineRender';
@@ -80,6 +81,7 @@ export async function importProject(file: File): Promise<Song> {
     bumpNoteIds(song.arrangements[d].notes);
   }
   bumpNoteIds(song.base);
+  sanitizeSheetData(song);
   await saveSong(song);
   return song;
 }

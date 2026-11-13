@@ -3,7 +3,7 @@
  * beat grid (tracked beats, a MIDI tempo map, or a regular grid when there is none).
  */
 import { beatToTime, estimateTempo, regularBeats, timeToBeat, upperBound } from '../music/beats';
-import type { Note, TempoInfo } from '../music/types';
+import type { Note, SheetGridLock, TempoInfo } from '../music/types';
 import { DIV, type TimeMap } from './types';
 
 export function resolveMeter(tempo: TempoInfo): { beatsPerBar: number; beatUnit: 2 | 4 | 8; compound: boolean } {
@@ -72,7 +72,12 @@ function localBpm(beats: number[], from: number, count: number): number {
  *   leading empty bars are dropped.
  */
 export function buildGrid(tempo: TempoInfo, duration: number, notes: { start: number }[]): TimeMap {
-  const { beatsPerBar, beatUnit, compound } = resolveMeter(tempo);
+  return gridFromLock(gridParams(tempo, duration, notes), tempo.source);
+}
+
+/** The values a TimeMap is made from (the same as a Song.sheet grid lock). */
+export function gridParams(tempo: TempoInfo, duration: number, notes: { start: number }[]): SheetGridLock {
+  const { beatsPerBar, beatUnit } = resolveMeter(tempo);
   // loops, not Math.min(...notes): Safari can't spread tens of thousands of arguments
   let firstStart = notes.length ? Infinity : 0;
   for (const n of notes) if (n.start < firstStart) firstStart = n.start;
@@ -126,7 +131,16 @@ export function buildGrid(tempo: TempoInfo, duration: number, notes: { start: nu
       originQ = Math.floor((minQ + tol) / measureQ) * measureQ;
     }
   }
-  const pickup = Math.round(pickupQ * DIV);
+  return { beats, db, bpm, beatsPerBar, beatUnit, originQ, pickup: Math.round(pickupQ * DIV) };
+}
+
+/** The TimeMap of grid values (buildGrid's, or a song's locked grid). */
+export function gridFromLock(lock: SheetGridLock, source: TempoInfo['source']): TimeMap {
+  const { beats, db, bpm, beatsPerBar, beatUnit, originQ, pickup } = lock;
+  const compound = beatUnit === 8 && beatsPerBar % 3 === 0;
+  const qPerBeat = 4 / beatUnit;
+  const toQ = (t: number) => (timeToBeat(beats, t, bpm) - db) * qPerBeat;
+  const measureQ = beatsPerBar * qPerBeat;
   const measureLen = Math.round(measureQ * DIV);
   const beatLen = compound ? 18 : beatUnit === 2 ? 24 : beatUnit === 8 ? 6 : 12;
   const measureStart = (m: number) => (pickup ? (m <= 0 ? 0 : pickup + (m - 1) * measureLen) : Math.max(0, m) * measureLen);
@@ -147,6 +161,6 @@ export function buildGrid(tempo: TempoInfo, duration: number, notes: { start: nu
     measureStart,
     measureOf,
     bpm,
-    source: tempo.source,
+    source,
   };
 }

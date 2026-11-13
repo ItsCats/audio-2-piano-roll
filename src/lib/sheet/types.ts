@@ -41,6 +41,10 @@ export interface QNote {
   on: number;
   off: number;
   staff: Staff;
+  /** Ids of the Song notes written as this note (several when duplicates were merged). */
+  src?: number[];
+  /** Placed by a sheet edit (a valid Note.pin): written exactly at on/off. */
+  pinned?: boolean;
 }
 
 /** Notes that start together and end together in one voice. */
@@ -49,6 +53,10 @@ export interface Chord {
   off: number;
   /** Ascending. */
   midis: number[];
+  /** Song note ids of each of `midis` (same order). */
+  srcByMidi?: number[][];
+  /** Holds a pinned note: never cut, filled or lengthened. */
+  pinned?: boolean;
   /** An octave mark starts right before this chord (8 = 8va, -8 = 8vb). */
   ottavaStart?: 8 | -8;
   /** The octave mark ends right after this chord. */

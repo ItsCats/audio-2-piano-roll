@@ -23,6 +23,7 @@ function lowerBoundAbove(xs: number[], t: number): number {
 export function trimLegato(notes: QNote[], maxOverhang: number): QNote[] {
   const onsets = [...new Set(notes.map((n) => n.on))].sort((a, b) => a - b);
   return notes.map((a) => {
+    if (a.pinned) return a;
     const i = lowerBoundAbove(onsets, a.on);
     const b = onsets[i];
     if (b === undefined || a.off <= b) return a;
@@ -33,27 +34,48 @@ export function trimLegato(notes: QNote[], maxOverhang: number): QNote[] {
   });
 }
 
+/** A chord of notes (ascending), with their Song note ids; pinned when any note is. */
+export function chordOf(on: number, off: number, ns: QNote[]): Chord {
+  const s = [...ns].sort((a, b) => a.midi - b.midi);
+  const c: Chord = { on, off, midis: s.map((n) => n.midi), srcByMidi: s.map((n) => n.src ?? []) };
+  if (s.some((n) => n.pinned)) c.pinned = true;
+  return c;
+}
+
+/** Longest end of the pinned notes (undefined: none pinned). */
+const pinnedEnd = (ns: QNote[]) => {
+  let e: number | undefined;
+  for (const n of ns) if (n.pinned) e = Math.max(e ?? -Infinity, n.off);
+  return e;
+};
+
+/** Joins chord tones (union by pitch, ids merged). */
+function joinInto(m: Chord, c: Chord): void {
+  const ids = new Map<number, number[]>();
+  m.midis.forEach((x, i) => ids.set(x, [...(m.srcByMidi?.[i] ?? [])]));
+  c.midis.forEach((x, i) => ids.set(x, [...(ids.get(x) ?? []), ...(c.srcByMidi?.[i] ?? [])]));
+  m.midis = [...ids.keys()].sort((a, b) => a - b);
+  m.srcByMidi = m.midis.map((x) => ids.get(x)!);
+  if (c.pinned) m.pinned = true;
+}
+
 const top = (c: Chord) => c.midis[c.midis.length - 1];
 const bottom = (c: Chord) => c.midis[0];
 
 /** One or two parts of an onset group (two only when the top notes end differently and don't cross the rest). */
 function groupParts(g: QNote[], t: number, split: boolean): Chord[] {
   const ends = new Set(g.map((n) => n.off));
-  const asc = (ns: QNote[]) => ns.map((n) => n.midi).sort((a, b) => a - b);
-  if (ends.size === 1) return [{ on: t, off: g[0].off, midis: asc(g) }];
+  if (ends.size === 1) return [chordOf(t, g[0].off, g)];
   const minEnd = Math.min(...ends);
   if (split) {
     const hi = g.reduce((a, b) => (b.midi > a.midi ? b : a));
     const upper = g.filter((n) => n.off === hi.off);
     const lower = g.filter((n) => n.off !== hi.off);
     if (Math.min(...upper.map((n) => n.midi)) > Math.max(...lower.map((n) => n.midi))) {
-      return [
-        { on: t, off: hi.off, midis: asc(upper) },
-        { on: t, off: Math.min(...lower.map((n) => n.off)), midis: asc(lower) },
-      ];
+      return [chordOf(t, hi.off, upper), chordOf(t, pinnedEnd(lower) ?? Math.min(...lower.map((n) => n.off)), lower)];
     }
   }
-  return [{ on: t, off: minEnd, midis: asc(g) }];
+  return [chordOf(t, pinnedEnd(g) ?? minEnd, g)];
 }
 
 export interface VoiceContext {
@@ -85,6 +107,8 @@ export function assignVoices(notesIn: QNote[], _staff: Staff, rules: SheetLevelR
   const allowUnder = mode !== 'never';
   const allowOver = mode !== 'never';
   /** How much held music (quarters × notes) cutting voice i at t would lose. */
+  /** Voice i holds a pinned chord past t (pins are never cut on Medium and Hard). */
+  const pinBusy = (i: number, t: number) => mode !== 'never' && !!last(i)?.pinned && busy(i) > t;
   const cutLoss = (i: number, t: number) => {
     const l = last(i);
     return l && l.off > t ? ((l.off - t) / DIV) * l.midis.length : 0;
@@ -114,6 +138,17 @@ export function assignVoices(notesIn: QNote[], _staff: Staff, rules: SheetLevelR
         else cuts = [0, 1];
       } else cuts = [0];
     }
+    // a pinned held chord is never cut: the new chord goes to the other voice (cutting that one if
+    // it isn't pinned too), or the voices cross
+    for (const i of [0, 1]) {
+      if (!cuts.includes(i) || !pinBusy(i, t)) continue;
+      if (into !== i) cuts = cuts.filter((x) => x !== i);
+      else if (!pinBusy(1 - i, t)) {
+        into = 1 - i;
+        cuts = busy(into) > t ? [into] : [];
+        swap = false;
+      }
+    }
     const loss = cuts.reduce((x, i) => x + cutLoss(i, t), 0);
     if (!apply) return loss;
     for (const i of cuts) cut(i, t);
@@ -130,8 +165,11 @@ export function assignVoices(notesIn: QNote[], _staff: Staff, rules: SheetLevelR
       const [up, lo] = parts;
       // Medium: two voices only for a note held at least a beat longer than the others
       const ok = mode === 'always' || (mode === 'limited' && Math.abs(up.off - lo.off) >= beatLen);
-      const merged: Chord = { on: t, off: Math.min(up.off, lo.off), midis: [...lo.midis, ...up.midis] };
-      if (!ok) parts = [merged];
+      const mergedOff = up.pinned !== lo.pinned ? (up.pinned ? up.off : lo.off) : Math.min(up.off, lo.off);
+      const merged: Chord = { on: t, off: mergedOff, midis: [...lo.midis, ...up.midis] };
+      if (up.srcByMidi && lo.srcByMidi) merged.srcByMidi = [...lo.srcByMidi, ...up.srcByMidi];
+      if (up.pinned || lo.pinned) merged.pinned = true;
+      if (!ok || pinBusy(0, t) || pinBusy(1, t)) parts = [merged];
       else if (busy(0) > t || busy(1) > t) {
         // two parts would stop both held voices: writing the group as one chord (the longer part
         // shortened) may lose less, e.g. a rolled chord whose bass is still sounding
@@ -166,6 +204,7 @@ export function assignVoices(notesIn: QNote[], _staff: Staff, rules: SheetLevelR
     };
     for (let i = 0; i < voice.length; i++) {
       const c = voice[i];
+      if (c.pinned) continue;
       const next = crossLimit(c, c.off, voice[i + 1]?.on ?? Infinity);
       const gap = next - c.off;
       if (gap <= 0) continue;
@@ -184,7 +223,7 @@ export function assignVoices(notesIn: QNote[], _staff: Staff, rules: SheetLevelR
   v[1] = v[1].filter((c) => {
     const m = byRhythm.get(c.on * 1e6 + c.off);
     if (!m) return true;
-    m.midis = [...new Set([...m.midis, ...c.midis])].sort((a, b) => a - b);
+    joinInto(m, c);
     return false;
   });
   return v;
