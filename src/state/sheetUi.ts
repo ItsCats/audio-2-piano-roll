@@ -19,6 +19,8 @@ export interface SheetUiState {
   panel: 'marks' | 'bar' | null;
   /** Open picker (in the popover, or above the phone dock). */
   picker: SheetPicker | null;
+  /** The popover was opened by a shortcut (D, W, K, M, Shift+T): applying closes it again. */
+  viaKey: boolean;
   /** Dynamics and hairpins change the loudness of the notes ("Change loudness"). */
   bake: boolean;
   /** Tab of the phone dock. */
@@ -34,6 +36,7 @@ export const useSheetUi = create<SheetUiState>((set) => ({
   chips: [],
   panel: null,
   picker: null,
+  viaKey: false,
   bake: true,
   tab: 'notes',
   set: (p) => set(p),

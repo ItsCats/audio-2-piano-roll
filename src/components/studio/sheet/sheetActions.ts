@@ -213,7 +213,7 @@ export function performSheetAction(a: SheetAction): boolean {
       return true;
     case 'picker': {
       const bar = a.picker === 'key' || a.picker === 'time' || a.picker === 'tempo';
-      ui.set({ panel: bar ? 'bar' : 'marks', tab: bar ? 'bar' : 'marks', picker: a.picker, menu: null });
+      ui.set({ panel: bar ? 'bar' : 'marks', tab: bar ? 'bar' : 'marks', picker: a.picker, menu: null, viaKey: true });
       return true;
     }
   }

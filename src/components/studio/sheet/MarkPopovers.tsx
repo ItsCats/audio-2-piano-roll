@@ -35,6 +35,12 @@ const useCtx = (): SheetCtx | null => {
   return useMemo(() => (song && arr ? { song, level, score: buildSheet(song, level) } : null), [song, level, arr]);
 };
 
+/** Closes the picker after it applied (and the popover when a shortcut opened it). */
+const closePicker = () => {
+  const ui = useSheetUi.getState();
+  ui.set({ picker: null, ...(ui.viaKey ? { panel: null, viaKey: false } : {}) });
+};
+
 const barNo = (ctx: SheetCtx, m: number) => m + (ctx.score.time.pickup ? 0 : 1);
 
 /** A short description of the selected marking, for the status line. */
@@ -219,7 +225,7 @@ export function DynPicker({ dock }: { dock: boolean }) {
   };
   const apply = (v: DynamicValue) => {
     sheetMark.dyn(v);
-    useSheetUi.getState().set({ picker: null, panel: dock ? null : useSheetUi.getState().panel });
+    closePicker();
   };
   return (
     <div ref={ref} onKeyDown={onKey} className={cn('flex flex-wrap items-center gap-1', dock ? 'px-2 py-2' : 'mt-1 border-t border-ink-700 pt-2')} role="group" aria-label="Dynamics" data-testid="sheet-dyn-picker">
@@ -268,7 +274,7 @@ export function TextPicker({ dock }: { dock: boolean }) {
   useEffect(() => input.current?.focus(), []);
   const submit = () => {
     if (!text.trim()) return;
-    if (sheetMark.text(text, { above, style })) useSheetUi.getState().set({ picker: null, ...(dock ? {} : { panel: null }) });
+    if (sheetMark.text(text, { above, style })) closePicker();
   };
   const seg = (on: boolean) => cn('focus-ring rounded-md px-2.5', dock ? 'h-11 text-[13px]' : 'h-8 text-[12px]', on ? 'bg-ink-600 text-ink-50' : 'text-ink-300 hover:text-ink-100');
   return (
@@ -356,7 +362,7 @@ const TIME_PRESETS: [number, 2 | 4 | 8][] = [
 export function BarPicker({ dock, which }: { dock: boolean; which: 'key' | 'time' | 'tempo' }) {
   const ctx = useCtx();
   const [m] = useState(() => (ctx ? targetMeasure(ctx) : 0));
-  const close = () => useSheetUi.getState().set({ picker: null, ...(dock ? {} : { panel: null }) });
+  const close = closePicker;
   if (!ctx) return null;
   const from = <span className="text-[12px] text-ink-300">Applies from bar {barNo(ctx, m)}</span>;
   const wrap = (children: ReactNode, testId: string) => (
@@ -502,7 +508,7 @@ function TempoForm({ ctx, m, dock, done }: { ctx: SheetCtx; m: number; dock: boo
 export function MarkPanelButtons() {
   const panel = useSheetUi((s) => s.panel);
   const set = useSheetUi((s) => s.set);
-  const toggle = (p: 'marks' | 'bar') => set({ panel: panel === p ? null : p, picker: null });
+  const toggle = (p: 'marks' | 'bar') => set({ panel: panel === p ? null : p, picker: null, viaKey: false });
   const btn = (p: 'marks' | 'bar', label: string, title: string) => (
     <button
       type="button"
