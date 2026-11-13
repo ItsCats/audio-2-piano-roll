@@ -146,6 +146,49 @@ def main() -> None:
     with open(os.path.join(out, "cv.json"), "w") as fh:
         json.dump({"cases": cases, "rects": rects, "ops": ops}, fh, separators=(",", ":"))
     print("wrote", os.path.join(out, "cv.json"), os.path.getsize(os.path.join(out, "cv.json")))
+    subdiv_fixtures(out)
+
+
+def subdiv_fixtures(out: str) -> None:
+    """cv2.Subdiv2D triangle lists (in order) for homr-like dewarping meshes and random point sets."""
+    rng = np.random.default_rng(2024)
+    sets = []
+    for k in range(24):
+        if k < 12:
+            # a dewarping mesh like homr's: image corners, rows of points every 80 px with a staff's
+            # small vertical offsets, each row closed by points on the left and right edges
+            w, h = int(rng.integers(600, 1400)), int(rng.integers(200, 400))
+            pts = [(0, 0), (w, 0)]
+            step = h // 6
+            bend = rng.integers(-3, 4, size=w // 80 + 2) if k % 3 else np.zeros(w // 80 + 2, int)
+            for y in range(2, h - 2, step):
+                row = [(x, y + int(bend[i])) for i, x in enumerate(range(2, w, 80)) if 10 <= x <= w - 10 and 10 <= y + int(bend[i]) <= h - 10]
+                if len(row) > 2:
+                    pts += [(0, row[0][1])] + row + [(w, row[-1][1])]
+            pts += [(0, h), (w, h)]
+            if k % 2:
+                avg = [(x, int(round(y))) for x, y in pts]
+                pts = avg
+        elif k < 18:
+            n = int(rng.integers(5, 60))
+            pts = [(float(x), float(y)) for x, y in rng.random((n, 2)) * [500, 300]]
+            if k % 2:
+                pts += pts[:3]  # duplicates
+        else:
+            # integer grid with collinear and co-circular points, plus points on grid edges
+            g = int(rng.integers(3, 8))
+            pts = [(x * 40, y * 30) for y in range(g) for x in range(g)]
+            pts += [(x * 40 + 20, 0) for x in range(g - 1)]
+        p = np.array(pts, np.float32)
+        rect = cv2.boundingRect(p.reshape(-1, 1, 2))
+        rect = (rect[0] - 10, rect[1] - 10, rect[2] + 20, rect[3] + 20)
+        sub = cv2.Subdiv2D(rect)
+        for q in p:
+            sub.insert((float(q[0]), float(q[1])))
+        sets.append({"points": p.astype(np.float64).tolist(), "rect": list(rect), "triangles": sub.getTriangleList().astype(np.float64).tolist()})
+    with open(os.path.join(out, "subdiv.json"), "w") as fh:
+        json.dump(sets, fh, separators=(",", ":"))
+    print("wrote", os.path.join(out, "subdiv.json"), os.path.getsize(os.path.join(out, "subdiv.json")))
 
 
 if __name__ == "__main__":

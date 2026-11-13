@@ -88,7 +88,7 @@ export const CREDITS: CreditGroup[] = [
         license: 'AGPL-3.0 (code and model weights)',
         licenseUrl: LIC.agpl3,
         url: 'https://github.com/liebharc/homr',
-        note: 'homr 0.7.1. Changed: we ported its image analysis and MusicXML writer from Python to TypeScript (src/lib/omr/homr, AGPL-3.0, published with this app’s source) and run its three networks with ONNX Runtime Web; the segmentation weights are stored as 16-bit floats and the encoder with 8-bit weights to halve the download; title recognition (OCR) is left out. Includes homr’s page joining, which is based on relieur by Papoteur (Apache-2.0). See public/models/homr/README.md.',
+        note: 'homr 0.7.1. Changed: we ported its image analysis and MusicXML writer from Python to TypeScript (src/lib/omr/homr, AGPL-3.0, published with this app’s source) and run its three networks with ONNX Runtime Web; the segmentation weights are stored as 16-bit floats and the encoder with 8-bit weights to halve the download; title recognition (OCR) is left out. The OpenCV functions homr calls (contours, rotated boxes, ellipse fitting, the Subdiv2D triangulation, image resizing and warping) are ported from OpenCV’s algorithms (Apache-2.0, OpenCV team). Includes homr’s page joining, which is based on relieur by Papoteur (Apache-2.0). See public/models/homr/README.md.',
       },
       {
         name: 'Training data of the homr models',

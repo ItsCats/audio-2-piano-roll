@@ -3,16 +3,15 @@
  * 1280 x 256 canvas. Port of prepare_staff_image and its helpers in homr/staff_parsing.py,
  * homr/staff_dewarping.py and homr/image_utils.py.
  *
- * Simplification: the triangulation of the dewarping mesh is a Bowyer-Watson Delaunay
- * triangulation, not OpenCV's Subdiv2D. Both are Delaunay triangulations; where four mesh points lie
- * on one circle (the mesh is a grid) they may pick the other diagonal, which only moves pixels by a
- * fraction of a pixel where a staff is curved (a straight staff is not warped at all).
+ * The dewarping mesh is triangulated with a port of OpenCV's Subdiv2D (subdiv2d.ts): the same
+ * triangles in the same order as homr, which matters for the pixels on shared triangle edges.
  *
  * Derived from homr (AGPL-3.0, Copyright the homr contributors, https://github.com/liebharc/homr).
  */
 import { fillConvexPoly, img, resizeLinear, warpAffine, type Img } from './cv';
 import { boundingRect, boundingRectF, findContours, type Pt } from './geom';
 import { pyRound, type MultiStaff, type Staff } from './model';
+import { Subdiv2D } from './subdiv2d';
 
 export const TR_HEIGHT = 256;
 export const TR_WIDTH = 1280;
@@ -56,57 +55,34 @@ function cropImage(im: Img, x1: number, y1: number, x2: number, y2: number): { i
 
 // ------------------------------------------------------------------ dewarping
 
-/** Delaunay triangulation (Bowyer-Watson) of points; triangles as point indices. */
+/**
+ * homr DelaunayTriangulation: OpenCV's Subdiv2D over the points' bounding rectangle (+10 px), its
+ * triangle list mapped back to point indices (the first point within 1e-3; triangles with a corner
+ * that is no input point are dropped). Same triangles in the same order as Python homr.
+ */
 export function delaunay(points: Pt[]): [number, number, number][] {
-  // unique points (duplicates map to the first, as homr's index lookup does)
-  const idx: number[] = [];
-  const pts: Pt[] = [];
-  for (let i = 0; i < points.length; i++) {
-    if (pts.some((p) => Math.hypot(p[0] - points[i][0], p[1] - points[i][1]) < 1e-3)) continue;
-    pts.push(points[i]);
-    idx.push(i);
-  }
-  const n = pts.length;
-  if (n < 3) throw new Error('Need at least 3 points for triangulation');
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (const [x, y] of pts) (minX = Math.min(minX, x)), (minY = Math.min(minY, y)), (maxX = Math.max(maxX, x)), (maxY = Math.max(maxY, y));
-  const d = Math.max(maxX - minX, maxY - minY) * 20 + 1;
-  const all: Pt[] = [...pts, [minX - d, minY - d], [minX + 2 * d, minY - d], [minX - d, minY + 2 * d]];
-  type Tri = { a: number; b: number; c: number; cx: number; cy: number; r2: number };
-  const circ = (a: number, b: number, c: number): Tri => {
-    const [ax, ay] = all[a];
-    const [bx, by] = all[b];
-    const [cx, cy] = all[c];
-    const D = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
-    const ux = ((ax * ax + ay * ay) * (by - cy) + (bx * bx + by * by) * (cy - ay) + (cx * cx + cy * cy) * (ay - by)) / D;
-    const uy = ((ax * ax + ay * ay) * (cx - bx) + (bx * bx + by * by) * (ax - cx) + (cx * cx + cy * cy) * (bx - ax)) / D;
-    return { a, b, c, cx: ux, cy: uy, r2: (ax - ux) ** 2 + (ay - uy) ** 2 };
-  };
-  let tris: Tri[] = [circ(n, n + 1, n + 2)];
-  for (let i = 0; i < n; i++) {
-    const [px, py] = all[i];
-    const bad: Tri[] = [];
-    const keep: Tri[] = [];
-    for (const t of tris) ((px - t.cx) ** 2 + (py - t.cy) ** 2 < t.r2 * (1 - 1e-12) ? bad : keep).push(t);
-    const edges = new Map<string, [number, number]>();
-    for (const t of bad) {
-      for (const [u, v] of [
-        [t.a, t.b],
-        [t.b, t.c],
-        [t.c, t.a],
-      ]) {
-        const k = u < v ? `${u},${v}` : `${v},${u}`;
-        if (edges.has(k)) edges.delete(k);
-        else edges.set(k, [u, v]);
-      }
+  if (points.length < 3) throw new Error('Need at least 3 points for triangulation');
+  const pts = points.map(([x, y]) => [Math.fround(x), Math.fround(y)] as Pt);
+  const r = boundingRectF(pts);
+  const sub = new Subdiv2D([r[0] - 10, r[1] - 10, r[2] + 20, r[3] + 20]);
+  for (const [x, y] of pts) sub.insert(x, y);
+  const index = (p: Pt): number | null => {
+    let best = -1;
+    let bd = Infinity;
+    for (let i = 0; i < pts.length; i++) {
+      const d = Math.fround(Math.hypot(pts[i][0] - p[0], pts[i][1] - p[1]));
+      if (d < bd) (bd = d), (best = i);
     }
-    tris = keep;
-    for (const [u, v] of edges.values()) tris.push(circ(u, v, i));
+    return bd < 1e-3 ? best : null;
+  };
+  const out: [number, number, number][] = [];
+  for (const t of sub.getTriangleList()) {
+    const a = index(t[0]);
+    const b = index(t[1]);
+    const c = index(t[2]);
+    if (a !== null && b !== null && c !== null) out.push([a, b, c]);
   }
-  return tris.filter((t) => t.a < n && t.b < n && t.c < n).map((t) => [idx[t.a], idx[t.b], idx[t.c]]);
+  return out;
 }
 
 /** cv2.getAffineTransform: the 2 x 3 matrix mapping three points onto three points */
