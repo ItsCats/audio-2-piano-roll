@@ -59,7 +59,7 @@ export interface ReadOptions {
   release?: boolean;
   /** model files to use instead of the shipped ones (test harnesses) */
   model?: ModelSpec;
-  /** for photos without corners: look for the page outline (default true) */
+  /** look for the page outline when a page has no corners (default: for photos) */
   findPage?: boolean;
 }
 
@@ -254,7 +254,7 @@ function runWorker(pages: SheetPage[], opts: ReadOptions): Promise<{ systems: Sy
       finish(false);
       reject(new SheetReadError(`The sheet-music reader stopped${e.message ? ` (${e.message})` : ''}. Please try again.`));
     };
-    const req: RunRequest = { type: 'run', jobId, kind: opts.kind, pages: input, model, threads, release, findPage: opts.findPage ?? true };
+    const req: RunRequest = { type: 'run', jobId, kind: opts.kind, pages: input, model, threads, release, findPage: opts.findPage ?? opts.kind === 'photo' };
     worker.postMessage(
       req,
       input.map((p) => p.data.buffer),
