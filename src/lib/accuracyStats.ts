@@ -174,10 +174,10 @@ export interface RecordingRow {
 
 /** Solo piano recordings without an answer key, compared with the ByteDance piano transcriber. */
 export const OTHER_PIANO_ROWS: RecordingRow[] = [
-  { piece: 'Chopin — Polonaise in A-flat major, Op. 53 (“Heroic”)', detail: 'Solo piano · loud chords and octaves, fast runs', length: '7:17', agreement: 0.64, agreementSensitive: 0.69, before: 0.6 },
-  { piece: 'Chopin — Ballade No. 1, Op. 23', detail: 'Solo piano · a different, commercial recording', length: '10:13', agreement: 0.72, agreementSensitive: 0.77, before: 0.68 },
-  { piece: 'Debussy — Clair de lune', detail: 'Solo piano · soft, pedalled, rolled chords', length: '5:13', agreement: 0.65, agreementSensitive: 0.67, before: 0.61 },
-  { piece: 'Chopin — Nocturne in F minor, Op. 55 No. 1', detail: 'Solo piano · Musopen recording (public domain)', length: '5:17', agreement: 0.61, agreementSensitive: 0.64, before: 0.58 },
+  { piece: 'Solo piano recording 1', detail: 'Solo piano · loud chords and octaves, fast runs', length: '7:17', agreement: 0.64, agreementSensitive: 0.69, before: 0.6 },
+  { piece: 'Solo piano recording 2', detail: 'Solo piano · long, dense, wide range', length: '10:13', agreement: 0.72, agreementSensitive: 0.77, before: 0.68 },
+  { piece: 'Solo piano recording 3', detail: 'Solo piano · soft, pedalled, rolled chords', length: '5:13', agreement: 0.65, agreementSensitive: 0.67, before: 0.61 },
+  { piece: 'Solo piano recording 4', detail: 'Solo piano · Musopen recording (public domain)', length: '5:17', agreement: 0.61, agreementSensitive: 0.64, before: 0.58 },
   { piece: 'Jazz piano cover of a pop song', detail: 'Solo piano · swing, dense voicings', length: '1:57', agreement: 0.56, agreementSensitive: 0.63, before: 0.5 },
 ];
 
@@ -363,10 +363,10 @@ export interface Dataset {
 /** Matches the "Used to measure accuracy" group on the Credits page (src/lib/credits.ts). */
 export const DATASETS: Dataset[] = [
   { name: 'MAESTRO v3 (Google Magenta)', use: '6 concert performances with the exact keys pressed — the answer key for solo piano', license: 'CC BY-NC-SA 4.0', url: 'https://magenta.tensorflow.org/datasets/maestro' },
-  { name: 'Musopen', use: 'Recording of Chopin’s Nocturne Op. 55 No. 1', license: 'Public domain (CC0)', url: 'https://musopen.org' },
+  { name: 'Musopen', use: 'Solo piano recording 4 (a public-domain recording)', license: 'Public domain (CC0)', url: 'https://musopen.org' },
   { name: 'High-resolution Piano Transcription (ByteDance)', use: 'Original Python version of the high-accuracy piano model: second opinion for piano recordings without an answer key, and the check that the browser version gives the same notes', license: 'MIT (inference code); CC BY 4.0 (weights)', url: 'https://github.com/qiuqiangkong/piano_transcription_inference' },
   { name: 'Demucs (Meta AI)', use: 'Separated vocal, bass, drum and lead tracks for the references (not used by the app)', license: 'MIT (code); weights for research use', url: 'https://github.com/facebookresearch/demucs' },
   { name: 'CREPE / torchcrepe', use: 'Pitch of the singer and the bass on those tracks', license: 'MIT', url: 'https://github.com/maxrmorrison/torchcrepe' },
   { name: 'librosa (pYIN) & mir_eval', use: 'Independent second pitch tracker; standard accuracy metrics', license: 'ISC; MIT', url: 'https://github.com/mir-evaluation/mir_eval' },
-  { name: 'Test songs and recordings', use: '5 songs with a singer, 1 instrumental soundtrack track, 4 commercial piano recordings — used privately for measuring only, never copied into the app or shared', license: 'Copyrighted (not distributed)' },
+  { name: 'Test songs and recordings', use: '5 songs with a singer, 1 instrumental soundtrack track, 4 piano recordings — used privately for measuring only, never copied into the app or shared', license: 'Copyrighted (not distributed)' },
 ];

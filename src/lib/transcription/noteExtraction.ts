@@ -1,3 +1,10 @@
+/*
+ * SPDX-License-Identifier: AGPL-3.0-or-later AND Apache-2.0
+ * Derived from `output_to_notes_polyphonic` (basic_pitch/note_creation.py) of
+ * spotify/basic-pitch (https://github.com/spotify/basic-pitch), Copyright 2022 Spotify AB,
+ * licensed under the Apache License, Version 2.0 (full text: public/models/basic-pitch/LICENSE).
+ * Modified: rewritten in TypeScript by the Piano2Vision authors, with the changes noted below.
+ */
 /**
  * Polyphonic note extraction from Basic Pitch posteriorgrams.
  *

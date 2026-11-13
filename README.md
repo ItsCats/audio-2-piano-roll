@@ -85,7 +85,7 @@ The piano presets were tuned on five of the six MAESTRO pieces (Liszt held out) 
 
 ## Deploying to Netlify
 
-1. Push this repository to a **private** GitHub repository.
+1. Push this repository (or your fork of it) to your own GitHub repository.
 2. In Netlify: **Add new site → Import an existing project → GitHub** and pick the repository. Netlify reads `netlify.toml`:
    - build command `npm run build`, publish directory `dist`, Node 22
    - SPA redirect, long-term caching for `/assets`, `/samples` and `/models`
@@ -156,7 +156,7 @@ tests/               unit tests and the browser accuracy harness
 
 ## Credits & licences
 
-The full list (models, sounds, fonts, libraries, server components and the data used to measure accuracy) is on the in-app **Credits** page (`/credits`, source `src/lib/credits.ts`; linked from the sidebar, Settings and the Accuracy page). In short:
+The full list (models, sounds, fonts, libraries, server components and the data used to measure accuracy) is on the in-app **Credits** page (`/credits`, source `src/lib/credits.ts`; linked from the sidebar, Settings and the Accuracy page) and, with copyright lines and licence details, in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). In short:
 
 - [Basic Pitch](https://github.com/spotify/basic-pitch) model by Spotify — Apache-2.0
 - [Salamander Grand Piano V3](https://freepats.zenvoid.org/Piano/acoustic-grand-piano.html) by Alexander Holm — CC-BY 3.0
@@ -167,4 +167,21 @@ The full list (models, sounds, fonts, libraries, server components and the data 
 - [ONNX Runtime](https://github.com/microsoft/onnxruntime) (onnxruntime-web in the browser, onnxruntime on the server) — MIT
 - TensorFlow.js (Apache-2.0), mediabunny (MPL-2.0), @tonejs/midi (MIT), React (MIT), OpenSheetMusicDisplay (BSD-3-Clause, with VexFlow MIT), jsPDF and svg2pdf.js (MIT); server only: yt-dlp (Unlicense), FastAPI (MIT), Uvicorn (BSD-3), python-multipart (Apache-2.0), NumPy (BSD-3), FFmpeg (LGPL)
 
-Users are responsible for having the rights to the music they import, and for complying with YouTube's Terms of Service.
+**Users are responsible for having the rights to the music they import, and for complying with YouTube's Terms of Service.** No copyrighted music is included in this repository; the songs used to measure accuracy were used privately and are not distributed.
+
+## Licence
+
+Piano2Vision
+Copyright (C) 2026 Jack Anderson
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License along with this program (see [LICENSE](LICENSE)). If not, see <https://www.gnu.org/licenses/>.
+
+SPDX identifier: `AGPL-3.0-or-later`. Source code: <https://github.com/ItsCats/audio-2-piano-roll>.
+
+- The AGPL also covers network use: if you run a modified version as a website or server, you must offer its users the source of your version (section 13). The app links to its source from the sidebar and the Credits page, and the optional server from its root response; keep those links pointing at your own source if you change the code.
+- Third-party parts keep their own licences: the AI models in `public/models/` (each folder has its own `LICENSE` and `README.md`), the piano samples in `public/samples/` (CC BY 3.0 and CC0, see [public/samples/README.md](public/samples/README.md)), and the npm packages and fonts bundled into the built site. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+

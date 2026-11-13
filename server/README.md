@@ -4,7 +4,8 @@ A small FastAPI service that adds two capabilities to the web app:
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /api/health` | version and enabled features (`features.separation`, `features.stems`, `features.youtube`) |
+| `GET /` | name, version, licence (`AGPL-3.0-or-later`) and a link to the source code |
+| `GET /api/health` | version, licence, source link and enabled features (`features.separation`, `features.stems`, `features.youtube`) |
 | `POST /api/jobs/youtube` `{url, separate}` | fetch a YouTube video's audio with yt-dlp; with `separate: true` also split it into stems |
 | `POST /api/jobs/separate` (multipart `file`) | SCNet source separation: a **vocal stem** and the **accompaniment without drums or vocals** (bass + other) |
 | `GET /api/jobs/{id}` | status, stage (`decoding` → `separating` → `encoding`), real per-segment progress, available `stems`, `separationMs` (the server's separation time). A YouTube job whose separation fails still finishes as `done` with only the `mix` stem and the reason in `separationError`, so the client can separate that audio itself without a second download. |
@@ -84,10 +85,13 @@ docker run -p 8000:8000 -e SHARED_SECRET=change-me -e ALLOWED_ORIGINS=https://yo
 | `JOB_TTL_SEC` | `3600` | results are deleted after this |
 | `WORKERS` | `1` | concurrent jobs (each separation needs ≈ 1.7 GB RAM plus 50–100 MB per minute of audio) |
 | `DATA_DIR` | `./data` | working directory for job files |
+| `SOURCE_CODE_URL` | `https://github.com/ItsCats/audio-2-piano-roll` | source link returned by `GET /` and `/api/health`. If you run a modified server, set it to where your modified source is published (AGPL-3.0 section 13) |
 
 See [../docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md) for hosting options and costs.
 
 ## Licences
 
-Server code: same licence as the app. SCNet weights and code: MIT, © 2024 starrytong (ONNX export: audiojs).
+Server code: same licence as the app, GNU AGPL-3.0-or-later (see [../LICENSE](../LICENSE)); source: <https://github.com/ItsCats/audio-2-piano-roll>.
+Because of the AGPL, a server that other people use must offer them its source; `GET /` and `/api/health` return the
+link (`SOURCE_CODE_URL`). Third-party components: [../THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md). SCNet weights and code: MIT, © 2024 starrytong (ONNX export: audiojs).
 onnxruntime: MIT (Microsoft). FastAPI, Starlette, uvicorn: MIT/BSD. numpy: BSD. yt-dlp: Unlicense. ffmpeg: LGPL/GPL (system package).

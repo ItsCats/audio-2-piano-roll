@@ -1,0 +1,32 @@
+Licences of the piano samples in this folder
+============================================
+
+These sound recordings are NOT covered by Piano2Vision's own licence (GNU AGPL-3.0-or-later).
+Each keeps the licence below. See README.md in this folder for the list of changes.
+
+
+grand/  -  Salamander Grand Piano V3
+------------------------------------
+
+Salamander Grand Piano V3 by Alexander Holm.
+Source: https://freepats.zenvoid.org/Piano/acoustic-grand-piano.html
+
+Licensed under the Creative Commons Attribution 3.0 Unported License (CC BY 3.0).
+To view a copy of this licence, visit https://creativecommons.org/licenses/by/3.0/
+(full legal code: https://creativecommons.org/licenses/by/3.0/legalcode).
+
+The files in grand/ are a modified version (an adaptation) of the original: a selection
+of 5 of the 16 velocity layers plus the release and pedal noises, trimmed, faded and
+converted to MP3. The author does not endorse Piano2Vision or these changes.
+
+
+upright/  -  Upright Piano KW
+-----------------------------
+
+Upright Piano KW by the FreePats project (https://freepats.zenvoid.org/).
+
+Dedicated to the public domain under the Creative Commons CC0 1.0 Universal
+Public Domain Dedication: https://creativecommons.org/publicdomain/zero/1.0/
+(full legal code: https://creativecommons.org/publicdomain/zero/1.0/legalcode).
+
+The files in upright/ use one of its two velocity layers, trimmed, faded and converted to MP3.

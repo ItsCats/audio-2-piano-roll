@@ -16,3 +16,26 @@ server/data
 __pycache__/
 *.nbi
 *.nbc
+
+# never commit test media / analysis output (copyrighted test songs live outside the repo)
+*.wav
+*.flac
+*.m4a
+*.aac
+*.ogg
+*.opus
+*.mp4
+*.webm
+*.mov
+*.mid
+*.midi
+*.npz
+*.npy
+*.pth
+*.ckpt
+stems/
+refs/
+posteriors/
+songs/
+*.mp3
+!public/samples/**/*.mp3

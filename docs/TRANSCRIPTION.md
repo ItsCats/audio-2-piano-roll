@@ -125,7 +125,7 @@ Measured 2026-11-11 with the real browser pipeline on full recordings (`tests/ac
 | What | Result |
 | --- | --- |
 | Solo piano, 6 MAESTRO performances with exact MIDI, note F1 (onset ±50 ms) | "Piano solo" 0.80 mean (0.62 Liszt … 0.92 Bach; was 0.78); "Sensitive" 0.82 (was 0.77); precision 0.88–0.94 |
-| 5 other solo piano recordings (incl. Chopin's Polonaise Op. 53), agreement with a piano-specialist model | 0.56–0.72 "Piano solo" (was 0.50–0.68) — a second opinion, not truth |
+| 5 other solo piano recordings, agreement with a piano-specialist model | 0.56–0.72 "Piano solo" (was 0.50–0.68) — a second opinion, not truth |
 | 5 songs with a singer: Easy right hand plays the singer's note (any octave) | 50 % of sung moments with separation (was 19 %; same app without separation 24 %; best possible ≈ 62 %) |
 | Same songs: Easy left hand on the bass note | 71 % (was 52 %) |
 | Instrumental band track: Easy right hand vs an estimated lead line | 40 % (was 34 %) |

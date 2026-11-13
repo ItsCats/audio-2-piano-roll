@@ -35,13 +35,13 @@
  * Measured (offline regeneration from saved base transcriptions: band-instrumental-1, 4 vocal songs,
  * 4 solo piano recordings, 6 MAESTRO pieces), left-hand / right-hand onsets spanning more than an
  * octave, before → after:
- *   Medium  every piece → 0 / 0 % (e.g. band-instrumental-1 8.5/2.3, Chopin Ballade 1 recording 15.8/6.7,
+ *   Medium  every piece → 0 / 0 % (e.g. band-instrumental-1 8.5/2.3, piano-solo-2 15.8/6.7,
  *           MAESTRO Ballade 13.0/4.8); notes dropped 0–1.1 % (0.2 % typical), melody notes
  *           never. Dropped notes that are the lowest left-hand note struck at their onset (a new
  *           note over a held bass): before the bass could be released, 34 of 45 drops on the
- *           MAESTRO Ballade, 38 of 45 on the Ballade recording, 12 of 15 on Clair de lune; now
+ *           MAESTRO Ballade, 38 of 45 on piano-solo-2, 12 of 15 on piano-solo-3; now
  *           6 of 7, 2 of 4, 1 of 1. Medium LH bottom line vs the bass stem (raw chroma) about
- *           unchanged (vocal songs + band-instrumental-1 + Heroic, solo piano, mean 0.628 → 0.626; releasing
+ *           unchanged (vocal songs + band-instrumental-1 + piano-solo-1, solo piano, mean 0.628 → 0.626; releasing
  *           every held bass at once cost 0.619).
  *   Hard    band-instrumental-1 22.9/16.0 → 18.7/14.5, vocal-1 19.1/16.4 → 14.2/15.2, MAESTRO Ballade
  *           16.9/21.7 → 12.7/10.9, Mozart K280 7.9/10.1 → 3.0/3.7; no note dropped or shortened

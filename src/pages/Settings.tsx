@@ -8,6 +8,7 @@ import { configuredBackendUrl, health, type BackendHealth } from '../lib/backend
 import { storageEstimate } from '../lib/storage/db';
 import type { Difficulty } from '../lib/music/types';
 import { PIANO_PRESETS } from '../lib/audio/presets';
+import { SOURCE_CODE_LABEL, SOURCE_CODE_URL } from '../lib/credits';
 import { toast } from '../state/toastStore';
 import { rememberServerHealth } from '../state/importStore';
 
@@ -223,6 +224,11 @@ export default function SettingsPage() {
               <Link to="/credits" className="text-accent-400 hover:text-accent-300">
                 All credits, licences and the test data we used →
               </Link>
+            </p>
+            <p className="mt-1 text-[12.5px] leading-relaxed text-ink-300">
+              <a href={SOURCE_CODE_URL} target="_blank" rel="noopener noreferrer" className="text-accent-400 hover:text-accent-300">
+                {SOURCE_CODE_LABEL}
+              </a>
             </p>
           </Section>
         </div>
