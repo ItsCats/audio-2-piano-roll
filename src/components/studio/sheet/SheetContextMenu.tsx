@@ -2,12 +2,13 @@
 import { useEffect, useRef } from 'react';
 import { useSheetUi } from '../../../state/sheetUi';
 import { useStudio } from '../../../state/studioStore';
-import { sheetEdit } from './sheetActions';
+import { sheetEdit, sheetMark } from './sheetActions';
 
 export function SheetContextMenu() {
   const menu = useSheetUi((s) => s.menu);
   const set = useSheetUi((s) => s.set);
   const has = useStudio((s) => s.selection.size > 0);
+  const markSel = useStudio((s) => s.markSel);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!menu) return;
@@ -20,7 +21,7 @@ export function SheetContextMenu() {
     };
   }, [menu, set]);
   if (!menu) return null;
-  const items: [string, string, () => void, boolean][] = [
+  const items: [string, string, () => unknown, boolean][] = [
     ['Up a step', '↑', () => sheetEdit.pitch('step', 1), has],
     ['Down a step', '↓', () => sheetEdit.pitch('step', -1), has],
     ['Octave up', 'Shift+↑', () => sheetEdit.pitch('octave', 1), has],
@@ -30,8 +31,14 @@ export function SheetContextMenu() {
     ['Swap hands', 'H', () => sheetEdit.hand('toggle'), has],
     ['Tie / untie', 'T', sheetEdit.tie, has],
     ['Delete', 'Del', sheetEdit.remove, has],
+    ['Staccato', 'S', () => sheetMark.art('staccato'), has],
+    ['Accent', 'A', () => sheetMark.art('accent'), has],
+    ['Slur', 'Shift+S', sheetMark.slur, has],
+    ['Pedal', 'P', sheetMark.pedal, true],
+    ['Dynamics…', 'D', () => set({ panel: 'marks', picker: 'dyn', viaKey: true }), true],
     ['Add notes', 'N', () => set({ addMode: true }), true],
   ];
+  if (markSel && !has) items.unshift(['Delete marking', 'Del', sheetMark.remove, true]);
   const x = Math.min(menu.x, window.innerWidth - 220);
   const y = Math.min(menu.y, window.innerHeight - items.length * 34 - 16);
   return (

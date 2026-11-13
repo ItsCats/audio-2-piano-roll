@@ -332,14 +332,27 @@ export function toMusicXml(score: Score, opts: MusicXmlOptions): string {
         .sort((p, q) => p.piece.pos - q.piece.pos);
       for (const it of notes) it.acc = spelled(score, it.chord!).map((sp) => tracker.need(sp, !!it.tieStop));
     }
+    // each direction goes into a voice with an item starting right at it (its own staff first), so it
+    // is drawn exactly there; otherwise before the voice-1 item it falls in
+    const placed = new Map<number, Dir[]>();
+    if (plan)
+      for (const s of [1, 2] as Staff[])
+        for (const d of plan.dirs.get(`${s}|${m}`) ?? []) {
+          const own = streams.map((st, i) => ({ st, i })).sort((x, y) => Number(x.st.staff !== s) - Number(y.st.staff !== s) || x.st.voice - y.st.voice);
+          const exact = d.pos < b ? own.find(({ st }) => st.items.some((it) => it.kind !== 'forward' && it.piece.pos === d.pos)) : undefined;
+          const i = exact?.i ?? streams.findIndex((st) => st.staff === s && st.voice === 0);
+          let a = placed.get(i);
+          if (!a) placed.set(i, (a = []));
+          a.push(d);
+        }
     let first = true;
-    for (const st of streams) {
+    for (const [si, st] of streams.entries()) {
       if (!first) x.push(`<backup><duration>${len}</duration></backup>`);
       first = false;
       const voiceNo = (st.staff === 1 ? 1 : 5) + st.voice;
       if (st.voice === 0 && m === from)
         for (const o of score.ottavas) if (o.staff === st.staff && o.start < a && o.stop > a) x.push(octaveShift(o.shift > 0 ? 'down' : 'up', st.staff));
-      const dirs = st.voice === 0 && plan ? (plan.dirs.get(`${st.staff}|${m}`) ?? []) : [];
+      const dirs = (placed.get(si) ?? []).sort((x, y) => x.pos - y.pos || x.order - y.order);
       let di = 0;
       for (const it of st.items) {
         while (di < dirs.length && dirs[di].pos < it.piece.pos + it.piece.dur && dirs[di].pos < b) x.push(dirs[di++].xml);

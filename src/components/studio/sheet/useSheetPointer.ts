@@ -12,7 +12,8 @@ import { addOp, lengthName, shiftOp } from '../../../lib/sheet/edit';
 import { pitchLabel, stepInKey } from '../../../lib/sheet/pitch';
 import { keyAt } from '../../../lib/sheet/keys';
 import { audition, runSheetEdit, sheetCtx } from '../../../state/sheetEdit';
-import { barMarkRefs, markSelOfHit } from '../../../state/sheetMarks';
+import { barMarkRefs, markSelOfHit, runMarkEdit } from '../../../state/sheetMarks';
+import { resizeMarkOp } from '../../../lib/sheet/marks';
 import { useSheetUi } from '../../../state/sheetUi';
 import { useStudio } from '../../../state/studioStore';
 import { getPlayer } from '../../../state/playback';
@@ -66,7 +67,9 @@ interface Down {
   type: string;
   hit: NoteHit | null;
   moved: boolean;
-  mode: 'note' | 'marquee' | 'tap' | 'add';
+  mode: 'note' | 'marquee' | 'tap' | 'add' | 'markEnd';
+  /** markEnd: the end of the selected hairpin or pedal being dragged, and the y of its line. */
+  end?: { which: 'start' | 'end'; y: number };
   additive: boolean;
 }
 
@@ -120,6 +123,22 @@ export function useSheetPointer(opts: {
       const s = r.slotAt(p.x, p.y);
       useSheetOverlay.getState().set({ ghost: s ? slotGhost(s, ui.addLen) : null });
       return;
+    }
+    // a mouse or pen on an end of the selected hairpin or pedal drags that end
+    const sel = useStudio.getState().markSel;
+    if (!touch && sel && (sel.startsWith('pedal:') || sel.startsWith('m'))) {
+      const ctx = sheetCtx();
+      const h = ctx ? r.markHits(barMarkRefs(ctx)).find((x) => markSelOfHit(ctx, x.id) === sel) : null;
+      const kind = ctx && sel.startsWith('m') ? ctx.song.arrangements[ctx.level].marks?.find((m) => m.id === sel)?.kind : 'pedal';
+      if (h && (kind === 'wedge' || kind === 'pedal') && p.y >= h.y0 - 6 && p.y <= h.y1 + 6) {
+        const which = Math.abs(p.x - h.x0) <= 10 ? 'start' : Math.abs(p.x - h.x1) <= 10 ? 'end' : null;
+        if (which) {
+          down.current = { ...base, mode: 'markEnd', end: { which, y: (h.y0 + h.y1) / 2 } };
+          (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+          e.preventDefault();
+          return;
+        }
+      }
     }
     const hits = r.notesAt(p.x, p.y, e.pointerType);
     if (touch) {
@@ -197,6 +216,9 @@ export function useSheetPointer(opts: {
       });
     } else if (d.mode === 'marquee') {
       useSheetOverlay.getState().set({ marquee: { x0: d.x, y0: d.y, x1: p.x, y1: p.y } });
+    } else if (d.mode === 'markEnd' && d.end) {
+      const h = useSheetOverlay.getState().ring;
+      if (h) useSheetOverlay.getState().set({ ring: d.end.which === 'start' ? { ...h, x0: Math.min(p.x, h.x1 - 4) } : { ...h, x1: Math.max(p.x, h.x0 + 4) } });
     } else if (d.mode === 'add') {
       const s = r.slotAt(p.x, p.y);
       useSheetOverlay.getState().set({ ghost: s ? slotGhost(s, ui.addLen) : null });
@@ -236,6 +258,17 @@ export function useSheetPointer(opts: {
       const s = r.slotAt(p.x, p.y);
       ov.set({ ghost: null });
       if (s) addAt(s);
+      return;
+    }
+    if (d.mode === 'markEnd' && d.end) {
+      const s = d.moved ? r.slotAt(p.x, d.end.y) : null;
+      const sel = st.markSel;
+      if (s && sel) {
+        const sc = r.drawnScore;
+        // an end at the far edge of a measure means the bar line
+        const pos = d.end.which === 'end' && sc && p.x > (r.box(s.measure)?.x ?? 0) + (r.box(s.measure)?.w ?? 0) - 8 ? sc.time.measureStart(s.measure + 1) : s.pos;
+        runMarkEdit((c) => resizeMarkOp(c, sel, d.end!.which, pos), { coalesceKey: `sheet-drag-${++dragSeq}` });
+      }
       return;
     }
     if (d.mode === 'note') {

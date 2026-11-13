@@ -22,6 +22,8 @@ import {
   slurOp,
   textOp,
   wedgeOp,
+  resizeMarkOp,
+  pedalSel,
   withArticulations,
   writtenSeconds,
   levelAt,
@@ -32,7 +34,7 @@ import { DIV } from '../../src/lib/sheet/types';
 import { parseXml, descendants, childText, type XmlElement } from '../../src/lib/score/xml';
 import { readScoreFile } from '../../src/lib/score';
 import { sanitizeSheetData } from '../../src/lib/sheet/sanitize';
-import { easyMediumFromHard } from '../../src/lib/songs';
+import { easyMediumFromHard, withAutoPedal } from '../../src/lib/songs';
 import { GOLDEN_SONGS, straightSong } from './sheetSongs';
 
 const demo = () => GOLDEN_SONGS[0][1]();
@@ -623,5 +625,44 @@ describe('positions of new marks', () => {
     out.forEach((n, i) => {
       if (spanOf(ctx, s.arrangements.hard.notes[i]).on < 96) expect(n.vel).toBe(s.arrangements.hard.notes[i].vel);
     });
+  });
+});
+
+describe('ends of hairpins and pedal', () => {
+  it('a drag sets the start or end (never past the other end)', () => {
+    let s = locked(demo());
+    s = apply(s, wedgeOp(ctxOf(s), new Set([rh(s)[2].id, rh(s)[9].id]), 'cresc', { bake: false, cursorMeasure: 0 }));
+    const w = s.arrangements.hard.marks![0] as Extract<SheetMark, { kind: 'wedge' }>;
+    const r = resizeMarkOp(ctxOf(s), w.id, 'end', w.end + 24)!;
+    expect((r.marks![0] as typeof w).end).toBe(w.end + 24);
+    expect(resizeMarkOp(ctxOf(s), w.id, 'start', w.end)).toBeNull();
+    s = apply(s, pedalOp(ctxOf(s), new Set([rh(s)[0].id, rh(s)[3].id]), 0));
+    const t = buildSheet(s, 'hard').time;
+    const p = s.arrangements.hard.pedal.find((x) => Math.abs(x.end - t.posToTime(spanOf(ctxOf(s), rh(s)[3]).off)) < 1e-9)!;
+    const res = resizeMarkOp(ctxOf(s), pedalSel(p), 'end', 48)!;
+    expect(res.pedal!.some((x) => x.start === p.start && Math.abs(x.end - t.posToTime(48)) < 1e-9)).toBe(true);
+  });
+
+  it('a direction is written in the voice that has an item starting right at it', () => {
+    let s = locked(demo());
+    const t = buildSheet(s, 'hard').time;
+    // pos 6: the right hand's first note; the left hand plays a dotted 8th from 3
+    s = apply(s, { pedal: [{ start: t.posToTime(6), end: t.posToTime(24) }], showPedal: true });
+    const m0 = measures(xmlOf(s))[0];
+    const i = m0.children.findIndex((c) => c.name === 'direction' && descendants(c, 'pedal').length);
+    const next = m0.children.slice(i + 1).find((c) => c.name === 'note')!;
+    expect(childText(next, 'voice')).toBe('1');
+    expect(childText(m0.children[i], 'staff')).toBe('2');
+  });
+});
+
+describe('automatic pedal', () => {
+  it('keeps pedal edited on the sheet unless told to replace it', () => {
+    const s0 = { ...demo(), hasAudio: true, source: { kind: 'audio' as const } };
+    const edited = { ...s0, arrangements: { ...s0.arrangements, hard: { ...s0.arrangements.hard, pedal: [{ start: 1, end: 2 }], pedalEdited: true as const } } };
+    expect(withAutoPedal(edited, true).arrangements.hard.pedal).toEqual([{ start: 1, end: 2 }]);
+    const replaced = withAutoPedal(edited, true, { replaceEdited: true }).arrangements.hard;
+    expect(replaced.pedalEdited).toBeUndefined();
+    expect(replaced.pedal).not.toEqual([{ start: 1, end: 2 }]);
   });
 });

@@ -404,6 +404,29 @@ export function moveMarkOp(ctx: SheetCtx, sel: string, dir: 1 | -1, end = false)
   return null;
 }
 
+/** Sets the start or the end of the selected hairpin or pedal to a position (a mouse drag of its end). */
+export function resizeMarkOp(ctx: SheetCtx, sel: string, which: 'start' | 'end', pos: number): MarkEditResult | null {
+  const r = resolveMark(ctx, sel);
+  if (!r) return null;
+  const p = Math.max(0, Math.round(pos));
+  if (r.type === 'mark' && r.mark.kind === 'wedge') {
+    const m = r.mark;
+    const next = which === 'start' ? { ...m, pos: p } : { ...m, end: p };
+    if (next.end <= next.pos || (next.pos === m.pos && next.end === m.end)) return null;
+    return { marks: marksOf(ctx).map((x) => (x.id === m.id ? next : x)), markSel: m.id };
+  }
+  if (r.type === 'pedal') {
+    const t = ctx.score.time;
+    const start = which === 'start' ? t.posToTime(p) : r.range.start;
+    const end = which === 'end' ? t.posToTime(p) : r.range.end;
+    if (!(end > start)) return null;
+    const range = { start, end };
+    const pedal = ctx.song.arrangements[ctx.level].pedal.map((x, i) => (i === r.index ? range : x)).sort((a, b) => a.start - b.start);
+    return { pedal, pedalEdited: true, markSel: pedalSel(range) };
+  }
+  return null;
+}
+
 // ------------------------------------------------------------------ Easy & Medium from Hard
 
 /**
