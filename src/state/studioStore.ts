@@ -13,6 +13,29 @@ import { quantizeNotes } from '../lib/music/quantize';
 
 const HISTORY_LIMIT = 200;
 
+/**
+ * The song fields an edit can touch; undo entries are references to them (edits make new
+ * objects), so one stack covers piano-roll edits, sheet edits and song-level changes together.
+ */
+export type HistorySnap = Pick<Song, 'arrangements' | 'base' | 'basePedal' | 'tempo' | 'duration' | 'key' | 'sheet'>;
+
+const snapOf = (s: Song): HistorySnap => ({
+  arrangements: s.arrangements,
+  base: s.base,
+  basePedal: s.basePedal,
+  tempo: s.tempo,
+  duration: s.duration,
+  key: s.key,
+  sheet: s.sheet,
+});
+
+/** A song with a history entry put back (an absent sheet is removed, not set to undefined). */
+function withSnap(song: Song, snap: HistorySnap): Song {
+  const out: Song = { ...song, ...snap, updatedAt: Date.now() };
+  if (!snap.sheet) delete out.sheet;
+  return out;
+}
+
 interface StudioState {
   song: Song | null;
   loading: boolean;
@@ -20,8 +43,8 @@ interface StudioState {
   difficulty: Difficulty;
   editMode: boolean;
   selection: Set<number>;
-  past: Arrangement[];
-  future: Arrangement[];
+  past: HistorySnap[];
+  future: HistorySnap[];
   saving: boolean;
   lastSavedAt: number | null;
   open: (id: string) => Promise<void>;
@@ -31,8 +54,12 @@ interface StudioState {
   setEditMode: (on: boolean) => void;
   select: (ids: number[], additive?: boolean) => void;
   clearSelection: () => void;
-  /** apply an edit to the current arrangement (undoable) */
+  /** apply an edit to the current arrangement's notes (undoable) */
   edit: (fn: (notes: Note[]) => Note[], opts?: { coalesceKey?: string }) => void;
+  /** apply an edit to the current arrangement as a whole: notes, pedal (undoable) */
+  editArr: (fn: (a: Arrangement) => Arrangement, opts?: { coalesceKey?: string }) => void;
+  /** apply a song-level edit: any of the history fields (undoable, one step) */
+  editSong: (fn: (s: Song) => Partial<HistorySnap>, opts?: { coalesceKey?: string }) => void;
   undo: () => void;
   redo: () => void;
   deleteSelected: () => void;
@@ -46,42 +73,74 @@ interface StudioState {
 }
 
 let saveTimer: number | null = null;
+/** The song waiting to be saved (captured when the save was scheduled: a song switch can't drop it). */
+let pendingSave: Song | null = null;
 let lastCoalesce: { key: string; at: number } | null = null;
+let saveNow: () => void = () => {};
+
+/** Saves a scheduled edit right away (the page is being hidden or closed, or another song opens). */
+export function flushSave(): void {
+  saveNow();
+}
+
+if (typeof window !== 'undefined' && typeof document !== 'undefined' && typeof window.addEventListener === 'function') {
+  window.addEventListener('pagehide', () => flushSave());
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flushSave();
+  });
+}
 
 function arrangement(s: StudioState): Arrangement | null {
   return s.song ? s.song.arrangements[s.difficulty] : null;
 }
 
 export const useStudio = create<StudioState>((set, get) => {
-  const scheduleSave = () => {
+  const write = async (song: Song) => {
+    set({ saving: true });
+    try {
+      await saveSong(song);
+      set({ lastSavedAt: Date.now() });
+    } catch (err) {
+      set({ error: `Could not save: ${err instanceof Error ? err.message : String(err)}` });
+    } finally {
+      set({ saving: false });
+    }
+  };
+  saveNow = () => {
     if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = window.setTimeout(async () => {
-      const song = get().song;
-      if (!song) return;
-      set({ saving: true });
-      try {
-        await saveSong(song);
-        set({ lastSavedAt: Date.now() });
-      } catch (err) {
-        set({ error: `Could not save: ${err instanceof Error ? err.message : String(err)}` });
-      } finally {
-        set({ saving: false });
-      }
-    }, 600);
+    saveTimer = null;
+    const song = pendingSave;
+    pendingSave = null;
+    if (song) void write(song);
+  };
+  const scheduleSave = () => {
+    const song = get().song;
+    if (!song) return;
+    // an edit of another song still waiting: save it now
+    if (pendingSave && pendingSave.id !== song.id) saveNow();
+    pendingSave = song;
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = window.setTimeout(saveNow, 600);
   };
 
-  const commit = (next: Arrangement, prev: Arrangement, coalesceKey?: string) => {
+  /** Puts the song with `patch` applied on screen, pushing the previous fields as an undo entry. */
+  const commitSong = (patch: Partial<HistorySnap>, coalesceKey?: string) => {
     const s = get();
     if (!s.song) return;
     const now = Date.now();
     const coalesce = coalesceKey && lastCoalesce?.key === coalesceKey && now - lastCoalesce.at < 800;
     lastCoalesce = coalesceKey ? { key: coalesceKey, at: now } : null;
     set({
-      song: { ...s.song, arrangements: { ...s.song.arrangements, [s.difficulty]: next }, updatedAt: now },
-      past: coalesce ? s.past : [...s.past, prev].slice(-HISTORY_LIMIT),
+      song: { ...s.song, ...patch, updatedAt: now },
+      past: coalesce ? s.past : [...s.past, snapOf(s.song)].slice(-HISTORY_LIMIT),
       future: [],
     });
     scheduleSave();
+  };
+  const commit = (next: Arrangement, coalesceKey?: string) => {
+    const s = get();
+    if (!s.song) return;
+    commitSong({ arrangements: { ...s.song.arrangements, [s.difficulty]: next } }, coalesceKey);
   };
 
   return {
@@ -97,6 +156,7 @@ export const useStudio = create<StudioState>((set, get) => {
     lastSavedAt: null,
     open: async (id) => {
       if (get().song?.id === id) return;
+      flushSave();
       set({ loading: true, error: null });
       try {
         const song = await getSong(id);
@@ -126,30 +186,34 @@ export const useStudio = create<StudioState>((set, get) => {
       const arr = arrangement(s);
       if (!arr) return;
       const notes = sortNotes(fn(arr.notes.map((n) => ({ ...n }))));
-      commit({ ...arr, notes, edited: true }, arr, opts?.coalesceKey);
+      commit({ ...arr, notes, edited: true }, opts?.coalesceKey);
+    },
+    editArr: (fn, opts) => {
+      const arr = arrangement(get());
+      if (!arr) return;
+      const next = fn(arr);
+      if (next === arr) return;
+      commit({ ...next, notes: sortNotes(next.notes), edited: true }, opts?.coalesceKey);
+    },
+    editSong: (fn, opts) => {
+      const s = get();
+      if (!s.song) return;
+      commitSong(fn(s.song), opts?.coalesceKey);
     },
     undo: () => {
       const s = get();
-      const arr = arrangement(s);
-      if (!arr || !s.past.length || !s.song) return;
+      if (!s.past.length || !s.song) return;
       const prev = s.past[s.past.length - 1];
-      set({
-        song: { ...s.song, arrangements: { ...s.song.arrangements, [s.difficulty]: prev }, updatedAt: Date.now() },
-        past: s.past.slice(0, -1),
-        future: [arr, ...s.future],
-      });
+      lastCoalesce = null;
+      set({ song: withSnap(s.song, prev), past: s.past.slice(0, -1), future: [snapOf(s.song), ...s.future] });
       scheduleSave();
     },
     redo: () => {
       const s = get();
-      const arr = arrangement(s);
-      if (!arr || !s.future.length || !s.song) return;
+      if (!s.future.length || !s.song) return;
       const next = s.future[0];
-      set({
-        song: { ...s.song, arrangements: { ...s.song.arrangements, [s.difficulty]: next }, updatedAt: Date.now() },
-        past: [...s.past, arr],
-        future: s.future.slice(1),
-      });
+      lastCoalesce = null;
+      set({ song: withSnap(s.song, next), past: [...s.past, snapOf(s.song)], future: s.future.slice(1) });
       scheduleSave();
     },
     deleteSelected: () => {
