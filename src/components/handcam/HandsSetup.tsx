@@ -609,7 +609,7 @@ export function HandsSetup({ song, difficulty, visual, settings, watermark, logo
             <span key={s} className={cn('h-1 flex-1 rounded-full', i <= si ? 'bg-accent-500' : 'bg-ink-700')} />
           ))}
         </div>
-        <div className="grid min-h-0 flex-1 overflow-y-auto lg:grid-cols-[1fr_340px] lg:overflow-hidden">
+        <div className="grid min-h-0 flex-1 content-start overflow-y-auto lg:grid-cols-[1fr_340px] lg:content-normal lg:overflow-hidden">
           <div className="min-w-0 p-3 sm:p-4 lg:overflow-y-auto">{media}</div>
           <div className="border-t border-ink-700 p-4 lg:overflow-y-auto lg:border-t-0 lg:border-l">{controls}</div>
         </div>

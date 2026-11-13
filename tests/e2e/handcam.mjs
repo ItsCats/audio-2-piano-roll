@@ -3,7 +3,8 @@
  * headers (CSP included) by tests/e2e/isolation.server.py:
  *
  *   npx vite build --outDir /tmp/p2v-dist
- *   node tests/e2e/handcam.mjs --dist /tmp/p2v-dist [--out SHOTS_DIR] [--port 5388] [--keep DIR]
+ *   node tests/e2e/handcam.mjs --dist /tmp/p2v-dist [--out SHOTS_DIR] [--port 5388] [--keep DIR] [--quick]
+ *   (--quick: no export, only the import, the setup, the screenshots and the sync checks)
  *
  * 1. A synthetic "hands video" (tests/e2e/handcam-video.mjs: tilted 88-key keyboard, H.264 + AAC, VFR with
  *    a dropped frame, rotation metadata; a key turns green while its tone sounds) is imported with
@@ -32,6 +33,7 @@ const dist = opt('dist');
 const out = opt('out');
 const keepDir = opt('keep');
 const port = Number(opt('port', '5388'));
+const quick = args.includes('--quick');
 if (!dist || !fs.existsSync(path.join(dist, 'index.html'))) {
   console.error('usage: node tests/e2e/handcam.mjs --dist DIR [--out DIR] [--keep DIR]');
   process.exit(2);
@@ -321,118 +323,121 @@ try {
   await page.waitForTimeout(1500);
   await shot(page, 'export-dialog-handcam.png');
 
-  // a canceled export, then the real one
-  const render = dlg.getByRole('button', { name: 'Render video' });
-  await render.click();
-  await dlg.getByText('Drawing frames (decoding your video)').waitFor({ timeout: 240000 });
-  await dlg.getByRole('button', { name: 'Cancel' }).click();
-  await render.waitFor({ timeout: 60000 });
-  check('cancel stops the export (Render is back)', await render.isEnabled());
-  const tExp = Date.now();
-  await dismissToasts(page);
-  await render.click();
-  const dl = await waitExport(dlg, 'export');
-  const [download] = await Promise.all([page.waitForEvent('download'), dl.click()]);
-  const fileA = path.join(dir, 'export-bottom.mp4');
-  await download.saveAs(fileA);
-  log(`export: ${((Date.now() - tExp) / 1000).toFixed(0)} s, ${(fs.statSync(fileA).size / 1e6).toFixed(2)} MB`);
+  // --quick: the setup, the screenshots and the sync checks only (no export)
+  if (!quick) {
+    // a canceled export, then the real one
+    const render = dlg.getByRole('button', { name: 'Render video' });
+    await render.click();
+    await dlg.getByText('Drawing frames (decoding your video)').waitFor({ timeout: 240000 });
+    await dlg.getByRole('button', { name: 'Cancel' }).click();
+    await render.waitFor({ timeout: 60000 });
+    check('cancel stops the export (Render is back)', await render.isEnabled());
+    const tExp = Date.now();
+    await dismissToasts(page);
+    await render.click();
+    const dl = await waitExport(dlg, 'export');
+    const [download] = await Promise.all([page.waitForEvent('download'), dl.click()]);
+    const fileA = path.join(dir, 'export-bottom.mp4');
+    await download.saveAs(fileA);
+    log(`export: ${((Date.now() - tExp) / 1000).toFixed(0)} s, ${(fs.statSync(fileA).size / 1e6).toFixed(2)} MB`);
 
-  // ---------------- 3. check the file ----------------
-  {
-    const [W, H] = probeSize(fileA);
-    const lead = 2;
-    const wm = { ...(await page.evaluate(() => JSON.parse(localStorage.getItem('piano2vision-watermark') ?? '{}').state ?? null)) };
-    const band = wmLayout.watermarkBand({ ...wm, enabled: true, text: 'youtube.com/yourname', logo: null }, W, H);
-    const songSpan = calib.noteSpan(song.notes);
-    const g = calib.outputGeometry(W, H, cal, { wmBand: band, song: songSpan });
-    const L = calib.calibratedLayout(cal, g);
-    const lane = (m) => L.keys[m].x + L.keys[m].w / 2;
-    const whiteW = L.whiteW;
-    const rowFor = (m) => Math.round(g.yTop + ([1, 3, 6, 8, 10].includes(m % 12) ? 0.4 : 0.8) * g.kh);
-    const off = off1;
-    // output time of a song time (full song from 0, sound = the recording)
-    const outT = (songT) => lead + songT;
-    const wanted = new Set();
-    const mid = Math.round(outT(5) * FPS);
-    wanted.add(mid);
-    for (const n of notes) for (let k = -10; k <= 14; k++) wanted.add(Math.round(outT(n.start - off) * FPS) + k);
-    const { frames, count } = await rgbFrames(fileA, W, H, (i) => wanted.has(i));
-    const audio = pcm(fileA);
-    // (a) lanes
-    const errs = notes.map((n) => {
-      const fi = Math.round(outT(n.start - off + 0.15) * FPS);
-      const x = frames.has(fi) ? green(frames.get(fi), W, rowFor(n.midi)) : null;
-      return x === null ? Infinity : Math.abs(x - lane(n.midi)) / whiteW;
-    });
-    check('lanes line up with the real keys (< 0.25 white key)', Math.max(...errs) < 0.25, `worst ${Math.max(...errs).toFixed(3)}, mean ${(errs.reduce((a, b) => a + b, 0) / errs.length).toFixed(3)} white key`);
-    // (b) sound and picture
-    const src = sourceFrameTimes({ seconds: SECONDS, fps: 30 });
-    const shownAt = (tv) => {
-      let k = -1;
-      for (let j = 0; j < src.length && src[j] <= tv + 1e-6; j++) k = j;
-      return k < 0 ? null : src[k];
-    };
-    const toneErr = [];
-    const picErr = [];
-    for (const n of notes) {
-      const exp = outT(n.start - off);
-      const on = onsetNear(audio, exp);
-      toneErr.push(on === null ? Infinity : on - exp);
-      let want = null;
-      let first = null;
-      for (let fi = Math.round((exp - 0.25) * FPS); fi < (exp + 0.3) * FPS; fi++) {
-        const ts = shownAt(fi / FPS - lead + off);
-        if (want === null && ts !== null && ts >= n.start && ts < n.start + n.dur) want = fi;
-        if (first === null && frames.has(fi) && green(frames.get(fi), W, rowFor(n.midi), lane(n.midi) - whiteW, lane(n.midi) + whiteW) !== null) first = fi;
-      }
-      picErr.push(want === null || first === null ? Infinity : first - want);
-    }
-    check('sound: every tone at its note time (< 3 ms)', toneErr.every((e) => Math.abs(e) < 0.003), toneErr.map((e) => (e * 1000).toFixed(1)).join(' ') + ' ms');
-    check('picture: every camera frame on its output frame (sound and picture within one frame)', picErr.every((e) => Math.abs(e) <= 1), picErr.join(' '));
-    // (c) the watermark under the video band: text pixels in the middle of the band, none at its left end
-    const f = frames.get(mid);
-    const brightShare = (xa, xb) => {
-      let lit = 0;
-      let all = 0;
-      for (let y = Math.ceil(g.yTop + g.bandH + 1); y < H; y++)
-        for (let x = Math.round(xa); x < xb; x++) {
-          const i = (y * W + x) * 3;
-          if (f[i] + f[i + 1] + f[i + 2] > 3 * 110) lit++;
-          all++;
+    // ---------------- 3. check the file ----------------
+    {
+      const [W, H] = probeSize(fileA);
+      const lead = 2;
+      const wm = { ...(await page.evaluate(() => JSON.parse(localStorage.getItem('piano2vision-watermark') ?? '{}').state ?? null)) };
+      const band = wmLayout.watermarkBand({ ...wm, enabled: true, text: 'youtube.com/yourname', logo: null }, W, H);
+      const songSpan = calib.noteSpan(song.notes);
+      const g = calib.outputGeometry(W, H, cal, { wmBand: band, song: songSpan });
+      const L = calib.calibratedLayout(cal, g);
+      const lane = (m) => L.keys[m].x + L.keys[m].w / 2;
+      const whiteW = L.whiteW;
+      const rowFor = (m) => Math.round(g.yTop + ([1, 3, 6, 8, 10].includes(m % 12) ? 0.4 : 0.8) * g.kh);
+      const off = off1;
+      // output time of a song time (full song from 0, sound = the recording)
+      const outT = (songT) => lead + songT;
+      const wanted = new Set();
+      const mid = Math.round(outT(5) * FPS);
+      wanted.add(mid);
+      for (const n of notes) for (let k = -10; k <= 14; k++) wanted.add(Math.round(outT(n.start - off) * FPS) + k);
+      const { frames, count } = await rgbFrames(fileA, W, H, (i) => wanted.has(i));
+      const audio = pcm(fileA);
+      // (a) lanes
+      const errs = notes.map((n) => {
+        const fi = Math.round(outT(n.start - off + 0.15) * FPS);
+        const x = frames.has(fi) ? green(frames.get(fi), W, rowFor(n.midi)) : null;
+        return x === null ? Infinity : Math.abs(x - lane(n.midi)) / whiteW;
+      });
+      check('lanes line up with the real keys (< 0.25 white key)', Math.max(...errs) < 0.25, `worst ${Math.max(...errs).toFixed(3)}, mean ${(errs.reduce((a, b) => a + b, 0) / errs.length).toFixed(3)} white key`);
+      // (b) sound and picture
+      const src = sourceFrameTimes({ seconds: SECONDS, fps: 30 });
+      const shownAt = (tv) => {
+        let k = -1;
+        for (let j = 0; j < src.length && src[j] <= tv + 1e-6; j++) k = j;
+        return k < 0 ? null : src[k];
+      };
+      const toneErr = [];
+      const picErr = [];
+      for (const n of notes) {
+        const exp = outT(n.start - off);
+        const on = onsetNear(audio, exp);
+        toneErr.push(on === null ? Infinity : on - exp);
+        let want = null;
+        let first = null;
+        for (let fi = Math.round((exp - 0.25) * FPS); fi < (exp + 0.3) * FPS; fi++) {
+          const ts = shownAt(fi / FPS - lead + off);
+          if (want === null && ts !== null && ts >= n.start && ts < n.start + n.dur) want = fi;
+          if (first === null && frames.has(fi) && green(frames.get(fi), W, rowFor(n.midi), lane(n.midi) - whiteW, lane(n.midi) + whiteW) !== null) first = fi;
         }
-      return lit / Math.max(1, all);
-    };
-    const inText = brightShare(W * 0.25, W * 0.75);
-    const outside = brightShare(0, W * 0.1);
-    check('watermark drawn in its band under the video', band > 0 && inText > 0.003 && outside < 0.0005, `${(inText * 100).toFixed(2)}% bright pixels in the middle, ${(outside * 100).toFixed(2)}% at the left, band ${band}px`);
-    // (d) length
-    const tail = 1.5;
-    const d = probeDuration(fileA);
-    check('length = lead-in + song + tail (within one frame)', Math.abs(d - (lead + song.duration + tail)) <= 1 / FPS + 0.03 && Math.abs(count - Math.ceil((lead + song.duration + tail) * FPS)) <= 1, `${d.toFixed(3)} s, ${count} frames, song ${song.duration.toFixed(3)} s`);
-    if (out) execFileSync('ffmpeg', ['-v', 'error', '-y', '-ss', String(outT(5.3)), '-i', fileA, '-frames:v', '1', path.join(out, 'export-measure-frame.png')]);
-  }
+        picErr.push(want === null || first === null ? Infinity : first - want);
+      }
+      check('sound: every tone at its note time (< 3 ms)', toneErr.every((e) => Math.abs(e) < 0.003), toneErr.map((e) => (e * 1000).toFixed(1)).join(' ') + ' ms');
+      check('picture: every camera frame on its output frame (sound and picture within one frame)', picErr.every((e) => Math.abs(e) <= 1), picErr.join(' '));
+      // (c) the watermark under the video band: text pixels in the middle of the band, none at its left end
+      const f = frames.get(mid);
+      const brightShare = (xa, xb) => {
+        let lit = 0;
+        let all = 0;
+        for (let y = Math.ceil(g.yTop + g.bandH + 1); y < H; y++)
+          for (let x = Math.round(xa); x < xb; x++) {
+            const i = (y * W + x) * 3;
+            if (f[i] + f[i + 1] + f[i + 2] > 3 * 110) lit++;
+            all++;
+          }
+        return lit / Math.max(1, all);
+      };
+      const inText = brightShare(W * 0.25, W * 0.75);
+      const outside = brightShare(0, W * 0.1);
+      check('watermark drawn in its band under the video', band > 0 && inText > 0.003 && outside < 0.0005, `${(inText * 100).toFixed(2)}% bright pixels in the middle, ${(outside * 100).toFixed(2)}% at the left, band ${band}px`);
+      // (d) length
+      const tail = 1.5;
+      const d = probeDuration(fileA);
+      check('length = lead-in + song + tail (within one frame)', Math.abs(d - (lead + song.duration + tail)) <= 1 / FPS + 0.03 && Math.abs(count - Math.ceil((lead + song.duration + tail) * FPS)) <= 1, `${d.toFixed(3)} s, ${count} frames, song ${song.duration.toFixed(3)} s`);
+      if (out) execFileSync('ffmpeg', ['-v', 'error', '-y', '-ss', String(outT(5.3)), '-i', fileA, '-frames:v', '1', path.join(out, 'export-measure-frame.png')]);
+    }
 
-  // a short good-looking export (every effect on) for the eyes
-  if (out) {
-    await dismissToasts(page);
-    await dlg.getByRole('button', { name: 'Back to settings' }).click();
-    await hs.getByRole('switch', { name: 'Light up the keys in the video' }).click();
-    await hs.getByRole('switch', { name: 'Sparkles' }).click();
-    await dlg.getByRole('radio', { name: 'Custom' }).click();
-    await setRange(dlg.getByLabel('Start', { exact: true }).first(), 4);
-    await setRange(dlg.getByLabel('End', { exact: true }).first(), 7.5);
-    await dlg.getByLabel('Resolution').selectOption('1080');
-    await dismissToasts(page);
-    await dlg.getByRole('button', { name: 'Render video' }).click();
-    const dl2 = await waitExport(dlg, 'export (look)');
-    const [d2] = await Promise.all([page.waitForEvent('download'), dl2.click()]);
-    const fileC = path.join(dir, 'export-look.mp4');
-    await d2.saveAs(fileC);
-    execFileSync('ffmpeg', ['-v', 'error', '-y', '-ss', '3.62', '-i', fileC, '-frames:v', '1', path.join(out, 'export-frame.png')]);
-    fs.rmSync(fileC, { force: true });
-    await dismissToasts(page);
-    await dlg.getByRole('button', { name: 'Back to settings' }).click();
-    await dlg.getByRole('radio', { name: 'Full song' }).click();
+    // a short good-looking export (every effect on) for the eyes
+    if (out) {
+      await dismissToasts(page);
+      await dlg.getByRole('button', { name: 'Back to settings' }).click();
+      await hs.getByRole('switch', { name: 'Light up the keys in the video' }).click();
+      await hs.getByRole('switch', { name: 'Sparkles' }).click();
+      await dlg.getByRole('radio', { name: 'Custom' }).click();
+      await setRange(dlg.getByLabel('Start', { exact: true }).first(), 4);
+      await setRange(dlg.getByLabel('End', { exact: true }).first(), 7.5);
+      await dlg.getByLabel('Resolution').selectOption('1080');
+      await dismissToasts(page);
+      await dlg.getByRole('button', { name: 'Render video' }).click();
+      const dl2 = await waitExport(dlg, 'export (look)');
+      const [d2] = await Promise.all([page.waitForEvent('download'), dl2.click()]);
+      const fileC = path.join(dir, 'export-look.mp4');
+      await d2.saveAs(fileC);
+      execFileSync('ffmpeg', ['-v', 'error', '-y', '-ss', '3.62', '-i', fileC, '-frames:v', '1', path.join(out, 'export-frame.png')]);
+      fs.rmSync(fileC, { force: true });
+      await dismissToasts(page);
+      await dlg.getByRole('button', { name: 'Back to settings' }).click();
+      await dlg.getByRole('radio', { name: 'Full song' }).click();
+    }
   }
 
   // ---------------- 4a. add a video that starts later: sync against the song's recording ----------------
