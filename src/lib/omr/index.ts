@@ -88,12 +88,19 @@ export class SheetReadError extends Error {}
 export const MODEL_FOR: Record<SheetKind, string> = { pdf: 'smt-camera-grandstaff', photo: 'smt-camera-grandstaff' };
 
 /**
- * Extra tab memory while reading, MB (onnxruntime sessions, encoder output of one system, the pages
- * being prepared): measured, see public/models/omr/README.md.
+ * Extra browser memory while reading, MB. Measured (2026-11-13, headless Chromium, RSS of the whole
+ * browser, a dense real page of five systems): +550 MB peak with 1 WASM thread, +940 MB with 3 (each
+ * thread has its own scratch memory); about +370–470 MB stays while the model is kept loaded, and goes
+ * when the worker ends (always right after the job on phones).
  */
-export const OMR_EXTRA_MB = 400;
-/** Measured seconds per page of piano music (about four systems) by WASM threads (index = threads). */
-const SECONDS_PER_PAGE = [40, 40, 25, 18, 16];
+export const OMR_EXTRA_MB = 800;
+/**
+ * Measured seconds per page of real printed piano music (four to five systems, ~1400 model steps) by
+ * WASM threads (index = threads), headless Chromium on a shared 4-core x86 box with other jobs
+ * running: 31–36 s with 1 thread, 18–28 s with 3 (the token-by-token decoder gains little from
+ * threads). A short page of two systems takes a quarter of that.
+ */
+const SECONDS_PER_PAGE = [35, 35, 30, 25, 23];
 /** How long an idle worker keeps its loaded model (desktops). */
 export const IDLE_WORKER_MS = 60_000;
 /** Most pages read in one go. */
@@ -124,8 +131,8 @@ function hasSimd(): boolean {
   }
 }
 
-/** Phones are assumed ~3x slower than one desktop thread. */
-export const PHONE_SLOWDOWN = 3;
+/** Phones run one thread (no cross-origin isolation on iOS Safari) and are assumed 1.5x slower than one desktop thread (not measured on a phone yet). */
+export const PHONE_SLOWDOWN = 1.5;
 export function estimateSecondsPerPage(threads: number, phone = false): number {
   const base = SECONDS_PER_PAGE[Math.max(1, Math.min(SECONDS_PER_PAGE.length - 1, Math.round(threads)))];
   return phone ? SECONDS_PER_PAGE[1] * PHONE_SLOWDOWN : base;
