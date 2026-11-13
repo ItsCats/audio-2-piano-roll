@@ -35,6 +35,7 @@
     "@tensorflow/tfjs-converter": "^4.22.0",
     "@tensorflow/tfjs-core": "^4.22.0",
     "@tonejs/midi": "^2.0.28",
+    "fflate": "0.8.3",
     "idb": "^8.0.4",
     "jspdf": "4.2.1",
     "lucide-react": "^1.71.0",

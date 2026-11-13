@@ -56,9 +56,12 @@ export interface KeyInfo {
   mode: 'major' | 'minor';
   name: string;
   confidence: number;
+  /** Key signature as written in an imported score (sharps > 0, flats < 0); absent when estimated. */
+  fifths?: number;
 }
 
-export type SourceKind = 'audio' | 'midi' | 'youtube' | 'capture' | 'demo';
+/** 'score': a sheet-music file (MusicXML, .mxl, MuseScore); also what PDF / photo recognition will produce. */
+export type SourceKind = 'audio' | 'midi' | 'youtube' | 'capture' | 'demo' | 'score';
 
 export interface SongSource {
   kind: SourceKind;
@@ -117,13 +120,17 @@ export interface ExtractionParams {
 }
 
 export interface TranscriptionInfo {
-  /** 'piano-specialist': the high-accuracy solo-piano model (Kong et al. 2021, lib/pianoSpecialist). */
-  method: 'basic-pitch' | 'piano-specialist' | 'midi-file' | 'demo';
+  /**
+   * 'piano-specialist': the high-accuracy solo-piano model (Kong et al. 2021, lib/pianoSpecialist).
+   * 'score-file': read from sheet music (lib/score), notes exactly as written.
+   */
+  method: 'basic-pitch' | 'piano-specialist' | 'midi-file' | 'score-file' | 'demo';
   /** True whenever the notes were inferred from audio (always an estimate). */
   estimated: boolean;
   /**
-   * The hands come from the score (a MIDI file's named hand tracks or two-staff layout, the
-   * built-in demo): Hard keeps them as written (no hand-span reassignment).
+   * The hands come from the score (a MIDI file's named hand tracks or two-staff layout, a piano
+   * part's staves in sheet music, the built-in demo): Hard keeps them as written (no hand-span
+   * reassignment).
    */
   handsFromScore?: boolean;
   params?: ExtractionParams;

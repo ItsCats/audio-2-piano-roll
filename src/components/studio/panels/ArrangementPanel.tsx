@@ -1,3 +1,4 @@
+import { resolveMeter } from '../../../lib/sheet/grid';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, Wand2 } from 'lucide-react';
@@ -125,7 +126,13 @@ export function ArrangementPanel() {
         ) : (
           <div className="flex gap-2 rounded-lg border border-ok/25 bg-ok/10 p-3 text-[12.5px] text-ink-100">
             <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-ok" />
-            <p>{t.method === 'midi-file' ? 'Exact notes from a MIDI file.' : 'Demo arrangement with exact notes.'}</p>
+            <p>
+              {t.method === 'midi-file'
+                ? 'Exact notes from a MIDI file.'
+                : t.method === 'score-file'
+                  ? 'Exact notes from sheet music, with repeats played in order. Hard is the piece as written.'
+                  : 'Demo arrangement with exact notes.'}
+            </p>
           </div>
         )}
         <dl className="grid grid-cols-2 gap-y-1 text-[12.5px]">
@@ -134,7 +141,9 @@ export function ArrangementPanel() {
             {song.tempo.bpm} BPM {song.tempo.source === 'estimated' && song.tempo.confidence < 0.2 && <Badge tone="warn">uncertain</Badge>}
           </dd>
           <dt className="text-ink-300">Meter</dt>
-          <dd className="text-right text-ink-100">{song.tempo.beatsPerBar}/4</dd>
+          <dd className="text-right text-ink-100">
+            {song.tempo.beatsPerBar}/{resolveMeter(song.tempo).beatUnit}
+          </dd>
           {song.key && (
             <>
               <dt className="text-ink-300">Key</dt>

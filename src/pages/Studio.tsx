@@ -399,7 +399,7 @@ export default function StudioPage() {
                 <Badge tone="warn">AI transcription</Badge>
               </Link>
             ) : (
-              <Badge tone="ok">{song.source.kind === 'midi' ? 'MIDI' : 'Exact'}</Badge>
+              <Badge tone="ok">{song.source.kind === 'midi' ? 'MIDI' : song.source.kind === 'score' ? 'Sheet music' : 'Exact'}</Badge>
             )}
             <span className="hidden text-[11.5px] text-ink-400 2xl:inline">{saving ? 'Saving…' : 'Saved'}</span>
             <ViewSwitch className="ml-auto md:hidden" />
