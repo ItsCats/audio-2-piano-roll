@@ -18,6 +18,8 @@ import { layoutOf, repairSystemsOfPage } from './systemRepair';
 import { restoreUnmarkedTriplets } from './triplets';
 import { EncodedSymbol, isUpperOrNoPosition, removeDuplicatedSymbols, VOCAB } from './vocabulary';
 import { serialize, type El } from './xml';
+import { MAX_ASPECT } from './page';
+import type { PageErrorKind } from './protocol';
 
 /** Token ids of one decoder step (rhythm, pitch, lift, articulation, slur, position). */
 export type TokenIds = [number, number, number, number, number, number];
@@ -38,7 +40,15 @@ export interface PageProgress {
   staffs?: number;
 }
 
-export class NoMusicError extends Error {}
+/** Nothing to read on the page (the job goes on with the other pages). */
+export class NoMusicError extends Error {
+  constructor(
+    message: string,
+    readonly kind: PageErrorKind = 'no-music',
+  ) {
+    super(message);
+  }
+}
 
 /** Optional intermediate results (tests, parity checks). */
 export interface PageDump {
@@ -61,13 +71,15 @@ export interface PageDump {
 
 const MAX_SEQ_LEN = 608;
 const EOS = 2;
-/** windows per segmentation run (Python homr: 8; fewer keeps the WASM heap small) */
-const SEG_BATCH = 2;
+/** windows per segmentation run (Python homr: 8; fewer keeps the WASM heap small; low-memory mode: 1) */
+export const SEG_BATCH = 2;
 
 export interface ReadPageOptions {
   onProgress?: (p: PageProgress) => void;
   signal?: AbortSignal;
   dump?: PageDump;
+  /** windows per segmentation run (default SEG_BATCH) */
+  segBatch?: number;
 }
 
 function checkAbort(signal?: AbortSignal) {
@@ -80,9 +92,10 @@ async function segment(pre: Img, infer: HomrInfer, opts: ReadPageOptions): Promi
   const merger = new PatchMerger(pre.w, pre.h);
   const plane = 3 * WIN * WIN;
   const cls = new Uint8Array(WIN * WIN);
-  for (let i = 0; i < origins.length; i += SEG_BATCH) {
+  const batchSize = Math.max(1, opts.segBatch ?? SEG_BATCH);
+  for (let i = 0; i < origins.length; i += batchSize) {
     checkAbort(opts.signal);
-    const n = Math.min(SEG_BATCH, origins.length - i);
+    const n = Math.min(batchSize, origins.length - i);
     const batch = new Float32Array(n * plane);
     for (let k = 0; k < n; k++) extractPatch(pre, origins[i + k][0], origins[i + k][1], batch.subarray(k * plane, (k + 1) * plane));
     const logits = await infer.segment(batch, n);
@@ -174,6 +187,8 @@ export async function readPage(page: Img, infer: HomrInfer, opts: ReadPageOption
   const dump = opts.dump;
   const cropped = autocrop(page);
   if (dump) dump.crop = [cropped.x, cropped.y, cropped.image.w, cropped.image.h];
+  // not in homr: the width becomes 1920 px, so a long strip would become a huge image
+  if (cropped.image.h > MAX_ASPECT * cropped.image.w) throw new NoMusicError('Image much taller than a page', 'too-tall');
   const resized = resizeToTarget(cropped.image);
   if (dump) dump.resized = [resized.w, resized.h];
   let pre = preprocess(resized);
@@ -269,11 +284,13 @@ async function parseStaffs(staffsIn: MultiStaff[], page: Img, infer: HomrInfer, 
         (opts.dump.staffExtents ??= []).push([staff.minX, staff.minY, staff.maxX, staff.maxY, staff.averageUnitSize]);
         (opts.dump.staffGrids ??= []).push(staff.grid.map((g) => [g.x, ...g.y, g.angle]));
       }
+      // `staff`: the staff being read (1-based)
+      opts.onProgress?.({ stage: 'reading', progress: done / total, staff: done + 1, staffs: total });
       let symbols = decodeTokens(await infer.transcribe(encoderInput(image, input), MAX_SEQ_LEN, EOS));
       if (!staff.isGrandstaff) symbols = symbols.filter((s) => isUpperOrNoPosition(s.position));
       if (opts.dump) (opts.dump.tokens ??= []).push(symbols.map(String));
       done++;
-      opts.onProgress?.({ stage: 'reading', progress: done / total, staff: done, staffs: total });
+      opts.onProgress?.({ stage: 'reading', progress: done / total, staff: Math.min(done + 1, total), staffs: total });
       if (!symbols.length) continue;
       results.set(`${si},${voice}`, symbols);
     }

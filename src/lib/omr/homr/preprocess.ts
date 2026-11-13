@@ -7,7 +7,7 @@
  */
 import { boxBlur, clahe, dilate, erode, fillPoly, img, laplacianNoiseSum, rectKernel, resizePil, toGray, type Img } from './cv';
 import { boundingRect, contourArea, convexHullIndices, findContours } from './geom';
-import { median, pyRound } from './model';
+import { pyRound } from './model';
 
 // ------------------------------------------------------------------ autocrop
 
@@ -23,16 +23,57 @@ function chroma(r: number, g: number, b: number): [number, number, number] {
   return [f(R / s), f(G / s), f(B / s)];
 }
 
-/** np.median of a float32 array (the middle values' mean in float32) */
-function medianF32(a: number[]): number {
-  const s = [...a].sort((x, y) => x - y);
+/** np.median of a float32 array (the middle values' mean in float32); sorts `a` in place */
+function medianF32(a: Float32Array): number {
+  const s = a.sort();
   const m = s.length >> 1;
   return s.length % 2 ? s[m] : Math.fround(Math.fround(s[m - 1] + s[m]) / 2);
 }
 
-function medianChroma(pixels: number[][]): [number, number, number] {
-  const cs = pixels.map(([r, g, b]) => chroma(r, g, b));
-  return [medianF32(cs.map((c) => c[0])), medianF32(cs.map((c) => c[1])), medianF32(cs.map((c) => c[2]))];
+/**
+ * Pixel samples as three typed channels (homr: numpy arrays; plain JS arrays of [r, g, b] took
+ * seconds and gigabytes on large photos).
+ */
+class Samples {
+  n = 0;
+  r: Uint8Array;
+  g: Uint8Array;
+  b: Uint8Array;
+  constructor(capacity: number) {
+    this.r = new Uint8Array(capacity);
+    this.g = new Uint8Array(capacity);
+    this.b = new Uint8Array(capacity);
+  }
+  push(d: Uint8Array, o: number) {
+    this.r[this.n] = d[o];
+    this.g[this.n] = d[o + 1];
+    this.b[this.n] = d[o + 2];
+    this.n++;
+  }
+}
+
+function medianChroma(px: Samples): [number, number, number] {
+  const cs = [new Float32Array(px.n), new Float32Array(px.n), new Float32Array(px.n)];
+  for (let i = 0; i < px.n; i++) {
+    const c = chroma(px.r[i], px.g[i], px.b[i]);
+    cs[0][i] = c[0];
+    cs[1][i] = c[1];
+    cs[2][i] = c[2];
+  }
+  return [medianF32(cs[0]), medianF32(cs[1]), medianF32(cs[2])];
+}
+
+/** np.median of uint8 values (float64 mean of the middle two), from a histogram */
+function medianU8(a: Uint8Array, n: number): number {
+  const hist = new Int32Array(256);
+  for (let i = 0; i < n; i++) hist[a[i]]++;
+  const kth = (k: number) => {
+    let acc = 0;
+    for (let v = 0; v < 256; v++) if ((acc += hist[v]) > k) return v;
+    return 255;
+  };
+  const m = n >> 1;
+  return n % 2 ? kth(m) : (kth(m - 1) + kth(m)) / 2;
 }
 
 /** np.abs(c - p).sum() <= 0.07 / > 0.07 in float32 (numpy 2 compares a float32 with a Python float in float32) */
@@ -43,13 +84,13 @@ function chromaDiff(c: [number, number, number], p: [number, number, number]): n
 }
 
 function isPaper(im: Img, x0: number, y0: number, x1: number, y1: number, paper: [number, number, number]): boolean {
-  const px: number[][] = [];
-  for (let y = Math.max(0, y0); y < Math.min(im.h, y1); y++)
-    for (let x = Math.max(0, x0); x < Math.min(im.w, x1); x++) {
-      const o = (y * im.w + x) * 3;
-      px.push([im.d[o], im.d[o + 1], im.d[o + 2]]);
-    }
-  if (!px.length) return true;
+  const ya = Math.max(0, y0);
+  const yb = Math.min(im.h, y1);
+  const xa = Math.max(0, x0);
+  const xb = Math.min(im.w, x1);
+  if (yb <= ya || xb <= xa) return true;
+  const px = new Samples((yb - ya) * (xb - xa));
+  for (let y = ya; y < yb; y++) for (let x = xa; x < xb; x++) px.push(im.d, (y * im.w + x) * 3);
   const c = medianChroma(px);
   return chromaDiff(c, paper) <= MAX_CHROMA_DIFF_F32;
 }
@@ -85,19 +126,18 @@ export function autocrop(im: Img): { image: Img; x: number; y: number } {
   const H = im.h;
   if (w < W * 0.25 || h < H * 0.25) return { image: im, x: 0, y: 0 };
   // a sample of the paper: thresholded pixels in the box, every 10th
-  const paper: number[][] = [];
+  let count = 0;
+  for (let yy = y; yy < y + h; yy++) for (let xx = x; xx < x + w; xx++) if (thresh.d[yy * W + xx] > 0) count++;
+  const paper = new Samples(Math.ceil(count / 10));
   let k = 0;
   for (let yy = y; yy < y + h; yy++)
     for (let xx = x; xx < x + w; xx++) {
       if (thresh.d[yy * W + xx] > 0) {
-        if (k % 10 === 0) {
-          const o = (yy * W + xx) * 3;
-          paper.push([im.d[o], im.d[o + 1], im.d[o + 2]]);
-        }
+        if (k % 10 === 0) paper.push(im.d, (yy * W + xx) * 3);
         k++;
       }
     }
-  if (!paper.length) return { image: im, x: 0, y: 0 };
+  if (!paper.n) return { image: im, x: 0, y: 0 };
   const pc = medianChroma(paper);
   const margin = Math.max(5, Math.floor(Math.max(W, H) / 100));
   const x0 = Math.max(0, x - margin);
@@ -126,7 +166,7 @@ export function autocrop(im: Img): { image: Img; x: number; y: number } {
     shifted[i + 1] = big[i + 1] - cy;
   }
   fillPoly(beside, convexHullIndices(shifted).map((i) => [shifted[2 * i], shifted[2 * i + 1]] as [number, number]), 0);
-  const paperColor = [0, 1, 2].map((c) => median(paper.map((p) => p[c])));
+  const paperColor = [paper.r, paper.g, paper.b].map((ch) => medianU8(ch, paper.n));
   const smooth = boxBlur(crop, 7);
   const meanPaper = (paperColor[0] + paperColor[1] + paperColor[2]) / 3;
   const bg = img(cw, ch);

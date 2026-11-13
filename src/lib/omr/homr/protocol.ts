@@ -47,6 +47,11 @@ export interface RunRequest {
   threads: number;
   /** release the sessions after the job (phones: the page also terminates the worker) */
   release: boolean;
+  /**
+   * phones / small-memory devices: one window per segmentation run, and only the networks of the
+   * current step in memory (segmentation, then encoder + decoder; see ort.ts stagedInfer)
+   */
+  lowMemory?: boolean;
   title?: string;
 }
 
@@ -74,7 +79,7 @@ export interface ProgressMessage {
   /** page index (0-based) / pages */
   page?: number;
   pages?: number;
-  /** reading: staffs done / staffs of the page */
+  /** reading: the staff being read (1-based) / staffs of the page (a grand staff counts as two) */
   line?: number;
   lines?: number;
 }
@@ -86,8 +91,14 @@ export interface HomrPageResult {
   systems: number;
   /** the page could not be read (no staffs or notes): the message; the other pages still count */
   error?: string;
+  /** why: no music found, or an image far taller than a page */
+  errorKind?: PageErrorKind;
+  /** the page was read turned by this many degrees (it was sideways) */
+  rotated?: number;
   ms: number;
 }
+
+export type PageErrorKind = 'no-music' | 'too-tall';
 
 export interface RunStats {
   fromCache: boolean;
@@ -99,6 +110,9 @@ export interface RunStats {
   decodeMs: number;
   steps: number;
   threads: number;
+  /** the models could not be stored in the browser's Cache Storage (private mode, no space): downloaded again next time */
+  notStored?: boolean;
+  lowMemory?: boolean;
 }
 
 export interface ResultMessage {
@@ -114,7 +128,22 @@ export interface ErrorMessage {
   type: 'error';
   jobId: number;
   message: string;
+  /**
+   * the message is written for the user (download failed, files corrupted); otherwise it is a raw
+   * technical error (onnxruntime, WASM out of memory) that the page logs and replaces with a plain one
+   * (the same contract as the Sheet Music Transformer reader)
+   */
+  plain?: boolean;
 }
+
+/** An error whose message is meant for the user (the worker passes it on as it is). */
+export class PlainError extends Error {
+  readonly plain = true;
+}
+
+/** What the user sees for any technical failure of the reader (its raw text goes to the console). */
+export const READER_STOPPED_MESSAGE =
+  'The sheet-music reader stopped, most likely because it ran out of memory. Close other tabs and apps, or read fewer pages, and try again.';
 
 export interface NeedPageMessage {
   type: 'need-page';

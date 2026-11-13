@@ -6,6 +6,78 @@
 import { img, type Img } from './cv';
 import type { PageInput, Quad } from './protocol';
 
+/**
+ * Longest side of a page image the reader works on, px. homr scales every page to 1920 px wide anyway,
+ * but crops photos to the paper before that, on the full image (Python: numpy; here: typed arrays): a
+ * 48-megapixel photo took 40 s and 2 GB there. Larger images are scaled down first (none of the test
+ * pages is larger: 2400 x 3287 at most, so this does not change their results).
+ */
+export const MAX_INPUT_SIDE = 4000;
+/**
+ * Height / width beyond which an image is not read as one page: homr scales the width to 1920 px, so a
+ * long screenshot (e.g. 351 x 3000) would become 1920 x 16,400 px, ~300 segmentation windows and
+ * hundreds of MB. A4 is 1.41, two pages one above the other 2.8.
+ */
+export const MAX_ASPECT = 3;
+
+/** Size that fits in maxSide (aspect kept). */
+export function fitSize(w: number, h: number, maxSide = MAX_INPUT_SIDE): { w: number; h: number; scale: number } {
+  const s = Math.min(1, maxSide / Math.max(w, h));
+  return { w: Math.max(1, Math.round(w * s)), h: Math.max(1, Math.round(h * s)), scale: s };
+}
+
+/**
+ * Pixels scaled down by area averaging to fit in maxSide (unchanged when they fit). Works on any
+ * channel count; the scale is the same on both axes up to rounding.
+ */
+export function shrinkPixels(data: Uint8Array | Uint8ClampedArray, w: number, h: number, channels: number, maxSide = MAX_INPUT_SIDE): { data: Uint8Array; w: number; h: number } {
+  const t = fitSize(w, h, maxSide);
+  if (t.scale >= 1) return { data: data instanceof Uint8Array ? data : new Uint8Array(data.buffer, data.byteOffset, data.byteLength), w, h };
+  const out = new Uint8Array(t.w * t.h * channels);
+  const fx = w / t.w;
+  const fy = h / t.h;
+  const acc = new Float64Array(t.w * channels);
+  const wsum = new Float64Array(t.w);
+  for (let oy = 0; oy < t.h; oy++) {
+    acc.fill(0);
+    wsum.fill(0);
+    const y0 = oy * fy;
+    const y1 = (oy + 1) * fy;
+    for (let y = Math.floor(y0); y < Math.min(h, Math.ceil(y1)); y++) {
+      const wy = Math.min(y + 1, y1) - Math.max(y, y0);
+      const row = y * w * channels;
+      for (let ox = 0; ox < t.w; ox++) {
+        const x0 = ox * fx;
+        const x1 = (ox + 1) * fx;
+        for (let x = Math.floor(x0); x < Math.min(w, Math.ceil(x1)); x++) {
+          const wgt = wy * (Math.min(x + 1, x1) - Math.max(x, x0));
+          const o = row + x * channels;
+          for (let c = 0; c < channels; c++) acc[ox * channels + c] += data[o + c] * wgt;
+          wsum[ox] += wgt;
+        }
+      }
+    }
+    for (let ox = 0; ox < t.w; ox++) for (let c = 0; c < channels; c++) out[(oy * t.w + ox) * channels + c] = Math.round(acc[ox * channels + c] / wsum[ox]);
+  }
+  return { data: out, w: t.w, h: t.h };
+}
+
+/** The image turned by 90 degrees clockwise (deg 90) or counter-clockwise (deg 270). */
+export function rotate90(src: Img, deg: 90 | 270): Img {
+  const out = img(src.h, src.w, src.c);
+  const c = src.c;
+  for (let y = 0; y < src.h; y++)
+    for (let x = 0; x < src.w; x++) {
+      // clockwise: (x, y) -> (h - 1 - y, x); counter-clockwise: (x, y) -> (y, w - 1 - x)
+      const nx = deg === 90 ? src.h - 1 - y : y;
+      const ny = deg === 90 ? x : src.w - 1 - x;
+      const o = (y * src.w + x) * c;
+      const n = (ny * out.w + nx) * c;
+      for (let k = 0; k < c; k++) out.d[n + k] = src.d[o + k];
+    }
+  return out;
+}
+
 /** PageInput (gray, RGB or RGBA) → gray or RGB image */
 export function pageImage(p: PageInput): Img {
   if (p.channels === 1) return { w: p.w, h: p.h, c: 1, d: p.data };

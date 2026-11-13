@@ -41,6 +41,43 @@ export interface InferStats {
   staffs: number;
 }
 
+export type SessionName = keyof HomrSessions;
+
+/**
+ * Low-memory variant (phones): only the networks of the current step exist. Segmentation runs with the
+ * segmentation session alone; before the first staff is read it is released and the encoder and
+ * decoder are created (and the other way round on the next page), so the WASM heap's high-water mark
+ * is the larger of the two steps instead of their sum (freed WASM memory is reused, never returned).
+ * Costs one session creation per step and page (a few seconds against minutes of reading on a phone).
+ */
+export function stagedInfer(ort: Ort, create: (name: SessionName) => Promise<Session>, stats?: InferStats): HomrInfer & { release(): Promise<void> } {
+  const open: Partial<HomrSessions> = {};
+  const drop = async (...names: SessionName[]) => {
+    for (const n of names) {
+      const sn = open[n];
+      delete open[n];
+      await sn?.release().catch(() => undefined);
+    }
+  };
+  const ensure = async (...names: SessionName[]) => {
+    for (const n of names) open[n] ??= await create(n);
+  };
+  const view = (): HomrSessions => open as HomrSessions;
+  return {
+    async segment(windows, n) {
+      await drop('encoder', 'decoder');
+      await ensure('segnet');
+      return ortInfer(ort, view(), stats).segment(windows, n);
+    },
+    async transcribe(input, maxSteps, eos) {
+      await drop('segnet');
+      await ensure('encoder', 'decoder');
+      return ortInfer(ort, view(), stats).transcribe(input, maxSteps, eos);
+    },
+    release: () => drop('segnet', 'encoder', 'decoder'),
+  };
+}
+
 export function ortInfer(ort: Ort, s: HomrSessions, stats?: InferStats): HomrInfer {
   return {
     async segment(windows: Float32Array, n: number): Promise<Float32Array> {
