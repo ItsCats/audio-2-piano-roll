@@ -78,3 +78,28 @@ Known differences from Python homr (measured, see `public/models/homr/README.md`
   port skips that staff instead.
 
 Source of the original: https://github.com/liebharc/homr (PyPI package `homr` 0.7.1).
+
+## Before the reader goes live (licence checklist for the merge)
+
+The files here carry their own notices; these repository-level items are done on the integration
+branch, not here, and must ship together with the reader:
+
+1. The GitHub repository is public before any production deploy that contains `src/lib/omr/homr/` or
+   `public/models/homr/`, and production is deployed only from pushed commits (the source offered must
+   be the source served; ideally the source link points at the deployed commit, e.g. Netlify's
+   `COMMIT_REF` as `VITE_COMMIT` → `/tree/<sha>`).
+2. A top-level `LICENSE` with the AGPL-3.0 text and a `license` field in `package.json`. homr is
+   AGPL-3.0 **only**, so if the rest of the app is "or later", say so for both parts (e.g.
+   `"AGPL-3.0-or-later AND AGPL-3.0-only"`, and in the README, Terms and Credits: "version 3 or later;
+   the homr sheet-music reader is version 3 only").
+3. A visible source-code link in the app (AGPL section 13), and a copyright line (e.g. in the Credits
+   footer or Terms) next to the existing warranty disclaimer and licence name.
+4. `THIRD_PARTY_NOTICES.md`: rows for this directory (homr port, AGPL-3.0-only), `public/models/homr/`
+   (homr's weights, AGPL-3.0, converted by `tests/homr/convert_models.py` and `package_models.py`,
+   training data incl. Camera-PrIMuS CC BY-NC 4.0), relieur (Apache-2.0), OpenCV (BSD-3-Clause /
+   Apache-2.0, `LICENSE-OpenCV.txt`) and Pillow (MIT-CMU, `LICENSE-Pillow.txt`), as in the table above;
+   homr in the README's credits list. Keep the integration branch's `src/lib/credits.ts` header (its
+   source-link block) and add this branch's homr, training-data, OpenCV and Pillow entries.
+5. Optional: a short "Reader: homr (AGPL-3.0) · source" line next to the reader choice on the Import page.
+6. The app stays free and non-commercial (Camera-PrIMuS); adding ads, donations or paid features would
+   need this reviewed again.
