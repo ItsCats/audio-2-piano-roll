@@ -1,0 +1,4 @@
+# model pieces and WASM: never treat as text (no line-ending conversion, no text diffs)
+*.bin binary
+*.onnx binary
+*.wasm binary
