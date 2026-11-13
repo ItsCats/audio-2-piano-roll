@@ -5,7 +5,8 @@
  */
 import type { Arrangement, Song, SheetKey, SheetMeter, SheetTempo, TempoUnit } from '../lib/music/types';
 import { ensureSheet } from '../lib/sheet/lock';
-import { deleteMarkOp, moveMarkOp, resolveMark, type MarkEditResult } from '../lib/sheet/marks';
+import { deleteMarkOp, moveMarkOp, pedalSel, resolveMark, type MarkEditResult } from '../lib/sheet/marks';
+import type { BarMarkRef } from '../lib/sheet/render';
 import { canRetime, retime } from '../lib/sheet/retime';
 import { TEMPO_UNIT_Q } from '../lib/sheet/score';
 import { sortNotes } from '../lib/music/cleanup';
@@ -193,4 +194,33 @@ export function moveSelectedMark(dir: 1 | -1, end = false): boolean {
     return false;
   }
   return runMarkEdit((c) => moveMarkOp(c, sel, dir, end), { coalesceKey: 'sheet-mark-move' });
+}
+
+/** The song-level markings to find on the sheet (key, time and tempo changes placed on it). */
+export function barMarkRefs(ctx: SheetCtx): BarMarkRef[] {
+  const sh = ctx.song.sheet;
+  if (!sh) return [];
+  const t = ctx.score.time;
+  const last = ctx.score.measureCount - 1;
+  const out: BarMarkRef[] = [];
+  for (const k of sh.keys ?? []) if (k.pos > 0) out.push({ id: `key:${k.pos}`, kind: 'key', measure: Math.min(last, t.measureOf(k.pos)) });
+  for (const k of sh.meters ?? []) if (k.pos > 0) out.push({ id: `time:${k.pos}`, kind: 'time', measure: Math.min(last, t.measureOf(k.pos)) });
+  for (const k of sh.tempos ?? []) out.push({ id: `tempo:${k.pos}`, kind: 'tempo', measure: Math.min(last, t.measureOf(k.pos)) });
+  return out;
+}
+
+/** The selection id of a drawn marking (a drawn pedal line: the pedal range it was written from). */
+export function markSelOfHit(ctx: SheetCtx, hitId: string): string | null {
+  const m = /^pedal@(\d+)$/.exec(hitId);
+  if (!m) return hitId;
+  const on = Number(m[1]);
+  const t = ctx.score.time;
+  let best: { d: number; sel: string } | null = null;
+  for (const p of ctx.song.arrangements[ctx.level].pedal) {
+    const a = t.toPos(p.start);
+    const b = t.toPos(p.end);
+    const d = a <= on + 6 && b > on ? Math.abs(a - on) : Infinity;
+    if (d < (best?.d ?? Infinity)) best = { d, sel: pedalSel(p) };
+  }
+  return best?.sel ?? null;
 }

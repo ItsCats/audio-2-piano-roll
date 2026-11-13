@@ -17,7 +17,7 @@ describe('sheet edit keys', () => {
     expect(sheetKeyAction(k('BracketRight'), true)).toEqual({ type: 'length', step: 1 });
     expect(sheetKeyAction(k('Period'), true)).toEqual({ type: 'dot' });
     expect(sheetKeyAction(k('Digit3', { altKey: true }), true)).toEqual({ type: 'triplet' });
-    expect(sheetKeyAction(k('Digit3'), true)).toBeNull(); // finger 3 (later), never the triplet
+    expect(sheetKeyAction(k('Digit3'), true)).toEqual({ type: 'finger', finger: 3 }); // never the triplet
     expect(sheetKeyAction(k('KeyH'), true)).toEqual({ type: 'hand', hand: 'toggle' });
     expect(sheetKeyAction(k('KeyT'), true)).toEqual({ type: 'tie' });
     expect(sheetKeyAction(k('KeyN'), false)).toEqual({ type: 'addMode' });
@@ -29,6 +29,25 @@ describe('sheet edit keys', () => {
     expect(sheetKeyAction(k('KeyY', { ctrlKey: true }), false)).toEqual({ type: 'redo' });
     expect(sheetKeyAction(k('KeyA', { ctrlKey: true }), false)).toEqual({ type: 'selectAll' });
     for (const c of ['Space', 'KeyF', 'KeyE', 'Home']) expect(sheetKeyAction(k(c), true)).toBeNull();
+  });
+
+  it('maps the marking keys', () => {
+    for (const f of [0, 1, 2, 3, 4, 5]) expect(sheetKeyAction(k(`Digit${f}`), true)).toEqual({ type: 'finger', finger: f });
+    expect(sheetKeyAction(k('Digit6'), true)).toBeNull();
+    expect(sheetKeyAction(k('KeyS'), true)).toEqual({ type: 'art', art: 'staccato' });
+    expect(sheetKeyAction(k('KeyA'), true)).toEqual({ type: 'art', art: 'accent' });
+    expect(sheetKeyAction(k('KeyA', { shiftKey: true }), true)).toEqual({ type: 'art', art: 'marcato' });
+    expect(sheetKeyAction(k('KeyU'), true)).toEqual({ type: 'art', art: 'tenuto' });
+    expect(sheetKeyAction(k('KeyS', { shiftKey: true }), true)).toEqual({ type: 'slur' });
+    expect(sheetKeyAction({ ...k('Comma', { shiftKey: true }), key: '<' }, true)).toEqual({ type: 'wedge', dir: 'cresc' });
+    expect(sheetKeyAction({ ...k('Period', { shiftKey: true }), key: '>' }, true)).toEqual({ type: 'wedge', dir: 'dim' });
+    expect(sheetKeyAction(k('KeyP'), true)).toEqual({ type: 'pedal' });
+    expect(sheetKeyAction(k('KeyD'), true)).toEqual({ type: 'picker', picker: 'dyn' });
+    expect(sheetKeyAction(k('KeyW'), true)).toEqual({ type: 'picker', picker: 'text' });
+    expect(sheetKeyAction(k('KeyK'), false)).toEqual({ type: 'picker', picker: 'key' });
+    expect(sheetKeyAction(k('KeyM'), false)).toEqual({ type: 'picker', picker: 'time' });
+    expect(sheetKeyAction(k('KeyT', { shiftKey: true }), false)).toEqual({ type: 'picker', picker: 'tempo' });
+    expect(sheetKeyAction(k('KeyS', { altKey: true }), true)).toBeNull();
   });
   it('typing in a text field is never a shortcut', () => {
     const input = { closest: (sel: string) => (sel.includes('input') ? {} : null) };

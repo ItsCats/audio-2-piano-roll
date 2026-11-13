@@ -7,7 +7,8 @@ import { useSheetOverlay } from './useSheetPointer';
 export function SheetEditOverlay() {
   const ghost = useSheetOverlay((s) => s.ghost);
   const marquee = useSheetOverlay((s) => s.marquee);
-  if (!ghost && !marquee) return null;
+  const ring = useSheetOverlay((s) => s.ring);
+  if (!ghost && !marquee && !ring) return null;
   const ledgers: number[] = [];
   if (ghost && ghost.gap) {
     // steps above the top line (2 per line) or below the bottom line (-8)
@@ -30,6 +31,18 @@ export function SheetEditOverlay() {
             </text>
           </g>
         </g>
+      )}
+      {ring && (
+        <rect
+          x={ring.x0}
+          y={ring.y0}
+          width={ring.x1 - ring.x0}
+          height={ring.y1 - ring.y0}
+          rx={5}
+          className="fill-accent-500/15 stroke-accent-500"
+          strokeWidth={1.5}
+          data-testid="sheet-mark-ring"
+        />
       )}
       {marquee && (
         <rect

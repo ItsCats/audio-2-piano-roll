@@ -52,6 +52,7 @@ import { toast } from '../state/toastStore';
 import { useImport } from '../state/importStore';
 import { arrowSeekDelta, shouldHandleGlobalKey } from '../state/studioKeys';
 import { sheetActionHandler, sheetKeyAction } from '../state/sheetKeys';
+import { buildSheet } from '../lib/sheet';
 import { useCompactSheetUi } from '../state/sheetUi';
 
 type PanelTab = 'look' | 'labels' | 'sound' | 'practice' | 'arrangement';
@@ -192,7 +193,7 @@ function useStudioKeyboard(computerKeys: boolean) {
       // the sheet in Edit mode has its own keys (state/sheetKeys.ts); Space, F, E and Home stay
       const sheetHandler = sheetActionHandler();
       if (st.editMode && sheetHandler && useSettings.getState().sheet.view === 'sheet') {
-        const a = sheetKeyAction(e, st.selection.size > 0);
+        const a = sheetKeyAction(e, st.selection.size > 0 || !!st.markSel);
         if (a) {
           e.preventDefault();
           sheetHandler(a);
@@ -306,6 +307,22 @@ function usePlayerSync() {
   useEffect(() => {
     if (arr) getPlayer().updateNotes(arr.notes, arr.pedal);
   }, [arr]);
+
+  // time-signature changes on the sheet: the metronome accents the sheet's bar lines
+  const sheetMeters = song?.sheet?.meters;
+  useEffect(() => {
+    const s = useStudio.getState().song;
+    if (!s?.sheet?.meters?.length) {
+      getPlayer().setBarAccent(null);
+      return;
+    }
+    const time = buildSheet(s, useStudio.getState().difficulty).time;
+    getPlayer().setBarAccent((b) => {
+      const pos = time.toPos(b);
+      const m = time.measureOf(Math.round(pos));
+      return Math.abs(pos - time.measureStart(m)) < 0.5;
+    });
+  }, [sheetMeters, song?.sheet?.grid]);
 
   // an edit that changed the tempo or the length (a sheet edit past the end, undo of one): the
   // player takes the new values without losing its place

@@ -20,7 +20,13 @@ export type SheetAction =
   | { type: 'undo' }
   | { type: 'redo' }
   | { type: 'selectAll' }
-  | { type: 'quantize' };
+  | { type: 'quantize' }
+  | { type: 'finger'; finger: 0 | 1 | 2 | 3 | 4 | 5 }
+  | { type: 'art'; art: 'staccato' | 'accent' | 'tenuto' | 'marcato' }
+  | { type: 'slur' }
+  | { type: 'wedge'; dir: 'cresc' | 'dim' }
+  | { type: 'pedal' }
+  | { type: 'picker'; picker: 'dyn' | 'text' | 'key' | 'time' | 'tempo' };
 
 export interface SheetKeyLike {
   code: string;
@@ -40,7 +46,28 @@ export function sheetKeyAction(e: SheetKeyLike, hasSelection: boolean): SheetAct
     if (e.code === 'KeyA') return { type: 'selectAll' };
     return null;
   }
+  if (e.key === '<' || (e.code === 'Comma' && e.shiftKey)) return { type: 'wedge', dir: 'cresc' };
+  if (e.key === '>' || (e.code === 'Period' && e.shiftKey)) return { type: 'wedge', dir: 'dim' };
+  const digit = /^Digit([0-5])$/.exec(e.code);
+  if (digit && !e.altKey && !e.shiftKey) return { type: 'finger', finger: Number(digit[1]) as 0 | 1 | 2 | 3 | 4 | 5 };
+  if (e.altKey && e.code !== 'Digit3' && !e.code.startsWith('Arrow')) return null;
   switch (e.code) {
+    case 'KeyS':
+      return e.shiftKey ? { type: 'slur' } : { type: 'art', art: 'staccato' };
+    case 'KeyA':
+      return { type: 'art', art: e.shiftKey ? 'marcato' : 'accent' };
+    case 'KeyU':
+      return e.shiftKey ? null : { type: 'art', art: 'tenuto' };
+    case 'KeyP':
+      return e.shiftKey ? null : { type: 'pedal' };
+    case 'KeyD':
+      return e.shiftKey ? null : { type: 'picker', picker: 'dyn' };
+    case 'KeyW':
+      return e.shiftKey ? null : { type: 'picker', picker: 'text' };
+    case 'KeyK':
+      return e.shiftKey ? null : { type: 'picker', picker: 'key' };
+    case 'KeyM':
+      return e.shiftKey ? null : { type: 'picker', picker: 'time' };
     case 'ArrowUp':
     case 'ArrowDown': {
       const dir = e.code === 'ArrowUp' ? 1 : -1;
@@ -77,7 +104,7 @@ export function sheetKeyAction(e: SheetKeyLike, hasSelection: boolean): SheetAct
     case 'KeyR':
       return e.altKey ? null : { type: 'hand', hand: 'R' };
     case 'KeyT':
-      return e.altKey || e.shiftKey ? null : { type: 'tie' };
+      return e.altKey ? null : e.shiftKey ? { type: 'picker', picker: 'tempo' } : { type: 'tie' };
     case 'KeyQ':
       return { type: 'quantize' };
   }
@@ -103,6 +130,15 @@ export const SHEET_SHORTCUTS: [string, string][] = [
   ['T', 'Tie / untie'],
   ['Del / Backspace', 'Delete'],
   ['Esc', 'Leave Add mode, then clear the selection'],
+  ['1–5 / 0', 'Fingering / clear it'],
+  ['S / A / U / Shift+A', 'Staccato / accent / tenuto / marcato'],
+  ['Shift+S', 'Slur over the selection'],
+  ['< / >', 'Crescendo / diminuendo over the selection'],
+  ['D', 'Dynamics (← / → choose, Enter applies)'],
+  ['P', 'Pedal over the selection'],
+  ['W', 'Words (text)'],
+  ['K / M / Shift+T', 'Key / time signature / tempo from this bar'],
+  ['Click a marking', 'Select it: Del removes it, ← / → move it (Shift: its end)'],
   ['Ctrl+Z / Ctrl+Shift+Z', 'Undo / redo'],
   ['Ctrl+A', 'Select all'],
 ];

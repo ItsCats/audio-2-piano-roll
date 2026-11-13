@@ -10,7 +10,9 @@ import { create } from 'zustand';
 import type { SheetRenderer, SheetSlot, NoteHit } from '../../../lib/sheet/render';
 import { addOp, lengthName, shiftOp } from '../../../lib/sheet/edit';
 import { pitchLabel, stepInKey } from '../../../lib/sheet/pitch';
-import { audition, runSheetEdit } from '../../../state/sheetEdit';
+import { keyAt } from '../../../lib/sheet/keys';
+import { audition, runSheetEdit, sheetCtx } from '../../../state/sheetEdit';
+import { barMarkRefs, markSelOfHit } from '../../../state/sheetMarks';
 import { useSheetUi } from '../../../state/sheetUi';
 import { useStudio } from '../../../state/studioStore';
 import { getPlayer } from '../../../state/playback';
@@ -28,11 +30,21 @@ export interface SheetGhost {
 
 interface OverlayState {
   ghost: SheetGhost | null;
+  /** The selected marking's box. */
+  ring: { x0: number; y0: number; x1: number; y1: number } | null;
   marquee: { x0: number; y0: number; x1: number; y1: number } | null;
   set: (p: Partial<Omit<OverlayState, 'set'>>) => void;
 }
 
-export const useSheetOverlay = create<OverlayState>((set) => ({ ghost: null, marquee: null, set: (p) => set(p) }));
+export const useSheetOverlay = create<OverlayState>((set) => ({ ghost: null, ring: null, marquee: null, set: (p) => set(p) }));
+
+/** The marking under a point, as a selection id (lib/sheet/marks.ts resolveMark), or null. */
+export function markUnder(r: SheetRenderer, x: number, y: number, pointerType: string): string | null {
+  const ctx = sheetCtx();
+  if (!ctx) return null;
+  const h = r.markAt(x, y, barMarkRefs(ctx), pointerType);
+  return h ? markSelOfHit(ctx, h.id) : null;
+}
 
 const slotGhost = (s: SheetSlot, len: number): SheetGhost => ({
   x: s.x,
@@ -124,6 +136,14 @@ export function useSheetPointer(opts: {
       (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
       e.preventDefault();
     } else {
+      const mark = markUnder(r, p.x, p.y, e.pointerType);
+      if (mark) {
+        useStudio.getState().selectMark(mark);
+        useSheetUi.getState().set({ chips: [] });
+        down.current = null;
+        e.preventDefault();
+        return;
+      }
       down.current = { ...base, mode: 'marquee' };
       (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
     }
@@ -142,7 +162,8 @@ export function useSheetPointer(opts: {
     if (slot && s) delta = slot.pos - h.pos;
     let midi = h.midi;
     if (alt) midi += steps;
-    else for (let i = 0; i < Math.abs(steps); i++) midi = stepInKey(midi, steps > 0 ? 1 : -1, s?.fifths ?? 0, s?.minorTonic);
+    const k = s ? keyAt(s, h.measure) : null;
+    if (!alt) for (let i = 0; i < Math.abs(steps); i++) midi = stepInKey(midi, steps > 0 ? 1 : -1, k?.fifths ?? 0, k?.minorTonic);
     return { steps, delta, midi, gap, x: slot?.x ?? h.cx, y: h.cy - steps * (gap / 2) };
   };
 
@@ -172,7 +193,7 @@ export function useSheetPointer(opts: {
       const tg = dragTarget(d, p, e.altKey);
       const s = r.drawnScore;
       useSheetOverlay.getState().set({
-        ghost: { x: tg.x, y: tg.y, label: `${pitchLabel(tg.midi, s?.fifths ?? 0, s?.minorTonic)}`, staffTop: tg.y, gap: tg.gap, steps: 0 },
+        ghost: { x: tg.x, y: tg.y, label: `${pitchLabel(tg.midi, s ? keyAt(s, d.hit.measure).fifths : 0, s ? keyAt(s, d.hit.measure).minorTonic : undefined)}`, staffTop: tg.y, gap: tg.gap, steps: 0 },
       });
     } else if (d.mode === 'marquee') {
       useSheetOverlay.getState().set({ marquee: { x0: d.x, y0: d.y, x1: p.x, y1: p.y } });
@@ -201,7 +222,9 @@ export function useSheetPointer(opts: {
         return;
       }
       const hit = pick(r.notesAt(p.x, p.y, 'touch'), p, true);
+      const mark = hit ? null : markUnder(r, p.x, p.y, 'touch');
       if (hit) st.select(hit.ids);
+      else if (mark) st.selectMark(mark);
       else {
         st.clearSelection();
         const t = r.timeAtPoint(p.x, p.y);

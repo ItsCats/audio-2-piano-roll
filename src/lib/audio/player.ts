@@ -105,6 +105,12 @@ export class PlaybackController {
     this.rebuildEvents();
   }
 
+  /** Downbeat test for the metronome's accent (time-signature changes on the sheet); null: every beatsPerBar beats. */
+  private barAccent: ((beatTime: number) => boolean) | null = null;
+  setBarAccent(fn: ((beatTime: number) => boolean) | null): void {
+    this.barAccent = fn;
+  }
+
   /** Replace notes (after edits / difficulty switch) without interrupting playback. */
   updateNotes(notes: Note[], pedal: PedalRange[]): void {
     this.notes = notes;
@@ -355,7 +361,7 @@ export class PlaybackController {
       while (this.beatIdx < beats.length && beats[this.beatIdx] < to) {
         const b = beats[this.beatIdx];
         if (b >= from) {
-          const accent = (this.beatIdx - this.tempo.downbeatIndex) % this.tempo.beatsPerBar === 0;
+          const accent = this.barAccent ? this.barAccent(b) : (this.beatIdx - this.tempo.downbeatIndex) % this.tempo.beatsPerBar === 0;
           scheduleClick(this.ctx, this.clickBus, this.songToCtx(b), accent, this.opts.metronomeVolume);
         }
         this.beatIdx++;

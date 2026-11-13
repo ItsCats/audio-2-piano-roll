@@ -2,15 +2,20 @@
  * The sheet music's edit bar: a toolbar row under the Studio header on a computer, a dock at the
  * bottom of the screen on phones and tablets (and in full screen). One component, two layouts.
  */
-import { useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, ChevronsDown, ChevronsUp, Link2, Pencil, Plus, Redo2, Trash2, Undo2, Hand as HandIcon, Minus } from 'lucide-react';
 import { currentArrangement, useStudio } from '../../../state/studioStore';
 import { useCompactSheetUi, useSheetUi } from '../../../state/sheetUi';
 import { buildSheet } from '../../../lib/sheet';
 import { lengthName, lengthsAt, spanOf, tieState, type SheetCtx } from '../../../lib/sheet/edit';
 import { pitchLabel } from '../../../lib/sheet/pitch';
-import { sheetEdit } from './sheetActions';
+import { keyAt } from '../../../lib/sheet/keys';
+import { sheetEdit, sheetMark } from './sheetActions';
+import { BarPicker, BarTools, DynPicker, MarkPanelButtons, MarksTools, TextPicker, describeMark } from './MarkPopovers';
+import { moveSelectedMark } from '../../../state/sheetMarks';
+import { Copy } from 'lucide-react';
 import { cn } from '../../ui';
+import { Tool, Sep } from './SheetTool';
 
 export { useCompactSheetUi };
 
@@ -22,58 +27,13 @@ const LEN_CHIPS: [number, string, string][] = [
   [48, 'Whole', 'Whole note'],
 ];
 
-function Tool({
-  label,
-  title,
-  onClick,
-  disabled,
-  active,
-  dock,
-  children,
-  testId,
-  wide,
-}: {
-  label: string;
-  title?: string;
-  onClick: () => void;
-  disabled?: boolean;
-  active?: boolean;
-  dock: boolean;
-  children: ReactNode;
-  testId?: string;
-  wide?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      title={disabled ? `${title ?? label} — select a note first` : (title ?? label)}
-      aria-pressed={active}
-      disabled={disabled}
-      data-testid={testId}
-      onClick={onClick}
-      // keep the keyboard focus on the sheet: shortcuts keep working after a click
-      onPointerDown={(e) => e.pointerType === 'mouse' && e.preventDefault()}
-      className={cn(
-        'focus-ring inline-flex shrink-0 items-center justify-center gap-1 font-medium transition-colors disabled:pointer-events-none disabled:opacity-35',
-        dock ? 'h-12 min-w-12 rounded-xl px-2 text-[13px]' : 'h-9 min-w-9 rounded-lg px-1.5 text-[12.5px]',
-        wide && (dock ? 'px-3' : 'px-2'),
-        active ? 'bg-accent-500/25 text-accent-200 ring-1 ring-accent-500/50' : 'text-ink-100 hover:bg-ink-700/70',
-      )}
-    >
-      {children}
-    </button>
-  );
-}
-
-const Sep = ({ dock }: { dock: boolean }) => <span aria-hidden className={cn('shrink-0 bg-ink-700', dock ? 'mx-0.5 h-8 w-px' : 'mx-1 h-5 w-px')} />;
-
 export function SheetEditBar({ layout, fixed = false }: { layout: 'row' | 'dock'; fixed?: boolean }) {
   const dock = layout === 'dock';
   const song = useStudio((s) => s.song)!;
   const difficulty = useStudio((s) => s.difficulty);
   const arr = useStudio(currentArrangement)!;
   const selection = useStudio((s) => s.selection);
+  const markSel = useStudio((s) => s.markSel);
   const past = useStudio((s) => s.past.length);
   const future = useStudio((s) => s.future.length);
   const undo = useStudio((s) => s.undo);
@@ -92,8 +52,14 @@ export function SheetEditBar({ layout, fixed = false }: { layout: 'row' | 'dock'
   const t = ctx?.score.time;
   const bar = span && t ? t.measureOf(span.on) + (t.pickup ? 0 : 1) : null;
   const touch = dock;
-  const status = single
-    ? `${pitchLabel(single.midi, ctx?.score.fifths ?? 0, ctx?.score.minorTonic)} · ${curLen ? lengthName(curLen) : ''} · bar ${bar} · ${single.hand === 'L' ? 'left' : 'right'} hand`
+  const key = ctx && span ? keyAt(ctx.score, ctx.score.time.measureOf(span.on)) : null;
+
+  const markText = ctx && markSel && !has ? describeMark(ctx, markSel) : null;
+  const markOn = !has && !!markText;
+  const status = markText
+    ? markText
+    : single
+    ? `${pitchLabel(single.midi, key?.fifths ?? 0, key?.minorTonic)} · ${curLen ? lengthName(curLen) : ''} · bar ${bar} · ${single.hand === 'L' ? 'left' : 'right'} hand${single.finger ? ` · finger ${single.finger}` : ''}`
     : selected.length
       ? `${selected.length} notes`
       : ui.addMode
@@ -128,10 +94,10 @@ export function SheetEditBar({ layout, fixed = false }: { layout: 'row' | 'dock'
         <span className="text-[17px] leading-none">♭</span>
       </Tool>
       <Sep dock={dock} />
-      <Tool dock={dock} label="Earlier" title="Earlier by a grid step (←, Shift: a beat)" disabled={!has} onClick={() => sheetEdit.move(-1)} testId="sheet-earlier">
+      <Tool dock={dock} label="Earlier" title="Earlier by a grid step (←, Shift: a beat)" disabled={!has && !markOn} onClick={() => (has ? sheetEdit.move(-1) : moveSelectedMark(-1))} testId="sheet-earlier">
         <ChevronLeft size={iconSize} />
       </Tool>
-      <Tool dock={dock} label="Later" title="Later by a grid step (→, Shift: a beat)" disabled={!has} onClick={() => sheetEdit.move(1)} testId="sheet-later">
+      <Tool dock={dock} label="Later" title="Later by a grid step (→, Shift: a beat)" disabled={!has && !markOn} onClick={() => (has ? sheetEdit.move(1) : moveSelectedMark(1))} testId="sheet-later">
         <ChevronRight size={iconSize} />
       </Tool>
       <Tool dock={dock} label="Shorter" title="Shorter ([)" disabled={!has} onClick={() => sheetEdit.length({ step: -1 })} testId="sheet-shorter">
@@ -169,7 +135,7 @@ export function SheetEditBar({ layout, fixed = false }: { layout: 'row' | 'dock'
       <Tool dock={dock} label={tie === 'untie' ? 'Untie' : 'Tie'} title={tie === 'untie' ? 'Untie (T)' : 'Tie two notes (T)'} disabled={!tie} active={tie === 'untie'} onClick={sheetEdit.tie}>
         <Link2 size={iconSize} />
       </Tool>
-      <Tool dock={dock} label="Delete" title="Delete (Del)" disabled={!has} onClick={sheetEdit.remove} testId="sheet-delete">
+      <Tool dock={dock} label="Delete" title="Delete (Del)" disabled={!has && !markOn} onClick={() => (has ? sheetEdit.remove() : sheetMark.remove())} testId="sheet-delete">
         <Trash2 size={iconSize} />
       </Tool>
       <Sep dock={dock} />
@@ -203,6 +169,13 @@ export function SheetEditBar({ layout, fixed = false }: { layout: 'row' | 'dock'
     </span>
   );
 
+  const copyFixes = difficulty === 'hard' && (
+    <Tool dock={dock} wide label="Copy fixes to Easy & Medium" title="Rebuild Easy and Medium from Hard, with its fingering and markings" onClick={sheetMark.copyFixes} testId="sheet-copy-fixes">
+      <Copy size={iconSize - 2} />
+      {label(dock ? 'To Easy & Medium' : 'Copy to Easy & Medium')}
+    </Tool>
+  );
+
   if (!dock)
     return (
       <div className="flex flex-wrap items-center gap-0.5 border-b border-ink-800 bg-ink-900/95 px-3 py-1" data-testid="sheet-edit-bar" role="toolbar" aria-label="Edit the sheet music">
@@ -215,6 +188,9 @@ export function SheetEditBar({ layout, fixed = false }: { layout: 'row' | 'dock'
         </Tool>
         <Sep dock={false} />
         {tools}
+        <Sep dock={false} />
+        <MarkPanelButtons />
+        {copyFixes}
         <span className="ml-auto flex min-w-0 items-center gap-2 pl-2 text-[11.5px] text-ink-300" aria-live="polite" data-testid="sheet-status">
           {chips}
           <span className="truncate">{status}</span>
@@ -246,10 +222,39 @@ export function SheetEditBar({ layout, fixed = false }: { layout: 'row' | 'dock'
         </Tool>
       </div>
       {chips && <div className="flex gap-1 overflow-x-auto px-2 pt-1">{chips}</div>}
-      {!collapsed && <div className="flex items-center gap-2 overflow-x-auto overscroll-x-contain px-2 py-1.5">{tools}</div>}
+      {!collapsed && (
+        <>
+          {ui.picker && (
+            <div className="max-h-[40vh] overflow-y-auto border-b border-ink-800" data-testid="sheet-dock-picker">
+              {ui.picker === 'dyn' && <DynPicker dock />}
+              {ui.picker === 'text' && <TextPicker dock />}
+              {(ui.picker === 'key' || ui.picker === 'time' || ui.picker === 'tempo') && <BarPicker dock which={ui.picker} key={ui.picker} />}
+            </div>
+          )}
+          <div className="flex items-center gap-2 px-2 pt-1.5" role="tablist" aria-label="Tools">
+            {(['notes', 'marks', 'bar'] as const).map((tb) => (
+              <button
+                key={tb}
+                type="button"
+                role="tab"
+                aria-selected={ui.tab === tb}
+                onClick={() => ui.set({ tab: tb, picker: null })}
+                className={cn('focus-ring h-11 flex-1 rounded-lg text-[13.5px] font-medium capitalize', ui.tab === tb ? 'bg-ink-700 text-ink-50' : 'text-ink-300 hover:text-ink-100')}
+                data-testid={`sheet-tab-${tb}`}
+              >
+                {tb === 'bar' ? 'Bar' : tb === 'marks' ? 'Marks' : 'Notes'}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-2 overflow-x-auto overscroll-x-contain px-2 py-1.5">
+            {ui.tab === 'notes' ? tools : ui.tab === 'marks' ? <MarksTools dock /> : <BarTools dock />}
+            {ui.tab === 'marks' && copyFixes}
+          </div>
+        </>
+      )}
     </div>
   );
 }
 
 /** Height (px) the dock covers at the bottom of the sheet (padding so the last line can scroll above it). */
-export const DOCK_PAD = 150;
+export const DOCK_PAD = 210;

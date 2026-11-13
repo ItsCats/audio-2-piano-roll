@@ -11,6 +11,11 @@ import { useSheetUi } from '../../../state/sheetUi';
 import { currentArrangement, useStudio } from '../../../state/studioStore';
 import { getPlayer } from '../../../state/playback';
 import { toast } from '../../../state/toastStore';
+import { articulationOp, dynamicOp, fingerOp, pedalOp, resolveMark, slurOp, textOp, updateMarkOp, wedgeOp } from '../../../lib/sheet/marks';
+import { cursorMeasure, deleteSelectedMark, moveSelectedMark, runMarkEdit } from '../../../state/sheetMarks';
+import { easyMediumFromHard } from '../../../lib/songs';
+import type { Articulation, DynamicValue, SheetMark } from '../../../lib/music/types';
+import { DYNAMIC_VALUES } from '../../../lib/music/types';
 
 const sel = () => useStudio.getState().selection;
 const selectedMidis = () => {
@@ -32,6 +37,64 @@ export const sheetEdit = {
   },
   addBar: () => runSheetEdit((c) => addBarOp(c)),
 };
+
+const needSel = () => {
+  if (sel().size) return true;
+  toast.info('Select a note first.');
+  return false;
+};
+const bake = () => useSheetUi.getState().bake;
+/** The selected marking of the given kind, if any. */
+function selectedMark<K extends SheetMark['kind']>(kind: K): Extract<SheetMark, { kind: K }> | null {
+  const ctx = sheetCtx();
+  const r = ctx ? resolveMark(ctx, useStudio.getState().markSel) : null;
+  return r?.type === 'mark' && r.mark.kind === kind ? (r.mark as Extract<SheetMark, { kind: K }>) : null;
+}
+
+/** Markings on the selection (or at the playback cursor when nothing is selected). */
+export const sheetMark = {
+  finger: (f: 0 | 1 | 2 | 3 | 4 | 5) => needSel() && runMarkEdit((c) => fingerOp(c, sel(), f)),
+  art: (a: Articulation) => needSel() && runMarkEdit((c) => articulationOp(c, sel(), a)),
+  slur: () => {
+    if (!needSel()) return false;
+    const ok = runMarkEdit((c) => slurOp(c, sel()));
+    if (!ok) toast.info('Select two or more notes of one hand to slur them.');
+    return ok;
+  },
+  /** A dynamic (or a new value for the selected one). */
+  dyn: (value: DynamicValue) => {
+    const cur = selectedMark('dyn');
+    if (cur) return runMarkEdit((c) => updateMarkOp(c, cur.id, { value }, { bake: bake() }));
+    return runMarkEdit((c) => dynamicOp(c, sel(), value, { bake: bake(), cursorMeasure: cursorMeasure(c) }));
+  },
+  /** A hairpin over the selection (a selected hairpin: its direction changes). */
+  wedge: (dir: 'cresc' | 'dim') => {
+    const cur = selectedMark('wedge');
+    if (cur) return runMarkEdit((c) => updateMarkOp(c, cur.id, { dir }, { bake: bake() }));
+    return runMarkEdit((c) => wedgeOp(c, sel(), dir, { bake: bake(), cursorMeasure: cursorMeasure(c) }));
+  },
+  pedal: () => runMarkEdit((c) => pedalOp(c, sel(), cursorMeasure(c))),
+  /** Pedal marks on this level's sheet on / off. */
+  showPedal: (on: boolean) => runMarkEdit(() => ({ showPedal: on })),
+  /** Words (or new words / placement for the selected text). */
+  text: (text: string, o: { above: boolean; style: 'italic' | 'bold' | null }) => {
+    const cur = selectedMark('text');
+    if (cur) return runMarkEdit((c) => updateMarkOp(c, cur.id, { text, above: o.above, style: o.style ?? undefined }));
+    return runMarkEdit((c) => textOp(c, sel(), text, { above: o.above, style: o.style, cursorMeasure: cursorMeasure(c) }));
+  },
+  remove: () => deleteSelectedMark(),
+  copyFixes: () => {
+    const st = useStudio.getState();
+    if (!st.song) return;
+    const fixed = st.song.arrangements.easy.edited || st.song.arrangements.medium.edited;
+    if (!confirm(`Copy your Hard fixes and markings to Easy and Medium? Easy and Medium are rebuilt from Hard.${fixed ? ' Fixes made on Easy and Medium will be replaced.' : ''}`)) return;
+    st.replaceSong(easyMediumFromHard(st.song));
+    toast.success('Copied to Easy & Medium', 'Easy and Medium were rebuilt from Hard, with its fingering and markings.');
+  },
+};
+
+/** The dynamics of the picker, in order (the first six are shown, the rest behind "More"). */
+export const DYN_ORDER: DynamicValue[] = DYNAMIC_VALUES;
 
 /** The previous / next written note on the staff of the selection (Alt+← / →). */
 export function selectNeighbor(dir: 1 | -1): void {
@@ -64,11 +127,22 @@ export function performSheetAction(a: SheetAction): boolean {
   const st = useStudio.getState();
   const ui = useSheetUi.getState();
   switch (a.type) {
-    case 'pitch':
+    case 'pitch': {
+      // a selected dynamic: louder / softer
+      const d = !st.selection.size ? selectedMark('dyn') : null;
+      if (d) {
+        const lv: DynamicValue[] = ['pp', 'p', 'mp', 'mf', 'f', 'ff', 'fff'];
+        const i = lv.indexOf(d.value);
+        const next = lv[Math.max(0, Math.min(lv.length - 1, (i < 0 ? 3 : i) + a.dir))];
+        if (next !== d.value) sheetMark.dyn(next);
+        return true;
+      }
       sheetEdit.pitch(a.kind, a.dir);
       return true;
+    }
     case 'move':
-      sheetEdit.move(a.dir, a.beat);
+      if (st.markSel && !st.selection.size) moveSelectedMark(a.dir, a.beat);
+      else sheetEdit.move(a.dir, a.beat);
       return true;
     case 'selectNext':
       selectNeighbor(a.dir);
@@ -93,12 +167,14 @@ export function performSheetAction(a: SheetAction): boolean {
       ui.set({ addMode: !ui.addMode });
       return true;
     case 'escape':
-      if (ui.menu) ui.set({ menu: null });
+      if (ui.picker || ui.panel) ui.set({ picker: null, panel: null });
+      else if (ui.menu) ui.set({ menu: null });
       else if (ui.addMode) ui.set({ addMode: false });
       else st.clearSelection();
       return true;
     case 'delete':
-      sheetEdit.remove();
+      if (st.markSel && !st.selection.size) sheetMark.remove();
+      else sheetEdit.remove();
       return true;
     case 'hand':
       sheetEdit.hand(a.hand);
@@ -120,6 +196,26 @@ export function performSheetAction(a: SheetAction): boolean {
     case 'quantize':
       toast.info('Notes on the sheet already follow its grid.');
       return true;
+    case 'finger':
+      sheetMark.finger(a.finger);
+      return true;
+    case 'art':
+      sheetMark.art(a.art);
+      return true;
+    case 'slur':
+      sheetMark.slur();
+      return true;
+    case 'wedge':
+      sheetMark.wedge(a.dir);
+      return true;
+    case 'pedal':
+      sheetMark.pedal();
+      return true;
+    case 'picker': {
+      const bar = a.picker === 'key' || a.picker === 'time' || a.picker === 'tempo';
+      ui.set({ panel: bar ? 'bar' : 'marks', tab: bar ? 'bar' : 'marks', picker: a.picker, menu: null });
+      return true;
+    }
   }
 }
 

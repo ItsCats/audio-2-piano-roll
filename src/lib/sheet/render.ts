@@ -74,6 +74,22 @@ export interface NoteHit {
   heads: Element[];
 }
 
+/** A drawn marking (dynamics, hairpin, words, slur, pedal, key / time / tempo change), host coordinates. */
+export interface MarkHit {
+  id: string;
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+/** A song-level marking to find on the sheet: its selection id and measure. */
+export interface BarMarkRef {
+  id: string;
+  kind: 'key' | 'time' | 'tempo';
+  measure: number;
+}
+
 /** A slot on the staff for a new note. */
 export interface SheetSlot {
   measure: number;
@@ -742,6 +758,126 @@ export class SheetRenderer {
     const out = new Set<number>();
     for (const h of this.noteHits()) if (h.cx >= ax && h.cx <= bx && h.cy >= ay && h.cy <= by) for (const id of h.ids) out.add(id);
     return [...out];
+  }
+
+  /**
+   * Where the markings are drawn. Positions come from the measure boxes (x of a position, staff
+   * lines), refined by the drawn text of dynamics, words and tempo marks when it is found nearby.
+   */
+  markHits(bar: BarMarkRef[] = []): MarkHit[] {
+    const s = this.score;
+    if (!s) return [];
+    const out: MarkHit[] = [];
+    const t = s.time;
+    const texts = () => {
+      const list: { text: string; r: DOMRect }[] = [];
+      const hostRect = this.host.getBoundingClientRect();
+      for (const el of this.host.querySelectorAll('svg text')) {
+        const r = el.getBoundingClientRect();
+        if (!r.width) continue;
+        list.push({ text: (el.textContent ?? '').trim(), r: new DOMRect(r.left - hostRect.left, r.top - hostRect.top, r.width, r.height) });
+      }
+      return list;
+    };
+    let tx: { text: string; r: DOMRect }[] | null = null;
+    const near = (want: (x: string) => boolean, x: number, y: number, maxD = 70) => {
+      tx ??= texts();
+      let best: DOMRect | null = null;
+      let bd = maxD;
+      for (const e of tx) {
+        if (!want(e.text)) continue;
+        const d = Math.hypot(e.r.x + e.r.width / 2 - x, (e.r.y + e.r.height / 2 - y) * 0.7);
+        if (d < bd) {
+          bd = d;
+          best = e.r;
+        }
+      }
+      return best;
+    };
+    const staffY = (m: number) => {
+      const b = this.box(m);
+      if (!b?.staffTop || !b.gap) return null;
+      const dy = b.top - (this.boxes[m]?.top ?? b.top);
+      return { b, gap: b.gap, top1: b.staffTop[0] + dy, top2: b.staffTop[1] + dy };
+    };
+    const push = (id: string, x0: number, y0: number, x1: number, y1: number) => out.push({ id, x0, y0, x1, y1 });
+    const fromRect = (id: string, r: DOMRect, pad = 3) => push(id, r.x - pad, r.y - pad, r.x + r.width + pad, r.y + r.height + pad);
+    // the x range of [pos, end) on the line of pos (cut at the line's end)
+    const span = (pos: number, end: number) => {
+      const m0 = Math.min(s.measureCount - 1, t.measureOf(pos));
+      const b0 = this.box(m0);
+      if (!b0) return null;
+      const x0 = this.xAt(m0, pos) ?? b0.x;
+      let m1 = Math.min(s.measureCount - 1, t.measureOf(Math.max(pos, end - 1)));
+      while (m1 > m0 && this.box(m1)?.top !== b0.top) m1--;
+      const b1 = this.box(m1)!;
+      const x1 = end >= t.measureStart(m1 + 1) ? b1.x + b1.w : (this.xAt(m1, end) ?? b1.x + b1.w);
+      return { m0, x0, x1: Math.max(x0 + 16, x1) };
+    };
+    for (const mk of s.marks ?? []) {
+      if (mk.kind === 'slur') {
+        const a = this.hitsOf(mk.from)[0];
+        const bs = this.hitsOf(mk.to);
+        const b = bs[bs.length - 1];
+        if (!a || !b) continue;
+        const g = this.box(a.measure)?.gap ?? 10;
+        const sameLine = Math.abs(a.cy - b.cy) < 6 * g;
+        const x1 = sameLine ? b.x1 : (this.box(a.measure)?.x ?? 0) + (this.box(a.measure)?.w ?? 0);
+        const y = Math.min(a.y0, sameLine ? b.y0 : a.y0);
+        push(mk.id, a.x0, y - (mk.below ? -1 : 2.5) * g - (mk.below ? 0 : 0), x1, y + (mk.below ? 4.5 * g : 0.2 * g));
+        continue;
+      }
+      const m = Math.min(s.measureCount - 1, t.measureOf(mk.pos));
+      const st = staffY(m);
+      if (!st) continue;
+      const x = this.xAt(m, mk.pos) ?? st.b.x;
+      if (mk.kind === 'dyn') {
+        const y = mk.staff === 2 ? st.top2 + 6.5 * st.gap : st.top1 + 6.5 * st.gap;
+        const r = near((x) => x === mk.value, x + st.gap, y);
+        if (r) fromRect(mk.id, r);
+        else push(mk.id, x - 4, y - 10, x + 24, y + 10);
+      } else if (mk.kind === 'text') {
+        const y = mk.above ? (mk.staff === 2 ? st.top2 : st.top1) - 2.5 * st.gap : (mk.staff === 2 ? st.top2 : st.top1) + 6.5 * st.gap;
+        const r = near((x) => x === mk.text.trim(), x + mk.text.length * 3, y, 90);
+        if (r) fromRect(mk.id, r);
+        else push(mk.id, x - 4, y - 10, x + mk.text.length * 7 + 4, y + 10);
+      } else if (mk.kind === 'wedge') {
+        const sp = span(mk.pos, mk.end);
+        if (!sp) continue;
+        const y = (mk.staff === 2 ? st.top2 : st.top1) + 6.5 * st.gap;
+        push(mk.id, sp.x0, y - 1.2 * st.gap, sp.x1, y + 1.2 * st.gap);
+      }
+    }
+    for (const p of s.pedals ?? []) {
+      const sp = span(p.on, p.off);
+      const st = sp && staffY(sp.m0);
+      if (!sp || !st) continue;
+      const y = st.top2 + 7 * st.gap;
+      push(`pedal@${p.on}`, sp.x0, y - 1.5 * st.gap, sp.x1, y + 1.5 * st.gap);
+    }
+    for (const r of bar) {
+      const st = staffY(r.measure);
+      if (!st) continue;
+      const bx = st.b.x;
+      if (r.kind === 'tempo') {
+        const y = st.top1 - 3 * st.gap;
+        const tr = near((x) => /=\s*\d+/.test(x), bx + 30, y, 90);
+        if (tr) push(r.id, tr.x - 22, tr.y - 4, tr.x + tr.width + 4, tr.y + tr.height + 4);
+        else push(r.id, bx, y - 12, bx + 70, y + 12);
+      } else {
+        // key and time signatures at the start of the bar, across both staves
+        push(r.id, bx - 2, st.top1 - st.gap, bx + 4 * st.gap, st.top2 + 5 * st.gap);
+      }
+    }
+    return out;
+  }
+
+  /** The marking under a point (host coordinates), smallest first; touch has a larger reach. */
+  markAt(x: number, y: number, bar: BarMarkRef[] = [], pointerType = 'mouse'): MarkHit | null {
+    const pad = pointerType === 'touch' ? 14 : 3;
+    const hits = this.markHits(bar).filter((h) => x >= h.x0 - pad && x <= h.x1 + pad && y >= h.y0 - pad && y <= h.y1 + pad);
+    hits.sort((a, b) => (a.x1 - a.x0) * (a.y1 - a.y0) - (b.x1 - b.x0) * (b.y1 - b.y0));
+    return hits[0] ?? null;
   }
 
   /** The Score drawn on screen. */

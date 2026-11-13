@@ -297,6 +297,7 @@ export function updateMarkOp(ctx: SheetCtx, id: string, patch: Partial<SheetMark
   const i = marks.findIndex((m) => m.id === id);
   if (i < 0) return null;
   const next = { ...marks[i], ...patch, id, kind: marks[i].kind } as SheetMark;
+  for (const k of Object.keys(next) as (keyof SheetMark)[]) if (next[k] === undefined) delete next[k];
   if (next.kind === 'text') {
     const t = next.text.replace(/[\u0000-\u001F\u007F-\u009F]/g, '').trim().slice(0, 80);
     if (!t) return null;

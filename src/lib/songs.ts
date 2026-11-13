@@ -7,6 +7,7 @@ import { newId } from './storage/db';
 import type { ParsedMidi } from './music/midi';
 import type { ParsedScore } from './score';
 import { bachPreludeDemo } from './music/demo';
+import { carryMarks } from './sheet/marks';
 
 /** A compact piano-roll overview image used as the song's thumbnail. */
 export function makeThumbnail(notes: Note[], duration: number, colors = { R: '#4f9dff', L: '#f5a524' }): string | undefined {
@@ -58,14 +59,37 @@ export function arrangementOptions(song: { transcription: TranscriptionInfo; aut
  * Turns the automatic pedal of a song from audio on or off. Medium and Hard get pedal derived
  * from their current notes (hand edits are kept); off clears it. Easy has none either way.
  */
-export function withAutoPedal(song: Song, on: boolean): Song {
+export function withAutoPedal(song: Song, on: boolean, opts?: { replaceEdited?: boolean }): Song {
   const arrangements = { ...song.arrangements };
   for (const d of DIFFICULTIES) {
     if (d === 'easy') continue;
     const a = arrangements[d];
+    // pedal edited on the sheet is kept (the caller asks first: pedalEditedLevels)
+    if (a.pedalEdited && !opts?.replaceEdited) continue;
+    if (a.pedalEdited) {
+      const { pedalEdited: _p, ...rest } = a;
+      void _p;
+      arrangements[d] = { ...rest, pedal: on ? autoPedal(a.notes, song.tempo, song.duration > 0 ? song.duration : Infinity) : song.basePedal.map((p) => ({ ...p })) };
+      continue;
+    }
     arrangements[d] = { ...a, pedal: on ? autoPedal(a.notes, song.tempo, song.duration > 0 ? song.duration : Infinity) : song.basePedal.map((p) => ({ ...p })) };
   }
   return { ...song, autoPedal: on, arrangements, updatedAt: Date.now() };
+}
+
+/** Levels whose pedal was edited on the sheet (automatic pedal and regenerating ask before replacing it). */
+export const pedalEditedLevels = (song: Song): Difficulty[] => DIFFICULTIES.filter((d) => song.arrangements[d].pedalEdited);
+
+/**
+ * Easy and Medium rebuilt from the current Hard notes (with Hard's edits), and Hard's markings
+ * carried over to them (lib/sheet/marks.ts carryMarks). Sheet positions are not copied: the derived
+ * notes are written on their own level's grid.
+ */
+export function easyMediumFromHard(song: Song): Song {
+  const hardArr = song.arrangements.hard;
+  const hard = hardArr.notes.map(({ pin: _pin, finger: _f, art: _a, artBase: _b, ...n }) => (void _pin, void _f, void _a, void _b, n));
+  const all = generateAllArrangements(hard, song.basePedal, song.tempo, song.duration, arrangementOptions(song));
+  return { ...song, arrangements: { ...song.arrangements, easy: carryMarks(hardArr, all.easy), medium: carryMarks(hardArr, all.medium) }, updatedAt: Date.now() };
 }
 
 interface BuildInput {

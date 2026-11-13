@@ -2,6 +2,8 @@
 import { useEffect, useState } from 'react';
 import { create } from 'zustand';
 
+export type SheetPicker = 'dyn' | 'text' | 'key' | 'time' | 'tempo';
+
 export interface SheetUiState {
   /** Clicks / taps on the staff place notes. */
   addMode: boolean;
@@ -13,6 +15,14 @@ export interface SheetUiState {
   menu: { x: number; y: number } | null;
   /** Notes under the last click that were close together (pitches to switch between). */
   chips: { ids: number[]; label: string }[];
+  /** Open popover of the desktop edit bar (Marks, Bar). */
+  panel: 'marks' | 'bar' | null;
+  /** Open picker (in the popover, or above the phone dock). */
+  picker: SheetPicker | null;
+  /** Dynamics and hairpins change the loudness of the notes ("Change loudness"). */
+  bake: boolean;
+  /** Tab of the phone dock. */
+  tab: 'notes' | 'marks' | 'bar';
   set: (p: Partial<Omit<SheetUiState, 'set'>>) => void;
 }
 
@@ -22,6 +32,10 @@ export const useSheetUi = create<SheetUiState>((set) => ({
   triplet: false,
   menu: null,
   chips: [],
+  panel: null,
+  picker: null,
+  bake: true,
+  tab: 'notes',
   set: (p) => set(p),
 }));
 

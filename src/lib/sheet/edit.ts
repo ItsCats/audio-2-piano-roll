@@ -11,6 +11,7 @@ import { pinValid } from './score';
 import { stepInKey } from './pitch';
 import { writtenIndex, writtenSpan } from './written';
 import { articulatedSound, levelAt } from './marks';
+import { keyAt } from './keys';
 import { DIV, type Score, type Staff } from './types';
 
 export interface SheetCtx {
@@ -183,7 +184,8 @@ export function pitchOp(ctx: SheetCtx, ids: Set<number>, kind: 'step' | 'octave'
   const touched = new Set<number>();
   const notes = arrNotes(ctx).map((n) => {
     if (!ids.has(n.id)) return n;
-    const midi = kind === 'octave' ? n.midi + 12 * dir : kind === 'semi' ? n.midi + dir : stepInKey(n.midi, dir, ctx.score.fifths, ctx.score.minorTonic);
+    const k = keyAt(ctx.score, ctx.score.time.measureOf(spanOf(ctx, n).on));
+    const midi = kind === 'octave' ? n.midi + 12 * dir : kind === 'semi' ? n.midi + dir : stepInKey(n.midi, dir, k.fifths, k.minorTonic);
     touched.add(n.id);
     return { ...pinHere(ctx, n), midi: Math.max(21, Math.min(108, midi)) };
   });
@@ -404,7 +406,10 @@ export function shiftOp(ctx: SheetCtx, ids: Set<number>, by: { steps?: number; s
     touched.add(n.id);
     let midi = n.midi;
     if (by.semis) midi += by.semis;
-    else if (by.steps) for (let i = 0; i < Math.abs(by.steps); i++) midi = stepInKey(midi, by.steps > 0 ? 1 : -1, ctx.score.fifths, ctx.score.minorTonic);
+    else if (by.steps) {
+      const k = keyAt(ctx.score, ctx.score.time.measureOf(s.on));
+      for (let i = 0; i < Math.abs(by.steps); i++) midi = stepInKey(midi, by.steps > 0 ? 1 : -1, k.fifths, k.minorTonic);
+    }
     midi = Math.max(21, Math.min(108, midi));
     if (!delta) return { ...pinHere(ctx, n), midi };
     const on = s.on + delta;

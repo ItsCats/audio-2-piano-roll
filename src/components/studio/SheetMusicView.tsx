@@ -12,12 +12,13 @@ import { toggleStageFullscreen, useStageFullscreen } from '../../state/fullscree
 import { buildSheet, type Score } from '../../lib/sheet';
 import { loadOsmd, SheetRenderer } from '../../lib/sheet/render';
 import { Button, cn, IconButton } from '../ui';
-import { sheetEditedRecently } from '../../state/sheetEdit';
+import { sheetCtx, sheetEditedRecently } from '../../state/sheetEdit';
+import { barMarkRefs, markSelOfHit } from '../../state/sheetMarks';
 import { useSheetUi } from '../../state/sheetUi';
 import { SheetEditBar, DOCK_PAD } from './sheet/SheetEditBar';
 import { SheetEditOverlay } from './sheet/SheetEditOverlay';
 import { SheetContextMenu } from './sheet/SheetContextMenu';
-import { useSheetPointer } from './sheet/useSheetPointer';
+import { useSheetOverlay, useSheetPointer } from './sheet/useSheetPointer';
 import { performSheetAction } from './sheet/sheetActions';
 import { setSheetActionHandler } from '../../state/sheetKeys';
 
@@ -40,6 +41,8 @@ export function SheetMusicView() {
   const fullscreen = useStageFullscreen((s) => s.mode !== 'off');
   const editMode = useStudio((s) => s.editMode);
   const selection = useStudio((s) => s.selection);
+  const markSel = useStudio((s) => s.markSel);
+  const [drawTick, setDrawTick] = useState(0);
   const addMode = useSheetUi((s) => s.addMode);
   // in full screen the edit tools dock inside the stage (otherwise the Studio shows them)
   const dock = editMode && fullscreen;
@@ -152,10 +155,12 @@ export function SheetMusicView() {
         const sc = scrollRef.current;
         if (sc && top !== null && t > 0.5) sc.scrollTop = Math.max(0, wrapperTop() + top - sc.clientHeight * 0.2);
       },
-    }).catch((e) => {
-      console.error(e);
-      setStatus('error');
-    });
+    })
+      .then((done) => done && setDrawTick((n) => n + 1))
+      .catch((e) => {
+        console.error(e);
+        setStatus('error');
+      });
     return () => r.cancel();
   }, [score, zoom, width, attempt]);
 
@@ -167,8 +172,20 @@ export function SheetMusicView() {
   }, [selection, editMode, score]);
 
   useEffect(() => {
-    if (!editMode) useSheetUi.getState().set({ addMode: false, menu: null, chips: [] });
+    if (!editMode) useSheetUi.getState().set({ addMode: false, menu: null, chips: [], panel: null, picker: null });
   }, [editMode]);
+
+  // the selected marking gets a ring (drawn by the overlay)
+  useEffect(() => {
+    const r = rendererRef.current;
+    const ctx = sheetCtx();
+    let ring = null;
+    if (editMode && markSel && r && ctx) {
+      const h = r.markHits(barMarkRefs(ctx)).find((x) => markSelOfHit(ctx, x.id) === markSel);
+      if (h) ring = { x0: h.x0, y0: h.y0, x1: h.x1, y1: h.y1 };
+    }
+    useSheetOverlay.getState().set({ ring });
+  }, [markSel, editMode, drawTick, status]);
 
   // the Studio's keyboard handler sends sheet keys here while the sheet is on screen
   useEffect(() => {

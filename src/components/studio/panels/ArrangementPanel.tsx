@@ -13,7 +13,7 @@ import { generateAllArrangements } from '../../../lib/music/difficulty';
 import type { Difficulty, ExtractionParams } from '../../../lib/music/types';
 import { Badge, Button, Section, Slider, Toggle } from '../../ui';
 import { toast } from '../../../state/toastStore';
-import { arrangementOptions, makeThumbnail } from '../../../lib/songs';
+import { arrangementOptions, easyMediumFromHard, makeThumbnail } from '../../../lib/songs';
 
 function LevelStats() {
   const song = useStudio((s) => s.song)!;
@@ -67,7 +67,7 @@ export function ArrangementPanel() {
 
   const redetect = async () => {
     const edited = (['easy', 'medium', 'hard'] as Difficulty[]).filter((d) => song.arrangements[d].edited);
-    if ((edited.length || song.sheet) && !confirm(`Re-detecting replaces your edits${edited.length ? ` to ${edited.join(', ')}` : ''}.${song.sheet ? ' Sheet edits on every level will be removed.' : ''} Continue?`)) return;
+    if ((edited.length || song.sheet) && !confirm(`Re-detecting replaces your edits${edited.length ? ` to ${edited.join(', ')}` : ''}.${song.sheet ? ' Sheet edits on every level and key/time/tempo marks will be removed.' : ''} Continue?`)) return;
     setBusy(true);
     try {
       const post = await getPosteriors(song.id);
@@ -104,7 +104,7 @@ export function ArrangementPanel() {
       return;
     }
     const edited = (['easy', 'medium', 'hard'] as Difficulty[]).filter((d) => song.arrangements[d].edited);
-    if ((edited.length || song.sheet) && !confirm(`Setting the tempo rebuilds every level from the detected notes: your edits${edited.length ? ` to ${edited.join(', ')}` : ''}${song.sheet ? ' and the sheet’s bar lines' : ''} will be replaced. Continue?`)) return;
+    if ((edited.length || song.sheet) && !confirm(`Setting the tempo rebuilds every level from the detected notes: your edits${edited.length ? ` to ${edited.join(', ')}` : ''}${song.sheet ? ', the sheet’s bar lines and its key/time/tempo marks' : ''} will be replaced. Continue?`)) return;
     const first = song.tempo.beats[song.tempo.downbeatIndex] ?? song.base[0]?.start ?? 0;
     const tempo = { ...song.tempo, bpm: v, beats: regularBeats(v, first, song.duration), downbeatIndex: 0, source: 'manual' as const, confidence: 1 };
     const { sheet: _sheet, ...rest } = song;
@@ -231,18 +231,15 @@ export function ArrangementPanel() {
         <LevelStats />
         <div className="flex flex-wrap gap-2">
           <Button size="sm" variant="subtle" icon={<RefreshCw size={14} />} onClick={() => {
-            if (song.arrangements[difficulty].edited && !confirm(`Regenerate ${difficulty}? Your note fixes on this level will be replaced.`)) return;
+            if (song.arrangements[difficulty].edited && !confirm(`Regenerate ${difficulty}? Your note fixes, fingering and markings on this level will be replaced.`)) return;
             regenerateLevels([difficulty]);
           }}>
             Regenerate {difficulty}
           </Button>
           <Button size="sm" variant="ghost" onClick={() => {
             const fixed = song.arrangements.easy.edited || song.arrangements.medium.edited;
-            if (!confirm(`Rebuild Easy and Medium from the current Hard arrangement (including your Hard edits)?${fixed ? ' Fixes made on Easy and Medium will be replaced.' : ''}`)) return;
-            // sheet positions are not copied: the derived notes are written on their own level's grid
-            const hard = song.arrangements.hard.notes.map(({ pin: _pin, ...n }) => (void _pin, n));
-            const all = generateAllArrangements(hard, song.basePedal, song.tempo, song.duration, arrangementOptions(song));
-            replaceSong({ ...song, arrangements: { ...song.arrangements, easy: all.easy, medium: all.medium } });
+            if (!confirm(`Rebuild Easy and Medium from the current Hard arrangement (including your Hard edits)?${fixed ? ' Fixes and markings made on Easy and Medium will be replaced.' : ''} Hard’s fingering and markings are copied over.`)) return;
+            replaceSong(easyMediumFromHard(song));
           }}>
             Easy & Medium from Hard
           </Button>

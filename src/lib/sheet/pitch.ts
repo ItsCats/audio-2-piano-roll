@@ -5,6 +5,7 @@
 import { buckets } from './voiceItems';
 import { diatonic, keyAlter, spell, spellChord, STEPS } from './spelling';
 import type { ClefSign, Score, Staff } from './types';
+import { keyAt } from './keys';
 
 const STEP_PC = [0, 2, 4, 5, 7, 9, 11];
 
@@ -50,16 +51,17 @@ export function yOfDiatonic(dn: number, staffTop: number, gap: number, clef: Cle
  */
 export function alterAt(score: Score, staff: Staff, m: number, pos: number, dn: number): number {
   const bk = buckets(score);
+  const k = keyAt(score, m);
   let best: { pos: number; alter: number } | null = null;
   for (const v of [0, 1])
     for (const c of bk[staff - 1][v][m] ?? []) {
       const on = Math.max(c.on, score.time.measureStart(m));
       if (on >= pos) continue;
-      spellChord(c.midis, score.fifths, score.minorTonic).forEach((sp) => {
+      spellChord(c.midis, keyAt(score, score.time.measureOf(c.on)).fifths, keyAt(score, score.time.measureOf(c.on)).minorTonic).forEach((sp) => {
         if (diatonic(sp) === dn && (!best || on >= best.pos)) best = { pos: on, alter: sp.alter };
       });
     }
-  return best ? (best as { alter: number }).alter : keyAlter(((dn % 7) + 7) % 7, score.fifths);
+  return best ? (best as { alter: number }).alter : keyAlter(((dn % 7) + 7) % 7, k.fifths);
 }
 
 /** Octave mark in force on a staff at a position. */
