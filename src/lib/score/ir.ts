@@ -121,7 +121,7 @@ export interface IRPart {
   name: string;
   /** Number of staves. */
   staves: number;
-  /** Looks like a keyboard part (piano, organ, harpsichord, keyboard, or a 2-staff grand staff). */
+  /** Named like a keyboard part (piano, organ, harpsichord, …). fromIR also reads a lone 2-staff part as a piano. */
   keyboard: boolean;
   /** Notes of this part are not played (percussion). */
   ignored?: boolean;

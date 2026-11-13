@@ -165,7 +165,9 @@ export function decodeXmlBytes(bytes: Uint8Array): string {
   const head = new TextDecoder('latin1').decode(bytes.subarray(0, 200));
   const m = /encoding\s*=\s*["']([A-Za-z0-9_.:-]+)["']/.exec(head);
   const enc = m?.[1].toLowerCase();
-  if (enc && enc !== 'utf-8' && enc !== 'utf8') {
+  // Real UTF-16 was caught above (BOM or zero bytes); a UTF-16 label on 8-bit text is wrong, so
+  // it is read as UTF-8, like browsers do.
+  if (enc && enc !== 'utf-8' && enc !== 'utf8' && !enc.startsWith('utf-16') && enc !== 'ucs-2' && enc !== 'unicode') {
     try {
       return new TextDecoder(enc).decode(bytes);
     } catch {

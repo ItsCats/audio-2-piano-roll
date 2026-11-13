@@ -13,10 +13,17 @@ const LOF_STEP = [3, 0, 4, 1, 5, 2, 6];
 /** Major-key tonic pitch class → fifths (F♯/G♭ is written with 6 flats, like theory.ts prefersFlats). */
 const MAJOR_FIFTHS: Record<number, number> = { 0: 0, 7: 1, 2: 2, 9: 3, 4: 4, 11: 5, 6: -6, 1: -5, 8: -4, 3: -3, 10: -2, 5: -1 };
 
-export function keyFifths(key?: Pick<KeyInfo, 'tonic' | 'mode'> | null): number {
+/**
+ * Key signature of a key. A signature written in an imported score (`fifths`, e.g. F♯ major's six
+ * sharps or C♯ major's seven) is kept when it still names the same key; otherwise the usual one.
+ */
+export function keyFifths(key?: (Pick<KeyInfo, 'tonic' | 'mode'> & { fifths?: number }) | null): number {
   if (!key || !Number.isFinite(key.tonic)) return 0;
   const t = ((Math.round(key.tonic) % 12) + 12) % 12;
-  return MAJOR_FIFTHS[key.mode === 'minor' ? (t + 3) % 12 : t];
+  const major = key.mode === 'minor' ? (t + 3) % 12 : t;
+  const f = key.fifths;
+  if (typeof f === 'number' && Number.isInteger(f) && f >= -7 && f <= 7 && (((f * 7) % 12) + 12) % 12 === major) return f;
+  return MAJOR_FIFTHS[major];
 }
 
 export interface Spelled {

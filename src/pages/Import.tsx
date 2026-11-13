@@ -565,6 +565,16 @@ export default function ImportPage() {
     { id: 'record', label: 'Record', icon: Mic },
   ] as const;
 
+  // on a phone the tabs don't all fit: scroll the open one into view (centred, so the tabs on
+  // either side peek out and show that the row scrolls)
+  const tabListRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const list = tabListRef.current;
+    const btn = list?.querySelector<HTMLElement>('[aria-selected="true"]');
+    if (!list || !btn || list.scrollWidth <= list.clientWidth) return;
+    list.scrollLeft = Math.max(0, btn.offsetLeft - (list.clientWidth - btn.offsetWidth) / 2);
+  }, [tab]);
+
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto flex max-w-4xl flex-col gap-6 px-5 py-8 md:px-10">
@@ -584,7 +594,7 @@ export default function ImportPage() {
         {job && <JobProgress />}
 
         <div className="panel overflow-hidden">
-          <div role="tablist" className="flex overflow-x-auto border-b border-ink-700 px-2">
+          <div ref={tabListRef} role="tablist" className="relative flex overflow-x-auto border-b border-ink-700 px-1 sm:px-2">
             {tabs.map((t) => (
               <button
                 key={t.id}
@@ -592,7 +602,7 @@ export default function ImportPage() {
                 aria-selected={tab === t.id}
                 onClick={() => navigate(t.id === 'youtube' ? YOUTUBE_IMPORT_PATH : `/import?tab=${t.id}`)}
                 className={cn(
-                  'focus-ring flex h-12 items-center gap-2 border-b-2 px-4 text-[13.5px] font-medium whitespace-nowrap transition-colors',
+                  'focus-ring flex h-12 shrink-0 items-center gap-2 border-b-2 px-3 text-[13.5px] font-medium whitespace-nowrap transition-colors sm:px-4',
                   tab === t.id ? 'border-accent-500 text-ink-50' : 'border-transparent text-ink-300 hover:text-ink-100',
                 )}
               >

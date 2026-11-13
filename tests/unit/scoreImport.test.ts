@@ -7,10 +7,11 @@
 import { describe, expect, it } from 'vitest';
 import { zipSync, strToU8 } from 'fflate';
 import { parseXml, decodeXmlBytes } from '../../src/lib/score/xml';
-import { importMusicXml, readScoreFile, scoreTiming, ScoreImportError, keyFromSignature, musicXmlToIR, isScoreFileName } from '../../src/lib/score';
+import { importMusicXml, readScoreFile, scoreTiming, ScoreImportError, keyFromSignature, musicXmlToIR, isScoreFileName, MAX_SCORE_SECONDS } from '../../src/lib/score';
 import { unroll } from '../../src/lib/score/unroll';
 import { jumpFromWords, parseEndingNumbers, tempoFromWords, type IRMeasure } from '../../src/lib/score/ir';
-import { buildScore, toMusicXml } from '../../src/lib/sheet';
+import { buildScore, buildSheet, songMusicXml, songSheetTempo, toMusicXml } from '../../src/lib/sheet';
+import { keyFifths } from '../../src/lib/sheet/spelling';
 import { DIV, type Score } from '../../src/lib/sheet/types';
 import { bachPreludeDemo } from '../../src/lib/music/demo';
 import { regularBeats } from '../../src/lib/music/beats';
@@ -666,5 +667,135 @@ describe('MuseScore files', () => {
     expect(readScoreFile('Song.mscz', z).format).toBe('mscz');
     expect(() => readScoreFile('old.mscx', strToU8('<museScore version="2.06"><Score/></museScore>'))).toThrow(/MuseScore 2[\s\S]*File → Export → MusicXML/);
     expect(() => readScoreFile('x.mscz', zipSync({ 'a.txt': strToU8('x') }))).toThrow(/Export → MusicXML/);
+  });
+});
+
+// ---------------------------------------------------------------- review fixes
+
+describe('review fixes', () => {
+  it('the sheet view keeps the exact bar grid of an imported score (32nd notes, quintuplets)', () => {
+    for (const [div, perBar] of [
+      [8, 32], // 32nd notes
+      [5, 20], // quintuplet 16ths
+    ]) {
+      const ms: string[] = [];
+      for (let i = 0; i < 16; i++) {
+        let b = i === 0 ? ATTR({ div }) + TEMPO(72) : '';
+        for (let k = 0; k < perBar; k++) b += N(60 + ((k * 5 + i) % 19), 1);
+        ms.push(b);
+      }
+      const song = songFromScore(importMusicXml(score([{ measures: ms }])), { kind: 'score' });
+      expect(songSheetTempo(song)).toBe(song.tempo);
+      const sheet = buildSheet(song, 'hard');
+      expect(sheet.time.source).toBe('midi');
+      expect(sheet.time.bpm).toBeCloseTo(72, 3);
+      // bar lines where the score has them (4 beats at 72 per minute); the sheet writer's finest
+      // grid is a 16th, so a final 32nd may round into one more bar
+      for (let m = 0; m <= 16; m++) expect(sheet.measureStartTimes[m]).toBeCloseTo((m * 4 * 60) / 72, 3);
+    }
+  });
+
+  it('a lone 2-staff part keeps its written hands whatever its name; Pno. and instrument-sound count as piano', () => {
+    // the right hand crosses below the left hand: only the staves say which hand plays what
+    const m = ATTR({ staves: 2 }) + TEMPO(60) + N(50, 4, '<voice>1</voice><staff>1</staff>') + '<backup><duration>4</duration></backup>' + N(62, 4, '<voice>5</voice><staff>2</staff>');
+    for (const name of ['', 'Part 1', 'Pno.', 'ピアノ', 'Piano']) {
+      const p = importMusicXml(score([{ name, measures: [m, m, m] }]));
+      expect(p.handsKnown).toBe(true);
+      expect(p.notes.filter((n) => n.midi === 50).every((n) => n.hand === 'R')).toBe(true);
+      expect(p.notes.filter((n) => n.midi === 62).every((n) => n.hand === 'L')).toBe(true);
+    }
+    // with another part: a 2-staff part named only by <instrument-sound> is still the piano
+    const flute = ATTR() + TEMPO(60) + N(79, 4);
+    const xml = score([{ name: 'P', measures: [m, m] }, { name: 'Flute', measures: [flute, flute] }]).replace(
+      '<part-name>P</part-name>',
+      '<part-name>P</part-name><score-instrument id="P1-I1"><instrument-name>X</instrument-name><instrument-sound>keyboard.piano.grand</instrument-sound></score-instrument>',
+    );
+    const p2 = importMusicXml(xml);
+    expect(p2.notes.filter((n) => n.midi === 50).every((n) => n.hand === 'R')).toBe(true);
+    expect(p2.notes.filter((n) => n.midi === 62).every((n) => n.hand === 'L')).toBe(true);
+  });
+
+  it('keeps 6 / 7 sharps and 7 flats in the sheet view, and warns about key changes', () => {
+    for (const [fifths, tonic] of [
+      [6, 66],
+      [7, 61],
+      [-7, 71],
+      [-6, 66],
+    ]) {
+      const p = importMusicXml(score([{ measures: [ATTR({ fifths }) + TEMPO(60) + N(tonic, 4), N(tonic + 2, 4)] }]));
+      const song = songFromScore(p, { kind: 'score' });
+      const xml = songMusicXml(song, 'hard');
+      expect(/<fifths>(-?\d+)<\/fifths>/.exec(xml)?.[1]).toBe(String(fifths));
+      // notes in the key need no printed accidental
+      expect(xml).not.toContain('<accidental>');
+    }
+    // keyFifths without a written signature, or with one that no longer matches the key: the usual signature
+    expect(keyFifths({ tonic: 6, mode: 'major' })).toBe(-6);
+    expect(keyFifths({ tonic: 6, mode: 'major', fifths: 6 })).toBe(6);
+    expect(keyFifths({ tonic: 3, mode: 'minor', fifths: 6 })).toBe(6); // D♯ minor
+    expect(keyFifths({ tonic: 7, mode: 'major', fifths: 6 })).toBe(1);
+    const change = importMusicXml(score([{ measures: [ATTR() + TEMPO(60) + N(60, 4), '<attributes><key><fifths>2</fifths></key></attributes>' + N(62, 4)] }]));
+    expect(change.warnings.join(' ')).toMatch(/changes key/);
+  });
+
+  it('a tie into the same pitch on the other staff is one held note', () => {
+    const ms = [ATTR({ staves: 2 }) + TEMPO(60) + N(60, 4, '<voice>1</voice><staff>1</staff><tie type="start"/>'), N(60, 4, '<voice>5</voice><staff>2</staff><tie type="stop"/>') + N(64, 4, '<voice>1</voice><staff>1</staff>', '')];
+    const p = importMusicXml(score([{ measures: ms }]));
+    expect(tuples(p.notes.filter((n) => n.midi === 60))).toEqual([[60, 0, 8]]);
+    expect(p.notes.find((n) => n.midi === 60)?.hand).toBe('R');
+    // a chain: staff 1 → staff 2 → staff 2
+    const ms2 = [
+      ATTR({ staves: 2 }) + TEMPO(60) + N(60, 4, '<voice>1</voice><staff>1</staff><tie type="start"/>'),
+      N(60, 4, '<voice>5</voice><staff>2</staff><tie type="stop"/><tie type="start"/>'),
+      N(60, 4, '<voice>5</voice><staff>2</staff><tie type="stop"/>'),
+      N(60, 4, '<voice>5</voice><staff>2</staff>'),
+    ];
+    expect(tuples(importMusicXml(score([{ measures: ms2 }])).notes)).toEqual([
+      [60, 0, 12],
+      [60, 12, 4],
+    ]);
+    // no tie: struck again
+    const ms3 = [ATTR({ staves: 2 }) + TEMPO(60) + N(60, 4, '<voice>1</voice><staff>1</staff>'), N(60, 4, '<voice>5</voice><staff>2</staff>')];
+    expect(importMusicXml(score([{ measures: ms3 }])).notes.length).toBe(2);
+  });
+
+  it('caps absurdly long performances at an hour with a plain warning', () => {
+    const huge = score([{ measures: [fwd + ATTR() + TEMPO(60) + N(60, 4) + back(1000000)] }]);
+    const p = importMusicXml(huge);
+    expect(p.duration).toBeLessThanOrEqual(MAX_SCORE_SECONDS);
+    expect(Math.max(...p.notes.slice(-5).map((n) => n.start + n.dur))).toBeLessThanOrEqual(MAX_SCORE_SECONDS + 1e-6);
+    expect(p.warnings.join(' ')).toMatch(/first hour/);
+    const longNote = importMusicXml(score([{ measures: [ATTR() + TEMPO(60) + N(60, 1e7) + N(62, 2)] }]));
+    expect(longNote.duration).toBeLessThanOrEqual(MAX_SCORE_SECONDS);
+    expect(longNote.notes.map((n) => n.midi)).toEqual([60]);
+    expect(() => importMusicXml(score([{ measures: [ATTR() + TEMPO(60) + '<forward><duration>100000</duration></forward>' + N(62, 2)] }]))).toThrow(ScoreImportError);
+    // an ordinary score is untouched
+    expect(importMusicXml(structure({}, 4)).warnings.join(' ')).not.toMatch(/hour/);
+  });
+
+  it('.mxl: only the score is decompressed; other entries, however large, are skipped', () => {
+    const xml = structure({}, 2);
+    const big = new Uint8Array(8 * 1024 * 1024); // compresses to almost nothing
+    const zip = zipSync({
+      'META-INF/container.xml': strToU8('<container><rootfiles><rootfile full-path="s/score.musicxml"/></rootfiles></container>'),
+      'junk1.bin': [big, { level: 1 }],
+      'junk2.bin': [big, { level: 1 }],
+      's/score.musicxml': strToU8(xml),
+    });
+    expect(zip.length).toBeLessThan(1024 * 1024);
+    expect(readScoreFile('x.mxl', zip).notes.length).toBe(2);
+    // a score that says it is over 50 MB once decompressed: a plain message, nothing decompressed
+    const z2 = zipSync({ 'score.musicxml': strToU8(xml) });
+    const dv = new DataView(z2.buffer, z2.byteOffset, z2.byteLength);
+    for (let i = 0; i + 4 <= z2.length; i++) {
+      if (dv.getUint32(i, true) === 0x04034b50) dv.setUint32(i + 22, 51 * 1024 * 1024, true); // local header
+      if (dv.getUint32(i, true) === 0x02014b50) dv.setUint32(i + 24, 51 * 1024 * 1024, true); // central directory
+    }
+    expect(() => readScoreFile('x.mxl', z2)).toThrow(/too large/);
+  });
+
+  it('UTF-8 text with a UTF-16 label is read as UTF-8', () => {
+    const xml = structure({}, 2).replace('encoding="UTF-8"', 'encoding="UTF-16"');
+    expect(readScoreFile('a.xml', strToU8(xml)).notes.length).toBe(2);
   });
 });

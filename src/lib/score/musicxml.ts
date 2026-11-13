@@ -33,7 +33,8 @@ const TYPE_QUARTERS: Record<string, number> = {
   '64th': 0.0625,
   '128th': 0.03125,
 };
-const KEYBOARD_NAME = /piano|klavier|keyboard|organ|orgel|harpsichord|cembalo|clavi|celest|pianoforte|forte ?piano|synth|e\.? ?p\.?\b|rhodes/i;
+const KEYBOARD_NAME =
+  /piano|klavier|keyboard|organ|orgel|orgue|órgano|organo|harpsichord|cembalo|clavecin|clavi|celest|pianoforte|forte ?piano|synth|e\.? ?p\.?\b|rhodes|\bpno\b|\bpf\.?(?=\s|$)|ピアノ|钢琴|鋼琴|피아노|фортепиано|рояль|пианино/i;
 const EPS = 1e-6;
 
 /** Is this text a MusicXML score (by its root element)? */
@@ -131,7 +132,9 @@ export function musicXmlToIR(text: string): ScoreIR {
     const instrName = childrenNamed(sp, 'score-instrument').map((si) => childText(si, 'instrument-name')).join(' ');
     const midiInstr = childrenNamed(sp, 'midi-instrument');
     const drumChannel = midiInstr.length > 0 && midiInstr.every((mi) => childNum(mi, 'midi-channel') === 10 || child(mi, 'midi-unpitched'));
-    const part: IRPart = { name, staves: 1, keyboard: KEYBOARD_NAME.test(`${name} ${instrName}`) };
+    // <instrument-sound> (MusicXML 3+) names the sound in a standard way: keyboard.piano, keyboard.organ.pipe, …
+    const sounds = childrenNamed(sp, 'score-instrument').map((si) => childText(si, 'instrument-sound')).join(' ');
+    const part: IRPart = { name, staves: 1, keyboard: KEYBOARD_NAME.test(`${name} ${instrName}`) || /(^|\s)keyboard\./.test(sounds) };
     parts.push(part);
 
     let divisions = 1;

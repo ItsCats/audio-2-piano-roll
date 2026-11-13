@@ -172,7 +172,8 @@ export function perform(ir: ScoreIR): Performance {
   // ---- ties: a tie start continues into the next same-pitch note on the same staff that starts where it ends
   {
     const open = new Map<string, (typeof notes)[number]>();
-    const keep: typeof notes = [];
+    const dangling = new Set<(typeof notes)[number]>();
+    let keep: typeof notes = [];
     for (const n of notes) {
       if (n.grace) {
         keep.push(n);
@@ -185,11 +186,33 @@ export function perform(ir: ScoreIR): Performance {
         if (!n.tieStart) open.delete(key);
         continue;
       }
-      if (o) open.delete(key);
+      if (o) {
+        open.delete(key);
+        dangling.add(o);
+      }
       if (n.tieStart) open.set(key, n);
       keep.push(n);
     }
-    // a tie into the next note on the other staff (cross-staff writing)
+    for (const o of open.values()) dangling.add(o);
+    // a tie that found no note on its own staff continues into the same pitch on another staff
+    // of the part (cross-staff writing), if one starts exactly where it ends
+    if (dangling.size) {
+      const at = new Map<string, (typeof notes)[number]>();
+      const pos = (q: number) => Math.round(q * 1e4);
+      for (const n of keep) if (!n.grace) at.set(`${n.part}|${n.midi}|${pos(n.on)}`, n);
+      const merged = new Set<(typeof notes)[number]>();
+      for (const o of [...dangling].sort((a, b) => a.on - b.on)) {
+        if (merged.has(o)) continue;
+        for (let guard = 0; guard < 64; guard++) {
+          const n = at.get(`${o.part}|${o.midi}|${pos(o.off)}`);
+          if (!n || n === o || n.staff === o.staff || merged.has(n)) break;
+          o.off = Math.max(o.off, n.off);
+          merged.add(n);
+          if (!dangling.has(n)) break;
+        }
+      }
+      if (merged.size) keep = keep.filter((n) => !merged.has(n));
+    }
     notes = keep;
   }
 

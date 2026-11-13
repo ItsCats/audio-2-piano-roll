@@ -9,7 +9,7 @@
  *   recognition step (OMR) calls with the MusicXML it produces; songFromScore (lib/songs.ts) then
  *   builds the Song exactly like for a score file.
  */
-import { unzipSync, strFromU8 } from 'fflate';
+import { unzipSync } from 'fflate';
 import type { KeyInfo, Note, PedalRange, TempoInfo } from '../music/types';
 import { assignHands } from '../music/hands';
 import { newNoteId, sortNotes } from '../music/cleanup';
@@ -28,6 +28,10 @@ export type { ScoreIR } from './ir';
 export const SCORE_EXTENSIONS = ['musicxml', 'xml', 'mxl', 'mscz', 'mscx'];
 /** Largest score file accepted (compressed or not). */
 export const MAX_SCORE_BYTES = 30 * 1024 * 1024;
+/** Longest performance imported (repeats played out); anything after it is left out with a warning. */
+export const MAX_SCORE_SECONDS = 60 * 60;
+/** Largest score inside a .mxl / .mscz after decompression. */
+const MAX_UNZIPPED_BYTES = 50 * 1024 * 1024;
 
 export type ScoreFormat = 'musicxml' | 'mxl' | 'mscz' | 'mscx';
 
@@ -71,20 +75,41 @@ export function readScoreFile(name: string, bytes: Uint8Array): ParsedScore {
   const e = ext(name);
   const zipped = bytes[0] === 0x50 && bytes[1] === 0x4b; // "PK"
   if (zipped) {
+    // List the entries first, then decompress only the score itself (plus META-INF/container.xml,
+    // which names it): a zip can hold many large files.
+    const entries = new Map<string, number>();
     let files: Record<string, Uint8Array>;
-    try {
-      files = unzipSync(bytes, { filter: (f) => !f.name.endsWith('/') && f.originalSize < 200 * 1024 * 1024 && !/\.(png|jpe?g|gif|pdf|ogg|wav|mp3)$/i.test(f.name) });
-    } catch {
-      throw new ScoreImportError('This compressed sheet-music file is damaged and could not be opened.');
-    }
-    const mscx = Object.keys(files).find((f) => /\.mscx$/i.test(f) && !f.includes('/'));
+    const unzip = (want: (name: string) => boolean) => {
+      try {
+        return unzipSync(bytes, {
+          filter: (f) => {
+            if (f.name.endsWith('/')) return false;
+            entries.set(f.name, f.originalSize);
+            return want(f.name) && f.originalSize <= MAX_UNZIPPED_BYTES;
+          },
+        });
+      } catch {
+        throw new ScoreImportError('This compressed sheet-music file is damaged and could not be opened.');
+      }
+    };
+    files = unzip((n) => n === 'META-INF/container.xml');
+    const mscx = [...entries.keys()].find((f) => /\.mscx$/i.test(f) && !f.includes('/'));
+    let target: string | null;
+    let asMscz = false;
     if (e === 'mscz' || (mscx && e !== 'mxl')) {
       if (!mscx) throw new ScoreImportError(museScoreHelp('This MuseScore file has no score inside.'));
-      return fromMscx(decodeXmlBytes(files[mscx]), name, 'mscz');
+      target = mscx;
+      asMscz = true;
+    } else {
+      target = rootFile(files['META-INF/container.xml'], entries);
+      if (!target) throw new ScoreImportError('No MusicXML score was found inside this .mxl file.');
     }
-    const root = rootFile(files);
-    if (!root) throw new ScoreImportError('No MusicXML score was found inside this .mxl file.');
-    return importMusicXml(decodeXmlBytes(files[root]), { fileName: name, format: 'mxl' });
+    if ((entries.get(target) ?? 0) > MAX_UNZIPPED_BYTES) throw new ScoreImportError('The score inside this file is too large (max 50 MB).');
+    if (!files[target]) files = unzip((n) => n === target);
+    const data = files[target];
+    if (!data) throw new ScoreImportError('This compressed sheet-music file is damaged and could not be opened.');
+    if (asMscz) return fromMscx(decodeXmlBytes(data), name, 'mscz');
+    return importMusicXml(decodeXmlBytes(data), { fileName: name, format: 'mxl' });
   }
   const text = decodeXmlBytes(bytes);
   if (e === 'mscx' || /<museScore[\s>]/.test(text.slice(0, 2000))) return fromMscx(text, name, 'mscx');
@@ -95,21 +120,20 @@ export function readScoreFile(name: string, bytes: Uint8Array): ParsedScore {
   return importMusicXml(text, { fileName: name, format: 'musicxml' });
 }
 
-/** The score inside an .mxl: META-INF/container.xml's first rootfile, else the first .musicxml/.xml file. */
-function rootFile(files: Record<string, Uint8Array>): string | null {
-  const container = files['META-INF/container.xml'];
+/** The score inside an .mxl: META-INF/container.xml's first MusicXML rootfile, else the first .musicxml/.xml file. */
+function rootFile(container: Uint8Array | undefined, entries: Map<string, number>): string | null {
   if (container) {
     try {
-      const c = parseXml(strFromU8(container));
+      const c = parseXml(decodeXmlBytes(container));
       const rootfiles = childrenNamed(child(c, 'rootfiles'), 'rootfile');
       const xmlRoot = rootfiles.find((r) => !r.attrs['media-type'] || /musicxml|xml/.test(r.attrs['media-type'])) ?? rootfiles[0];
       const p = xmlRoot?.attrs['full-path'];
-      if (p && files[p]) return p;
+      if (p && entries.has(p)) return p;
     } catch {
       /* fall through */
     }
   }
-  return Object.keys(files).find((f) => !f.startsWith('META-INF/') && /\.(musicxml|xml)$/i.test(f)) ?? null;
+  return [...entries.keys()].find((f) => !f.startsWith('META-INF/') && /\.(musicxml|xml)$/i.test(f)) ?? null;
 }
 
 function museScoreHelp(reason: string): string {
@@ -208,10 +232,12 @@ export function fromIR(ir: ScoreIR, meta: ScoreMeta = {}): ParsedScore {
   });
   if (shifted) warnings.push(`${shifted} note${shifted === 1 ? ' was' : 's were'} outside the piano’s range and moved by an octave.`);
 
-  // ---- hands: piano staves say which hand; other instruments are split by pitch
-  const grand = (part: number) => ir.parts[part].keyboard && ir.parts[part].staves >= 2;
-  const fromStaves = raw.every((r) => grand(r.pn.part));
+  // ---- hands: piano staves say which hand; other instruments are split by pitch. A part on two
+  // staves counts as a piano when it is named like one or is the only part with notes (recognised
+  // sheet music and non-English scores often have no usable part name).
   const usedParts = [...new Set(raw.map((r) => r.pn.part))];
+  const grand = (part: number) => ir.parts[part].staves >= 2 && (ir.parts[part].keyboard || usedParts.length === 1);
+  const fromStaves = raw.every((r) => grand(r.pn.part));
   for (const r of raw) if (grand(r.pn.part)) r.note.hand = r.pn.staff >= 2 ? 'L' : 'R';
   let notes = raw.map((r) => r.note);
   if (!fromStaves) {
@@ -221,7 +247,7 @@ export function fromIR(ir: ScoreIR, meta: ScoreMeta = {}): ParsedScore {
       const avg = others.reduce((s, r) => s + r.note.midi, 0) / others.length;
       for (const r of others) r.note.hand = avg < 55 ? 'L' : 'R';
     } else {
-      const assigned = assignHands(others.map((r) => r.note), Math.max(...others.map((r) => r.note.start + r.note.dur)));
+      const assigned = assignHands(others.map((r) => r.note), lastEnd(others.map((r) => r.note)));
       const byId = new Map(assigned.map((n) => [n.id, n.hand]));
       for (const r of others) r.note.hand = byId.get(r.note.id) ?? r.note.hand;
     }
@@ -245,8 +271,20 @@ export function fromIR(ir: ScoreIR, meta: ScoreMeta = {}): ParsedScore {
   const beatQ = 4 / meter.beatUnit;
   const barQ = meter.beatsPerBar * beatQ;
   const endQ = perf.measureStart[perf.measureStart.length - 1];
-  const lastNote = Math.max(...notes.map((n) => n.start + n.dur));
-  const duration = Math.max(sec(endQ), lastNote);
+  const lastNote = lastEnd(notes);
+  let duration = Math.max(sec(endQ), lastNote);
+  if (duration > MAX_SCORE_SECONDS) {
+    // a broken or extreme file (huge repeat counts or note lengths): keep the first hour
+    notes = notes.filter((n) => n.start < MAX_SCORE_SECONDS - 0.05);
+    for (const n of notes) n.dur = Math.min(n.dur, MAX_SCORE_SECONDS - n.start);
+    for (let i = pedal.length - 1; i >= 0; i--) {
+      if (pedal[i].start >= MAX_SCORE_SECONDS) pedal.splice(i, 1);
+      else pedal[i].end = Math.min(pedal[i].end, MAX_SCORE_SECONDS);
+    }
+    if (!notes.length) throw new ScoreImportError('This sheet music has no notes to play in its first hour.');
+    duration = Math.max(lastEnd(notes), Math.min(sec(endQ), MAX_SCORE_SECONDS));
+    warnings.push('This sheet music plays for more than an hour, so only the first hour was imported.');
+  }
   const beats: number[] = [];
   for (let k = 0; k < 100000; k++) {
     const t = sec(-lead + k * beatQ);
@@ -276,6 +314,9 @@ export function fromIR(ir: ScoreIR, meta: ScoreMeta = {}): ParsedScore {
 
   const k0 = ir.measures.find((m) => m.key)?.key;
   const key = k0 ? keyFromSignature(k0.fifths, k0.mode) : undefined;
+  if (k0 && ir.measures.some((m) => m.key && (m.key.fifths !== k0.fifths || m.key.mode !== k0.mode))) {
+    warnings.push('This score changes key. The sheet music view uses the first key signature throughout; the notes are not affected.');
+  }
   return {
     title: ir.title,
     composer: ir.composer,
@@ -289,6 +330,13 @@ export function fromIR(ir: ScoreIR, meta: ScoreMeta = {}): ParsedScore {
     handsKnown: fromStaves,
     measures: { written: ir.measures.length, played: perf.order.length },
   };
+}
+
+/** End of the last note (a loop: spreading tens of thousands of notes into Math.max fails in Safari). */
+function lastEnd(notes: Note[]): number {
+  let end = 0;
+  for (const n of notes) if (n.start + n.dur > end) end = n.start + n.dur;
+  return end;
 }
 
 function maxPolyphony(notes: Note[]): number {

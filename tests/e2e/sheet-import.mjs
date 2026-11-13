@@ -7,7 +7,8 @@
  *
  * For each score file, on desktop and at iPhone 14 size: import it from the "MIDI / Sheet music"
  * tab, land in the Studio with the "Sheet music" badge, play for a moment (the position moves),
- * open the Sheet music view and switch Easy / Medium / Hard (the music is drawn each time), with
+ * show the piano roll on Hard and Easy, open the Sheet music view and switch Easy / Medium / Hard
+ * (the music is drawn each time), with the open import tab fully in view, and with
  * no CSP violations, console errors or sideways page scroll. Score files (use public-domain music)
  * and screenshots stay outside the repo (`--shots`, default: the OS temp folder).
  */
@@ -81,6 +82,12 @@ try {
     await page.waitForTimeout(400);
     await page.screenshot({ path: path.join(shots, `${dev}-import-tab.png`) });
     check(`${dev}: import tab has no sideways scroll`, (await sideScroll(page)) <= 0);
+    const tabBox = await page.evaluate(() => {
+      const list = document.querySelector('[role="tablist"]')?.getBoundingClientRect();
+      const tab = document.querySelector('[role="tab"][aria-selected="true"]')?.getBoundingClientRect();
+      return list && tab ? { left: tab.left - list.left, right: list.right - tab.right } : null;
+    });
+    check(`${dev}: the open "MIDI / Sheet music" tab is fully in view`, !!tabBox && tabBox.left >= -1 && tabBox.right >= -1, tabBox);
     for (const file of scores) {
       const name = path.basename(file);
       const tag = `${dev}-${name.replace(/[^a-z0-9]+/gi, '-')}`;
@@ -98,6 +105,11 @@ try {
       const p1 = await position(page);
       await page.getByRole('button', { name: /^Pause/ }).first().click();
       check(`${dev} ${name}: playback moves`, p0 !== null && p1 !== null && p1 > p0, { p0, p1 });
+      for (const level of ['hard', 'easy']) {
+        await page.getByRole('radio', { name: new RegExp(level, 'i') }).first().click();
+        await page.waitForTimeout(700);
+        await page.screenshot({ path: path.join(shots, `${tag}-roll-${level}.png`) });
+      }
       await page.getByRole('radio', { name: /Sheet music/ }).click();
       await sheetReady(page);
       for (const level of ['easy', 'medium', 'hard']) {
