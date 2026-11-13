@@ -126,6 +126,13 @@ async function newPage(contextOpts) {
       window.__raf++;
       return raf(cb);
     };
+    // frames the game drew (GameStage sets the canvas transform once per drawn frame; the import page has no other canvas)
+    window.__draws = 0;
+    const st = CanvasRenderingContext2D.prototype.setTransform;
+    CanvasRenderingContext2D.prototype.setTransform = function (...a) {
+      window.__draws++;
+      return st.apply(this, a);
+    };
   });
   const page = await ctx.newPage();
   const errors = [];
@@ -374,14 +381,19 @@ async function perfRuns(dev) {
     const busy0 = await busy();
     const cpu0 = browserCpuSeconds();
     let raf0 = 0;
+    let draws0 = 0;
     let gameFrom = null;
     if (withGame) {
-      await waitFor(async () => (await playBtn(page).count()) > 0, 60000, 100);
+      if (!(await waitFor(async () => (await playBtn(page).count()) > 0, 60000, 100))) {
+        await shot(page, 'debug-perf-no-game-button');
+        console.log('import card:', await page.evaluate(() => `${location.pathname} ${document.querySelector('[data-import-card]')?.textContent ?? '(none)'}`));
+      }
       gameFrom = (Date.now() - t0) / 1000;
       await playBtn(page).click();
       await page.getByRole('button', { name: /Note Hopper/ }).click();
       await page.locator('[role="application"]').waitFor();
       raf0 = await page.evaluate(() => window.__raf);
+      draws0 = await page.evaluate(() => window.__draws);
     }
     const tGame = Date.now();
     let taps = 0;
@@ -405,7 +417,9 @@ async function perfRuns(dev) {
     out.browserCores = +(out.cpuSeconds / sec).toFixed(2);
     if (withGame) {
       const frames = (await page.evaluate(() => window.__raf)) - raf0;
-      Object.assign(out, { gameFromSec: +gameFrom.toFixed(1), rafPerSec: +(frames / ((Date.now() - tGame) / 1000)).toFixed(1), taps });
+      const draws = (await page.evaluate(() => window.__draws)) - draws0;
+      const open = (Date.now() - tGame) / 1000;
+      Object.assign(out, { gameFromSec: +gameFrom.toFixed(1), rafPerSec: +(frames / open).toFixed(1), drawsPerSec: +(draws / open).toFixed(1), taps });
       await page.getByRole('button', { name: 'Open song' }).first().waitFor();
       await page.getByRole('button', { name: 'Open song' }).first().click();
     }
