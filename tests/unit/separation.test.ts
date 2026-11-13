@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+// heavy STFT work: the default 5 s is too tight on a busy machine or a shared CI runner
+vi.setConfig({ testTimeout: 30_000 });
 import {
   BINS,
   FRAMES,

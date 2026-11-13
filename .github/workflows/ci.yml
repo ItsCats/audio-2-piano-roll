@@ -1,11 +1,15 @@
-# Quick checks on every push and pull request: type check, unit tests and build for the web app,
+# Quick checks on pushes to main and on every pull request: type check, unit tests and build for the web app,
 # and the tests of the optional processing server (server/). About two minutes.
 # The browser end-to-end and accuracy suites (tests/e2e, tests/accuracy) are slow and stay manual.
 name: CI
 
 on:
+  # pushes to main only: a branch with a pull request is already checked by pull_request
+  # (no second run of the same commit)
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read

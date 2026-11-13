@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PracticeScorer, TimeJumpDetector, followSongTime } from '../../src/lib/midiInput/practice';
+import { PracticeScorer, TimeJumpDetector, followSongTime, loopWrapEnd, sameScoredNotes } from '../../src/lib/midiInput/practice';
 import type { Note } from '../../src/lib/music/types';
 
 // one right-hand note every 0.5 s for 30 s
@@ -111,5 +111,52 @@ describe('practice on an A-B loop', () => {
     s.newPass(0);
     s.newPass(0);
     expect(s.stats().pass).toBe(1);
+  });
+
+  it('the loop wrap scores the notes between the last check and the loop end', () => {
+    // a note 15 ms before the loop end: the 30 ms ticks never reach it before the wrap
+    const late: Note[] = [...notes.filter((n) => n.start < 11.5), { id: 999, midi: 72, start: 11.985, dur: 0.2, vel: 0.7, hand: 'R' }];
+    const run = (withLoop: boolean) => {
+      const s = new PracticeScorer(late, { L: true, R: true }, 150);
+      const jumps = new TimeJumpDetector();
+      s.reset(4);
+      jumps.reset(4);
+      const loop = withLoop ? { start: 4, end: 12 } : null;
+      let t = 4;
+      for (; t < 11.98; t += 0.03) {
+        followSongTime(s, jumps, t, 0.03, loop);
+        s.update(t);
+        for (const n of late) if (n.start <= t && n.start > t - 0.03) s.press(n.midi, t);
+      }
+      // wrap: song time goes from the last tick (just under 12) to just after the loop start
+      expect(followSongTime(s, jumps, 4.01, 0.03, loop)).toBe('back');
+      return s.stats();
+    };
+    // with the loop known, the unplayed note at 11.985 is a miss of pass 1 (best below 100 %)
+    expect(run(true).bestAccuracy).toBeLessThan(100);
+    // without it, that note fell into the gap and pass 1 looked perfect
+    expect(run(false).bestAccuracy).toBe(100);
+  });
+
+  it('tells a loop wrap from a seek back', () => {
+    const loop = { start: 4, end: 12 };
+    expect(loopWrapEnd(11.98, 4.01, 0.03, loop)).toBe(12);
+    expect(loopWrapEnd(11.9, 4.05, 0.03, loop)).toBe(12); // within the tolerance
+    expect(loopWrapEnd(9, 4, 0.03, loop)).toBeNull(); // the user sought back mid-loop
+    expect(loopWrapEnd(11.98, 1, 0.03, loop)).toBeNull(); // Home: before the loop
+    expect(loopWrapEnd(11.98, 4.01, 0.03, null)).toBeNull();
+    expect(loopWrapEnd(11.98, 4.01, 0.03, { start: 5, end: 5 })).toBeNull();
+  });
+
+  it('a change that leaves the notes alone (e.g. the automatic pedal) is not a new arrangement for scoring', () => {
+    const copy = notes.map((n) => ({ ...n }));
+    expect(sameScoredNotes(notes, notes)).toBe(true);
+    expect(sameScoredNotes(notes, copy)).toBe(true);
+    expect(sameScoredNotes(notes, copy.slice(1))).toBe(false);
+    expect(sameScoredNotes(notes, copy.map((n, i) => (i === 3 ? { ...n, midi: n.midi + 1 } : n)))).toBe(false);
+    expect(sameScoredNotes(notes, copy.map((n, i) => (i === 3 ? { ...n, start: n.start + 0.01 } : n)))).toBe(false);
+    expect(sameScoredNotes(notes, copy.map((n, i) => (i === 3 ? { ...n, hand: 'L' as const } : n)))).toBe(false);
+    // velocity or length changes do not change what is scored
+    expect(sameScoredNotes(notes, copy.map((n) => ({ ...n, vel: 0.2, dur: 1 })))).toBe(true);
   });
 });
