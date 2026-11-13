@@ -86,7 +86,7 @@ export const CREDITS: CreditGroup[] = [
         license: 'MIT',
         licenseUrl: LIC.mit,
         url: 'https://github.com/antoniorv6/SMT',
-        note: 'Two of the authors’ published checkpoints: antoniorv6/smt-grandstaff for PDFs and antoniorv6/smt-camera-grandstaff for photos (huggingface.co). Changed: we converted each to two ONNX files (image encoder; text decoder with a key/value cache) with 8-bit weights, split into pieces for hosting, and wrote our own page clean-up, staff finding, **kern reading and MusicXML output in TypeScript (see public/models/omr/README.md).',
+        note: 'The authors’ published checkpoint antoniorv6/smt-camera-grandstaff (huggingface.co), used for both PDFs and photos. Changed: we converted it to two ONNX files (image encoder; text decoder with a key/value cache) with 8-bit weights, split into pieces for hosting, and wrote our own page clean-up, staff finding, **kern reading and MusicXML output in TypeScript (see public/models/omr/README.md).',
       },
       {
         name: 'GrandStaff and Camera-GrandStaff datasets',
