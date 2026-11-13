@@ -302,7 +302,12 @@ export async function readSheetImages(pages: HomrPage[], opts: ReadOptions = {})
   let done!: () => void;
   queue = new Promise<void>((r) => (done = r));
   try {
-    await prev;
+    // waiting for an earlier job: a cancel still takes effect at once
+    const signal = opts.signal;
+    if (signal) {
+      let onAbort = () => {};
+      await Promise.race([prev, new Promise<void>((_, reject) => signal.addEventListener('abort', (onAbort = () => reject(abortError())), { once: true }))]).finally(() => signal.removeEventListener('abort', onAbort));
+    } else await prev;
     if (opts.signal?.aborted) throw abortError();
     return await readNow(pages, opts, isMemoryConstrained(device));
   } finally {
