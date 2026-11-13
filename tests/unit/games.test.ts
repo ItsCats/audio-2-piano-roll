@@ -335,10 +335,10 @@ describe('offer, pacing, storage', () => {
     expect(canvasScale(3, true, 430, 700)).toBeCloseTo(Math.sqrt(450_000 / (430 * 700)), 2);
     expect(canvasScale(2, false, 300, 200)).toBe(2);
     expect(canvasScale(2, false, 4000, 4000)).toBe(0.5);
-    // 30 fps: drawn at 1000 → sleep until ~1019, then wait for the frame; late → ask now
-    expect(frameWait(1000, 1000, 30)).toBe(19);
+    // 30 fps: frame at 1000, done at 1003 → sleep until ~1025, then the browser's frame at ~1033; late → ask now
+    expect(frameWait(1003, 1000, 30)).toBe(22);
     expect(frameWait(1025, 1000, 30)).toBe(0);
-    expect(frameWait(1000, 1000, 60)).toBe(0);
+    expect(frameWait(1003, 1000, 60)).toBe(6);
   });
 
   it('random numbers are seeded', () => {

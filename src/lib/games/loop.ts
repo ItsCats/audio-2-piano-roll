@@ -21,12 +21,13 @@ export function frameDue(now: number, last: number, fps: number): boolean {
 }
 
 /**
- * How long to sleep (ms) before asking for the next animation frame: until about one display
- * refresh (at most 60 Hz assumed, minus a little slack) before the next game frame is due; 0 = ask now.
+ * How long to sleep (ms) before asking for the next animation frame: until 8 ms before the next game
+ * frame is due, so the frame the browser then gives is the due one (no wake-ups on the refreshes in
+ * between, at 60 or 120 Hz); 0 = ask now.
  */
 export function frameWait(now: number, last: number, fps: number): number {
-  const wait = last + 1000 / fps - now - 14;
-  return wait > 4 ? Math.round(wait) : 0;
+  const wait = last + 1000 / fps - now - 8;
+  return wait > 2 ? Math.round(wait) : 0;
 }
 
 /** most canvas pixels a game draws each frame (the whole board is redrawn, so this bounds the work per frame) */
