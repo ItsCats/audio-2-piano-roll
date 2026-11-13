@@ -10,6 +10,7 @@ import { SHEET_PLAN, STAGE_LABELS, readScoreWarnings, sheetTitle, stageLabel } f
 import { sourceLabel } from '../../src/components/SongCard';
 import { readFromSheet } from '../../src/components/studio/SheetReaderNotice';
 import type { PendingImport } from '../../src/lib/storage/db';
+import { capPhotos, maxPagesFor, MAX_PHONE_PAGES, MAX_READ_PAGES } from '../../src/components/import/SheetMusicTab';
 
 describe('sheet-music reader: interrupted-import notice', () => {
   const pdf: Pick<PendingImport, 'title' | 'kind' | 'blob' | 'sheet'> = { title: 'Minuet', kind: 'score', blob: new Blob(['%PDF']), sheet: { kind: 'pdf', pages: [1, 2, 3] } };
@@ -86,6 +87,21 @@ describe('sheet-music reader: titles and warnings', () => {
     expect(w.join(' ')).not.toMatch(/not affected/);
     expect(w[1]).toBe('This score changes key. The sheet music view uses the first key signature throughout.');
     expect(w[2]).toBe('Something else.');
+  });
+});
+
+describe('sheet-music reader: page limits', () => {
+  it('phones read a few pages at a time', () => {
+    expect(maxPagesFor({ phone: true })).toBe(MAX_PHONE_PAGES);
+    expect(maxPagesFor({ phone: false })).toBe(MAX_READ_PAGES);
+    expect(MAX_PHONE_PAGES).toBeLessThanOrEqual(3);
+  });
+  it('choosing more photos than fit keeps the first ones and says so', () => {
+    const files = Array.from({ length: 15 }, (_, i) => i);
+    expect(capPhotos(files, 10, 10)).toEqual({ keep: files.slice(0, 10), note: 'Only the first 10 photos were added: up to 10 pages can be read at a time.' });
+    expect(capPhotos(files.slice(0, 2), 3, 3)).toEqual({ keep: [0, 1], note: null });
+    expect(capPhotos(files, 0, 3).keep).toEqual([]);
+    expect(capPhotos(files, 0, 3).note).toMatch(/Up to 3 pages/);
   });
 });
 

@@ -5,6 +5,7 @@ import type { Song } from '../../lib/music/types';
 import { useStudio } from '../../state/studioStore';
 import { useSettings } from '../../state/settingsStore';
 import { Badge, Button, IconButton, Modal } from '../ui';
+import { isTouchDevice } from '../../lib/wakeLock';
 
 /** Songs read from a PDF or photo by the sheet-music reader (beta): the notes are its estimate. */
 export const readFromSheet = (song: Pick<Song, 'source'>): boolean => song.source.kind === 'score' && !!song.source.reader;
@@ -18,6 +19,7 @@ const dismissed = new Set<string>();
 function TipsModal({ open, onClose, song }: { open: boolean; onClose: () => void; song: Song }) {
   const setEditMode = useStudio((s) => s.setEditMode);
   const setSheet = useSettings((s) => s.setSheet);
+  const [touch] = useState(isTouchDevice);
   return (
     <Modal
       open={open}
@@ -56,12 +58,22 @@ function TipsModal({ open, onClose, song }: { open: boolean; onClose: () => void
         </div>
         <div>
           <p className="font-medium text-ink-50">Fix mistakes in Edit mode</p>
-          <ul className="mt-1 list-disc pl-5">
-            <li>Tap Edit (the pencil), then select a note by clicking or tapping it.</li>
-            <li>Drag a note to move it; drag its end to make it longer or shorter; double-click to add one.</li>
-            <li>↑ / ↓ move the selected note by a semitone; L and R set the hand; Delete removes it; Ctrl+Z undoes.</li>
-            <li>Your changes are saved for the level you are on (Easy, Medium or Hard).</li>
-          </ul>
+          {touch ? (
+            <ul className="mt-1 list-disc pl-5">
+              <li>Tap Edit (the pencil), then tap a note to select it.</li>
+              <li>Drag a note to move it; drag its end to make it longer or shorter.</li>
+              <li>The buttons above the notes: the arrows move the note up or down, L and R set the hand, the bin removes it, and the curved arrow undoes.</li>
+              <li>Adding missing notes is easier on a computer (double-click).</li>
+              <li>Your changes are saved for the level you are on (Easy, Medium or Hard).</li>
+            </ul>
+          ) : (
+            <ul className="mt-1 list-disc pl-5">
+              <li>Click Edit (the pencil), then click a note to select it.</li>
+              <li>Drag a note to move it; drag its end to make it longer or shorter; double-click to add one.</li>
+              <li>↑ / ↓ move the selected note by a semitone; L and R set the hand; Delete removes it; Ctrl+Z undoes.</li>
+              <li>Your changes are saved for the level you are on (Easy, Medium or Hard).</li>
+            </ul>
+          )}
         </div>
         <p className="text-[12.5px] text-ink-300">
           A whole line wrong? Try a sharper, evenly lit photo with the corners set tightly, or the PDF if you have one.{' '}

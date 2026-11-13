@@ -56,13 +56,58 @@ async function open(bytes: Uint8Array) {
   }
 }
 
+/** An open PDF: render its pages one by one, then close it (the page picker keeps one open). */
+export interface PdfDocument {
+  numPages: number;
+  /** page (1-based) as a gray image `width` pixels wide on white */
+  render(page: number, width?: number): Promise<Gray>;
+  close(): Promise<void>;
+}
+
+/** Opens a PDF once (password-protected / damaged files: an Error with a plain message). */
+export async function openPdf(bytes: Uint8Array): Promise<PdfDocument> {
+  const { doc, task } = await open(bytes);
+  let closed = false;
+  return {
+    numPages: doc.numPages,
+    render: async (n, width = PDF_RENDER_WIDTH) => {
+      if (closed) throw new DOMException('Closed', 'AbortError');
+      const page = await doc.getPage(n);
+      const v1 = page.getViewport({ scale: 1 });
+      const vp = page.getViewport({ scale: width / v1.width });
+      const w = Math.round(vp.width);
+      const h = Math.round(vp.height);
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      try {
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        if (!ctx) throw new Error('This browser cannot draw PDF pages.');
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, w, h);
+        await page.render({ canvas, canvasContext: ctx, viewport: vp, background: '#ffffff' }).promise;
+        const data = ctx.getImageData(0, 0, w, h);
+        return grayFromRGBA(data.data, w, h);
+      } finally {
+        page.cleanup();
+        canvas.width = canvas.height = 0;
+      }
+    },
+    close: async () => {
+      if (closed) return;
+      closed = true;
+      await task.destroy().catch(() => undefined);
+    },
+  };
+}
+
 /** Number of pages of a PDF. */
 export async function pdfPageCount(bytes: Uint8Array): Promise<number> {
-  const { doc, task } = await open(bytes);
+  const doc = await openPdf(bytes);
   try {
     return doc.numPages;
   } finally {
-    await task.destroy();
+    await doc.close();
   }
 }
 
@@ -77,35 +122,18 @@ export interface RenderPdfOptions {
 
 /** Renders PDF pages as gray images `width` pixels wide (white background). */
 export async function renderPdfPages(bytes: Uint8Array, opts: RenderPdfOptions = {}): Promise<Gray[]> {
-  const { doc, task } = await open(bytes);
+  const doc = await openPdf(bytes);
   try {
     const all = Array.from({ length: doc.numPages }, (_, i) => i + 1);
     const list = (opts.pages ?? all).filter((p) => p >= 1 && p <= doc.numPages).slice(0, opts.maxPages ?? 20);
     const out: Gray[] = [];
     for (let i = 0; i < list.length; i++) {
       if (opts.signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
-      const page = await doc.getPage(list[i]);
-      const v1 = page.getViewport({ scale: 1 });
-      const scale = (opts.width ?? PDF_RENDER_WIDTH) / v1.width;
-      const vp = page.getViewport({ scale });
-      const w = Math.round(vp.width);
-      const h = Math.round(vp.height);
-      const canvas = document.createElement('canvas');
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
-      if (!ctx) throw new Error('This browser cannot draw PDF pages.');
-      ctx.fillStyle = '#fff';
-      ctx.fillRect(0, 0, w, h);
-      await page.render({ canvas, canvasContext: ctx, viewport: vp, background: '#ffffff' }).promise;
-      const data = ctx.getImageData(0, 0, w, h);
-      out.push(grayFromRGBA(data.data, w, h));
-      page.cleanup();
-      canvas.width = canvas.height = 0;
+      out.push(await doc.render(list[i], opts.width));
       opts.onPage?.(i + 1, list.length);
     }
     return out;
   } finally {
-    await task.destroy();
+    await doc.close();
   }
 }

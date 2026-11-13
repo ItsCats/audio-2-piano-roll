@@ -54,6 +54,8 @@ export function CornerEditor({
   const drag = useRef<{ i: number; id: number; dx: number; dy: number } | null>(null);
   const [active, setActive] = useState<number | null>(null);
   const [size, setSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+  /** read out after a keyboard move (screen readers) */
+  const [said, setSaid] = useState('');
 
   useEffect(() => {
     const el = box.current;
@@ -66,6 +68,8 @@ export function CornerEditor({
 
   useEffect(() => {
     root.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+    // each photo's corner screen takes the focus (after "Looks good" it would otherwise drop to the page)
+    root.current?.focus({ preventScroll: true });
   }, []);
 
   const toImage = (clientX: number, clientY: number): [number, number] => {
@@ -105,7 +109,10 @@ export function CornerEditor({
     const next = corners.map((c) => [c[0], c[1]] as [number, number]);
     next[i] = [Math.max(0, Math.min(width, next[i][0] + d[0])), Math.max(0, Math.min(height, next[i][1] + d[1]))];
     onChange(next);
+    setSaid(`${NAMES[i]}: ${where(next[i])}`);
   };
+  /** "12% from the left, 5% from the top" */
+  const where = (c: [number, number]) => `${Math.round((c[0] / width) * 100)}% from the left, ${Math.round((c[1] / height) * 100)}% from the top`;
 
   const pct = (c: [number, number]) => ({ left: `${(c[0] / width) * 100}%`, top: `${(c[1] / height) * 100}%` });
   const poly = corners.map((c) => `${c[0]},${c[1]}`).join(' ');
@@ -142,12 +149,16 @@ export function CornerEditor({
   })();
 
   return (
-    <div ref={root} className="flex flex-col gap-3" data-testid="corner-editor">
+    <div ref={root} tabIndex={-1} aria-labelledby="corner-editor-title" className="flex flex-col gap-3 outline-none" data-testid="corner-editor">
       <div>
-        <p className="text-[14px] font-medium text-ink-50">{label ?? 'Adjust the corners'}</p>
+        <p id="corner-editor-title" className="text-[14px] font-medium text-ink-50">
+          {label ?? 'Adjust the corners'}
+        </p>
         <p className="text-[12.5px] text-ink-300">Drag the four dots onto the corners of the page, so only the music is inside.</p>
+        <p className="mt-0.5 text-[12px] text-ink-400">The page must lie flat and be sharp: a curved page or a blurry photo comes out wrong, even with the corners set.</p>
       </div>
-      <div className="flex justify-center rounded-xl bg-black/40 p-2 select-none">
+      {/* side padding on phones: a dot at the photo's edge stays clear of the screen edge (the browser's back swipe) */}
+      <div className="flex justify-center rounded-xl bg-black/40 px-5 py-2 select-none sm:px-2">
         <div ref={box} className="relative inline-block max-w-full">
           <img src={preview} alt="Your photo" draggable={false} className="block max-h-[58vh] max-w-full" />
           <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-hidden>
@@ -158,7 +169,7 @@ export function CornerEditor({
             <button
               key={i}
               type="button"
-              aria-label={`${NAMES[i]} (use the arrow keys to move it)`}
+              aria-label={`${NAMES[i]}, ${where(c)}. Use the arrow keys to move it.`}
               data-corner={i}
               onPointerDown={onDown(i)}
               onPointerMove={onMove}
@@ -174,6 +185,9 @@ export function CornerEditor({
           {loupe}
         </div>
       </div>
+      <p className="sr-only" aria-live="polite">
+        {said}
+      </p>
       <div className="flex flex-wrap gap-2">
         <Button variant="primary" icon={<Check size={16} />} onClick={onDone}>
           Looks good

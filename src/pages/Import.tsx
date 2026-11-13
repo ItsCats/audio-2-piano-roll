@@ -93,6 +93,9 @@ function formatEta(sec: number): string {
  * The step the speed measurement covers ("separation", "pitch detection 1 of 2"): the ETA is for
  * this step only, so it says which one (more steps follow, see the checklist below the bar).
  */
+/** "reading: 1 min left" → "Reading: 1 min left" (the sheet reader's plain progress line) */
+const sentence = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
 function etaStep(job: Pick<ImportJob, 'stage' | 'detail' | 'transcriber' | 'sheet'>): string {
   const part = job.detail?.match(/\((\d+) of (\d+)\)/);
   if (job.sheet) return job.stage === 'analyzing' ? 'reading' : job.stage === 'loading-model' ? 'download' : stageLabel(job, job.stage).toLowerCase();
@@ -171,12 +174,16 @@ function JobProgress() {
           <ProgressBar value={job.progress} />
           {touch && job.kind !== 'midi' && job.kind !== 'demo' && (job.kind !== 'score' || job.sheet) && (
             <p className="mt-2 flex items-center gap-1.5 text-[12px] text-ink-300">
-              <Smartphone size={13} className="shrink-0 text-accent-400" /> Keep this page open while it’s analysing.
+              <Smartphone size={13} className="shrink-0 text-accent-400" /> {job.sheet ? 'Keep this page open while it reads the music.' : 'Keep this page open while it’s analysing.'}
             </p>
           )}
           {job.progress !== null && (
-            <p className="mt-1.5 flex justify-between gap-3 font-mono text-[11px] text-ink-300">
-              <span>{eta ?? ((job.stage === 'separating' || job.stage === 'analyzing') && job.progress < 0.99 ? `${etaStep(job)}: measuring speed…` : '')}</span>
+            <p className={cn('mt-1.5 flex justify-between gap-3 text-ink-300', job.sheet ? 'text-[12px]' : 'font-mono text-[11px]')}>
+              <span>
+                {job.sheet
+                  ? sentence(eta ?? (job.stage === 'analyzing' && job.progress < 0.99 ? 'Working out the time left…' : ''))
+                  : (eta ?? ((job.stage === 'separating' || job.stage === 'analyzing') && job.progress < 0.99 ? `${etaStep(job)}: measuring speed…` : ''))}
+              </span>
               <span>{Math.round(job.progress * 100)}%</span>
             </p>
           )}

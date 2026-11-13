@@ -425,4 +425,4 @@ export function shrink(img: Gray, maxSide: number): Gray {
   return s >= 1 ? img : resize(img, img.w * s, img.h * s);
 }
 
-export { pdfPageCount, renderPdfPages } from './pdf';
+export { openPdf, pdfPageCount, renderPdfPages, type PdfDocument } from './pdf';

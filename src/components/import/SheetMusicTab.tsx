@@ -7,12 +7,29 @@ import { Badge, Button, cn } from '../ui';
 import { useImport } from '../../state/importStore';
 import { isTouchDevice } from '../../lib/wakeLock';
 import { titleFromFileName } from '../../lib/songs';
-import type { Gray, SheetReaderSupport } from '../../lib/omr';
+import type { Gray, PdfDocument, SheetReaderSupport } from '../../lib/omr';
 
 /** Most pages read in one go from this screen (the reader takes up to 20; this keeps waits sensible). */
 export const MAX_READ_PAGES = 10;
-/** PDF pages shown as thumbnails to pick from. */
+/** On phones: about 50 s per page, and the tab may be ended for memory; a few pages at a time. */
+export const MAX_PHONE_PAGES = 3;
+/** PDF pages shown as thumbnails at first, and added by each "Show more pages". */
 export const THUMB_PAGES = 30;
+
+/** Most pages per read on this device. */
+export const maxPagesFor = (support: Pick<SheetReaderSupport, 'phone'> | null): number => (support?.phone ? MAX_PHONE_PAGES : MAX_READ_PAGES);
+
+/** Photos chosen with room for `room` more pages: the ones kept, and a plain note when some were left out. */
+export function capPhotos<T>(files: T[], room: number, max: number): { keep: T[]; note: string | null } {
+  const keep = files.slice(0, Math.max(0, room));
+  if (keep.length === files.length) return { keep, note: null };
+  return {
+    keep,
+    note: keep.length
+      ? `Only the first ${keep.length === 1 ? 'photo was' : `${keep.length} photos were`} added: up to ${max} pages can be read at a time.`
+      : `Up to ${max} pages can be read at a time. Read these first, or remove a page to add another.`,
+  };
+}
 /** Longest side of a photo's preview on the corner screen, px. */
 const PREVIEW_SIDE = 1400;
 
@@ -65,8 +82,11 @@ interface PdfState {
   file: File;
   /** null: still opening */
   count: number | null;
+  /** thumbnails of the first pages (null: still drawing) */
   thumbs: (string | null)[];
   selected: number[];
+  /** a page was tapped while the most pages were already chosen */
+  full?: boolean;
 }
 
 interface PhotoItem {
@@ -99,10 +119,20 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
   const importSheet = useImport((s) => s.importSheet);
   const cameraInput = useRef<HTMLInputElement>(null);
   const photoInput = useRef<HTMLInputElement>(null);
-  /** where retaken / added photos go in the page order */
-  const insertAt = useRef<number | null>(null);
+  /** where the next chosen photos go: a page to replace (Retake; kept until a photo arrives) or the end */
+  const target = useRef<{ replaceId: number } | null>(null);
   /** bumps when the user starts over: late results of an earlier PDF or photo are dropped */
   const session = useRef(0);
+  /** the PDF open for the page picker (one copy, closed when it is no longer shown) */
+  const pdfDoc = useRef<PdfDocument | null>(null);
+  const photosNow = useRef<PhotoItem[]>(photos);
+  photosNow.current = photos;
+
+  const closePdf = () => {
+    const d = pdfDoc.current;
+    pdfDoc.current = null;
+    void d?.close();
+  };
 
   useEffect(() => {
     let alive = true;
@@ -112,20 +142,39 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
     return () => {
       alive = false;
       session.current++;
+      closePdf();
     };
   }, []);
 
   const canRead = !!support?.available;
+  const maxPages = maxPagesFor(support);
   const mode: 'pick' | 'pdf' | 'photo' = pdf ? 'pdf' : photos.length || opening ? 'photo' : 'pick';
 
   const reset = () => {
     session.current++;
+    closePdf();
     setPdf(null);
     setPhotos([]);
     setEditing(null);
     setOpening(0);
     setError(null);
-    insertAt.current = null;
+    target.current = null;
+  };
+
+  /** draws thumbnails from..to (1-based) one page at a time, so the first ones show quickly */
+  const drawThumbs = async (omr: Omr, doc: PdfDocument, file: File, from: number, to: number, my: number) => {
+    for (let p = from; p <= to; p++) {
+      if (session.current !== my || pdfDoc.current !== doc) return;
+      let url: string;
+      try {
+        url = grayUrl(omr, await doc.render(p, 220), 220, 'image/png');
+      } catch {
+        if (session.current !== my || pdfDoc.current !== doc) return;
+        url = '';
+      }
+      if (session.current !== my) return;
+      setPdf((cur) => (cur && cur.file === file ? { ...cur, thumbs: cur.thumbs.map((t, i) => (i + 1 === p ? url : t)) } : cur));
+    }
   };
 
   const openPdf = async (file: File) => {
@@ -134,32 +183,44 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
     setPdf({ file, count: null, thumbs: [], selected: [] });
     try {
       const omr = await loadOmr();
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      const count = await omr.pdfPageCount(bytes);
-      if (session.current !== my) return;
-      const shown = Math.min(count, THUMB_PAGES);
-      setPdf({ file, count, thumbs: Array(shown).fill(null), selected: Array.from({ length: Math.min(count, MAX_READ_PAGES) }, (_, i) => i + 1) });
-      // thumbnails, a few pages at a time so the first ones show quickly
-      for (let p = 1; p <= shown; p += 6) {
-        const batch = Array.from({ length: Math.min(6, shown - p + 1) }, (_, i) => p + i);
-        const imgs = await omr.renderPdfPages(bytes, { pages: batch, width: 220 });
-        if (session.current !== my) return;
-        const urls = imgs.map((g) => grayUrl(omr, g, 220, 'image/png'));
-        setPdf((cur) => (cur && cur.file === file ? { ...cur, thumbs: cur.thumbs.map((t, i) => (i + 1 >= p && i + 1 < p + batch.length ? urls[i + 1 - p] : t)) } : cur));
+      const doc = await omr.openPdf(new Uint8Array(await file.arrayBuffer()));
+      if (session.current !== my) {
+        void doc.close();
+        return;
       }
+      pdfDoc.current = doc;
+      const count = doc.numPages;
+      const shown = Math.min(count, THUMB_PAGES);
+      setPdf({ file, count, thumbs: Array(shown).fill(null), selected: Array.from({ length: Math.min(count, maxPages) }, (_, i) => i + 1) });
+      await drawThumbs(omr, doc, file, 1, shown, my);
     } catch (err) {
       if (session.current !== my) return;
+      closePdf();
       setPdf(null);
       setError((err as Error).message || 'This PDF could not be opened.');
     }
   };
 
-  const addPhotos = async (files: File[]) => {
+  const showMorePages = async () => {
+    const doc = pdfDoc.current;
+    if (!pdf?.count || !doc) return;
+    const from = pdf.thumbs.length + 1;
+    const to = Math.min(pdf.count, pdf.thumbs.length + THUMB_PAGES);
+    setPdf({ ...pdf, thumbs: [...pdf.thumbs, ...Array<string | null>(to - from + 1).fill(null)] });
+    await drawThumbs(await loadOmr(), doc, pdf.file, from, to, session.current);
+  };
+
+  const addPhotos = async (all: File[]) => {
     setError(null);
     if (pdf) reset();
     const my = session.current;
-    const at = insertAt.current;
-    insertAt.current = null;
+    const replaceId = target.current?.replaceId ?? null;
+    target.current = null;
+    const replacing = replaceId !== null && photosNow.current.some((p) => p.id === replaceId);
+    // only as many photos as can be read at once
+    const { keep: files, note } = capPhotos(all, maxPages - photosNow.current.length + (replacing ? 1 : 0), maxPages);
+    if (note) setError(note);
+    if (!files.length) return;
     setOpening((n) => n + files.length);
     const added: PhotoItem[] = [];
     try {
@@ -174,7 +235,7 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
           if (session.current !== my) return;
           setError(
             isHeic(file)
-              ? `“${file.name}” is a HEIC photo, which this browser can’t open. Use Safari, or save the photo as JPEG first.`
+              ? `“${file.name}” is in HEIC format, which this browser can’t open. Choose it again from the Photos app, or save it as JPEG.`
               : `“${file.name}” could not be opened as a photo. Please use a JPEG or PNG picture.`,
           );
         } finally {
@@ -191,7 +252,10 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
     if (session.current !== my || !added.length) return;
     setPhotos((cur) => {
       const next = [...cur];
-      next.splice(at ?? next.length, 0, ...added);
+      // Retake: the new photo takes the old one's place (the old one stays until a new one arrives)
+      const at = replaceId === null ? -1 : next.findIndex((p) => p.id === replaceId);
+      if (at >= 0) next.splice(at, 1, ...added);
+      else next.push(...added);
       return next;
     });
     setEditing(added[0].id);
@@ -222,8 +286,8 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
     }
   };
 
-  const takePhoto = (index: number | null = null) => {
-    insertAt.current = index;
+  const takePhoto = (replaceId: number | null = null) => {
+    target.current = replaceId === null ? null : { replaceId };
     (touch ? cameraInput : photoInput).current?.click();
   };
 
@@ -234,12 +298,9 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
     setPhotos(next);
     setEditing(next.find((p) => !p.confirmed)?.id ?? null);
   };
-  const retake = (id: number) => {
-    const i = photos.findIndex((p) => p.id === id);
-    setPhotos((cur) => cur.filter((p) => p.id !== id));
-    setEditing(null);
-    takePhoto(i < 0 ? null : i);
-  };
+  // the photo stays (with its corners and place) until a new one actually arrives: cancelling the
+  // camera or picker changes nothing
+  const retake = (id: number) => takePhoto(id);
   const remove = (id: number) => setPhotos((cur) => cur.filter((p) => p.id !== id));
   const move = (i: number, d: -1 | 1) =>
     setPhotos((cur) => {
@@ -253,13 +314,13 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
   const readPdf = async () => {
     if (!pdf || !pdf.selected.length || busy) return;
     const { file, selected } = pdf;
-    const p = importSheet({ kind: 'pdf', file, fileName: file.name, pages: [...selected].sort((a, b) => a - b) });
+    const p = importSheet({ kind: 'pdf', file, fileName: file.name, pages: [...selected].sort((a, b) => a - b).slice(0, maxPages) });
     onStarted();
     reset();
     await p;
   };
   const readPhotos = async () => {
-    if (!photos.length || busy) return;
+    if (!photos.length || photos.length > maxPages || busy) return;
     const omr = await loadOmr();
     const list = photos.map((p) => ({ blob: p.file as Blob, name: p.file.name, image: p.image, quad: omr.orderQuad(p.corners) }));
     const p = importSheet({ kind: 'photo', photos: list, fileName: photos[0].file.name, title: photoTitle(photos[0].file.name) });
@@ -317,14 +378,14 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
               <p className="text-[12.5px] text-ink-300">
                 {pdf.count === 1
                   ? 'One page.'
-                  : `${pdf.count} pages — tap the pages to read (${pdf.selected.length} chosen).${pdf.count > MAX_READ_PAGES ? ` Up to ${MAX_READ_PAGES} pages at a time.` : ''}`}
+                  : `${pdf.count} pages — tap the pages to read (${pdf.selected.length} chosen).${pdf.count > maxPages ? ` Up to ${maxPages} pages at a time${support?.phone ? ' on a phone' : ''}.` : ''}`}
               </p>
               {pdf.count > 1 && (
                 <div className="flex flex-wrap gap-2">
-                  <Button size="sm" onClick={() => setPdf({ ...pdf, selected: Array.from({ length: Math.min(pdf.count!, MAX_READ_PAGES) }, (_, i) => i + 1) })}>
-                    {pdf.count > MAX_READ_PAGES ? `First ${MAX_READ_PAGES} pages` : 'All pages'}
+                  <Button size="sm" onClick={() => setPdf({ ...pdf, full: false, selected: Array.from({ length: Math.min(pdf.count!, maxPages) }, (_, i) => i + 1) })}>
+                    {pdf.count > maxPages ? `First ${maxPages} pages` : 'All pages'}
                   </Button>
-                  <Button size="sm" variant="ghost" onClick={() => setPdf({ ...pdf, selected: [] })}>
+                  <Button size="sm" variant="ghost" onClick={() => setPdf({ ...pdf, full: false, selected: [] })}>
                     None
                   </Button>
                 </div>
@@ -333,16 +394,22 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
                 {pdf.thumbs.map((url, i) => {
                   const page = i + 1;
                   const on = pdf.selected.includes(page);
-                  const full = !on && pdf.selected.length >= MAX_READ_PAGES;
+                  const full = !on && pdf.selected.length >= maxPages;
                   return (
                     <button
                       key={page}
                       type="button"
                       aria-pressed={on}
                       aria-label={`Page ${page}`}
-                      disabled={full || pdf.count === 1}
-                      title={full ? `Up to ${MAX_READ_PAGES} pages at a time` : undefined}
-                      onClick={() => setPdf({ ...pdf, selected: on ? pdf.selected.filter((p) => p !== page) : [...pdf.selected, page].sort((a, b) => a - b) })}
+                      aria-disabled={full || undefined}
+                      disabled={pdf.count === 1}
+                      title={full ? `Up to ${maxPages} pages at a time` : undefined}
+                      // a page tapped while the most are chosen says why instead of doing nothing (touch has no tooltips)
+                      onClick={() =>
+                        full
+                          ? setPdf({ ...pdf, full: true })
+                          : setPdf({ ...pdf, full: false, selected: on ? pdf.selected.filter((p) => p !== page) : [...pdf.selected, page].sort((a, b) => a - b) })
+                      }
                       className={cn(
                         'focus-ring relative overflow-hidden rounded-lg border-2 bg-white transition-opacity disabled:cursor-default',
                         on ? 'border-accent-500' : 'border-ink-700 opacity-40 grayscale hover:opacity-70',
@@ -358,7 +425,16 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
                   );
                 })}
               </div>
-              {pdf.count > THUMB_PAGES && <p className="text-[12px] text-ink-400">Only the first {THUMB_PAGES} pages are shown. For a later part, save those pages as their own PDF.</p>}
+              {pdf.full && (
+                <p role="status" className="text-[12.5px] text-warn">
+                  Up to {maxPages} pages can be read at a time{support?.phone ? ' on a phone' : ''}. Tap a chosen page to remove it first, then choose another.
+                </p>
+              )}
+              {pdf.count > pdf.thumbs.length && (
+                <Button size="sm" variant="secondary" className="self-start" onClick={() => void showMorePages()}>
+                  Show more pages ({pdf.thumbs.length + 1}–{Math.min(pdf.count, pdf.thumbs.length + THUMB_PAGES)} of {pdf.count})
+                </Button>
+              )}
             </>
           )}
           <ReadBar
@@ -431,24 +507,26 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
                   </li>
                 )}
               </ol>
-              {photos.length < MAX_READ_PAGES ? (
+              {photos.length < maxPages ? (
                 <div className="flex flex-wrap gap-2">
                   {touch && (
                     <Button icon={<Camera size={15} />} onClick={() => takePhoto()}>
                       Photo of the next page
                     </Button>
                   )}
-                  <Button variant={touch ? 'ghost' : 'secondary'} icon={<ImagePlus size={15} />} onClick={() => ((insertAt.current = null), photoInput.current?.click())}>
+                  <Button variant={touch ? 'ghost' : 'secondary'} icon={<ImagePlus size={15} />} onClick={() => ((target.current = null), photoInput.current?.click())}>
                     {touch ? 'Choose from photos' : 'Add the next page'}
                   </Button>
                 </div>
               ) : (
-                <p className="text-[12px] text-ink-400">Up to {MAX_READ_PAGES} pages at a time.</p>
+                <p className="text-[12px] text-ink-400">
+                  Up to {maxPages} pages at a time{support?.phone ? ' on a phone' : ''}.{photos.length > maxPages ? ' Remove a page to read these.' : ''}
+                </p>
               )}
               {photos.length > 0 && (
                 <ReadBar
                   label={photos.length === 1 ? 'Read 1 page' : `Read ${photos.length} pages`}
-                  disabled={busy || !photos.length || opening > 0}
+                  disabled={busy || !photos.length || photos.length > maxPages || opening > 0}
                   onRead={() => void readPhotos()}
                   estimate={estimate}
                   pages={photos.length}
@@ -478,7 +556,8 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
 
       {/* hidden pickers (after the drop zone's own file input): photos from the camera (phones) or from files */}
       <input ref={cameraInput} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => (e.target.files?.length && void addPhotos([...e.target.files]), (e.target.value = ''))} />
-      <input ref={photoInput} type="file" accept="image/*,.heic,.heif" multiple className="hidden" onChange={(e) => (e.target.files?.length && void addPhotos([...e.target.files]), (e.target.value = ''))} />
+      {/* accept="image/*" only: listing .heic makes iPhones hand over HEIC files instead of converting them to JPEG */}
+      <input ref={photoInput} type="file" accept="image/*" multiple className="hidden" onChange={(e) => (e.target.files?.length && void addPhotos([...e.target.files]), (e.target.value = ''))} />
     </div>
   );
 }
@@ -533,7 +612,7 @@ function ReadBar({
         </Button>
         {estimate && <span className="text-[12.5px] text-ink-300">Takes {estimate}{support?.phone ? ' on a phone' : ''}.</span>}
       </div>
-      {support?.phone && pages > 3 && <p className="text-[12px] text-ink-300">On a phone, reading a few pages at a time is safer. Keep this page open; the screen stays on.</p>}
+      {support?.phone && pages > 1 && <p className="text-[12px] text-ink-300">Keep this page open while it reads; the screen stays on.</p>}
       {note && <p className="text-[11.5px] text-ink-400">{note}</p>}
     </div>
   );
