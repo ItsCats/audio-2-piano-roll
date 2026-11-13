@@ -208,3 +208,15 @@ html.p2v-games-open #root {
 
 /* a phone held sideways (short and wide): the games put their arrow pad beside the board */
 @custom-variant short-landscape (@media (orientation: landscape) and (max-height: 520px));
+
+/* sheet music in Edit mode: selected noteheads (every tied piece), drawn by OSMD with fill attributes */
+.sheet-sel,
+.sheet-sel path {
+  fill: #3d5bf5 !important;
+  stroke: #3d5bf5 !important;
+}
+.sheet-editing {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}

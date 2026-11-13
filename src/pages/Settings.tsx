@@ -1,3 +1,4 @@
+import { SHEET_SHORTCUTS } from '../state/sheetKeys';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Server, HardDrive, Keyboard as KeyboardIcon, Music2, Info, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
@@ -17,7 +18,7 @@ const SHORTCUTS: [string, string][] = [
   ['Home', 'Back to start'],
   ['← / →', 'Seek ±5 s (Shift: ±1 s)'],
   ['F', 'Full screen (Esc to leave)'],
-  ['E', 'Toggle edit mode (not in full screen)'],
+  ['E', 'Toggle edit mode (in full screen: sheet music only)'],
   ['Ctrl/⌘ + Z', 'Undo (Shift: redo)'],
   ['Delete', 'Delete selected notes'],
   ['↑ / ↓', 'Transpose selection (Shift: octave)'],
@@ -174,6 +175,19 @@ export default function SettingsPage() {
                 </div>
               ))}
             </dl>
+          </Section>
+          <Section title="Sheet music (Edit mode)">
+            <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[12.5px]" data-testid="sheet-shortcuts">
+              {SHEET_SHORTCUTS.map(([k, v]) => (
+                <div key={k} className="contents">
+                  <dt>
+                    <kbd className="rounded-md border border-ink-600 bg-ink-800 px-1.5 py-0.5 font-mono text-[11px] text-ink-100">{k}</kbd>
+                  </dt>
+                  <dd className="text-ink-300">{v}</dd>
+                </div>
+              ))}
+            </dl>
+            <p className="mt-2 text-[11.5px] text-ink-400">Sheet edits move notes on the sheet’s own grid (8ths on Easy, 16ths on Medium and Hard); the piano roll’s snap setting doesn’t apply there.</p>
           </Section>
         </div>
 

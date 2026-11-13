@@ -350,3 +350,31 @@ export function addBarOp(ctx: SheetCtx): SheetEditResult {
 
 /** The staff a note is written on. */
 export { writtenStaff };
+
+/**
+ * A drag of selected notes: `steps` letters in the key (or `semis` semitones), and `delta`
+ * divisions in time (snapped to the grid where the first note lands); lengths kept. One undo step.
+ */
+export function shiftOp(ctx: SheetCtx, ids: Set<number>, by: { steps?: number; semis?: number; delta?: number }): SheetEditResult | null {
+  const sel = arrNotes(ctx).filter((n) => ids.has(n.id));
+  if (!sel.length || (!by.steps && !by.semis && !by.delta)) return null;
+  const spans = new Map(sel.map((n) => [n.id, spanOf(ctx, n)]));
+  const first = Math.min(...[...spans.values()].map((s) => s.on));
+  const delta = by.delta ? Math.max(-first, snapPos(ctx.score, first + by.delta) - first) : 0;
+  const touched = new Set<number>();
+  const notes = arrNotes(ctx).map((n) => {
+    const s = spans.get(n.id);
+    if (!s) return n;
+    touched.add(n.id);
+    let midi = n.midi;
+    if (by.semis) midi += by.semis;
+    else if (by.steps) for (let i = 0; i < Math.abs(by.steps); i++) midi = stepInKey(midi, by.steps > 0 ? 1 : -1, ctx.score.fifths, ctx.score.minorTonic);
+    midi = Math.max(21, Math.min(108, midi));
+    if (!delta) return { ...pinHere(ctx, n), midi };
+    const on = s.on + delta;
+    let off = on + (s.off - s.on);
+    if (snapPos(ctx.score, off) !== off) off = Math.max(on + gridStep(ctx.score, on), snapPos(ctx.score, off));
+    return { ...placeAt(ctx, n, on, off), midi };
+  });
+  return finish(ctx, notes, touched, [...ids]);
+}

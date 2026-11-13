@@ -12,6 +12,14 @@ import { toggleStageFullscreen, useStageFullscreen } from '../../state/fullscree
 import { buildSheet, type Score } from '../../lib/sheet';
 import { loadOsmd, SheetRenderer } from '../../lib/sheet/render';
 import { Button, cn, IconButton } from '../ui';
+import { sheetEditedRecently } from '../../state/sheetEdit';
+import { useSheetUi } from '../../state/sheetUi';
+import { SheetEditBar, useCompactSheetUi, DOCK_PAD } from './sheet/SheetEditBar';
+import { SheetEditOverlay } from './sheet/SheetEditOverlay';
+import { SheetContextMenu } from './sheet/SheetContextMenu';
+import { useSheetPointer } from './sheet/useSheetPointer';
+import { performSheetAction } from './sheet/sheetActions';
+import { setSheetActionHandler } from '../../state/sheetKeys';
 
 const ZOOM_MIN = 0.5;
 const ZOOM_MAX = 1.5;
@@ -29,6 +37,12 @@ export function SheetMusicView() {
   const setSheet = useSettings((s) => s.setSheet);
   // inside the Studio's full-screen stage this toolbar also holds its "Full screen" button
   const canFullscreen = useStageFullscreen((s) => s.controls !== null && s.mode === 'off');
+  const fullscreen = useStageFullscreen((s) => s.mode !== 'off');
+  const editMode = useStudio((s) => s.editMode);
+  const selection = useStudio((s) => s.selection);
+  const addMode = useSheetUi((s) => s.addMode);
+  const compact = useCompactSheetUi();
+  const dock = editMode && (compact || fullscreen);
   const scrollRef = useRef<HTMLDivElement>(null);
   const pageRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
@@ -88,15 +102,21 @@ export function SheetMusicView() {
       return;
     }
     const key = `${song.id}:${difficulty}`;
-    const delay = scoreKey.current === key ? 400 : 0;
+    const same = scoreKey.current === key;
     scoreKey.current = key;
-    const timer = window.setTimeout(() => {
+    const build = () => {
       performance.mark('sheet:score-start');
       setScore(buildSheet(song, difficulty));
       performance.mark('sheet:score-ready');
-    }, delay);
+    };
+    // an edit made on the sheet shows on the next frame; piano-roll edits and undo wait 400 ms
+    if (same && sheetEditedRecently()) {
+      const raf = requestAnimationFrame(build);
+      return () => cancelAnimationFrame(raf);
+    }
+    const timer = window.setTimeout(build, same ? 400 : 0);
     return () => clearTimeout(timer);
-  }, [arr, song.tempo, song.key, song.duration, song.id, difficulty, empty]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [arr, song.tempo, song.key, song.duration, song.sheet, song.id, difficulty, empty]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // draw (progressively); keep the current measure in view
   useEffect(() => {
@@ -120,6 +140,8 @@ export function SheetMusicView() {
       startTime: t,
       linesPerChunk: width < 640 ? 1 : 2,
       keepOld,
+      // an edit (on the sheet or undo while editing): keep the lines, redraw only what changed
+      edit: keepOld && useStudio.getState().editMode,
       onChunk: () => {
         if (shown) return;
         shown = true;
@@ -138,6 +160,31 @@ export function SheetMusicView() {
   }, [score, zoom, width, attempt]);
 
   useEffect(() => () => rendererRef.current?.destroy(), []);
+
+  // selected notes light up on the sheet (the renderer re-applies it after every redraw)
+  useEffect(() => {
+    rendererRef.current?.highlight(editMode ? selection : new Set());
+  }, [selection, editMode, score]);
+
+  useEffect(() => {
+    if (!editMode) useSheetUi.getState().set({ addMode: false, menu: null, chips: [] });
+  }, [editMode]);
+
+  // the Studio's keyboard handler sends sheet keys here while the sheet is on screen
+  useEffect(() => {
+    setSheetActionHandler(performSheetAction);
+    return () => setSheetActionHandler(null);
+  }, []);
+
+  const pointer = useSheetPointer({
+    renderer: () => rendererRef.current,
+    layer: () => hostRef.current?.parentElement ?? null,
+    enabled: editMode && status === 'ready',
+    onSeek: (t) => {
+      tappedAt.current = performance.now();
+      getPlayer().seek(Math.max(0, t));
+    },
+  });
 
   const wrapperTop = () => {
     const sc = scrollRef.current;
@@ -269,9 +316,11 @@ export function SheetMusicView() {
   // tap / click a note or measure to jump there
   const down = useRef<{ x: number; y: number } | null>(null);
   const onPointerDown = (e: React.PointerEvent) => {
+    if (editMode) return pointer.onPointerDown(e);
     down.current = { x: e.clientX, y: e.clientY };
   };
   const onPointerUp = (e: React.PointerEvent) => {
+    if (editMode) return pointer.onPointerUp(e);
     const d = down.current;
     down.current = null;
     if (!d || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 6) return;
@@ -328,7 +377,7 @@ export function SheetMusicView() {
           )}
         </div>
       </div>
-      <div ref={pageRef} className="mx-auto -mt-12 w-full max-w-[1180px] px-0 pb-24 sm:px-4">
+      <div ref={pageRef} className="mx-auto -mt-12 w-full max-w-[1180px] px-0 pb-24 sm:px-4" style={dock ? { paddingBottom: DOCK_PAD } : undefined}>
         <div className="min-h-full bg-white px-2 pt-14 pb-10 text-black shadow-xl sm:rounded-b-lg sm:px-5">
           <div className="mb-3 px-2 text-center">
             <h2 className="font-serif text-[22px] leading-tight font-semibold break-words text-black sm:text-[26px]">{song.title || 'Untitled'}</h2>
@@ -345,8 +394,22 @@ export function SheetMusicView() {
           {empty ? (
             <p className="py-16 text-center text-[14px] text-neutral-500">No notes to show yet.</p>
           ) : (
-            <div ref={zoomLayerRef} className="relative" onPointerDown={onPointerDown} onPointerUp={onPointerUp} data-testid="sheet-music">
+            <div
+              ref={zoomLayerRef}
+              className={cn('relative', editMode && 'sheet-editing', editMode && addMode && 'cursor-crosshair')}
+              style={editMode ? { touchAction: 'pan-x pan-y' } : undefined}
+              onPointerDown={onPointerDown}
+              onPointerUp={onPointerUp}
+              onPointerMove={editMode ? pointer.onPointerMove : undefined}
+              onPointerLeave={editMode ? pointer.onPointerLeave : undefined}
+              onPointerCancel={editMode ? pointer.onPointerCancel : undefined}
+              onDoubleClick={editMode ? pointer.onDoubleClick : undefined}
+              onContextMenu={editMode ? pointer.onContextMenu : undefined}
+              data-testid="sheet-music"
+              data-editing={editMode ? 'true' : undefined}
+            >
               <div ref={hostRef} className="relative" />
+              {editMode && <SheetEditOverlay />}
               <div ref={tintRef} className="pointer-events-none absolute top-0 left-0 hidden rounded-sm bg-accent-500/10" />
               <div ref={cursorRef} className="pointer-events-none absolute top-0 left-0 hidden w-[3px] rounded-full bg-accent-500/80" data-testid="sheet-cursor" />
               {status !== 'ready' && (
@@ -370,6 +433,8 @@ export function SheetMusicView() {
           )}
         </div>
       </div>
+      {editMode && <SheetContextMenu />}
+      {dock && <SheetEditBar layout="dock" />}
     </div>
   );
 }

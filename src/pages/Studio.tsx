@@ -51,12 +51,15 @@ import type { Difficulty } from '../lib/music/types';
 import { toast } from '../state/toastStore';
 import { useImport } from '../state/importStore';
 import { arrowSeekDelta, shouldHandleGlobalKey } from '../state/studioKeys';
+import { sheetActionHandler, sheetKeyAction } from '../state/sheetKeys';
+import { useCompactSheetUi } from '../state/sheetUi';
 
 type PanelTab = 'look' | 'labels' | 'sound' | 'practice' | 'arrangement';
 
 // the sheet-music view and its notation library load only when they are wanted
 const loadSheetView = () => import('../components/studio/SheetMusicView');
 const SheetMusicView = lazy(() => loadSheetView().then((m) => ({ default: m.SheetMusicView })));
+const SheetEditBar = lazy(() => import('../components/studio/sheet/SheetEditBar').then((m) => ({ default: m.SheetEditBar })));
 let warmed = false;
 /**
  * Starts loading the notation code when the switch is approached, so the sheet shows sooner. Not
@@ -95,11 +98,7 @@ function ViewSwitch({ className }: { className?: string }) {
       <Segmented<'roll' | 'sheet'>
         ariaLabel="View"
         value={view}
-        onChange={(v) => {
-          const st = useStudio.getState();
-          if (v === 'sheet' && st.editMode) st.setEditMode(false);
-          setSheet({ view: v });
-        }}
+        onChange={(v) => setSheet({ view: v })}
         options={[option('roll', 'Piano roll', Piano), option('sheet', 'Sheet music', FileMusic)]}
       />
     </span>
@@ -190,6 +189,16 @@ function useStudioKeyboard(computerKeys: boolean) {
       const st = useStudio.getState();
       const player = getPlayer();
       const mod = e.ctrlKey || e.metaKey;
+      // the sheet in Edit mode has its own keys (state/sheetKeys.ts); Space, F, E and Home stay
+      const sheetHandler = sheetActionHandler();
+      if (st.editMode && sheetHandler && useSettings.getState().sheet.view === 'sheet') {
+        const a = sheetKeyAction(e, st.selection.size > 0);
+        if (a) {
+          e.preventDefault();
+          sheetHandler(a);
+          return;
+        }
+      }
       if (computerKeys && !st.editMode && !mod) {
         if (e.code in QWERTY_MAP) {
           e.preventDefault();
@@ -211,7 +220,7 @@ function useStudioKeyboard(computerKeys: boolean) {
         if (delta !== null) player.seek(player.getTime() + delta);
       } else if (isFullscreenKey(e)) {
         toggleStageFullscreen();
-      } else if (e.code === 'KeyE' && !mod && !isStageFullscreen()) {
+      } else if (e.code === 'KeyE' && !mod && (!isStageFullscreen() || useSettings.getState().sheet.view === 'sheet')) {
         st.setEditMode(!st.editMode);
       } else if (st.editMode) {
         if (mod && e.code === 'KeyZ') {
@@ -298,6 +307,27 @@ function usePlayerSync() {
     if (arr) getPlayer().updateNotes(arr.notes, arr.pedal);
   }, [arr]);
 
+  // an edit that changed the tempo or the length (a sheet edit past the end, undo of one): the
+  // player takes the new values without losing its place
+  const tempo = song?.tempo;
+  const duration = song?.duration;
+  const synced = useRef<{ id?: string; tempo?: unknown; duration?: number }>({});
+  useEffect(() => {
+    const prev = synced.current;
+    synced.current = { id: songId, tempo, duration };
+    if (!songId || prev.id !== songId || (prev.tempo === tempo && prev.duration === duration)) return;
+    const s = useStudio.getState().song;
+    const a = s && currentArrangement(useStudio.getState());
+    if (!s || !a) return;
+    const player = getPlayer();
+    const t = player.getTime();
+    const playing = player.isPlaying;
+    if (playing) player.pause();
+    player.setSong(a.notes, a.pedal, s.tempo, s.duration);
+    player.seek(Math.min(t, s.duration));
+    if (playing) void player.play();
+  }, [songId, tempo, duration]);
+
   useEffect(() => {
     getPlayer().setOptions({
       rate: transport.rate,
@@ -319,7 +349,7 @@ export default function StudioPage() {
   const [exportOpen, setExportOpen] = useState(false);
   const [pdfOpen, setPdfOpen] = useState(false);
   const view = useSettings((s) => s.sheet.view);
-  const setSheet = useSettings((s) => s.setSheet);
+  const compactSheet = useCompactSheetUi();
   const [computerKeys, setComputerKeys] = useState(false);
   const importDemo = useImport((s) => s.importDemo);
 
@@ -330,14 +360,6 @@ export default function StudioPage() {
 
   usePlayerSync();
   useStudioKeyboard(computerKeys);
-
-  // editing happens on the piano roll
-  useEffect(() => {
-    if (editMode && view === 'sheet') {
-      setSheet({ view: 'roll' });
-      toast.info('Editing works in the piano roll.');
-    }
-  }, [editMode, view, setSheet]);
 
   if (!id && !song) {
     return (
@@ -441,10 +463,20 @@ export default function StudioPage() {
           </IconButton>
         </header>
         <SheetReaderNotice key={song.id} song={song} />
-        {editMode && <EditToolbar />}
+        {editMode &&
+          (view === 'sheet' ? (
+            !compactSheet && (
+              <Suspense fallback={<div className="h-[45px] border-b border-ink-800 bg-ink-900/95" />}>
+                <SheetEditBar layout="row" />
+              </Suspense>
+            )
+          ) : (
+            <EditToolbar />
+          ))}
         {/* full screen covers the app and the controls around the view (edit mode is for the normal layout) */}
         {/* the sheet music has its own toolbar in the stage's corner: its Full screen button lives there */}
-        <FullscreenStage onEnter={() => setEditMode(false)} enterButton={view !== 'sheet'}>
+        {/* the sheet keeps Edit mode in full screen (its edit tools dock inside the stage) */}
+        <FullscreenStage onEnter={() => useSettings.getState().sheet.view !== 'sheet' && setEditMode(false)} enterButton={view !== 'sheet'}>
           {view === 'sheet' ? (
             <Suspense
               fallback={

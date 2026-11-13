@@ -106,3 +106,10 @@ export const SHEET_SHORTCUTS: [string, string][] = [
   ['Ctrl+Z / Ctrl+Shift+Z', 'Undo / redo'],
   ['Ctrl+A', 'Select all'],
 ];
+
+/** Runs sheet actions; set by the sheet view while it is mounted (it loads with the notation code). */
+let handler: ((a: SheetAction) => boolean) | null = null;
+export function setSheetActionHandler(h: ((a: SheetAction) => boolean) | null): void {
+  handler = h;
+}
+export const sheetActionHandler = () => handler;
