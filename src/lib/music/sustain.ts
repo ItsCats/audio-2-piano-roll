@@ -60,6 +60,11 @@ export interface SustainRule {
   closeMinAgree: number;
   closeMinVoiced: number;
   closeDropDb: number;
+  /**
+   * ...and only when at least this many of the gap's frames are at the note's pitch class (positive
+   * evidence that the note still sounds; 0: a gap without a clear pitch is closed too)
+   */
+  closeNeedAgree: number;
 }
 
 export const SUSTAIN: SustainRule = {
@@ -74,6 +79,7 @@ export const SUSTAIN: SustainRule = {
   closeMinAgree: 0.3,
   closeMinVoiced: 2,
   closeDropDb: 12,
+  closeNeedAgree: 0,
 };
 
 export interface SustainOptions {
@@ -201,6 +207,7 @@ export function sustainTuneLine(notes: Note[], duration: number, opts: SustainOp
       const cue = opts.gapCue(a.midi, end, b.start);
       if (cue.dropDb > rule.closeDropDb) continue;
       if (cue.voiced >= rule.closeMinVoiced && cue.agree < rule.closeMinAgree * cue.voiced) continue;
+      if (cue.agree < rule.closeNeedAgree) continue;
       newEnd.set(a.id, b.start - rule.gap);
     }
   }

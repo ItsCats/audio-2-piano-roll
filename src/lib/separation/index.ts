@@ -81,11 +81,13 @@ const SPEEDUP = [1, 1, 1.9, 2.4, 2.6];
 /**
  * Rough peak memory of the tab while separating `seconds` of audio in the browser: ~2 GB measured
  * for short songs (renderer, the ~1.2 GB WASM heap of the separation model, the transcription model)
- * plus what grows with length: the worker's 44.1 kHz stereo input and 22.05 kHz stems (~14 bytes per
- * 44.1 kHz sample) and the main thread's 44.1 kHz decode and 22.05 kHz mix (~16 bytes per sample).
+ * plus what grows with length: the worker's 44.1 kHz stereo input and 22.05 kHz stems (~16 bytes per
+ * 44.1 kHz sample: vocals, bass, other and drums are accumulated apart), the main thread's 44.1 kHz
+ * decode and 22.05 kHz mix (~16 bytes per sample) and the bass and other stems kept for their own
+ * passes ("Full song" preset; ~4 bytes per sample).
  */
 export function estimateSeparationMB(seconds: number): number {
-  return 2000 + (seconds * SCNET_RATE * 30) / 1e6;
+  return 2000 + (seconds * SCNET_RATE * 36) / 1e6;
 }
 
 /** "about 2.4 GB" */
@@ -95,7 +97,7 @@ export function formatMemory(mb: number): string {
 
 /**
  * Recordings longer than this are not separated in the browser unless the device reports 8 GB or
- * more (navigator.deviceMemory is capped at 8): at 10 min the tab needs ~2.8 GB, at 20 min ~3.6 GB.
+ * more (navigator.deviceMemory is capped at 8): at 10 min the tab needs ~3.0 GB, at 20 min ~3.9 GB.
  * Browsers that report no memory (Firefox, Safari) get the lower limit.
  */
 export const BROWSER_SEPARATION_MAX_SECONDS = 10 * 60;

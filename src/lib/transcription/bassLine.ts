@@ -76,11 +76,27 @@ export const BASS_LINE: BassLineRule = {
   weakMean: 0.6,
 };
 
-/** Posteriors of the bass stem's own Basic Pitch pass (8-bit stored or float, nFrames x 88). */
+/**
+ * Posteriors of the bass stem's own Basic Pitch pass (8-bit stored or float): nFrames rows of
+ * `pitches` values for MIDI 21 up (default 88, the whole model output). The pipeline keeps only the
+ * band this module reads (BASS_BAND_PITCHES: MIDI 21..55, the line's range and the octave below it).
+ */
 export interface BassPosteriors {
   nFrames: number;
+  /** values per frame row (pitches from MIDI 21 up); default BP_N_PITCHES */
+  pitches?: number;
   frames: Uint8Array | Float32Array;
   onsets: Uint8Array | Float32Array;
+}
+
+/** Rows kept of the bass stem's posteriors: MIDI 21..55 (BASS_LINE / BASS_MERGE never read higher). */
+export const BASS_BAND_PITCHES = 55 - BP_MIDI_OFFSET + 1;
+
+/** The bass band (first `pitches` values of every nFrames x 88 row) of a full posterior array. */
+export function bassBand<T extends Uint8Array | Float32Array>(full: T, nFrames: number, pitches = BASS_BAND_PITCHES): T {
+  const out = new (full.constructor as { new (n: number): T })(nFrames * pitches);
+  for (let t = 0; t < nFrames; t++) out.set(full.subarray(t * BP_N_PITCHES, t * BP_N_PITCHES + pitches), t * pitches);
+  return out;
 }
 
 const scaleOf = (a: Uint8Array | Float32Array) => (a instanceof Uint8Array ? 1 / 255 : 1);
@@ -89,7 +105,7 @@ const scaleOf = (a: Uint8Array | Float32Array) => (a instanceof Uint8Array ? 1 /
 export function decodeBassLine(post: BassPosteriors, rule: Partial<BassLineRule> = {}): Note[] {
   const r = { ...BASS_LINE, ...rule };
   const { nFrames, frames, onsets } = post;
-  const P = BP_N_PITCHES;
+  const P = post.pitches ?? BP_N_PITCHES;
   const lo = Math.max(0, r.minMidi - BP_MIDI_OFFSET);
   const hi = Math.min(P - 1, r.maxMidi - BP_MIDI_OFFSET);
   const K = hi - lo + 1;
@@ -211,11 +227,12 @@ export function decodeBassLine(post: BassPosteriors, rule: Partial<BassLineRule>
 /** Mean frame activation of `midi` in the bass stem's posteriors over [t0, t1] (0 outside the range). */
 export function bassActivation(post: BassPosteriors, midi: number, t0: number, t1: number): number {
   const f = midi - BP_MIDI_OFFSET;
-  if (f < 0 || f >= BP_N_PITCHES || post.nFrames < 1) return 0;
+  const P = post.pitches ?? BP_N_PITCHES;
+  if (f < 0 || f >= P || post.nFrames < 1) return 0;
   const a = Math.min(post.nFrames - 1, timeToFrame(Math.max(0, t0)));
   const b = Math.min(post.nFrames - 1, Math.max(a, timeToFrame(t1)));
   let s = 0;
-  for (let t = a; t <= b; t++) s += post.frames[t * BP_N_PITCHES + f];
+  for (let t = a; t <= b; t++) s += post.frames[t * P + f];
   return (s / (b - a + 1)) * scaleOf(post.frames);
 }
 

@@ -28,14 +28,14 @@ import { BASS_FOLD, DRUM_HIT_RULE, RESTRIKE, TAIL_GATE, mergeContinuations, merg
 import { assignHands } from '../music/hands';
 import { estimateTempo } from '../music/beats';
 import { detectKey } from '../music/theory';
-import { extractMelodyLine, instrumentLine, mergeMelody, tuneCandidates } from '../music/melody';
+import { extractMelodyLine, mergeMelody } from '../music/melody';
 import { recoverLead } from '../music/leadRecovery';
 import { sustainTuneLine } from '../music/sustain';
 import type { StoredPosteriors } from './posteriors';
-import { BASS_LINE, decodeBassLine, mergeBassLine, type BassPosteriors } from './bassLine';
-import { ABOVE_TUNE, clearAboveTune, fixLineOctaves, gapCue, pitchContinues, pitchHeldEnd, storedPitch, tagTune, type StoredPitch } from './stemPitch';
+import { BASS_BAND_PITCHES, BASS_LINE, bassBand, decodeBassLine, mergeBassLine, type BassPosteriors } from './bassLine';
+import { gapCue, pitchContinues, pitchHeldEnd, storedPitch, type StoredPitch } from './stemPitch';
 import { isMemoryConstrained, pageDeviceInfo } from './backendChoice';
-import { DRUM_ENV_FPS, longReason, separateStems, separationSupport, stemsFromBlobs, type SeparationResult } from '../separation';
+import { BROWSER_SEPARATION_MAX_SECONDS, DRUM_ENV_FPS, longReason, separateStems, separationSupport, stemsFromBlobs, type SeparationResult } from '../separation';
 import { regressionToNotes, type RegressionOutputs } from '../pianoSpecialist/postprocess';
 // (protocol.ts is pure: the specialist's runtime itself is only loaded when it is used)
 
@@ -363,27 +363,34 @@ export interface CleanContext {
   bass?: BassPosteriors;
   /** pitch track of the lead-bearing stem (separated songs): the tune cue (transcription/stemPitch.ts) */
   leadPitch?: StoredPitch;
+  /** the song was separated (any engine): with no sung line, LEAD_EVERY_LEVEL applies */
+  separated?: boolean;
 }
 
 /**
- * Separated in the browser (the stem pitch track exists) with no sung line: the recovered lead notes
- * are the instruments' tune for every level, not Hard-only (see accompFromRaw).
+ * Separated (CleanContext.separated) with no sung line: the recovered lead notes are the
+ * instruments' tune for every level, not Hard-only (see accompFromRaw).
  */
 export const LEAD_EVERY_LEVEL = { instrumental: true };
 
 /**
- * Stem pitch cue switches (transcription/stemPitch.ts): run the tracker on the other stem (browser
- * separation; the track holds tune notes, closes short gaps in the tune line and marks a song as
- * separated for LEAD_EVERY_LEVEL), tag notes with the track's agreement
- * (Note.tune, a bonus in the tune-line search), move tune-line octave slips. Both off: on the Slakh
- * band set the tag does not tell the lead from the comping (CREPE-tiny on the mixed stem follows the
- * loudest pitched part; tagged lead-register notes were on the lead 25 % of the time, untagged 23 %),
- * and the bonus moved the tune line onto the tune's octave doubling (band-instrumental-1 0:44-0:46,
- * Hard top note on the tune 20 -> 0 %); Easy lead recall 21.3 -> 20.8 % with it. The track's octave
- * is unreliable (often an octave below the lead): moving notes by it lowered band-instrumental-1's
- * Hard exact-pitch lead recall 65 -> 53 %.
+ * Run the pitch tracker on the other stem (browser separation of an instrumental, "Full song"
+ * preset): the track holds tune notes and closes short gaps in the tune line (music/sustain.ts).
+ * Using it to pick the tune line or to move its octave slips did not hold up on the Slakh band set
+ * (CREPE-tiny on the mixed stem follows the loudest pitched part, and often reports the octave below).
  */
-export const STEM_PITCH = { track: true, tag: false, octaves: false };
+export const STEM_PITCH = { track: true };
+
+/**
+ * The bass stem's own pass and the stem pitch track are extra full-length passes: skipped on
+ * memory-constrained devices (phones, tablets, small-memory machines) and above this length.
+ */
+export const EXTRA_STEM_PASS_MAX_SECONDS = BROWSER_SEPARATION_MAX_SECONDS;
+
+/** Whether the optional stem passes (bass line, stem pitch track) run for a `duration` s import here. */
+export function extraStemPasses(params: ExtractionParams, duration: number, constrained: boolean): boolean {
+  return !!params.leadPass && !constrained && duration <= EXTRA_STEM_PASS_MAX_SECONDS;
+}
 
 /** Strongest drum onset (8-bit) of an envelope at DRUM_ENV_FPS in [t0, t1] seconds. */
 export function drumOnsetMax(drums: Uint8Array, t0: number, t1: number): number {
@@ -545,8 +552,9 @@ export interface LeadContext {
  * music/leadRecovery.ts) in `notes`. Shared by import and re-detection.
  *
  * The recovered notes are Hard-only (role 'lead': Easy and Medium are built without them) unless
- * the song was separated in the browser (the stem pitch track exists) and has no sung line
- * (LEAD_EVERY_LEVEL): then the tune they complete is the song's only tune and every level gets it.
+ * the song was separated (CleanContext.separated) and has no sung line (LEAD_EVERY_LEVEL): then the
+ * tune they complete is the song's only tune and every level gets them, except those struck with a
+ * main note an octave away (an octave doubling: Easy and Medium keep the main pass's note).
  * (A main note of the tune line the lead pass shows re-struck is split in two; those pieces are main
  * notes, so all levels get them: music/leadRecovery.ts splitRestrikes.)
  * Letting Easy and Medium use them everywhere was measured and is not worth it: without separation
@@ -575,14 +583,12 @@ export function accompFromRaw(
   // so the tempo and beat grid stay as without it (on vocal-3 the cleaner bass line moved the
   // estimate to double time, 85.7 -> 171.4 BPM)
   const tempoNotes = main;
+  // everything below (and the bass line) is the "Full song" preset's (ExtractionParams.leadPass); it does not depend on
+  // the extra pass having run (a re-detection with a more sensitive main pass has none)
+  if (!params.leadPass) return { notes: main, main: tempoNotes };
   // the bass stem read as one bass line in place of the low notes it explains (bassLine.ts)
   const bassLine = ctx.bass ? decodeBassLine(ctx.bass) : [];
   if (ctx.bass && bassLine.length) main = mergeBassLine(main, bassLine, ctx.bass);
-  const pitch = ctx.leadPitch;
-  if (pitch && STEM_PITCH.tag) main = tagTune(main, pitch);
-  // everything below is the "Full song" preset's (ExtractionParams.leadPass); it does not depend on
-  // the extra pass having run (a re-detection with a more sensitive main pass has none)
-  if (!params.leadPass) return { notes: main, main: tempoNotes };
   const { frames, onsets, nFrames } = ctx;
   const rise = frames && nFrames ? (n: Note) => frameRise(frames, nFrames, timeToFrame(n.start + ONSET_LATENCY), n.midi) : undefined;
   // one bass note the kick drum chopped into several (music/cleanup.ts foldBassRestrikes)
@@ -590,8 +596,7 @@ export function accompFromRaw(
   let notes = rise && BASS_FOLD.enabled && !bassLine.length ? foldBassRestrikes(main, rise) : main;
   const leadParams = leadPassParams(params);
   if (leadParams && leadRaw?.length) {
-    let candidates = cleanNotes(leadRaw, rms, leadParams, duration, ctx);
-    if (pitch && STEM_PITCH.tag) candidates = tagTune(candidates, pitch);
+    const candidates = cleanNotes(leadRaw, rms, leadParams, duration, ctx);
     notes = recoverLead(notes, candidates, duration, {
       ...(frames && nFrames && rise
         ? {
@@ -603,20 +608,8 @@ export function accompFromRaw(
           }
         : {}),
       ...(melody.length ? { exclude: sungRanges(melody) } : {}),
-      hardOnly: !(LEAD_EVERY_LEVEL.instrumental && pitch && !melody.length),
+      ...(LEAD_EVERY_LEVEL.instrumental && ctx.separated && !melody.length ? { doublesHardOnly: true } : { hardOnly: true }),
     });
-  }
-  // octave slips of the tune line, by the stem's pitch track (per note, per phrase where unclear;
-  // off: CREPE-tiny on the mixed stem reports the octave below often enough that moving notes by it
-  // lowered band-instrumental-1's Hard exact-pitch lead recall 65 -> 53 %)
-  if (pitch && STEM_PITCH.octaves) {
-    const line = instrumentLine(tuneCandidates(assignHands(notes, duration)));
-    notes = fixLineOctaves(notes, new Set(line.map((n) => n.id)), pitch);
-  }
-  // backing above a confirmed tune note (the tune on top; stemPitch.ts ABOVE_TUNE, off)
-  if (pitch && ABOVE_TUNE.mode !== 'off') {
-    const line = instrumentLine(tuneCandidates(assignHands(notes, duration)));
-    notes = clearAboveTune(notes, new Set(line.map((n) => n.id)));
   }
   // With a sung line the singer carries the tune: nothing is held (holding the instruments' tune in
   // the singer's pauses lowered the 5 sung test songs' voicing-counted Easy / Medium accuracy).
@@ -902,11 +895,16 @@ async function transcribeAudioOnce(
   if (sep && sep.sampleRate !== BP_SAMPLE_RATE) throw new Error(`Separated stems have an unexpected sample rate (${sep.sampleRate} Hz).`);
 
   // ---- the passes over the stems, numbered for the progress text
+  // The bass line and the stem pitch track are the "Full song" preset's (a piano recording's low
+  // register lands in the bass stem: read as one line it would lose the left hand's octaves and
+  // chords), and are skipped on memory-constrained devices and long recordings (extraStemPasses).
+  const device = pageDeviceInfo();
+  const extra = !!sep?.bass && extraStemPasses(params, duration, !!device && isMemoryConstrained(device));
   // the bass stem as one bass line (bassLine.ts): browser separation with an audible bass stem
-  const bassStem = sep?.bass && stemLevelDb(sep.bass, sep.accomp) >= BASS_LINE.minLevelDb ? sep.bass : undefined;
-  // the lead-bearing stem's pitch track (stemPitch.ts): other (+ vocals where they go back in)
-  const tracksPitch = !!sep?.bass && STEM_PITCH.track;
-  const passes = (withVocals ? 1 : 0) + 1 + (bassStem ? 1 : 0) + (tracksPitch ? 1 : 0);
+  const bassStem = extra && sep?.bass && stemLevelDb(sep.bass, sep.accomp) >= BASS_LINE.minLevelDb ? sep.bass : undefined;
+  // the lead-bearing stem's pitch track (stemPitch.ts): only used without a sung line (decided after the vocal pass)
+  const tracksPitch = extra && STEM_PITCH.track;
+  const passes = (withVocals ? 1 : 0) + 1 + (bassStem ? 1 : 0);
   let pass = 0;
   const step = (what: string) => (passes > 1 ? `${what} (${++pass} of ${passes})` : what);
 
@@ -921,9 +919,10 @@ async function transcribeAudioOnce(
     melody = melodyFromRaw(vocal.notes, vocal.rms, duration);
   }
   const vocalsBack = !!sep && vocalsIntoAccomp(withVocals, melody.length);
-  // the other stem (accompaniment minus bass), before the accompaniment is normalised and handed over
+  // the other stem (accompaniment minus bass), before the accompaniment is normalised and handed
+  // over; with a sung line nothing uses the track (the singer carries the tune), so it is not run
   let other: Float32Array | null = null;
-  if (sep && tracksPitch && sep.bass) {
+  if (sep && tracksPitch && sep.bass && !melody.length) {
     other = new Float32Array(sep.accomp.length);
     for (let i = 0; i < other.length; i++) other[i] = sep.accomp[i] - (sep.bass[i] ?? 0);
     if (vocalsBack) addVocalsInto(other, sep.vocals);
@@ -939,19 +938,25 @@ async function transcribeAudioOnce(
   const what = sep ? step('Neural pitch detection — accompaniment') : 'Neural pitch detection';
   const result = await runModel(audio, params, onProgress, signal, what);
 
-  // ---- bass stem: its own pass, read as one line in accompFromRaw
+  // ---- bass stem: its own pass, read as one line in accompFromRaw (a failure only loses the line)
   let bass: StoredPosteriors['bass'];
   if (bassStem) {
     normalise(bassStem);
     const { leadPass: _lp, ...bassParams } = params;
     void _lp;
-    const b = await runModel(bassStem, bassParams, onProgress, signal, step('Neural pitch detection — bass line'));
-    bass = { nFrames: b.nFrames, frames: b.frames, onsets: b.onsets };
+    try {
+      const b = await runModel(bassStem, bassParams, onProgress, signal, step('Neural pitch detection — bass line'));
+      bass = { nFrames: b.nFrames, pitches: BASS_BAND_PITCHES, frames: bassBand(b.frames, b.nFrames), onsets: bassBand(b.onsets, b.nFrames) };
+    } catch (err) {
+      if (signal?.aborted || (err as Error)?.name === 'AbortError') throw aborted();
+      console.warn('[transcription] bass stem pass failed', err);
+      warnings.push('The bass line could not be read from its own stem; the low notes come from the accompaniment.');
+    }
   }
   // ---- the tune cue: pitch track of the other stem (failures only lose the cue)
   let leadPitch: StoredPitch | undefined;
   if (other) {
-    const detail = step('Following the tune in the instruments');
+    const detail = 'Following the tune in the instruments';
     try {
       const { trackVocalPitchDetailed } = await import('../pitch');
       const t = await trackVocalPitchDetailed(other, (f) => onProgress({ stage: 'analyzing', progress: f, detail }), signal, STEM_PITCH_TRACK);
@@ -966,7 +971,7 @@ async function transcribeAudioOnce(
 
   onProgress({ stage: 'arranging', progress: null, detail: melody.length ? 'Fitting the vocal melody, assigning hands, tracking beats' : 'Cleaning notes, assigning hands, tracking beats' });
   const drums = sep?.drumOnsets;
-  const accomp = accompFromRaw(result.notes, result.leadNotes, result.rms, params, duration, { frames: result.frames, onsets: result.onsets, nFrames: result.nFrames, drums, bass, leadPitch }, { melody });
+  const accomp = accompFromRaw(result.notes, result.leadNotes, result.rms, params, duration, { frames: result.frames, onsets: result.onsets, nFrames: result.nFrames, drums, bass, leadPitch, separated: !!sep }, { melody });
   const accompNotes = accomp.notes;
   const notes = mergeMelody(accompNotes, melody, duration);
   if (result.backend === 'cpu') {
@@ -982,7 +987,7 @@ async function transcribeAudioOnce(
     duration,
     tempo,
     key: detectKey(notes),
-    posteriors: { ...toStored(result, drums?.length ? drums : undefined), ...(bass ? { bass } : {}), ...(leadPitch ? { leadPitch } : {}) },
+    posteriors: { ...toStored(result, drums?.length ? drums : undefined), ...(bass ? { bass } : {}), ...(leadPitch ? { leadPitch } : {}), ...(sep ? { separated: true as const } : {}) },
     info: {
       method: 'basic-pitch',
       estimated: true,
@@ -1177,7 +1182,7 @@ export async function redetectNotes(
 
 /** The clean context of stored posteriors (re-detection): the same evidence an import passes to accompFromRaw. */
 export function storedContext(post: StoredPosteriors): CleanContext {
-  return { frames: post.frames, onsets: post.onsets, nFrames: post.nFrames, drums: post.drums, bass: post.bass, leadPitch: post.leadPitch };
+  return { frames: post.frames, onsets: post.onsets, nFrames: post.nFrames, drums: post.drums, bass: post.bass, leadPitch: post.leadPitch, separated: !!post.separated };
 }
 
 async function reextract(post: StoredPosteriors, params: ExtractionParams, duration: number, opts: ReextractOptions): Promise<{ main: Note[]; notes: Note[] }> {

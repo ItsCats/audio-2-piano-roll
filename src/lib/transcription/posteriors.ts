@@ -13,12 +13,19 @@ export interface StoredPosteriors {
    */
   drums?: Uint8Array;
   /**
-   * Separated in the browser with an audible bass stem: the bass stem's own posteriors (same frame
-   * grid), read as one bass line (transcription/bassLine.ts) on import and re-detection.
+   * Separated in the browser with an audible bass stem ("Full song" preset): the bass stem's own
+   * posteriors (same frame grid), MIDI 21..55 only (`pitches` values per frame; bassLine.ts
+   * BASS_BAND_PITCHES, ~0.35 MB per minute), read as one bass line on import and re-detection.
    */
-  bass?: { nFrames: number; frames: Uint8Array; onsets: Uint8Array };
-  /** Separated in the browser: pitch track of the lead-bearing stem, the tune cue (transcription/stemPitch.ts). ~6 bytes per 10 ms. */
+  bass?: { nFrames: number; pitches?: number; frames: Uint8Array; onsets: Uint8Array };
+  /** Separated in the browser, no sung line: pitch track of the lead-bearing stem, the tune cue (transcription/stemPitch.ts). ~6 bytes per 10 ms. */
   leadPitch?: StoredPitch;
+  /**
+   * The song was separated (any engine): without a sung line, Easy and Medium get the recovered
+   * lead notes too (pipeline.ts LEAD_EVERY_LEVEL). Absent on records from before this was stored:
+   * they re-detect as they were imported (Hard-only lead).
+   */
+  separated?: true;
   /**
    * @deprecated Older records (before the melody line was kept as notes) also stored the vocal
    * stem's posteriors here. Nothing reads them any more; re-detection keeps the song's

@@ -6,7 +6,10 @@
  * which octave the lead sits when its octave neighbour is lit too. CREPE-tiny (lib/pitch, already
  * shipped) follows the most prominent single pitch of the stem; where it agrees with a note, that
  * note is more likely the tune. It is a cue, never a gate: on a stem with loud comping it follows
- * the comping.
+ * the comping. On the Slakh band set it did not tell the lead from the comping (tagging notes with
+ * it, using it as a bonus in the tune-line search or moving octave slips by it were tried and did
+ * not hold up), so it is used only to hold the tune line's notes and close short gaps in it
+ * (music/sustain.ts).
  *
  * Pure: the pipeline runs the tracker (transcription/pipeline.ts) and stores the track with the
  * posteriors (StoredPosteriors.leadPitch) so that re-detection sees the same cue.
@@ -97,152 +100,6 @@ export function pitchSupport(p: StoredPitch, midi: number, t0: number, t1: numbe
   return { voiced, exact: exact / v, up: up / v, down: down / v, pc: pc / v, frames: Math.max(0, b - a + 1) };
 }
 
-/** pitchSupport over a note's opening window (PitchCueRule skip / window). */
-export function noteSupport(p: StoredPitch, n: Note, rule: PitchCueRule = PITCH_CUE): PitchSupport {
-  const t0 = n.start + Math.min(rule.skip, n.dur / 2);
-  return pitchSupport(p, n.midi, t0, n.start + Math.max(Math.min(rule.window, n.dur), rule.skip + 0.03), rule);
-}
-
-export interface TuneCueRule {
-  /** notes from this pitch up are tagged (the tune's register) */
-  minMidi: number;
-  /** a note is tagged only when at least this share of its window carries a pitch (and 3 frames) */
-  minVoiced: number;
-  /** agreement at the note's pitch class (any octave) instead of its exact pitch */
-  pitchClass: boolean;
-}
-
-export const TUNE_CUE: TuneCueRule = { minMidi: 55, minVoiced: 0.4, pitchClass: true };
-
-/** `notes` with Note.tune set from the stem's pitch track (see Note.tune); untagged notes are the same objects. */
-export function tagTune(notes: Note[], p: StoredPitch, rule: TuneCueRule = TUNE_CUE, cue: PitchCueRule = PITCH_CUE): Note[] {
-  return notes.map((n) => {
-    if (n.midi < rule.minMidi) return n;
-    const s = noteSupport(p, n, cue);
-    if (s.voiced < 3 || s.voiced < rule.minVoiced * s.frames) return n.tune === undefined ? n : { ...n, tune: undefined };
-    return { ...n, tune: Math.round((rule.pitchClass ? s.pc : s.exact) * 100) / 100 };
-  });
-}
-
-export interface OctaveRule {
-  /** a note moves when at least this share of its voiced window is an octave away and at most `maxExact` at its own pitch */
-  minShare: number;
-  maxExact: number;
-  /** tune-line notes further apart than this (s) start a new phrase */
-  phraseGap: number;
-  /** a note with fewer voiced frames follows its phrase: the phrase's octave-away weight must be this many times its own-pitch weight */
-  phraseRatio: number;
-  weakFrames: number;
-}
-
-export const LINE_OCTAVE: OctaveRule = { minShare: 0.5, maxExact: 0.15, phraseGap: 0.5, phraseRatio: 3, weakFrames: 4 };
-
-/**
- * Tune-line notes the stem's pitch track hears an octave away (an octave slip of the many-notes
- * detector): moved by an octave, decided per note where the track is clear and per phrase (line
- * notes closer than `phraseGap`) where it is not. A note is not moved onto a pitch another note
- * already plays at that time (the tune line can take that note instead). Returns `notes` with the
- * moved notes replaced (same ids).
- */
-export function fixLineOctaves(notes: Note[], lineIds: Set<number>, p: StoredPitch, rule: OctaveRule = LINE_OCTAVE, cue: PitchCueRule = PITCH_CUE): Note[] {
-  const line = notes.filter((n) => lineIds.has(n.id)).sort((a, b) => a.start - b.start);
-  if (!line.length) return notes;
-  const sup = new Map(line.map((n) => [n.id, noteSupport(p, n, cue)]));
-  const shift = new Map<number, number>();
-  let i = 0;
-  while (i < line.length) {
-    let j = i;
-    while (j + 1 < line.length && line[j + 1].start - (line[j].start + line[j].dur) <= rule.phraseGap) j++;
-    let ex = 0;
-    let up = 0;
-    let down = 0;
-    for (let k = i; k <= j; k++) {
-      const s = sup.get(line[k].id)!;
-      ex += s.exact * s.voiced;
-      up += s.up * s.voiced;
-      down += s.down * s.voiced;
-    }
-    const phrase = up > rule.phraseRatio * ex && up > down ? 12 : down > rule.phraseRatio * ex && down > up ? -12 : 0;
-    for (let k = i; k <= j; k++) {
-      const n = line[k];
-      const s = sup.get(n.id)!;
-      let d = 0;
-      if (s.voiced >= rule.weakFrames) {
-        if (s.exact <= rule.maxExact && s.up >= rule.minShare) d = 12;
-        else if (s.exact <= rule.maxExact && s.down >= rule.minShare) d = -12;
-      } else if (s.exact * s.voiced < 1) d = phrase;
-      if (d && n.midi + d >= 21 && n.midi + d <= 108) shift.set(n.id, d);
-    }
-    i = j + 1;
-  }
-  if (!shift.size) return notes;
-  const busy = (n: Note, midi: number) =>
-    notes.some((m) => m.id !== n.id && m.midi === midi && m.start < n.start + n.dur - 0.03 && m.start + m.dur > n.start + 0.03);
-  return notes.map((n) => {
-    const d = shift.get(n.id);
-    if (!d || busy(n, n.midi + d)) return n;
-    const moved = { ...n, midi: n.midi + d };
-    const s = noteSupport(p, moved, cue);
-    return { ...moved, tune: Math.round(s.exact * 100) / 100 };
-  });
-}
-
-export interface AboveRule {
-  /** 'off', or what happens to a note above a confirmed tune note: dropped, or moved down by octaves below it */
-  mode: 'off' | 'drop' | 'lower';
-  /** the tune note's own support (Note.tune) at least this */
-  minTune: number;
-  /** the note above: its support at most this (the stem hears the tune, not it) */
-  maxTune: number;
-  /** ...starting within this many seconds of the tune note's start */
-  window: number;
-  /** only notes an octave (or two) above the tune note (its doubling / overtone) */
-  octaveOnly: boolean;
-}
-
-export const ABOVE_TUNE: AboveRule = { mode: 'off', minTune: 0.5, maxTune: 0.1, window: 0.06, octaveOnly: true };
-
-/**
- * Notes struck with a tune-line note the stem's pitch track confirms (Note.tune >= minTune), above
- * it, that the track does not hear (Note.tune <= maxTune): backing in the tune's register or the
- * tune doubled an octave up, which would otherwise be the top note of the right hand. Dropped or
- * moved below the tune note (AboveRule.mode); notes without the cue are never touched.
- */
-export function clearAboveTune(notes: Note[], lineIds: Set<number>, rule: AboveRule = ABOVE_TUNE): Note[] {
-  if (rule.mode === 'off' || !lineIds.size) return notes;
-  const line = notes.filter((n) => lineIds.has(n.id) && (n.tune ?? 0) >= rule.minTune).sort((a, b) => a.start - b.start);
-  if (!line.length) return notes;
-  const starts = line.map((n) => n.start);
-  const drop = new Set<number>();
-  const lower = new Map<number, number>();
-  for (const x of notes) {
-    if (lineIds.has(x.id) || x.tune === undefined || x.tune > rule.maxTune) continue;
-    // tune notes struck with x
-    let lo = 0;
-    let hi = starts.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (starts[mid] < x.start - rule.window) lo = mid + 1;
-      else hi = mid;
-    }
-    for (let i = lo; i < line.length && line[i].start <= x.start + rule.window; i++) {
-      const l = line[i];
-      const d = x.midi - l.midi;
-      if (d <= 0 || (rule.octaveOnly && d % 12 !== 0)) continue;
-      if (rule.mode === 'drop') drop.add(x.id);
-      else {
-        let m = x.midi - 12 * Math.ceil(d / 12);
-        if (m === l.midi) m -= 12;
-        if (m >= 21) lower.set(x.id, m);
-        else drop.add(x.id);
-      }
-      break;
-    }
-  }
-  if (!drop.size && !lower.size) return notes;
-  return notes.filter((n) => !drop.has(n.id)).map((n) => (lower.has(n.id) ? { ...n, midi: lower.get(n.id)!, tune: undefined } : n));
-}
-
 /**
  * The pitch track over a gap [t0, t1] (s) between two tune notes, against pitch `midi`: frames with
  * a clear pitch, those at midi's pitch class (any octave: CREPE-tiny on a mixed stem often reports
@@ -277,14 +134,36 @@ export interface HoldCueRule {
   maxSilent: number;
   /** ...or at the first frame more than this many dB below the stem's loudest frame in the note's last 0.1 s (the note fades or the phrase ends) */
   maxDropDb: number;
+  /**
+   * frames at the note's pitch class but in another octave than the track was at during the note
+   * count as another pitch (the tune moving by an octave, e.g. G4 -> G3, is not the G4 still held)
+   */
+  sameOctave: boolean;
 }
 
-export const HOLD_CUE: HoldCueRule = { on: true, stopAfter: 0.03, maxSilent: 0.08, maxDropDb: 12 };
+export const HOLD_CUE: HoldCueRule = { on: true, stopAfter: 0.03, maxSilent: 0.08, maxDropDb: 12, sameOctave: true };
+
+/** The octave offset (multiple of 12 from `midi`, rounded) the track's frames at midi's pitch class mostly have over frames [a, b]; undefined without any. */
+function trackOctave(p: StoredPitch, midi: number, a: number, b: number, cue: PitchCueRule): number | undefined {
+  const count = new Map<number, number>();
+  for (let i = Math.max(0, a); i <= Math.min(b, p.midi.length - 1); i++) {
+    const m = framePitch(p, i, cue);
+    if (!m) continue;
+    const d = m - midi;
+    if (Math.abs((((d % 12) + 18) % 12) - 6) > cue.tolerance) continue;
+    const k = Math.round(d / 12);
+    count.set(k, (count.get(k) ?? 0) + 1);
+  }
+  let best: number | undefined;
+  for (const [k, c] of count) if (best === undefined || c > count.get(best)!) best = k;
+  return best;
+}
 
 /**
- * End (s) of note `n` held while the stem's pitch track stays at its pitch class (any octave), at
- * most `limit`: from the note's end, frames at its pitch class extend it; a run of `stopAfter` s at
- * another pitch class, or `maxSilent` s without a clear pitch, ends it (at the last agreeing frame).
+ * End (s) of note `n` held while the stem's pitch track stays at its pitch class (in the octave the
+ * track was at during the note: CREPE-tiny is often an octave off), at most `limit`: from the note's
+ * end, such frames extend it; a run of `stopAfter` s at another pitch (or octave), or `maxSilent` s
+ * without a clear pitch, ends it (at the last agreeing frame).
  * A sustained lead note under louder backing fades out of Basic Pitch's frame posteriors long before
  * it ends; the pitch track of its stem often still follows it. Returns n's end when not held.
  */
@@ -300,6 +179,8 @@ export function pitchHeldEnd(p: StoredPitch, n: Note, limit: number, rule: HoldC
   let last = -1;
   let off = 0;
   let quiet = 0;
+  // the track's octave during the note (CREPE-tiny is often an octave off; a change of octave is a move)
+  let oct = rule.sameOctave ? trackOctave(p, n.midi, Math.round((n.start + Math.min(cue.skip, n.dur / 2)) / p.hop), a, cue) : undefined;
   for (let i = a; i <= b; i++) {
     if (top - p.level[i] > rule.maxDropDb) break;
     const m = framePitch(p, i, cue);
@@ -309,7 +190,9 @@ export function pitchHeldEnd(p: StoredPitch, n: Note, limit: number, rule: HoldC
     }
     quiet = 0;
     const d = Math.abs(((((m - n.midi) % 12) + 18) % 12) - 6);
-    if (d <= cue.tolerance) {
+    const k = Math.round((m - n.midi) / 12);
+    if (d <= cue.tolerance && rule.sameOctave && oct === undefined) oct = k;
+    if (d <= cue.tolerance && (oct === undefined || k === oct)) {
       last = i;
       off = 0;
     } else if (++off >= stop) break;

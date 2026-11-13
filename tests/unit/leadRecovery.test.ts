@@ -1,11 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { LEAD_RECOVERY, capDensity, freshCandidates, octaveAttacks, overtoneCandidates, recoverLead, splitRestrikes } from '../../src/lib/music/leadRecovery';
+import { LEAD_RECOVERY, capDensity, doublesMainNote, freshCandidates, octaveAttacks, overtoneCandidates, recoverLead, splitRestrikes } from '../../src/lib/music/leadRecovery';
 import { mergeMelody } from '../../src/lib/music/melody';
 import { generateAllArrangements, withoutHardOnly } from '../../src/lib/music/difficulty';
 import { EXTRACTION_PRESETS, LEAD_PASS, accompFromRaw, heldEnd, leadPassParams, leadWorkerOptions, onsetPeak, sungRanges, withLeadPass } from '../../src/lib/transcription/pipeline';
 import { BP_N_PITCHES, frameToTime, timeToFrame } from '../../src/lib/transcription/constants';
 import type { RawNoteEvent } from '../../src/lib/transcription/noteExtraction';
-import { storedPitch } from '../../src/lib/transcription/stemPitch';
 import type { Note, TempoInfo } from '../../src/lib/music/types';
 
 let id = 1;
@@ -107,21 +106,30 @@ describe('lead recovery', () => {
     expect(accompFromRaw(raw, undefined, rms, EXTRACTION_PRESETS.mix, 5).notes).toHaveLength(4);
   });
 
-  it('separated in the browser without a singer (stem pitch track present): the recovered note is for every level', () => {
+  it('separated without a singer: the recovered note is for every level, an octave doubling stays Hard-only', () => {
     const rms = new Float32Array(500).fill(0.3);
     const raw = [ev(48, timeToFrame(0), timeToFrame(4)), ev(72, timeToFrame(0), timeToFrame(0.4)), ev(74, timeToFrame(0.5), timeToFrame(0.9)), ev(77, timeToFrame(1.5), timeToFrame(1.9))];
     const leadRaw = [...raw, ev(76, timeToFrame(1), timeToFrame(1.4))];
-    // a silent pitch track: no cue on any note, but it marks a browser-separated song
-    const n = 500;
-    const leadPitch = storedPitch({ f0: new Float32Array(n), periodicity: new Float32Array(n), rms: new Float32Array(n), hop: 0.01 });
-    const r = accompFromRaw(raw, leadRaw, rms, EXTRACTION_PRESETS.mix, 5, { leadPitch });
+    const r = accompFromRaw(raw, leadRaw, rms, EXTRACTION_PRESETS.mix, 5, { separated: true });
     const added = r.notes.filter((x) => !r.main.includes(x));
     expect(added.map((x) => x.midi)).toEqual([76]);
     expect(added[0].role).toBeUndefined();
     expect(withoutHardOnly(r.notes)).toHaveLength(5);
-    // with a sung line the recovered notes stay Hard-only
-    const sung = accompFromRaw(raw, leadRaw, rms, EXTRACTION_PRESETS.mix, 5, { leadPitch }, { melody: [note(64, 3, 0.6, 0.7, { role: 'melody' })] });
+    // not separated, or with a sung line: the recovered notes stay Hard-only
+    expect(accompFromRaw(raw, leadRaw, rms, EXTRACTION_PRESETS.mix, 5).notes.filter((x) => x.midi === 76).map((x) => x.role)).toEqual(['lead']);
+    const sung = accompFromRaw(raw, leadRaw, rms, EXTRACTION_PRESETS.mix, 5, { separated: true }, { melody: [note(64, 3, 0.6, 0.7, { role: 'melody' })] });
     expect(sung.notes.filter((x) => x.midi === 76).map((x) => x.role)).toEqual(['lead']);
+  });
+
+  it('marks Hard-only only the recovered notes that double a main note an octave away (doublesHardOnly)', () => {
+    const main = [note(48, 0, 4, 0.6), note(67, 1.02, 0.5, 0.6), note(72, 2, 0.4, 0.6)];
+    expect(doublesMainNote(note(79, 1, 0.4), main)).toBe(true); // G5 over the main G4
+    expect(doublesMainNote(note(55, 1, 0.4), main)).toBe(true); // an octave below
+    expect(doublesMainNote(note(76, 1, 0.4), main)).toBe(false); // another pitch class
+    expect(doublesMainNote(note(79, 1.3, 0.4), main)).toBe(false); // struck later: not a doubling
+    expect(doublesMainNote(note(67, 1, 0.4), main)).toBe(false); // the same pitch
+    // the bass line is not a main note the tune doubles
+    expect(doublesMainNote(note(79, 1, 0.4), [note(55, 1, 0.5, 0.6, { role: 'bass' })])).toBe(false);
   });
 
   it('tests the evidence before choosing the line: a weak candidate on top does not hide the real one', () => {
