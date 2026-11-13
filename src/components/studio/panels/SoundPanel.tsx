@@ -77,7 +77,7 @@ export function SoundPanel() {
         {fromAudio && (
           <Toggle
             label="Automatic pedal"
-            hint="Adds pedal to Medium and Hard so the notes join up. Changes the sound only."
+            hint="Adds pedal to Medium and Hard so the notes join up (also in MIDI and video)."
             checked={autoPedal}
             disabled={!a.pedalEnabled}
             onChange={(on) => {

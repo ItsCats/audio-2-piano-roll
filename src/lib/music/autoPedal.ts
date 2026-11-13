@@ -10,7 +10,9 @@
  *  - it never carries across a rest (a stretch where no key is held);
  *  - where it would make two notes a semitone apart ring together (a clash the detected notes do
  *    not have), it is changed at the second note instead.
- * Only the sound (and MIDI / video exports) changes; the falling notes stay as they are.
+ * It is stored as the arrangement's pedal, so it changes the sound, the MIDI export (CC64) and the
+ * pedal lane on the piano roll and in exported videos (hidden with Look → Sustain pedal lane). The
+ * notes themselves stay as they are.
  */
 import type { Note, PedalRange, TempoInfo } from './types';
 

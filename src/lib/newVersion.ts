@@ -53,27 +53,83 @@ function setGuard(now: number): boolean {
   }
 }
 
-function showNote(text: string) {
+const NOTE_ID = 'pv-update-note';
+const NOTE_STYLE =
+  'position:fixed;left:50%;top:max(16px,env(safe-area-inset-top));transform:translateX(-50%);z-index:2147483647;' +
+  'max-width:calc(100vw - 32px);padding:10px 16px;border-radius:12px;background:#1d1d27;color:#f4f4f6;' +
+  'font:500 14px/1.4 system-ui,sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.5);border:1px solid #33333f;text-align:center';
+
+/** A note at the top of the page; with `reload`, a "Reload" button the user presses when ready. */
+function showNote(text: string, reload = false) {
+  document.getElementById(NOTE_ID)?.remove();
   const el = document.createElement('div');
+  el.id = NOTE_ID;
   el.setAttribute('role', 'status');
-  el.textContent = text;
-  el.style.cssText =
-    'position:fixed;left:50%;top:max(16px,env(safe-area-inset-top));transform:translateX(-50%);z-index:2147483647;' +
-    'max-width:calc(100vw - 32px);padding:10px 16px;border-radius:12px;background:#1d1d27;color:#f4f4f6;' +
-    'font:500 14px/1.4 system-ui,sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.5);border:1px solid #33333f;text-align:center';
+  el.style.cssText = NOTE_STYLE;
+  const p = document.createElement('div');
+  p.textContent = text;
+  el.appendChild(p);
+  if (reload) {
+    const row = document.createElement('div');
+    row.style.cssText = 'margin-top:8px;display:flex;gap:8px;justify-content:center';
+    const btn = (label: string, primary: boolean, onClick: () => void) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = label;
+      b.style.cssText =
+        'min-height:40px;padding:0 16px;border-radius:8px;font:500 14px system-ui,sans-serif;cursor:pointer;' +
+        (primary ? 'background:var(--color-accent-500,#6d8cff);color:#fff;border:0' : 'background:transparent;color:#f4f4f6;border:1px solid #44444f');
+      b.addEventListener('click', onClick);
+      row.appendChild(b);
+    };
+    btn('Reload', true, () => location.reload());
+    btn('Later', false, () => el.remove());
+    el.appendChild(row);
+  }
   document.body.appendChild(el);
+}
+
+/**
+ * Something that a reload would lose (an import running, a recording not yet saved) can hold off
+ * the automatic reload: `hold` returns the reason, or null when a reload is fine. Returns a
+ * function that removes the hold.
+ */
+type ReloadHold = () => string | null;
+const holds = new Set<ReloadHold>();
+export function holdReload(hold: ReloadHold): () => void {
+  holds.add(hold);
+  return () => void holds.delete(hold);
+}
+/** The first reason not to reload now, or null. */
+export function reloadHeldBy(): string | null {
+  for (const h of holds) {
+    try {
+      const why = h();
+      if (why) return why;
+    } catch {
+      /* a broken hold must not block updates */
+    }
+  }
+  return null;
 }
 
 let checking: Promise<boolean> | null = null;
 
 /**
  * After a failed load of a part of the app: if a new version is online, say so and reload once.
+ * While something holds the reload (see holdReload) the note offers a "Reload" button instead, so
+ * an import or a recording is never thrown away (iPhone Safari never asks before leaving a page).
  * Resolves true when the page is about to reload.
  */
 export function reloadIfNewVersion(): Promise<boolean> {
   checking ??= (async () => {
     if (guardActive(Date.now())) return false;
     if (!(await newVersionOnline())) return false;
+    const held = reloadHeldBy();
+    if (held) {
+      showNote(`A new version is available. ${held}`, true);
+      return false;
+    }
     if (!setGuard(Date.now())) return false;
     showNote('A new version is available — reloading');
     window.setTimeout(() => location.reload(), 900);

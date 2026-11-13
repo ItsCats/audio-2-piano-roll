@@ -3,7 +3,7 @@
  * live key highlighting and, when practice mode is on, the scorer and wait mode.
  */
 import { midiInput, type MidiInputEvent } from '../lib/midiInput/webmidi';
-import { PracticeScorer, TimeJumpDetector, followSongTime } from '../lib/midiInput/practice';
+import { PracticeScorer, TimeJumpDetector, followSongTime, sameScoredNotes } from '../lib/midiInput/practice';
 import type { Arrangement } from '../lib/music/types';
 import { getPlayer } from './playback';
 import { flashKey, liveKeys } from './liveInput';
@@ -60,6 +60,11 @@ function buildScorer(keepPasses: boolean): void {
   const tr = useTransport.getState();
   const s = useSettings.getState().practice;
   const t = getPlayer().getTime();
+  // a change that leaves the notes alone (e.g. the automatic pedal) keeps the pass going
+  if (keepPasses && scorer && scoredArr && sameScoredNotes(scoredArr.notes, arr.notes)) {
+    scoredArr = arr;
+    return;
+  }
   scoredArr = arr;
   if (keepPasses && scorer) {
     scorer.newPass(t);
@@ -134,7 +139,7 @@ function tick() {
   if (player.isPlaying && player.getCountInRemaining() > 0) return;
   const t = player.getTime();
   // loop wrap, seek back or back to start → a new pass; seek forward → skip the notes in between
-  const jump = followSongTime(scorer, jumps, t, player.isPlaying && player.heldAt === null ? wallDt * tr.rate : 0);
+  const jump = followSongTime(scorer, jumps, t, player.isPlaying && player.heldAt === null ? wallDt * tr.rate : 0, tr.loopEnabled ? tr.loop : null);
   if (jump) useTransport.setState({ stats: scorer.stats() });
   if (!player.isPlaying) return;
   if (wait) {

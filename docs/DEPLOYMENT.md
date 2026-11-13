@@ -80,7 +80,7 @@ docker run -p 8000:8000 -e SHARED_SECRET=$(openssl rand -hex 32) -e ALLOWED_ORIG
 The build downloads the SCNet model from a pinned Hugging Face revision and verifies its SHA-256. Build with
 `--build-arg WITH_SEPARATION=0` for a YouTube-only image without onnxruntime and the model.
 
-Then in Netlify set `PROCESSING_SHARED_SECRET` (same value) and optionally `VITE_PROCESSING_URL=https://your-server.example`, and redeploy. Users can also enter a server URL under **Settings → Processing server**.
+Then in Netlify set `PROCESSING_SHARED_SECRET` (same value) and optionally `VITE_PROCESSING_URL=https://your-server.example`, and redeploy. Users can also enter a server URL under **Settings → Processing server**. With `VITE_PROCESSING_URL` set, imports use that server by default and the Privacy page (/privacy) says so and names its host; read that page once after the deploy to check it still matches how you run the server.
 
 ### Local development with the server
 

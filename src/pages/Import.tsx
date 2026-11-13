@@ -17,6 +17,7 @@ import { createScreenWakeLock, isTouchDevice } from '../lib/wakeLock';
 import { saveBlobAs } from '../lib/saveBlob';
 import { YOUTUBE_IMPORT_PATH, documentIsolated, isYouTubeImportPath, switchDocument } from '../lib/isolation';
 import { audioSessionForRecording } from '../lib/audio/audioSession';
+import { holdReload } from '../lib/newVersion';
 
 type Tab = 'audio' | 'youtube' | 'midi' | 'record';
 
@@ -473,6 +474,8 @@ function RecordTab({ busy }: { busy: boolean }) {
     const t = setInterval(() => tick((x) => x + 1), 250);
     return () => clearInterval(t);
   }, [rec]);
+  // while recording, a new version going online must not reload the page (src/lib/newVersion.ts)
+  useEffect(() => (rec ? holdReload(() => 'Stop recording first, then reload.') : undefined), [rec]);
   // leaving the tab mid-recording: stop the microphone (nothing is imported) and let the screen lock
   const live = useRef<{ r: MediaRecorder; stream: MediaStream; endSession: () => void } | null>(null);
   useEffect(

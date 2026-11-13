@@ -215,12 +215,45 @@ export class PracticeScorer {
 
 /**
  * Feed the current song time to the scorer's pass logic (call before update()/nextPending()).
- * A jump back starts a new pass; a jump forward skips the notes in between.
+ * A jump back starts a new pass; a jump forward skips the notes in between. With `loop` (the active
+ * A-B loop), a jump back that is the loop wrapping closes the pass at the loop end, so the notes
+ * between the last check and the loop end are scored too.
  */
-export function followSongTime(scorer: PracticeScorer, jumps: TimeJumpDetector, t: number, advance: number): 'back' | 'forward' | null {
+export function followSongTime(
+  scorer: PracticeScorer,
+  jumps: TimeJumpDetector,
+  t: number,
+  advance: number,
+  loop?: { start: number; end: number } | null,
+): 'back' | 'forward' | null {
   const before = jumps.high;
   const jump = jumps.check(t, advance);
-  if (jump === 'back') scorer.newPass(t, before ?? undefined);
+  if (jump === 'back') scorer.newPass(t, before === null ? undefined : loopWrapEnd(before, t, advance, loop) ?? before);
   else if (jump === 'forward') scorer.skipTo(t);
   return jump;
+}
+
+/** The loop end when song time went from `before` to `t` by wrapping around `loop`, else null. */
+export function loopWrapEnd(before: number, t: number, advance: number, loop?: { start: number; end: number } | null): number | null {
+  if (!loop || loop.end <= loop.start) return null;
+  const toEnd = loop.end - before; // played before the wrap
+  const fromStart = t - loop.start; // played after it
+  const slack = 0.05;
+  if (toEnd < -slack || fromStart < -slack) return null;
+  return toEnd + fromStart <= Math.max(0, advance) + JUMP_TOLERANCE_SEC ? loop.end : null;
+}
+
+/**
+ * The scorer only looks at which notes there are (pitch, hand, start). A change that leaves them as
+ * they are (the automatic pedal, a note's colour) must not start a new pass.
+ */
+export function sameScoredNotes(a: readonly Note[], b: readonly Note[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i];
+    const y = b[i];
+    if (x.id !== y.id || x.midi !== y.midi || x.start !== y.start || x.hand !== y.hand) return false;
+  }
+  return true;
 }

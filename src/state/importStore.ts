@@ -30,6 +30,7 @@ import type { Song, SongSource } from '../lib/music/types';
 import type { ParsedScore, ScoreMeta } from '../lib/score';
 import type { Gray, Quad, ReadProgress } from '../lib/omr';
 import { toast } from './toastStore';
+import { holdReload } from '../lib/newVersion';
 
 export type ImportStage = TranscriptionStage | 'downloading' | 'uploading' | 'done' | 'error';
 
@@ -1227,6 +1228,14 @@ if (typeof window !== 'undefined') {
     guarded = busy;
     if (busy) window.addEventListener('beforeunload', onBeforeUnload);
     else window.removeEventListener('beforeunload', onBeforeUnload);
+  });
+  // a new version going online must not reload the page under a running import, or throw away a
+  // recording that only lives in memory now (the error card's "Download recording")
+  holdReload(() => {
+    const st = useImport.getState();
+    if (importBusy(st.job)) return 'Reload when the import has finished.';
+    if (st.failed?.recording) return 'Download your recording first, then reload.';
+    return null;
   });
   // keep the screen on while an import runs (a locked phone suspends the page)
   const wake = createScreenWakeLock();

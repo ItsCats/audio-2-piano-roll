@@ -7,7 +7,7 @@ import { useEffect, type ReactNode } from 'react';
 import { Link, NavLink, useLocation } from 'react-router-dom';
 import { cn } from '../components/ui';
 import { SOURCE_CODE_URL } from '../lib/credits';
-import { CONTACT_EMAIL, CONTACT_URL, COPYRIGHT_EMAIL, LEGAL_LAST_UPDATED, SITE_NAME } from '../lib/site';
+import { CONTACT_EMAIL, CONTACT_URL, COPYRIGHT_EMAIL, LEGAL_LAST_UPDATED, SITE_NAME, SITE_PROCESSING_HOST } from '../lib/site';
 
 export type LegalPageId = 'privacy' | 'terms' | 'copyright';
 
@@ -73,7 +73,8 @@ function Privacy() {
       <Part title="What stays on your device">
         <p>
           The songs you import, your microphone recordings, sheet music files and photos, your library, your edits and your settings are processed
-          and saved in this browser on this device (in the browser’s own storage, called IndexedDB and local storage). They are not uploaded to us.
+          and saved in this browser on this device (in the browser’s own storage, called IndexedDB and local storage).{' '}
+          {SITE_PROCESSING_HOST ? 'They are not uploaded to us, except audio sent to our processing server (see below).' : 'They are not uploaded to us.'}
         </p>
         <p>
           The AI that listens to the music and writes out the notes runs inside your browser too. We can’t see your songs, and we can’t get them back
@@ -102,11 +103,20 @@ function Privacy() {
             <Ext href="https://policies.google.com/privacy">Google Privacy Policy</Ext>. If you record the video’s sound, the recording is saved on your
             device only.
           </li>
-          <li>
-            <b>A processing server, only if one is set.</b> It is off unless a server address appears in <b>Settings → Processing server</b>. If one
-            is set, the audio you choose to separate, or the YouTube link you paste, is sent to that server. The person who runs that server can see
-            it, and their rules apply.
-          </li>
+          {SITE_PROCESSING_HOST ? (
+            <li>
+              <b>Our processing server.</b> This site uses a processing server at <b>{SITE_PROCESSING_HOST}</b> for some imports, unless you enter
+              another address in <b>Settings → Processing server</b>. When you import audio, the page checks that the server is online, so it sees
+              your IP address. The audio you choose to separate (this can be a file or a recording), or the YouTube link you paste, is sent to that
+              server to be processed.
+            </li>
+          ) : (
+            <li>
+              <b>A processing server, only if one is set.</b> It is off unless a server address appears in <b>Settings → Processing server</b>. If
+              one is set, the audio you choose to separate, or the YouTube link you paste, is sent to that server. The person who runs that server
+              can see it, and their rules apply.
+            </li>
+          )}
           <li>
             <b>Links you open.</b> Links to GitHub, to the projects on the Credits page and to other sites open those sites, which have their own
             privacy policies.
@@ -124,7 +134,10 @@ function Privacy() {
       <Part title="Microphone, MIDI keyboard and tab sound">
         <p>
           The microphone, a MIDI keyboard and recording a tab’s sound are only used when you press the button for them, and your browser asks for
-          permission first. The sound and the keys you play are handled on your device and are not sent anywhere.
+          permission first.{' '}
+          {SITE_PROCESSING_HOST
+            ? 'The keys you play stay on your device. A recording you import is handled like any other audio: on your device, unless you choose to separate it on the processing server (see above).'
+            : 'The sound and the keys you play are handled on your device and are not sent anywhere.'}
         </p>
       </Part>
 
