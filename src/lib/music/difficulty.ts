@@ -458,6 +458,9 @@ export function generateEasy(allNotes: Note[], tempo: TempoInfo, duration: numbe
 const EASY_BASS_LOW = 43; // G2
 const EASY_BASS_HIGH = 57; // A3
 
+/** Easy left hand follows the bass line (role 'bass') where it sounds (see easyBassLine). */
+export const EASY_BASS = { followBassLine: true };
+
 export interface EasyBassOptions {
   /** Analysis slot length in beats (default: 1, or ½ at slow tempos where a beat lasts ≥ 0.75 s). */
   slotBeats: number;
@@ -468,7 +471,10 @@ export interface EasyBassOptions {
  * beat at slow tempos). Each slot is sampled at several points; the pitch that is the lowest
  * sounding note for most of the slot (weighted by velocity) wins. Consecutive slots with the
  * same pitch become one sustained note (pumping 8ths on one bass note → one held note);
- * octaves are folded into G2–A3, pitch classes are kept. Silent slots stay silent.
+ * octaves are folded into G2–A3, pitch classes are kept. Silent slots stay silent. Where the
+ * separated bass stem's line (role 'bass') sounds, it is the sampled note: the lowest left-hand
+ * note there is often another instrument's (on the first 10 Slakh band tracks, 136 of the 204
+ * Easy bass notes at a wrong pitch class were picked while the bass line sounded).
  *
  * (The previous version took the lowest note STARTING in each 2-beat window and held it for
  * the whole window: held bass notes and every change inside the window were lost, and a short
@@ -502,8 +508,15 @@ export function easyBassLine(left: Note[], tempo: TempoInfo, duration: number, o
     const first = new Map<number, Note>();
     for (let s = 0; s < K; s++) {
       const t = t0 + ((s + 0.5) / K) * (t1 - t0);
+      // the bass line (role 'bass', separated band songs) where it sounds, else the lowest note
       let low: Note | null = null;
-      for (const n of active) if (n.start <= t && n.start + n.dur > t && (!low || n.midi < low.midi)) low = n;
+      let bass: Note | null = null;
+      for (const n of active) {
+        if (!(n.start <= t && n.start + n.dur > t)) continue;
+        if (!low || n.midi < low.midi) low = n;
+        if (n.role === 'bass' && (!bass || n.midi < bass.midi)) bass = n;
+      }
+      if (bass && EASY_BASS.followBassLine) low = bass;
       if (!low) continue;
       weight.set(low.midi, (weight.get(low.midi) ?? 0) + 0.5 + low.vel);
       const f = first.get(low.midi);

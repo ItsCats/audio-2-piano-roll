@@ -15,8 +15,10 @@ export interface Note {
    * separated vocal stem: they always sit in the right hand and Easy/Medium are built around them.
    * 'lead' marks lead-line notes recovered by the "Full song" preset's sensitive pass
    * (music/leadRecovery.ts): they are shown on Hard only (Easy and Medium are built without them).
+   * 'bass' marks the separated bass stem's one-note-at-a-time line (transcription/bassLine.ts):
+   * Easy's left hand follows it where it sounds.
    */
-  role?: 'melody' | 'lead';
+  role?: 'melody' | 'lead' | 'bass';
   /**
    * Separated band songs: share (0..1) of the note's opening in which the pitch track of the
    * lead-bearing stem (transcription/stemPitch.ts) is at this pitch. Absent where that stem had no

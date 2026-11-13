@@ -85,7 +85,7 @@ export interface BassPosteriors {
 
 const scaleOf = (a: Uint8Array | Float32Array) => (a instanceof Uint8Array ? 1 / 255 : 1);
 
-/** The bass stem's one-note-at-a-time line (see the module comment). Notes are hand 'L'. */
+/** The bass stem's one-note-at-a-time line (see the module comment). Notes are hand 'L', role 'bass'. */
 export function decodeBassLine(post: BassPosteriors, rule: Partial<BassLineRule> = {}): Note[] {
   const r = { ...BASS_LINE, ...rule };
   const { nFrames, frames, onsets } = post;
@@ -203,7 +203,7 @@ export function decodeBassLine(post: BassPosteriors, rule: Partial<BassLineRule>
     for (let u = Math.max(0, g.a - 2); u <= Math.min(nFrames - 1, g.a + 3); u++) on = Math.max(on, onsets[u * P + col] * os);
     if (on < r.weakOnset && mean < r.weakMean) continue;
     const vel = Math.max(0.15, Math.min(1, 0.3 + 0.5 * Math.min(1, mean) + 0.2 * on));
-    out.push({ id: newNoteId(), midi: col + BP_MIDI_OFFSET, start, dur: end - start, vel, hand: 'L' });
+    out.push({ id: newNoteId(), midi: col + BP_MIDI_OFFSET, start, dur: end - start, vel, hand: 'L', role: 'bass' });
   }
   return out;
 }

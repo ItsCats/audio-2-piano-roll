@@ -221,6 +221,15 @@ describe('Easy left hand bass line', () => {
     const left = [n(40, 0, beat * 0.9, 0.7, 'L'), n(45, beat, beat * 0.9, 0.7, 'L'), n(43, 2 * beat, beat * 0.9, 0.7, 'L'), n(38, 3 * beat, beat * 0.9, 0.7, 'L')];
     expect(easyBassLine(left, t, 4 * beat).map((x) => x.midi % 12)).toEqual([4, 9, 7, 2]);
   });
+
+  it('follows the separated bass line where it sounds, not a lower note of another instrument', () => {
+    const t = tempo(120, 10);
+    // a piano's low A1 under the whole bar; the bass line plays E2 then D2 (role 'bass')
+    const left = [n(33, 0, 2, 0.8, 'L'), n(40, 0, 1, 0.7, 'L', 'bass'), n(38, 1, 1, 0.7, 'L', 'bass')];
+    expect(easyBassLine(left, t, 2).map((x) => x.midi % 12)).toEqual([4, 2]);
+    // without the role the lowest note wins
+    expect(easyBassLine(left.map((x) => ({ ...x, role: undefined })), t, 2).map((x) => x.midi % 12)).toEqual([9]);
+  });
 });
 
 describe('instrumental stretches of a song with singing', () => {
