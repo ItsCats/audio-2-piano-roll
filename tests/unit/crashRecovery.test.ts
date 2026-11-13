@@ -84,7 +84,7 @@ describe('interrupted-import store (IndexedDB)', () => {
 
     const db = await import('../../src/lib/storage/db');
     expect(db.DB_NAME).toBe('pianovision');
-    expect(db.DB_VERSION).toBe(2);
+    expect(db.DB_VERSION).toBe(3);
     // the old data is all still there
     expect((await db.getSong('s1'))?.title).toBe('Old song');
     expect((await db.listSummaries()).map((s) => s.id)).toEqual(['s1']);
@@ -116,10 +116,10 @@ describe('interrupted-import store (IndexedDB)', () => {
     await db.deletePending('p1');
     expect((await db.listPending()).map((r) => r.id)).toEqual(['p0']);
 
-    // reopening at version 2 does not touch anything
+    // reopening at the current version does not touch anything
     await db.closeDb();
-    const raw = await openDB('pianovision', 2);
-    expect([...raw.objectStoreNames].sort()).toEqual(['audio', 'media', 'pending', 'posteriors', 'songs', 'summaries']);
+    const raw = await openDB('pianovision', 3);
+    expect([...raw.objectStoreNames].sort()).toEqual(['audio', 'handcam', 'media', 'pending', 'posteriors', 'songs', 'summaries']);
     raw.close();
     expect((await db.listPending()).map((r) => r.id)).toEqual(['p0']);
     expect((await db.getSong('s1'))?.title).toBe('Old song');

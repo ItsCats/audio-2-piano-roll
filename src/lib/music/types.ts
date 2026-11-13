@@ -1,3 +1,4 @@
+import type { HandVideo } from '../handcam/types';
 export type Hand = 'L' | 'R';
 export type Difficulty = 'easy' | 'medium' | 'hard';
 export const DIFFICULTIES: Difficulty[] = ['easy', 'medium', 'hard'];
@@ -15,8 +16,10 @@ export interface Note {
    * separated vocal stem: they always sit in the right hand and Easy/Medium are built around them.
    * 'lead' marks lead-line notes recovered by the "Full song" preset's sensitive pass
    * (music/leadRecovery.ts): they are shown on Hard only (Easy and Medium are built without them).
+   * 'bass' marks the separated bass stem's one-note-at-a-time line (transcription/bassLine.ts):
+   * Easy's left hand follows it where it sounds.
    */
-  role?: 'melody' | 'lead';
+  role?: 'melody' | 'lead' | 'bass';
 }
 
 /** Sustain pedal held from `start` to `end` (seconds). */
@@ -75,6 +78,11 @@ export interface SongSource {
    * are the reader's estimate and should be checked (absent: a sheet-music file, notes as written).
    */
   reader?: 'pdf' | 'photo';
+  /**
+   * which sheet-music reader read it (src/lib/omr/readers.ts): 'accurate' (homr) or 'quick' (the Sheet
+   * Music Transformer, Beta). Absent on songs read before there was a choice: the quick reader.
+   */
+  sheetReader?: 'accurate' | 'quick';
   /** pages read (sheet-music reader) */
   pages?: number;
 }
@@ -186,6 +194,11 @@ export interface Song {
    * until it is switched on in the Sound panel. Never set for MIDI files or sheet music.
    */
   autoPedal?: boolean;
+  /**
+   * A video of the player's hands for "hands video" exports (lib/handcam). Absent in older songs
+   * and when none was added; the file is in IndexedDB (see HandVideo.store).
+   */
+  handVideo?: HandVideo;
 }
 
 export type SongSummary = Pick<

@@ -22,6 +22,7 @@ Songs imported from audio keep their original recording. The dialog's **Sound** 
 * **Speed.** With the original included, export speed is fixed at 100 % (the slider is disabled with a note). Changing speed without changing pitch needs a time-stretcher: changing the playback rate would put the recording out of tune with the piano, the permissively licensed option (Signalsmith Stretch, MIT) would add a WASM/worklet module, latency compensation and chunk continuity work, and a full band mix stretched to 0.5–0.75× sounds smeared. It may be added later.
 * **Memory.** The recording is decoded only when the export starts and only if it is used, and released before any video frame is drawn. Decoding holds the whole song as 32-bit samples at 48 kHz: ~115 MB for 5 minutes of stereo, ~460 MB at the 20-minute import limit, plus the compressed file while it decodes. That is the peak; nothing is copied after it. The export keeps views into the decoded channels for the part it can hear (range ± lead-in and tail); only a span of up to 60 s (a loop or short custom range) is copied out, so the rest can be freed. On phones and low-memory devices songs over 4 minutes (and any file with more than two channels) are downmixed to mono in place, which halves what is kept during the sound render (~58 MB for 5 minutes) but not the decode peak. If decoding fails, the dialog says so and suggests "Piano".
 * **Encoder stalls.** The WASM AAC encoder (used for MP4 where the browser has no AAC encoder: Firefox, Linux Chrome, headless Chromium) could hang forever on some near-silent "Both" mixes. Samples smaller than 10⁻⁶ (about −120 dB, inaudible) are set to 0 before AAC encoding, which avoids it. As a safety net every encoder step has a time limit (2 minutes per audio block or frame, including each title page and end card frame and each second of their silence; one minute plus 6 s per minute of video to write the end of the file) and Cancel works at every step: a stuck export stops with "Saving the video got stuck…", suggesting WebM, and the encoder's worker is stopped. A canceled export that is still decoding the original can't be interrupted, so **Render video** shows "Stopping…" until it has finished, and two exports never run at once.
+* **The dialog's backdrop.** The Export dialog dims the page behind it without blurring it. A blurred full-screen backdrop is drawn again on every frame while the progress spinner turns, and on a slow or software GPU that held up the encoder's reads of the frames: with Chromium drawing on SwiftShader, exports from the dialog stopped at frame 1 and failed after 2 minutes ("Saving the video got stuck…"), at 720p and 1080p, MP4 and WebM alike. `node tests/e2e/export-ui.mjs --dist <build>` renders a 720p MP4 and a WebM with a title page from the dialog in that setup and fails if the frame counter stands still for 45 s or a file is missing frames. The export loop waits only on the encoders and decoders, never on `requestAnimationFrame` (only the real-time fallback without WebCodecs does), so a hidden tab doesn't pause it; headless Chromium never hides a page, so that is not covered by a test.
 * **Check.** `npm run test:e2e:export` exports a synthetic song whose "recording" is a click on every note (MP4 and WebM, full range, a custom range starting mid-song, Piano + Original including 40 s MP4s and a loud mix with both sliders at 150 %), decodes the files with ffmpeg and checks every click is within 10 ms of its note, the file doesn’t clip at normal levels, nothing above the limiter's level reaches the encoder, and every case finishes.
 
 ## Options
@@ -72,3 +73,62 @@ Optional, off by default, videos only (the Studio is unchanged). In the dialog: 
 * **Checks.** `tests/unit/titleCard.test.ts`; `node tests/e2e/title-card.mjs` (every style × 16:9 / 9:16 / 1:1 × normal, long, CJK and one-long-word texts with the real fonts: fonts loaded, boxes and ink inside the safe area, measured widths match the ink); `node tests/e2e/title-export.mjs` (with a 2.5 s title page the first note is heard exactly 2.5 s later, roll frame N matches frame N + 75, lengths, a silent end card); `node tests/e2e/title-card-ui.mjs --dist DIR --out DIR` (the dialog on desktop and a 390 px phone against a production build with the site's headers).
 * **With the original song.** The original is mixed into the audio samples before they reach the wrapper, so it moves with the roll and is silent under the title page and the end card (an MP4 and a WebM with a title page, end card and the original, decoded with ffmpeg: every click lands on its note with 0 ms error and both cards are digital silence).
 * **Stalls and Cancel.** Each title page and end card frame and each piece of their silence goes through the same per-step time limit and Cancel as the roll's own frames; the title page frames are added before the first roll frame, which keeps its own limit. A stopped export also stops the real audio encoder, not just the wrapper around it.
+
+## Hands video ("hand cam")
+
+A video of your hands on a real keyboard, filmed from above, can be shown under the falling notes
+(the notes land on your real keys, the Studio keyboard is hidden) or as a picture-in-picture in a
+corner. Code: `src/lib/handcam/*`, UI: `src/components/handcam/*`.
+
+**Two ways to get one**
+
+- *Import a video of you playing* (Import > Audio / Video): the notes come from the video's sound and
+  the video is kept as the song's original recording (stored once, IndexedDB `audio` store), so it is
+  in sync by construction. The small difference between the browser's audio decoder and the video's
+  own timeline (AAC/Opus priming, edit lists) is measured at import by cross-correlating the two decodes
+  (`measureImportOffset`). Videos over 200 MB are decoded by streaming their sound; up to 4 GB on a
+  computer, 2 GB on a phone; a warning above 500 MB; the free space is checked first.
+- *Add a hands video* (Export video > Hands video) to any song: stored in the `handcam` store (database
+  version 3), then synced automatically: log-spectral-flux onset envelopes at 100 frames/s of the
+  video's sound (streamed at 8 kHz) and of the song's recording (or of its notes), FFT
+  cross-correlation over every lag, a confidence ratio (High / Medium / Low), GCC-PHAT refinement
+  against a recording (sub-millisecond), and a drift check (another performance can't be lined up with
+  one offset). A nudge slider (±5 s, 10 ms steps), ±10 ms buttons, a scrub preview and a Listen button
+  (the video's sound with a click on every note) fix the rest.
+
+**Setup** (Sync > Pick a frame > Corners > Keys > Framing, saved per song): drag the 4 corners onto the
+keys (auto-suggested from the long horizontal edge and the key pattern; a "Clean frame" median hides
+the hands; Turn 180° / Mirror), see the keyboard straightened by a perspective warp, pick 88 / 76 / 61
+keys or any range and match the lanes to the real keys (live overlay, Auto-match, zoom up to 5× with
+Left end / Middle C / Right end), then set where the notes land, how much of the hands area shows and
+which keys are shown. Save is on every step once the keyboard was set up before (on the Sync step it
+saves just the sync); closing with unsaved changes asks first. The setup's pictures are drawn straight
+into canvases (never encoded as images), and all previews of a song share one open file that decodes
+one frame at a time; the dialog's preview and thumbnail let go of the file while the setup or an export
+runs, so the page stays responsive while the video is read and synced.
+
+**Export**: each output frame decodes the exact video frame for its time (mediabunny
+`VideoSampleSink.samplesAtTimestamps`: the last frame starting at or before that time, so variable
+frame rates, dropped frames, 60 FPS sources and rotation metadata are handled), uploads it as a
+`VideoFrame` to WebGL2 and closes it right away (a Canvas 2D mesh warp if WebGL2 is missing). Before
+the video starts and after it ends, its first / last frame is held (fading out at the end). Speed is
+100 %. Sound: piano, the video's sound (sample-exact, through the same mixing as the original
+recording), the song's recording, or mixes. Key light and sparkles are drawn at the real keys.
+
+## Watermark
+
+A text line (e.g. YOUTUBE.COM/YOURNAME, spaced capitals, the name after the last "/" brighter) in one
+of the title-page fonts, with size, color, opacity and position (bottom center by default), and an
+optional PNG/SVG logo (downscaled to 512 px, stored in the `media` store). Shown on every roll frame
+and, if chosen, on the title page and end card. Saved as your default (localStorage
+`piano2vision-watermark`). With "hands at the bottom" a band under the video is kept free for it; with
+picture-in-picture a logo in the small video's corner moves to the other side. The text and logo are
+drawn once into a small picture of their own, so each frame costs one image copy.
+
+**Tests**: `tests/unit/handcam/*` (homography, lanes for 61/76/88 keys, output layout, auto-sync on
+synthetic signals at different sample rates, watermark layout, the v2 → v3 database upgrade, the
+sync worker fallback, the nudge range, gaps in streamed sound, damaged stored hands videos);
+`node tests/e2e/handcam-export.mjs` (dev server: lanes, sync, watermark, length, PiP + WebM + title
+page); `node tests/e2e/handcam.mjs --dist <build> [--out DIR]` (the whole flow on the production build:
+import, setup by dragging, export, cancel, auto-sync of a video added later against a recording and
+against MIDI notes). Both need ffmpeg to make the synthetic camera video and check the output.

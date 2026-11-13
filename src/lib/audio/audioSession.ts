@@ -48,3 +48,22 @@ export function audioSessionForRecording(): () => void {
     if (recordings === 0) setType('playback');
   };
 }
+
+/**
+ * The import mini-games' sound effects (lib/games/synth): 'ambient', so on an iPhone the silent switch
+ * mutes them and music the player has on in another app keeps playing (unlike the piano, which plays
+ * like a music app). Call from the gesture that starts the games' sound; the returned function puts
+ * back what was there (safe to call more than once). Does nothing while recording.
+ */
+export function audioSessionForEffects(): () => void {
+  const s = session();
+  if (!s || recordings > 0) return () => undefined;
+  const before = s.type;
+  setType('ambient');
+  let done = false;
+  return () => {
+    if (done) return;
+    done = true;
+    if (recordings === 0 && s.type === 'ambient' && before !== 'ambient') setType(before);
+  };
+}

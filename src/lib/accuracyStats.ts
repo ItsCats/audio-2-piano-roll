@@ -371,37 +371,48 @@ export const DATASETS: Dataset[] = [
   { name: 'Test songs and recordings', use: '5 songs with a singer, 1 instrumental soundtrack track, 4 piano recordings — used privately for measuring only, never copied into the app or shared', license: 'Copyrighted (not distributed)' },
 ];
 
+/** notes right / rhythm right (0..1) of one reader on one test set; null: not measured */
+export type ReaderScore = { notes: number; rhythm: number } | null;
+
 /**
- * Sheet-music reader (beta, src/lib/omr): measured 2026-11-13 with the shipped pipeline (Sheet Music
- * Transformer, Camera-GrandStaff checkpoint, 8-bit weights) in headless Chromium, the way the app's
- * import job runs it, after the review fixes. Rows use pages the reader was NOT tuned on: 16 new pieces
- * generated in code (keys, metres and textures the tuning pages lack), engraved by two notation programs,
- * plus 6 public-domain Mutopia pages; photos are simulated. public/models/omr/README.md has the details.
- * Notes / rhythm: see `metric`.
+ * The two sheet-music readers (src/lib/omr/readers.ts), measured 2026-11-13 in headless Chromium.
+ *  - Quick reader (Sheet Music Transformer, Camera-GrandStaff checkpoint, 8-bit weights; src/lib/omr): the
+ *    shipped pipeline the way the import job runs it, after the review fixes (public/models/omr/README.md).
+ *  - Accurate reader (homr 0.7.1 ported to TypeScript, src/lib/omr/homr): the production build with the
+ *    shipped models (tests/e2e/homr-prod.mjs; public/models/homr/README.md), on the same 16 new pieces
+ *    (page images and simulated photos with corners, 15 of 16 pieces perfect, the ledger-line piece 0.843)
+ *    and on the Mutopia pages.
+ * Rows use pages neither reader was tuned on: 16 new pieces generated in code (keys, meters and textures the
+ * tuning pages lack, engraved with Verovio) and 6 public-domain Mutopia pages. Every photo is SIMULATED
+ * (tilt, shadow, blur, JPEG noise added to the page image). Notes / rhythm: see `metric`.
  */
 export const SHEET_READER = {
   intro:
-    'Printed piano music in a PDF or a photo is read by the Sheet Music Transformer, an AI model that runs on your device. It is a Beta: it gets most notes right on clear printed pages, but rhythm mistakes are common, and photos are harder than PDFs. The photo numbers below come from simulated phone photos; real phone photos have not been measured yet.',
+    'Printed music in a PDF or a photo is read on your device by one of two readers. The Accurate reader (based on homr; the default on computers) got nearly every note and rhythm right on clear printed pages, but it is a 93 MB download and takes about a minute per page on a computer. The Quick reader (the Sheet Music Transformer; Beta, the default on phones) is a 24 MB download and faster, but it makes more mistakes, most of all in rhythm. You choose the reader on the Import page. All photo numbers below come from simulated phone photos; real phone photos have not been measured yet.',
   rows: [
-    { what: 'Clean printed PDFs', note: '16 new test pieces in many keys and time signatures, exact answer key', before: '88%', after: '81%' },
-    { what: 'Clean printed pages, another notation program', note: 'the same 16 pieces, engraved differently', before: '90%', after: '83%' },
-    { what: 'Real printed scores', note: '6 public-domain pages (Mutopia Project: études, Bach songs)', before: '80%', after: '59%' },
-    { what: 'Simulated phone photos, corners set', note: 'the 16 pieces with tilt, shadow, blur and JPEG noise added', before: '87%', after: '77%' },
-    { what: 'Simulated photos of real scores, corners set', note: 'the 6 Mutopia pages', before: '76%', after: '55%' },
-    { what: 'Simulated phone photos, corners not adjusted', note: 'automatic corners (one of 16 found no music); on photos of real scores only 50% of notes', before: '76%', after: '68%' },
-    { what: 'Curved page, blur or dim light (simulated)', note: 'even with the corners set exactly', before: '32%', after: '19%' },
-  ],
+    { what: 'Clean printed pages', note: '16 new test pieces in many keys and time signatures, exact answer key (Quick reader on the vector PDFs: 88% / 81%)', accurate: { notes: 0.989, rhythm: 0.989 }, quick: { notes: 0.873, rhythm: 0.78 } },
+    { what: 'Real printed scores', note: '6 public-domain pages (Mutopia Project: études, Bach chorales)', accurate: { notes: 0.984, rhythm: 0.973 }, quick: { notes: 0.798, rhythm: 0.588 } },
+    { what: 'Simulated phone photos, corners set', note: 'the 16 pieces with tilt, shadow, blur and JPEG noise added', accurate: { notes: 0.989, rhythm: 0.989 }, quick: { notes: 0.869, rhythm: 0.768 } },
+    { what: 'Simulated photos of real scores', note: 'the 6 Mutopia pages (Quick reader: corners set; Accurate reader: the whole photo, it finds the page itself)', accurate: { notes: 0.987, rhythm: 0.977 }, quick: { notes: 0.756, rhythm: 0.549 } },
+    { what: 'Simulated phone photos, corners not adjusted', note: 'automatic corners; for the Quick reader one of 16 found no music', accurate: null, quick: { notes: 0.763, rhythm: 0.679 } },
+    { what: 'Curved page, blur or dim light (simulated)', note: 'even with the corners set exactly', accurate: null, quick: { notes: 0.318, rhythm: 0.185 } },
+  ] as { what: string; note: string; accurate: ReaderScore; quick: ReaderScore }[],
   metric:
-    '“Notes right” counts notes found with the right pitch in the right order (missed and extra notes both count against it); a note still counts when it comes at the wrong time. “Rhythm right” also needs the time since the previous note to be right. On the 12 pages we tuned the reader on it scored 93% / 84%; those are left out above because they flatter it.',
+    '“Notes right” counts notes found with the right pitch in the right order (missed and extra notes both count against it); a note still counts when it comes at the wrong time. “Rhythm right” also needs the time since the previous note to be right. Rows marked “not measured” have not been tested with that reader yet. On the 12 pages the Quick reader was tuned on it scored 93% / 84% (the Accurate reader: 100% / 100%); those are left out above because they flatter it.',
   speed:
-    'A full page of piano music took 20–35 seconds on a computer (a page with two lines: a few seconds). Phones are slower: we estimate about 50 seconds a page (not yet measured on a real phone), so a phone reads up to 3 pages at a time. The reader is a 24 MB download, once, and needs about 0.5–1 GB of memory while it reads.',
+    'Accurate reader: 32–73 seconds per page on a computer in our tests (on a shared test machine, so these are upper bounds); on a phone we estimate 2–4.5 minutes per page. It needs about 1 GB of extra memory while it reads, which is close to what iPhone Safari allows one tab, so it may not work on a phone (if the page reloads, use the Quick reader). Quick reader: 20–35 seconds per page on a computer, about 50 seconds on a phone (estimated), and 0.5–1 GB of memory. Neither has been measured on a real phone yet; a phone reads up to 3 pages at a time. Each reader is downloaded once, the first time it is used.',
   limits: [
-    { title: 'Printed piano music only', body: 'Two staves (right and left hand). A vocal line, more than two staves, or band and orchestra scores come out wrong.' },
-    { title: 'Lay the page flat', body: 'A curved page, a blurry or dim photo comes out mostly wrong, even with the corners set. Lay the page flat, light it evenly and hold the phone straight above it.' },
-    { title: 'Rhythm is the weak spot', body: 'The reader sometimes reads a note twice or gets a length wrong. A bar with too many beats is made longer so no note is lost; the notes after it then come a little later than on your page.' },
-    { title: 'Very high or very low notes', body: 'Notes with many ledger lines above or below the staff (or under an 8va sign) are often missed or put in the wrong octave.' },
-    { title: 'One key', body: 'The key used most is kept for the whole piece; a key change partway through is not followed. If the key signature is misread, every sharp or flat note is a semitone off — the app warns when lines disagree.' },
-    { title: 'No handwriting, no text', body: 'Hand-written music is not supported. Lyrics, chord symbols, fingering, dynamics and tempo words are not read.' },
-    { title: 'Repeats as written', body: 'Repeat signs are not followed: the music plays straight through, as printed.' },
+    { title: 'Printed music only', body: 'Both readers were measured on printed piano music and songs written on two staves. The Quick reader is made for two-stave piano music: a vocal line, more than two staves, or band and orchestra scores come out wrong.' },
+    { title: 'Lay the page flat', body: 'A curved page, a blurry or dim photo comes out mostly wrong with the Quick reader, even with the corners set (not yet measured for the Accurate reader). Lay the page flat, light it evenly and hold the phone straight above it.' },
+    { title: 'Rhythm is the Quick reader’s weak spot', body: 'It sometimes reads a note twice or gets a length wrong. A bar with too many beats is made longer so no note is lost; the notes after it then come a little later than on your page. The Accurate reader got the rhythm right on 97–99% of the notes in our tests.' },
+    { title: 'Very high or very low notes', body: 'Notes with many ledger lines above or below the staff (or under an 8va sign) are the hardest part for both readers: on our ledger-line test piece the Accurate reader got 84% of the notes right, the Quick reader 55–73%. Some are missed or put in the wrong octave.' },
+    { title: 'One key (Quick reader)', body: 'The key used most is kept for the whole piece; a key change partway through is not followed. If the key signature is misread, every sharp or flat note is a semitone off — the app warns when lines disagree.' },
+    { title: 'No handwriting, no text', body: 'Hand-written music is not supported. Lyrics, chord symbols, fingering, dynamics, tempo words and titles are not read.' },
+    { title: 'Check every song', body: 'Even the Accurate reader can misread a page it was not tested on: a wrong rhythm, a missing sharp or flat or a note in the wrong hand. Compare with your page and fix notes in Edit mode.' },
   ],
 } as const;
+
+/** "99% / 98%" (notes / rhythm) or "not measured". */
+export const readerScoreText = (s: ReaderScore): string => (s ? `${scorePct(s.notes)} / ${scorePct(s.rhythm)}` : 'not measured');
+/** 0.873 → "87%"; just under 1 keeps a decimal (0.998 → "99.8%", not a misleading "100%") */
+const scorePct = (x: number): string => (x < 1 && x >= 0.995 ? `${(Math.floor(x * 1000) / 10).toFixed(1)}%` : `${Math.round(x * 100)}%`);

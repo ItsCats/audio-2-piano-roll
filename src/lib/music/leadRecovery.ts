@@ -136,8 +136,30 @@ export interface LeadRecoveryOptions {
   evidence?: (n: Note) => LeadEvidence;
   /** time ranges (s) where nothing is recovered (e.g. sung phrases: the sung line is the tune there) */
   exclude?: [number, number][];
-  /** mark the recovered notes Hard-only (role 'lead'; the pipeline always does) */
+  /** mark the recovered notes Hard-only (role 'lead'; Easy and Medium are built without them) */
   hardOnly?: boolean;
+  /**
+   * (without hardOnly) mark Hard-only just the recovered notes struck with a main note an octave or
+   * two away (an octave doubling of the tune or of the backing): Easy and Medium keep the main
+   * pass's note there instead of jumping to the doubling (see LEAD_DOUBLE)
+   */
+  doublesHardOnly?: boolean;
+}
+
+/** doublesHardOnly: a main note starting within `window` s of a recovered note, a whole number of octaves away, that still sounds `overlap` s in. */
+export const LEAD_DOUBLE = { window: 0.08, overlap: 0.05 };
+
+/** Whether recovered note `n` doubles a note of `base` an octave (or more) away (see LeadRecoveryOptions.doublesHardOnly). */
+export function doublesMainNote(n: Note, base: Note[], rule = LEAD_DOUBLE): boolean {
+  return base.some(
+    (m) =>
+      m.midi !== n.midi &&
+      (m.midi - n.midi) % 12 === 0 &&
+      Math.abs(m.start - n.start) <= rule.window &&
+      m.start + m.dur > n.start + rule.overlap &&
+      m.role !== 'bass' &&
+      m.role !== 'lead',
+  );
 }
 
 function overlap(a: Note, b: Note): number {
@@ -393,5 +415,6 @@ export function recoverLead(base: Note[], candidates: Note[], duration: number, 
   }
   let kept = capDensity(picked, meanOf, rule);
   if (opts.hardOnly) kept = kept.map((n) => ({ ...n, role: 'lead' as const }));
+  else if (opts.doublesHardOnly) kept = kept.map((n) => (doublesMainNote(n, base) ? { ...n, role: 'lead' as const } : n));
   return kept.length ? sortNotes([...base, ...kept]) : base;
 }

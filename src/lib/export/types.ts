@@ -1,3 +1,5 @@
+import type { Corner, HandsLayout } from '../handcam/types';
+
 export type Orientation = 'landscape' | 'portrait' | 'square';
 export type Resolution = 720 | 1080 | 1440;
 
@@ -22,9 +24,23 @@ export interface ExportSettings {
   sound: ExportSound;
   /** volume of the original recording (undefined = follow the Studio's "Original" setting) */
   originalVolume?: number;
+  /** hands video (lib/handcam): off, under the falling notes, or picture-in-picture (needs a song with a video) */
+  handsLayout: HandsLayout;
+  pipCorner: Corner;
+  /** picture-in-picture width as a share of the frame width */
+  pipSize: number;
+  /** light up the real keys in the video when notes land */
+  handsKeyLight: boolean;
+  /** sparkles where the notes land */
+  handsSparkles: boolean;
 }
 
-export type ExportSound = 'piano' | 'original' | 'both';
+/**
+ * What the video's sound track holds. 'original' / 'both': the song's original recording (for a song
+ * imported from a video of the player: the video's own sound). 'hands' / 'hands+piano': the sound of a
+ * hands video added to the song later.
+ */
+export type ExportSound = 'piano' | 'original' | 'both' | 'hands' | 'hands+piano';
 
 export const DEFAULT_EXPORT: ExportSettings = {
   resolution: 1080,
@@ -43,6 +59,11 @@ export const DEFAULT_EXPORT: ExportSettings = {
   quality: 'high',
   keyboardRange: 'match',
   sound: 'piano',
+  handsLayout: 'off',
+  pipCorner: 'br',
+  pipSize: 0.3,
+  handsKeyLight: true,
+  handsSparkles: true,
 };
 
 export function outputSize(s: Pick<ExportSettings, 'resolution' | 'orientation'>): { width: number; height: number } {

@@ -4,12 +4,23 @@
  * font or library (and check the licence allows redistribution from a public website).
  */
 /**
- * Where the source code of Piano2Vision is published (GNU AGPL-3.0-or-later, see LICENSE). Linked from the sidebar,
- * Settings, the Accuracy page and the Credits page to offer the source to every user (AGPL section 13). If you run a
- * modified version, point this at your own source.
+ * Where the source code of Piano2Vision is published (GNU AGPL, version 3 or later; the homr sheet-music reader
+ * in src/lib/omr/homr is version 3 only; see LICENSE). Linked from the sidebar, Settings, the Accuracy page and the
+ * Credits page to offer the source to every user (AGPL section 13). If you run a modified version, point this at
+ * your own source.
  */
-export const SOURCE_CODE_URL = 'https://github.com/ItsCats/audio-2-piano-roll';
+export const SOURCE_REPO_URL = 'https://github.com/ItsCats/audio-2-piano-roll';
+/**
+ * The commit this build was made from: VITE_COMMIT, or Netlify's COMMIT_REF (vite.config.ts passes it in), so the
+ * source link shows exactly the code being served. Empty in local builds: the link then opens the repository.
+ */
+export const SOURCE_COMMIT: string = ((c: unknown) => (typeof c === 'string' && /^[0-9a-f]{7,40}$/i.test(c.trim()) ? c.trim() : ''))(import.meta.env?.VITE_COMMIT);
+export const SOURCE_CODE_URL = SOURCE_COMMIT ? `${SOURCE_REPO_URL}/tree/${SOURCE_COMMIT}` : SOURCE_REPO_URL;
 export const SOURCE_CODE_LABEL = 'Source code (AGPL-3.0)';
+/** Shown next to the license and warranty notices (Terms, Credits). */
+export const COPYRIGHT_LINE = 'Copyright (C) 2026 Jack Anderson. The homr sheet-music reader: Copyright the homr contributors, port Copyright the Piano2Vision contributors.';
+/** The license in words (README, Terms, Credits footer, THIRD_PARTY_NOTICES.md say the same). */
+export const LICENSE_WORDS = 'version 3 or later; the homr sheet-music reader is version 3 only';
 
 export interface Credit {
   name: string;
@@ -43,6 +54,8 @@ const LIC = {
   cc0: 'https://creativecommons.org/publicdomain/zero/1.0/',
   bsd3: 'https://opensource.org/license/bsd-3-clause',
   unlicense: 'https://unlicense.org/',
+  agpl3: 'https://www.gnu.org/licenses/agpl-3.0.html',
+  ccbync4: 'https://creativecommons.org/licenses/by-nc/4.0/',
 };
 
 export const CREDITS: CreditGroup[] = [
@@ -88,8 +101,44 @@ export const CREDITS: CreditGroup[] = [
         note: 'Converted to ONNX by us from torchcrepe’s “tiny” weights (see public/models/crepe/README.md).',
       },
       {
+        name: 'homr',
+        use: 'The Accurate sheet-music reader (the default on computers): reads printed sheet music from PDFs and photos — finds the staffs, notes, bar lines and clefs, then transcribes each staff. Downloaded only when you first read a PDF or photo with it.',
+        author: 'Christian Liebhardt and the homr contributors',
+        license: 'AGPL-3.0-only (code and model weights)',
+        licenseUrl: LIC.agpl3,
+        url: 'https://github.com/liebharc/homr',
+        note: 'homr 0.7.1, licensed under version 3 of the AGPL only. Changed by the Piano2Vision contributors in 2026: we ported its image analysis and MusicXML writer from Python to TypeScript (src/lib/omr/homr, AGPL-3.0-only, published with this app’s source) and run its three networks with ONNX Runtime Web; the segmentation weights are stored as 16-bit floats and the encoder with 8-bit weights to halve the download; title recognition (OCR) is left out. The original model files: github.com/liebharc/homr/releases/tag/onnx_checkpoints. Includes homr’s page joining, which is based on relieur by Papoteur and contributors (Apache-2.0). See src/lib/omr/homr/README.md and public/models/homr/README.md.',
+      },
+      {
+        name: 'OpenCV (ported functions)',
+        use: 'The image operations the sheet-music reader needs (contours, convex hulls, rotated boxes, ellipse fitting, the Subdiv2D triangulation, polygon filling, CLAHE, resizing, morphology, blurring, warping), rewritten in TypeScript with OpenCV’s algorithms so the results match homr’s.',
+        author: 'Intel Corporation, Willow Garage, NVIDIA, Itseez, Advanced Micro Devices and the OpenCV contributors',
+        license: '3-clause BSD and Apache-2.0',
+        licenseUrl: LIC.bsd3,
+        url: 'https://github.com/opencv/opencv',
+        note: 'Ported from OpenCV 4.x imgproc (no OpenCV code is downloaded). Copyright notices and license: src/lib/omr/homr/LICENSE-OpenCV.txt.',
+      },
+      {
+        name: 'Pillow (ported bicubic resize)',
+        use: 'Scaling each page to the size the sheet-music reader expects, with the same filter as homr.',
+        author: 'Secret Labs AB, Fredrik Lundh, Jeffrey A. Clark and contributors',
+        license: 'MIT-CMU',
+        licenseUrl: 'https://github.com/python-pillow/Pillow/blob/main/LICENSE',
+        url: 'https://python-pillow.org',
+        note: 'Pillow’s bicubic resampling rewritten in TypeScript. Copyright notices and license: src/lib/omr/homr/LICENSE-Pillow.txt.',
+      },
+      {
+        name: 'Training data of the homr models',
+        use: 'The data homr’s authors trained its networks on (not included in the app).',
+        author: 'DeepScoresV2 (Tuggener et al.; CC BY 4.0) for the segmentation; OpenScore Lieder and String Quartets (CC0), GrandStaff (Ríos-Vila et al.), Camera-PrIMuS (Calvo-Zaragoza, Rizo), PDMX (public-domain subset) and the MuseTrainer library for the transcription',
+        license: 'Mixed; Camera-PrIMuS: CC BY-NC 4.0 (non-commercial)',
+        licenseUrl: LIC.ccbync4,
+        url: 'https://github.com/liebharc/homr/blob/main/LICENSE_FAQ.md',
+        note: 'The transcription model was partly trained on Camera-PrIMuS, whose published copy is licensed for non-commercial use only. Piano2Vision is free and non-commercial; anyone reusing these weights should check homr’s license FAQ.',
+      },
+      {
         name: 'Sheet Music Transformer (SMT)',
-        use: 'Reads printed piano music from PDFs and photos (beta). Downloaded only when you first read a PDF or photo.',
+        use: 'The Quick sheet-music reader (Beta; the default on phones): reads printed piano music from PDFs and photos with a smaller download. Downloaded only when you first read a PDF or photo with it.',
         author: 'Antonio Ríos-Vila, Jorge Calvo-Zaragoza, Thierry Paquet (“Sheet Music Transformer: End-To-End Optical Music Recognition Beyond Monophonic Transcription”, ICDAR 2024)',
         license: 'MIT',
         licenseUrl: LIC.mit,
@@ -199,7 +248,7 @@ export const CREDITS: CreditGroup[] = [
       { name: 'React Router', use: 'Pages and navigation.', author: 'Remix Software and contributors', license: 'MIT', licenseUrl: LIC.mit, url: 'https://reactrouter.com' },
       { name: 'Zustand', use: 'App state.', author: 'Poimandres', license: 'MIT', licenseUrl: LIC.mit, url: 'https://github.com/pmndrs/zustand' },
       { name: 'TensorFlow.js', use: 'Runs the Basic Pitch model (WebGL / WebAssembly).', author: 'Google and contributors', license: 'Apache-2.0', licenseUrl: LIC.apache, url: 'https://www.tensorflow.org/js' },
-      { name: 'ONNX Runtime Web', use: 'Runs the SCNet separation model, the high-accuracy piano model and the sheet-music reader (WebAssembly).', author: 'Microsoft and contributors', license: 'MIT', licenseUrl: LIC.mit, url: 'https://onnxruntime.ai' },
+      { name: 'ONNX Runtime Web', use: 'Runs the SCNet separation model, the high-accuracy piano model and both sheet-music readers (WebAssembly).', author: 'Microsoft and contributors', license: 'MIT', licenseUrl: LIC.mit, url: 'https://onnxruntime.ai' },
       { name: 'Mediabunny', use: 'Video export (MP4 / WebM) and decoding unusual file types.', author: 'Vanilagy', license: 'MPL-2.0', licenseUrl: LIC.mpl, url: 'https://mediabunny.dev' },
       {
         name: 'Mediabunny AAC encoder (includes FFmpeg)',
@@ -241,7 +290,7 @@ export const CREDITS: CreditGroup[] = [
       },
       {
         name: 'PDF.js',
-        use: 'Opens PDF sheet music for the sheet-music reader (beta); loaded only when you read a PDF.',
+        use: 'Opens PDF sheet music for the sheet-music readers; loaded only when you read a PDF.',
         author: 'Mozilla and contributors',
         license: 'Apache-2.0',
         licenseUrl: LIC.apache,

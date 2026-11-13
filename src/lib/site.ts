@@ -12,7 +12,7 @@
  * VITE_PROCESSING_URL (README, docs/DEPLOYMENT.md) is read here too: when the site has its own
  * processing server, the Privacy page says so and names its host.
  */
-import { SOURCE_CODE_URL } from './credits';
+import { SOURCE_REPO_URL } from './credits';
 
 export const SITE_NAME = 'Piano2Vision';
 
@@ -22,7 +22,7 @@ const env = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
 export const SITE_URL: string = (env(import.meta.env.VITE_SITE_URL) || (typeof location !== 'undefined' ? location.origin : '')).replace(/\/+$/, '');
 
 /** Public issue tracker: always available as a way to get in touch. */
-export const CONTACT_URL = `${SOURCE_CODE_URL}/issues`;
+export const CONTACT_URL = `${SOURCE_REPO_URL}/issues`;
 
 /** The site's contact address, used when VITE_CONTACT_EMAIL is not set. */
 export const DEFAULT_CONTACT_EMAIL = 'jackanderson0616@gmail.com';

@@ -1,13 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useEffect, useRef, useState, type ComponentType } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { FileAudio, FileMusic, Mic, Loader2, CheckCircle2, XCircle, Circle, ArrowRight, Square, Info, RotateCcw, Download, Smartphone, MonitorSpeaker } from 'lucide-react';
+import { FileAudio, FileMusic, Mic, Loader2, CheckCircle2, XCircle, Circle, ArrowRight, Square, Info, RotateCcw, Download, Smartphone, MonitorSpeaker, Gamepad2 } from 'lucide-react';
 import { Dropzone } from '../components/import/Dropzone';
 import { SeparationOption, useSeparationChoice } from '../components/import/SeparationOption';
 import { PianoModelOption, usePianoModelChoice } from '../components/import/PianoModelOption';
 import type { TranscriptionEngine } from '../lib/transcription/pipeline';
 import { Button, ProgressBar, Segmented, cn } from '../components/ui';
-import { STAGE_LABELS, stageLabel, useImport, type ImportJob, type ImportStage } from '../state/importStore';
+import { STAGE_LABELS, stageLabel, transcriberChoice, useImport, type ImportJob, type ImportStage } from '../state/importStore';
 import { SheetMusicTab } from '../components/import/SheetMusicTab';
+import { HandsVideoImport } from '../components/import/HandsVideoImport';
 import { useSettings } from '../state/settingsStore';
 import { NO_SOUND_SHARED, TERMS_NOTE, startTabAudioCapture, tabAudioSupport, type TabAudioCapture } from '../lib/audio/tabAudio';
 import { formatTime } from '../lib/music/theory';
@@ -16,6 +17,20 @@ import { createScreenWakeLock, isTouchDevice } from '../lib/wakeLock';
 import { saveBlobAs } from '../lib/saveBlob';
 import { audioSessionForRecording } from '../lib/audio/audioSession';
 import { holdReload } from '../lib/newVersion';
+import { offerGame } from '../lib/games/offer';
+
+// the mini-games load only when opened (their own chunk); offline, the button just says so
+const GameOverlay = lazy<ComponentType<{ jobId: number; onClose: () => void; onOpenSong: (songId: string) => void }>>(() =>
+  import('../components/games/GameOverlay').catch(() => ({
+    default: function GamesUnavailable({ onClose }: { onClose: () => void }) {
+      useEffect(() => {
+        toast.error('Couldn’t load the games', 'Check your connection and try again.');
+        onClose();
+      }, [onClose]);
+      return null;
+    },
+  })),
+);
 
 type Tab = 'audio' | 'computer' | 'midi' | 'record';
 
@@ -101,7 +116,7 @@ function etaText(job: ImportJob): string | null {
   return `${etaStep(job)}: ${left > 0 ? formatEta(left) : 'finishing…'}`;
 }
 
-function JobProgress() {
+function JobProgress({ onPlayGame }: { onPlayGame: () => void }) {
   const job = useImport((s) => s.job);
   const cancel = useImport((s) => s.cancel);
   const clear = useImport((s) => s.clear);
@@ -132,7 +147,7 @@ function JobProgress() {
   const err = job.stage === 'error';
   const failedHere = err && failed?.jobId === job.id ? failed : null;
   return (
-    <div ref={card} className="panel animate-fade-in scroll-mt-4 p-5" aria-live="polite">
+    <div ref={card} data-import-card tabIndex={-1} className="panel animate-fade-in scroll-mt-4 p-5 outline-none" aria-live="polite">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <p className="truncate text-[15px] font-semibold text-ink-50">{job.title}</p>
@@ -164,6 +179,11 @@ function JobProgress() {
               <span>{Math.round(job.progress * 100)}%</span>
             </p>
           )}
+          {offerGame(job, Date.now()) && (
+            <Button size="sm" className="mt-3" onClick={onPlayGame} icon={<Gamepad2 size={15} />}>
+              Play a game while you wait
+            </Button>
+          )}
         </div>
       )}
       <ol className="mt-4 grid gap-1.5 sm:grid-cols-2">
@@ -181,7 +201,7 @@ function JobProgress() {
       {err && <p className="mt-4 rounded-lg border border-bad/30 bg-bad/10 px-3 py-2 text-[13px] text-bad">{job.error}</p>}
       {done && job.sheet && (
         <p className="mt-4 flex gap-2 text-[12.5px] text-ink-200">
-          <Info size={14} className="mt-0.5 shrink-0 text-warn" /> Read from sheet music (Beta) — check the notes against your page.
+          <Info size={14} className="mt-0.5 shrink-0 text-warn" /> Read from sheet music{job.sheetReader === 'accurate' ? '' : ' (Beta)'} — check the notes against your page.
         </p>
       )}
       {job.warnings.length > 0 && (
@@ -203,6 +223,11 @@ function JobProgress() {
           {err && failedHere && (
             <Button variant="primary" onClick={() => void failedHere.retry()} icon={<RotateCcw size={15} />}>
               Try again
+            </Button>
+          )}
+          {err && failedHere?.retryQuick && (
+            <Button onClick={() => void failedHere.retryQuick!()} icon={<RotateCcw size={15} />}>
+              Use the Quick reader
             </Button>
           )}
           {err && failedHere?.retryFast && pianoModelSelected && (
@@ -490,11 +515,32 @@ export default function ImportPage() {
   const separate = sep.checked && !pianoModel;
   const busy = !!job && job.stage !== 'done' && job.stage !== 'error';
 
+  // "Play a game while you wait": the import it was opened for
+  const [gameFor, setGameFor] = useState<number | null>(null);
+  /** the import a game was played during: it doesn't jump to the studio (the game says the song is ready) */
+  const gamePlayedFor = useRef<number | null>(null);
+  const openGame = () => {
+    if (!job) return;
+    gamePlayedFor.current = job.id;
+    setGameFor(job.id);
+  };
+  // closed while the import still runs: back to the card as before, so the finished import opens the
+  // studio by itself again (one that finished while the game was open stays put: the player saw "Your
+  // song is ready" and chose to stay)
+  const closeGame = () => {
+    setGameFor(null);
+    const j = useImport.getState().job;
+    if (j && j.id === gamePlayedFor.current && j.stage !== 'done' && j.stage !== 'error') gamePlayedFor.current = null;
+  };
+
   // jump to the studio as soon as an import started on this page finishes
   const startedHere = useRef<number | null>(null);
   useEffect(() => {
-    if (job?.stage === 'done' && job.songId && startedHere.current === job.id) {
-      const t = setTimeout(() => navigate(`/studio/${job.songId}`), 700);
+    if (job?.stage === 'done' && job.songId && startedHere.current === job.id && gamePlayedFor.current !== job.id) {
+      const id = job.id;
+      const t = setTimeout(() => {
+        if (gamePlayedFor.current !== id) navigate(`/studio/${job.songId}`);
+      }, 700);
       return () => clearTimeout(t);
     }
   }, [job?.stage, job?.songId, job?.id, navigate]);
@@ -506,6 +552,12 @@ export default function ImportPage() {
     if (busy) return;
     void importFile(f, { separate, transcriber: model.transcriber }).then(() => {});
     startedHere.current = (useImport.getState().job?.id ?? 0);
+  };
+  /** a video of the user playing: solo piano, no separation, the video kept with the song */
+  const onHandsVideo = (f: File, keep: boolean) => {
+    if (busy) return;
+    void importFile(f, { separate: false, transcriber: transcriberChoice(useImport.getState().prefs, 'piano', model.support.available), keepVideo: keep, presetId: 'piano' }).then(() => {});
+    startedHere.current = useImport.getState().job?.id ?? 0;
   };
 
   const tabs = [
@@ -541,7 +593,12 @@ export default function ImportPage() {
           </p>
         </header>
 
-        {job && <JobProgress />}
+        {job && <JobProgress onPlayGame={openGame} />}
+        {gameFor !== null && (
+          <Suspense fallback={<div className="fixed inset-0 z-[58] bg-ink-950" aria-busy="true" />}>
+            <GameOverlay jobId={gameFor} onClose={closeGame} onOpenSong={(id) => navigate(`/studio/${id}`)} />
+          </Suspense>
+        )}
 
         <div className="panel overflow-hidden">
           <div ref={tabListRef} role="tablist" className="relative flex overflow-x-auto border-b border-ink-700 px-1 sm:px-2">
@@ -564,9 +621,10 @@ export default function ImportPage() {
             {tab === 'audio' && (
               <div className="flex flex-col gap-5">
                 <Dropzone onFile={onFile} />
+                <HandsVideoImport busy={busy} pianoModelOn={pianoModel} onVideo={onHandsVideo} />
                 <DetectionOptions />
                 <SeparationOption unusedReason={pianoModel ? 'Not used with the high-accuracy piano model.' : undefined} />
-                <p className="text-[12px] text-ink-400">Up to 20 minutes / 300 MB. Longer files: trim first. Video files use their audio track.</p>
+                <p className="text-[12px] text-ink-400">Up to 20 minutes / 300 MB (videos of you playing: up to 4 GB). Longer files: trim first. Video files use their audio track.</p>
               </div>
             )}
             {tab === 'computer' && (

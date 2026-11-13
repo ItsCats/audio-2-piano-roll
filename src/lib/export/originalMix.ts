@@ -63,15 +63,30 @@ export function exportTimeline(
   };
 }
 
-/** What the sound track actually holds, given what this song and browser can do. */
-export function effectiveSound(s: Pick<ExportSettings, 'sound'>, env: { hasOriginal: boolean; webCodecs: boolean }): ExportSound {
-  if (!env.hasOriginal || !env.webCodecs) return 'piano';
+/**
+ * What the sound track actually holds, given what this song and browser can do. `hasHandsSound`: the
+ * song has a hands video added after its import (its sound can be used).
+ */
+export function effectiveSound(s: Pick<ExportSettings, 'sound'>, env: { hasOriginal: boolean; webCodecs: boolean; hasHandsSound?: boolean }): ExportSound {
+  if (!env.webCodecs) return 'piano';
+  if (s.sound === 'hands' || s.sound === 'hands+piano') return env.hasHandsSound ? s.sound : 'piano';
+  if (!env.hasOriginal) return 'piano';
   return s.sound === 'original' || s.sound === 'both' ? s.sound : 'piano';
 }
 
-/** Export speed: locked to 100 % whenever the original recording is included (no time-stretching). */
-export function effectiveRate(s: Pick<ExportSettings, 'rate'>, sound: ExportSound): number {
-  return sound === 'piano' ? s.rate : 1;
+/** The sound track has no piano in it. */
+export const soundWithoutPiano = (sound: ExportSound): boolean => sound === 'original' || sound === 'hands';
+/** The song's original recording is in the sound track. */
+export const usesOriginalRecording = (sound: ExportSound): boolean => sound === 'original' || sound === 'both';
+/** A hands video's own sound is in the sound track. */
+export const usesHandsSound = (sound: ExportSound): boolean => sound === 'hands' || sound === 'hands+piano';
+
+/**
+ * Export speed: locked to 100 % whenever a recording is included (no time-stretching) or a hands video
+ * is shown (it plays at its real speed).
+ */
+export function effectiveRate(s: Pick<ExportSettings, 'rate'>, sound: ExportSound, handsVideo = false): number {
+  return sound === 'piano' && !handsVideo ? s.rate : 1;
 }
 
 /** The Studio's "Original" volume if it is turned up, else a sensible default. */

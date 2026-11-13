@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { ExternalLink, Heart, Sparkles } from 'lucide-react';
-import { CREDITS, INSPIRATION, ORIGINAL_WORK, SOURCE_CODE_LABEL, SOURCE_CODE_URL } from '../lib/credits';
+import { COPYRIGHT_LINE, CREDITS, INSPIRATION, LICENSE_WORDS, ORIGINAL_WORK, SOURCE_CODE_LABEL, SOURCE_CODE_URL } from '../lib/credits';
 import { Badge } from '../components/ui';
 
 export default function CreditsPage() {
@@ -81,12 +81,13 @@ export default function CreditsPage() {
             <Heart size={13} className="text-accent-400" /> Found something missing or credited wrongly? Please let us know and we’ll fix it.
           </p>
           <p>
-            Piano2Vision is free software under the GNU Affero General Public License, version 3 or later:{' '}
+            Piano2Vision is free software under the GNU Affero General Public License ({LICENSE_WORDS}):{' '}
             <a href={SOURCE_CODE_URL} target="_blank" rel="noopener noreferrer" className="text-accent-400 hover:text-accent-300">
               {SOURCE_CODE_LABEL}
             </a>
-            . The models, piano sounds, fonts and libraries above keep their own licenses.
+            . It comes with no warranty. The models, piano sounds, fonts and libraries above keep their own licenses.
           </p>
+          <p data-testid="copyright-line">{COPYRIGHT_LINE}</p>
           <p>
             Piano2Vision is not affiliated with YouTube, Spotify, Google, ByteDance, Rousseau or any other project or person listed here. You are responsible for having
             the rights to the music you import. See also{' '}

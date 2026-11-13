@@ -113,7 +113,7 @@ export function kernToMusicXml(piece: KernPiece, opts: MusicXmlOptions = {}): st
   out.push('<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 4.0 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">');
   out.push('<score-partwise version="4.0">');
   if (opts.title) out.push(`<work><work-title>${esc(opts.title)}</work-title></work>`);
-  out.push(`<identification><encoding><software>${esc(opts.software ?? 'Piano2Vision sheet-music reader (beta)')}</software></encoding></identification>`);
+  out.push(`<identification><encoding><software>${esc(opts.software ?? 'Piano2Vision Quick sheet-music reader (Beta)')}</software></encoding></identification>`);
   out.push('<part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>');
   out.push('<part id="P1">');
   const hasPickup = !!piece.measures[0]?.pickup;

@@ -44,8 +44,8 @@ export function SongCard({ song }: { song: SongSummary }) {
             </Badge>
           )}
           {song.source.kind === 'score' && song.source.reader && (
-            <Badge tone="warn" title={`${sourceLabel(song.source.kind, song.source.reader)} by the sheet-music reader (Beta) — check the notes`}>
-              Beta
+            <Badge tone="warn" title={`${sourceLabel(song.source.kind, song.source.reader)} by the ${song.source.sheetReader === 'accurate' ? 'Accurate sheet-music reader' : 'Quick sheet-music reader (Beta)'} — check the notes`}>
+              {song.source.sheetReader === 'accurate' ? 'AI' : 'Beta'}
             </Badge>
           )}
         </div>

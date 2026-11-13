@@ -1,8 +1,15 @@
 # Third-party notices
 
 Piano2Vision's own code is Copyright (C) 2026 Jack Anderson and licensed under the GNU Affero General Public
-License, version 3 or later (`AGPL-3.0-or-later`, see [LICENSE](LICENSE)). Source code:
-<https://github.com/ItsCats/audio-2-piano-roll>.
+License, version 3 or later; the homr sheet-music reader is version 3 only (see [LICENSE](LICENSE)). In SPDX
+terms the repository is `AGPL-3.0-or-later AND AGPL-3.0-only`: the files written for Piano2Vision are
+`AGPL-3.0-or-later`, the port of homr in `src/lib/omr/homr/` and homr's models in `public/models/homr/` are
+`AGPL-3.0-only` (each file's first line says which), so the app as a whole can be passed on under version 3 of
+the AGPL only. Source code: <https://github.com/ItsCats/audio-2-piano-roll>.
+
+homr's transcription model was partly trained on Camera-PrIMuS, a dataset whose published copy is licensed for
+non-commercial use only (row below). Piano2Vision is free and non-commercial; keep it that way while it ships
+these models, or check homr's [license FAQ](https://github.com/liebharc/homr/blob/main/LICENSE_FAQ.md) first.
 
 The parts below were made by other people and keep their own licenses. Being bundled with Piano2Vision does not
 change their license. The in-app Credits page (`src/lib/credits.ts`) lists the same works for users.
@@ -19,6 +26,11 @@ change their license. The in-app Credits page (`src/lib/credits.ts`) lists the s
 | `src/lib/separation/dsp.ts` | STFT and segmenting written to match SCNet's preprocessing and the `demix()` procedure of [ZFTurbo/Music-Source-Separation-Training](https://github.com/ZFTurbo/Music-Source-Separation-Training) (MIT) | Piano2Vision authors | AGPL-3.0-or-later | own implementation, credited for the method |
 | `public/models/crepe/crepe-tiny.onnx` | CREPE "tiny" pitch model ([marl/crepe](https://github.com/marl/crepe)), PyTorch weights from torchcrepe 0.0.24 | Copyright (c) 2018 Jong Wook Kim; Copyright (c) 2020 Max Morrison | MIT ([LICENSE](public/models/crepe/LICENSE), [README](public/models/crepe/README.md)) | converted to ONNX |
 | `public/models/omr/` (`smt-camera-grandstaff/*.bin`, `vocab.json`) | Sheet Music Transformer checkpoint [antoniorv6/smt-camera-grandstaff](https://huggingface.co/antoniorv6/smt-camera-grandstaff) (Ríos-Vila, Calvo-Zaragoza, Paquet, ICDAR 2024) | the SMT authors | MIT ([LICENSE](public/models/omr/LICENSE), [README](public/models/omr/README.md)); training data GrandStaff / Camera-GrandStaff (not shipped) | converted to ONNX (encoder + decoder with key/value cache), 8-bit weights, split into 3 files |
+| `src/lib/omr/homr/` | TypeScript port of the inference pipeline of [homr](https://github.com/liebharc/homr) 0.7.1 (optical music recognition; the "Accurate reader") | homr: Christian Liebhardt and the homr contributors; port: Copyright the Piano2Vision contributors, 2026 | AGPL-3.0-only (the ported files; the new files `index.ts`, `support.ts`, `worker.ts`, `protocol.ts`, `page.ts`, `xml.ts`, `fp16w.ts`, `manifest.ts` are AGPL-3.0-or-later); per-file SPDX lines, see [its README](src/lib/omr/homr/README.md) | ported from Python module by module (each file names the homr module it follows and says it was modified); title recognition (OCR) left out; page corners, progress, low-memory mode and size limits added |
+| `public/models/homr/` (`segnet.fp16w.*.bin`, `encoder.int8.*.bin`, `decoder.int8.*.bin`) | homr's segmentation, transformer encoder and decoder networks, from its release [onnx_checkpoints](https://github.com/liebharc/homr/releases/tag/onnx_checkpoints) | the homr contributors | AGPL-3.0-only ([LICENSE](public/models/homr/LICENSE), [README](public/models/homr/README.md)). Training data (not shipped): DeepScoresV2 (CC BY 4.0), OpenScore Lieder and String Quartets (CC0), GrandStaff, **Camera-PrIMuS (CC BY-NC 4.0 on its Hugging Face copy: non-commercial use only)**, PDMX (public-domain subset), MuseTrainer library | segmentation weights stored as float16, encoder with 8-bit weights, split into 11 files; made by `tests/homr/convert_models.py` and `tests/homr/package_models.py` (part of the corresponding source) |
+| `src/lib/omr/homr/musicxml.ts` (page joining) | [relieur](https://github.com/papoteur-mga/relieur), via homr's `relieur.py` | Papoteur and contributors | Apache-2.0 (no NOTICE file upstream) | ported to TypeScript with homr's MusicXML writer |
+| `src/lib/omr/homr/geom.ts`, `subdiv2d.ts`, `cv.ts` | functions of [OpenCV](https://github.com/opencv/opencv) 4.x imgproc that homr calls (contours, convex hulls, rotated boxes, ellipse fitting, Subdiv2D, polygon filling, CLAHE, resizing, morphology, blurring, warpAffine) | Intel Corporation, Willow Garage, NVIDIA, Itseez, Advanced Micro Devices and other OpenCV contributors | BSD-3-Clause and Apache-2.0 ([LICENSE-OpenCV.txt](src/lib/omr/homr/LICENSE-OpenCV.txt)) | algorithms rewritten in TypeScript (no OpenCV code is shipped) |
+| `src/lib/omr/homr/cv.ts` (bicubic resize) | [Pillow](https://github.com/python-pillow/Pillow)'s bicubic resampling | Secret Labs AB, Fredrik Lundh, Jeffrey A. Clark and contributors | MIT-CMU ([LICENSE-Pillow.txt](src/lib/omr/homr/LICENSE-Pillow.txt)) | rewritten in TypeScript |
 | `public/pdfjs/wasm/` (`jbig2.wasm`, `openjpeg.wasm`, `qcms_bg.wasm`) | image decoders shipped with pdfjs-dist 6.4.299 | PDFium authors; OpenJPEG authors; qcms authors; Mozilla | BSD-3-Clause / Apache-2.0, BSD-2-Clause, MIT (license files next to them) | none |
 | `public/samples/grand/` | Salamander Grand Piano V3 | Alexander Holm | CC BY 3.0 ([LICENSE](public/samples/LICENSE), [README](public/samples/README.md)) | 5 of 16 velocity layers, trimmed, faded, MP3 |
 | `public/samples/upright/` | Upright Piano KW (FreePats) | FreePats project | CC0 1.0 ([LICENSE](public/samples/LICENSE), [README](public/samples/README.md)) | one of 2 velocity layers, trimmed, faded, MP3 |
