@@ -342,6 +342,14 @@ export function parseKernSystems(systems: string[], opts: KernOptions = {}): Ker
   let start: Frac = ZERO;
   let overfullBars = 0;
   const spanOf = (b: RawBar) => max(b.span[1], b.span[2]);
+  const keyVotes = new Map<number, number>();
+  for (const b of raw) if (b.systemStart && b.fifths !== undefined) keyVotes.set(b.fifths, (keyVotes.get(b.fifths) ?? 0) + 1);
+  // most votes; a tie goes to the first system's key
+  let usualFifths: number | undefined;
+  for (const b of raw) {
+    if (!b.systemStart || b.fifths === undefined) continue;
+    if (usualFifths === undefined || keyVotes.get(b.fifths)! > keyVotes.get(usualFifths)!) usualFifths = b.fifths;
+  }
   for (let k = 0; k < raw.length; k++) {
     const b = raw[k];
     let meterChange: Meter | undefined;
@@ -362,10 +370,13 @@ export function parseKernSystems(systems: string[], opts: KernOptions = {}): Ker
       }
     }
     let fifthsChange: number | undefined;
-    if (b.fifths !== undefined && b.fifths !== fifths) {
-      fifths = b.fifths;
-      fifthsChange = b.fifths;
-      firstFifths ??= b.fifths;
+    // a system's opening key signature is read again on every line and is sometimes misread: the
+    // piece's most common one wins; only a change in the middle of a line is taken as written
+    const bf = b.systemStart && b.fifths !== undefined ? (fifths === undefined ? usualFifths : fifths) : b.fifths;
+    if (bf !== undefined && bf !== fifths) {
+      fifths = bf;
+      fifthsChange = bf;
+      firstFifths ??= bf;
     }
     let clefChange: Partial<Record<Staff, Clef>> | undefined;
     for (const s of [1, 2] as Staff[]) {
