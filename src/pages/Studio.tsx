@@ -491,6 +491,12 @@ export default function StudioPage() {
             <PianoRollView />
           )}
         </FullscreenStage>
+        {/* phones and tablets: the sheet's edit tools as a dock above the transport */}
+        {editMode && view === 'sheet' && compactSheet && (
+          <Suspense fallback={null}>
+            <SheetEditBar layout="dock" />
+          </Suspense>
+        )}
         <Transport />
       </div>
 

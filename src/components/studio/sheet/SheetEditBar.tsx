@@ -68,7 +68,7 @@ function Tool({
 
 const Sep = ({ dock }: { dock: boolean }) => <span aria-hidden className={cn('shrink-0 bg-ink-700', dock ? 'mx-0.5 h-8 w-px' : 'mx-1 h-5 w-px')} />;
 
-export function SheetEditBar({ layout }: { layout: 'row' | 'dock' }) {
+export function SheetEditBar({ layout, fixed = false }: { layout: 'row' | 'dock'; fixed?: boolean }) {
   const dock = layout === 'dock';
   const song = useStudio((s) => s.song)!;
   const difficulty = useStudio((s) => s.difficulty);
@@ -224,8 +224,8 @@ export function SheetEditBar({ layout }: { layout: 'row' | 'dock' }) {
 
   return (
     <div
-      className="fixed inset-x-0 bottom-0 z-40 border-t border-ink-700 bg-ink-900/97 shadow-[0_-8px_24px_-12px_rgba(0,0,0,0.6)] backdrop-blur"
-      style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+      className={cn('border-t border-ink-700 bg-ink-900/97', fixed && 'fixed inset-x-0 bottom-0 z-40 shadow-[0_-8px_24px_-12px_rgba(0,0,0,0.6)] backdrop-blur')}
+      style={fixed ? { paddingBottom: 'env(safe-area-inset-bottom)' } : undefined}
       data-testid="sheet-edit-dock"
       role="toolbar"
       aria-label="Edit the sheet music"

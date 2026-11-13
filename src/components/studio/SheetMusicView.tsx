@@ -14,7 +14,7 @@ import { loadOsmd, SheetRenderer } from '../../lib/sheet/render';
 import { Button, cn, IconButton } from '../ui';
 import { sheetEditedRecently } from '../../state/sheetEdit';
 import { useSheetUi } from '../../state/sheetUi';
-import { SheetEditBar, useCompactSheetUi, DOCK_PAD } from './sheet/SheetEditBar';
+import { SheetEditBar, DOCK_PAD } from './sheet/SheetEditBar';
 import { SheetEditOverlay } from './sheet/SheetEditOverlay';
 import { SheetContextMenu } from './sheet/SheetContextMenu';
 import { useSheetPointer } from './sheet/useSheetPointer';
@@ -41,8 +41,8 @@ export function SheetMusicView() {
   const editMode = useStudio((s) => s.editMode);
   const selection = useStudio((s) => s.selection);
   const addMode = useSheetUi((s) => s.addMode);
-  const compact = useCompactSheetUi();
-  const dock = editMode && (compact || fullscreen);
+  // in full screen the edit tools dock inside the stage (otherwise the Studio shows them)
+  const dock = editMode && fullscreen;
   const scrollRef = useRef<HTMLDivElement>(null);
   const pageRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
@@ -434,7 +434,7 @@ export function SheetMusicView() {
         </div>
       </div>
       {editMode && <SheetContextMenu />}
-      {dock && <SheetEditBar layout="dock" />}
+      {dock && <SheetEditBar layout="dock" fixed />}
     </div>
   );
 }

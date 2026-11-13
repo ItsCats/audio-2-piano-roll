@@ -114,6 +114,11 @@ interface RawHit {
   pos: number;
 }
 
+/** Names the notes a drawn notehead stands for (data-note-ids), for tools and tests. */
+function tagHeads(h: NoteHit): void {
+  for (const el of h.heads) el.setAttribute?.('data-note-ids', h.ids.join(','));
+}
+
 const yieldToMain = (): Promise<void> => {
   const s = (globalThis as { scheduler?: { yield?: () => Promise<void> } }).scheduler;
   if (s?.yield) return s.yield();
@@ -247,7 +252,10 @@ export class SheetRenderer {
           const prev = old.get(`${sp.from}|${sp.to}`);
           if (!changed[i] && prev) {
             // same music: keep the drawing; ids and times come from the new score
-            for (const h of prev.hits) h.ids = index.byKey.get(h.key)?.ids ?? [];
+            for (const h of prev.hits) {
+              h.ids = index.byKey.get(h.key)?.ids ?? [];
+              tagHeads(h);
+            }
             for (let m = sp.from; m < sp.to; m++) {
               const b = this.boxes[m];
               if (b) boxes[m] = { ...b, t0: score.measureStartTimes[m], t1: score.measureStartTimes[m + 1], entries: b.entries.map((e) => (e.pos !== undefined ? { ...e, t: score.time.posToTime(e.pos) } : e)) };
@@ -278,6 +286,7 @@ export class SheetRenderer {
         this.score = score;
         this.breaks = starts;
         this.lastRedrawn = n;
+        this.host.dataset.redrawn = String(n);
         this.applyHighlight();
         performance.mark('sheet:edit-done');
         opts.onChunk?.(chunks.length, chunks.length);
@@ -363,6 +372,7 @@ export class SheetRenderer {
       this.applyHighlight();
     }
     this.lastRedrawn = chunks.length;
+    this.host.dataset.redrawn = String(chunks.length);
     if (opts.edit) performance.mark('sheet:edit-done');
     return true;
   }
@@ -524,6 +534,7 @@ export class SheetRenderer {
         y1,
         heads: c.heads,
       });
+      tagHeads(out[out.length - 1]);
     }
     return out;
   }
