@@ -148,9 +148,17 @@ export async function videoSound8k(blob: Blob, opts: { start?: number; end?: num
 /**
  * Where an imported video's sound is against the song: video time = song time + offset. Song time 0 is
  * sample 0 of the decode the transcription used (decodeToRate), which can differ from the video's own
- * timeline by encoder priming (AAC 20–50 ms, Opus a few ms). Measured by GCC-PHAT on the first 20 s;
- * when that fails, taken from the audio track's first timestamp.
+ * timeline by encoder priming (AAC 20–50 ms, Opus a few ms). Streamed decodes start at the audio
+ * track's first timestamp; native decodes are measured by GCC-PHAT on the first 20 s (when that fails:
+ * NATIVE_FALLBACK_OFFSET).
  */
+/**
+ * The import offset when it can't be measured (a short or quiet start, a decode error) on the native
+ * route: the browser's decoder drops the encoder priming (measured: 0.0 ms in Chrome), so sample 0 is
+ * video time 0.
+ */
+export const NATIVE_FALLBACK_OFFSET = 0;
+
 export async function measureImportOffset(blob: Blob, probe: Pick<VideoProbe, 'audioStart'>, signal?: AbortSignal): Promise<number> {
   const first = probe.audioStart ?? 0;
   // a streamed decode starts at the first audio sample in the file: exact by construction
@@ -165,12 +173,12 @@ export async function measureImportOffset(blob: Blob, probe: Pick<VideoProbe, 'a
       for (let i = 0; i < ref.length; i++) ref[i] += d[i] / nat.numberOfChannels;
     }
     const len = Math.min(ref.length, vid.samples.length, 20 * SYNC_SR) - SYNC_SR;
-    if (len < 2 * SYNC_SR) return -first;
+    if (len < 2 * SYNC_SR) return NATIVE_FALLBACK_OFFSET;
     const d = gccPhatRefine(ref, vid.samples, SYNC_SR, 0, Math.round(0.25 * SYNC_SR), len - Math.round(0.25 * SYNC_SR), 0.25);
-    return d === null ? -first : vid.t0 + d;
+    return d === null ? NATIVE_FALLBACK_OFFSET : vid.t0 + d;
   } catch (e) {
     if ((e as Error)?.name === 'AbortError') throw e;
-    return -first;
+    return NATIVE_FALLBACK_OFFSET;
   }
 }
 
@@ -196,42 +204,43 @@ export async function videoSoundForSpan(
     let srcRate = 0;
     let t0: number | null = null;
     let chans = 0;
-    const pieces: { at: number; data: Float32Array[] }[] = [];
+    // decoded straight into one buffer at the file's rate (sized from the span once the rate is known),
+    // then resampled once: at most two copies of the span in memory
+    let raw: AudioBuffer | null = null;
+    let used = 0;
     for await (const { buffer, timestamp } of sink.buffers(Math.max(0, vStart - 0.1), vEnd + 0.1)) {
       if (opts.signal?.aborted) throw abort();
-      srcRate = buffer.sampleRate;
-      t0 ??= timestamp;
-      const mono = opts.mono || buffer.numberOfChannels === 1;
-      chans = mono ? 1 : Math.min(2, buffer.numberOfChannels);
-      const data: Float32Array[] = [];
-      if (mono) {
-        const m = new Float32Array(buffer.length);
+      if (!raw) {
+        srcRate = buffer.sampleRate;
+        t0 = timestamp;
+        chans = opts.mono || buffer.numberOfChannels === 1 ? 1 : Math.min(2, buffer.numberOfChannels);
+        const cap = Math.ceil((vEnd + 0.1 - t0) * srcRate) + 2 * buffer.length + 16;
+        raw = new AudioBuffer({ length: Math.max(1, cap), numberOfChannels: chans, sampleRate: srcRate });
+      }
+      const at = Math.round((timestamp - t0!) * srcRate);
+      if (at >= raw.length) break;
+      if (chans === 1) {
+        const m = new Float32Array(Math.min(buffer.length, raw.length - at));
         for (let c = 0; c < buffer.numberOfChannels; c++) {
           const d = buffer.getChannelData(c);
-          for (let i = 0; i < d.length; i++) m[i] += d[i] / buffer.numberOfChannels;
+          for (let i = 0; i < m.length; i++) m[i] += d[i] / buffer.numberOfChannels;
         }
-        data.push(m);
-      } else for (let c = 0; c < chans; c++) data.push(buffer.getChannelData(c).slice());
-      pieces.push({ at: Math.round((timestamp - t0) * srcRate), data });
+        raw.copyToChannel(m, 0, at);
+      } else for (let c = 0; c < chans; c++) raw.copyToChannel(buffer.getChannelData(c).subarray(0, raw.length - at) as Float32Array<ArrayBuffer>, c, at);
+      used = Math.max(used, Math.min(raw.length, at + buffer.length));
       opts.onProgress?.(Math.min(1, (timestamp - vStart) / Math.max(0.001, vEnd - vStart)));
     }
-    if (t0 === null || !pieces.length) return { channels: [new Float32Array(0)], offsetFrame: 0 };
-    const last = pieces[pieces.length - 1];
-    const len = last.at + last.data[0].length;
-    const raw: Float32Array[] = Array.from({ length: chans }, () => new Float32Array(len));
-    for (const p of pieces) for (let c = 0; c < chans; c++) raw[c].set(p.data[Math.min(c, p.data.length - 1)].subarray(0, len - p.at), p.at);
-    pieces.length = 0;
-    let channels = raw;
+    if (t0 === null || !raw || !used) return { channels: [new Float32Array(0)], offsetFrame: 0 };
+    let channels = Array.from({ length: chans }, (_, c) => raw!.getChannelData(c).subarray(0, used));
     if (srcRate !== sr) {
-      const outLen = Math.ceil((len * sr) / srcRate);
+      const outLen = Math.ceil((used * sr) / srcRate);
       const ctx = new OfflineAudioContext(chans, outLen, sr);
-      const b = ctx.createBuffer(chans, len, srcRate);
-      for (let c = 0; c < chans; c++) b.copyToChannel(raw[c] as Float32Array<ArrayBuffer>, c);
       const node = ctx.createBufferSource();
-      node.buffer = b;
+      node.buffer = raw;
       node.connect(ctx.destination);
-      node.start();
+      node.start(0, 0, used / srcRate);
       const out = await ctx.startRendering();
+      raw = null;
       channels = Array.from({ length: chans }, (_, c) => out.getChannelData(c));
     }
     // channels[j] is at video time t0 + j / sr = song time t0 − offset + j / sr

@@ -91,6 +91,11 @@ export function WatermarkSection() {
               onChange={(e) => w.set({ text: e.target.value })}
             />
           </label>
+          {!w.text.trim() && !w.logo && (
+            <p className="text-[12px] text-warn" data-testid="watermark-empty">
+              Type your text (for example your channel link) or add a logo. Nothing is shown until you do.
+            </p>
+          )}
           <Toggle label="Spaced capitals" checked={w.spaced} onChange={(spaced) => w.set({ spaced })} />
           <Toggle label="Highlight your name" hint="The part after the last / is brighter" checked={w.highlightName} onChange={(highlightName) => w.set({ highlightName })} />
           <Select<FontKey> label="Font" value={w.font} onChange={(font) => w.set({ font })} options={(Object.keys(FONT_NAMES) as FontKey[]).map((f) => ({ value: f, label: FONT_NAMES[f] }))} />

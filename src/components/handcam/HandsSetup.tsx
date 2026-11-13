@@ -3,7 +3,7 @@
  *   Sync → Pick a frame → Corners → Keys → Framing → Save.
  * The calibration is saved on the song (Song.handVideo.calibration).
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import { ArrowLeft, ArrowRight, Check, Crosshair, FlipHorizontal2, Loader2, RotateCw, Sparkles, Volume2, Wand2, X, Eraser } from 'lucide-react';
 import { Button, ProgressBar, Segmented, Select, Slider, cn } from '../ui';
 import type { Difficulty, Song } from '../../lib/music/types';
@@ -27,14 +27,15 @@ import {
 } from '../../lib/handcam/calibration';
 import { autoMatch, blackCenters, findKeyboard, guessRange, rectify, toGray } from '../../lib/handcam/detect';
 import { createWarper, type Warper } from '../../lib/handcam/warp';
-import { autoSync, offsetSentence, syncReference } from '../../lib/handcam/syncRun';
+import { NUDGE_RANGE, autoSync, nudgeTo, offsetSentence, syncReference } from '../../lib/handcam/syncRun';
 import { videoSoundForSpan } from '../../lib/handcam/media';
 import { isBlack, noteName } from '../../lib/music/theory';
 import { formatTime } from '../../lib/music/theory';
 import type { VisualSettings } from '../../lib/render/settings';
 import type { ExportSettings } from '../../lib/export/types';
 import type { WatermarkSettings } from '../../lib/watermark/types';
-import { cpuCanvas, useCanvasUrl, useFrameUrl, useHandFrames, useVideoFrame, type FrameImage } from './hooks';
+import { cpuCanvas, drawOriented, useHandFrames, useVideoFrame, type FrameImage } from './hooks';
+import { FrameCanvas } from './FrameCanvas';
 import { PreviewPainter } from './previewPainter';
 import { QuadEditor } from './QuadEditor';
 
@@ -43,13 +44,10 @@ const STEP_TITLE: Record<Step, string> = { sync: 'Sync', frame: 'Pick a frame', 
 const CORNER_LABELS = ['Lowest key, back', 'Highest key, back', 'Highest key, front', 'Lowest key, front'];
 const LEVEL_LABEL = { high: 'High', medium: 'Medium', low: 'Low' };
 
-/** the frame as the user sees it (turned / mirrored), as a canvas */
+/** the frame as the user sees it (turned / mirrored), in ordinary memory for reading its pixels (detection) */
 function orientCanvas(src: CanvasImageSource, w: number, h: number, cal: Pick<KeyboardCalibration, 'turn' | 'mirror'>): HTMLCanvasElement {
   const { canvas: c, ctx } = cpuCanvas(w, h);
-  ctx.translate(w / 2, h / 2);
-  if (cal.turn === 180) ctx.rotate(Math.PI);
-  if (cal.mirror) ctx.scale(-1, 1);
-  ctx.drawImage(src, -w / 2, -h / 2, w, h);
+  drawOriented(ctx, src, cal, 0, 0, w, h);
   return c;
 }
 
@@ -132,9 +130,11 @@ export interface HandsSetupProps {
   setLayout: (l: HandsLayout) => void;
   onClose: () => void;
   onSave: (hv: HandVideo) => void;
+  /** set to this screen's close (asks first when there are unsaved changes): Escape in the dialog under it */
+  closeRef?: MutableRefObject<(() => void) | null>;
 }
 
-export function HandsSetup({ song, difficulty, visual, settings, watermark, logo, autoStart, setLayout, onClose, onSave }: HandsSetupProps) {
+export function HandsSetup({ song, difficulty, visual, settings, watermark, logo, autoStart, setLayout, onClose, onSave, closeRef }: HandsSetupProps) {
   const hv0 = song.handVideo!;
   const [hv, setHv] = useState<HandVideo>(hv0);
   const [cal, setCal] = useState<KeyboardCalibration>(() => hv0.calibration ?? defaultCalibration({ frameTime: Math.min(hv0.duration / 2, Math.max(0, hv0.offset + 2)) }));
@@ -228,7 +228,7 @@ export function HandsSetup({ song, difficulty, visual, settings, watermark, logo
   useEffect(() => () => void listen.current?.close().catch(() => {}), []);
 
   // ---------- frame & corners ----------
-  const orientedUrl = useCanvasUrl(() => (still ? orientCanvas(still.canvas, still.w, still.h, cal) : null), [still, cal.turn, cal.mirror]);
+  const orient = useMemo(() => ({ turn: cal.turn, mirror: cal.mirror }), [cal.turn, cal.mirror]);
   const [detectMsg, setDetectMsg] = useState<string | null>(null);
   const detect = (silent = false) => {
     if (!still) return;
@@ -306,11 +306,16 @@ export function HandsSetup({ song, difficulty, visual, settings, watermark, logo
     if (step !== 'keys' || !stripCanvas || !still) return;
     drawLanes(stripCanvas.getContext('2d')!, cal, stripW, stripH, v0, v1);
   }, [step, stripCanvas, still, cal, stripW, stripH]);
-  const jumpToC4 = () => {
+  /** scrolls the zoomed strip to the left end, middle C or the right end */
+  const jumpTo = (where: 'left' | 'c4' | 'right') => {
     const el = stripWrap.current;
     if (!el) return;
-    const u = (uOfWhite(cal, Math.max(0, whiteKeys(cal.lo, 60).length - 1)) + 0.5 / n) * stripW;
-    el.scrollLeft = Math.max(0, u - el.clientWidth / 2);
+    if (where === 'left') el.scrollLeft = 0;
+    else if (where === 'right') el.scrollLeft = el.scrollWidth;
+    else {
+      const u = (uOfWhite(cal, Math.max(0, whiteKeys(cal.lo, 60).length - 1)) + 0.5 / n) * stripW;
+      el.scrollLeft = Math.max(0, u - el.clientWidth / 2);
+    }
   };
 
   // ---------- framing / sync preview ----------
@@ -344,12 +349,32 @@ export function HandsSetup({ song, difficulty, visual, settings, watermark, logo
       logo,
     });
   }, [step, calibrated, song, difficulty, visual, settings, songT, draftHv, syncFrame, watermark, logo]);
-  const syncUrl = useFrameUrl(step === 'sync' && !calibrated ? syncFrame : null);
   // before calibration: a flash dot on the frame when a note starts
   const noteNow = notes.some((x) => Math.abs(x.start - songT) < 0.06);
 
   const canNext = step === 'corners' ? cornersValid(cal.corners) : step === 'sync' ? sync.status !== 'running' : true;
-  const save = () => onSave({ ...hv, calibration: { ...cal, frameTime: cal.frameTime } });
+  const last = si === steps.length - 1;
+  /** the keyboard setup is saved once it was set up before, or every step was gone through */
+  const withCal = !!hv0.calibration || last;
+  const save = () => onSave(withCal ? { ...hv, calibration: { ...cal } } : { ...hv, calibration: undefined });
+  // unsaved changes: the sync / nudge, or the keyboard setup (when it would be saved)
+  const [initial] = useState(() => JSON.stringify([hv0.offset, hv0.sync ?? null, hv0.calibration ?? null]));
+  const dirty = JSON.stringify([hv.offset, hv.sync ?? null, hv0.calibration || si > 0 ? cal : null]) !== initial;
+  const requestClose = () => {
+    if (dirty && !window.confirm('Close without saving? Your changes to the hands video setup will be lost.')) return;
+    onClose();
+  };
+  const closeNow = useRef(requestClose);
+  closeNow.current = requestClose;
+  useEffect(() => {
+    if (!closeRef) return;
+    closeRef.current = () => closeNow.current();
+    return () => {
+      closeRef.current = null;
+    };
+  }, [closeRef]);
+  // a sync or nudge can be saved on its own; the keyboard setup once it exists
+  const canSaveEarly = !last && (!!hv0.calibration || step === 'sync') && sync.status !== 'running';
   const outW = settings.orientation === 'portrait' ? 9 : settings.orientation === 'square' ? 1 : 16;
   const outH = settings.orientation === 'portrait' ? 16 : settings.orientation === 'square' ? 1 : 9;
 
@@ -363,20 +388,26 @@ export function HandsSetup({ song, difficulty, visual, settings, watermark, logo
           <canvas ref={previewRef} className="mx-auto block max-h-[52vh] max-w-full rounded-md" style={{ aspectRatio: `${outW} / ${outH}` }} aria-label="Preview with the notes falling onto your video" />
         ) : (
           <div className="relative mx-auto max-w-full" style={{ aspectRatio: String(aspect), maxHeight: '52vh' }}>
-            {syncFrame && <img alt="Your video at this point of the song" className="h-full w-full rounded-md object-contain" src={syncUrl ?? ''} />}
+            {syncFrame ? (
+              <FrameCanvas img={syncFrame} className="h-full w-full rounded-md object-contain" label="Your video at this point of the song" />
+            ) : (
+              <div className="flex h-full min-h-40 items-center justify-center rounded-md bg-black/40 text-ink-300">
+                <Loader2 className="animate-spin" size={20} />
+              </div>
+            )}
             <span className={cn('absolute top-3 right-3 h-6 w-6 rounded-full border-2 border-white transition-colors', noteNow ? 'bg-accent-400 shadow-[0_0_18px_6px_rgba(140,160,255,0.8)]' : 'bg-black/40')} aria-label={noteNow ? 'A note starts here' : undefined} />
           </div>
         );
       case 'frame':
         return still ? (
-          <img alt="The frame used to set up the keyboard" className="mx-auto block max-h-[52vh] max-w-full rounded-md" src={orientedUrl ?? ''} />
+          <FrameCanvas img={still} orient={orient} className="mx-auto block max-h-[52vh] max-w-full rounded-md" label="The frame used to set up the keyboard" />
         ) : (
           <div className="flex h-56 items-center justify-center"><Loader2 className="animate-spin" size={20} /></div>
         );
       case 'corners':
         return (
           <div className="flex flex-col gap-3">
-            {orientedUrl && <QuadEditor image={orientedUrl} aspect={aspect} corners={cal.corners} labels={CORNER_LABELS} onChange={(corners) => setCal((c) => ({ ...c, corners }))} maxHeight="46vh" />}
+            {still && <QuadEditor image={still} orient={orient} aspect={aspect} corners={cal.corners} labels={CORNER_LABELS} onChange={(corners) => setCal((c) => ({ ...c, corners }))} maxHeight="46vh" />}
             <div ref={stripWrap} className="overflow-hidden rounded-md bg-black">
               <canvas ref={stripRef} className="block w-full" aria-label="Your keyboard, straightened" />
             </div>
@@ -385,16 +416,37 @@ export function HandsSetup({ song, difficulty, visual, settings, watermark, logo
       case 'keys':
         return (
           <div className="flex flex-col gap-2">
-            {orientedUrl && <img alt="" aria-hidden className="mx-auto hidden max-h-[24vh] max-w-full rounded-md sm:block" src={orientedUrl} />}
+            {still && <FrameCanvas img={still} orient={orient} className="mx-auto hidden max-h-[24vh] max-w-full rounded-md sm:block" />}
             <div ref={stripWrap} className={cn('rounded-md bg-black', zoom > 1 ? 'overflow-x-auto' : 'overflow-hidden')} data-testid="key-strip">
               <canvas ref={stripRef} style={{ width: stripW, height: stripH }} className="block" aria-label="Lanes over your keyboard" />
             </div>
             <div className="flex flex-wrap items-center gap-2 text-[12px] text-ink-300">
-              <Segmented size="sm" ariaLabel="Zoom" value={String(zoom)} onChange={(z) => setZoom(Number(z))} options={[{ value: '1', label: '1×' }, { value: '3', label: '3×' }]} />
+              <Segmented
+                size="sm"
+                ariaLabel="Zoom"
+                value={String(zoom)}
+                onChange={(z) => setZoom(Number(z))}
+                options={[
+                  { value: '1', label: '1×' },
+                  { value: '2', label: '2×' },
+                  { value: '3', label: '3×' },
+                  { value: '5', label: '5×' },
+                ]}
+              />
               {zoom > 1 && (
-                <button className="rounded-full border border-ink-600 px-2.5 py-1 hover:border-ink-400" onClick={jumpToC4}>
-                  Jump to middle C
-                </button>
+                <span className="flex flex-wrap gap-1.5" role="group" aria-label="Go to">
+                  {(
+                    [
+                      ['left', 'Left end'],
+                      ['c4', 'Middle C'],
+                      ['right', 'Right end'],
+                    ] as const
+                  ).map(([k, label]) => (
+                    <button key={k} className="focus-ring rounded-full border border-ink-600 px-2.5 py-1 hover:border-ink-400" onClick={() => jumpTo(k)}>
+                      {label}
+                    </button>
+                  ))}
+                </span>
               )}
               <span>Pink lines: white keys. Blue boxes: black keys.</span>
             </div>
@@ -452,18 +504,18 @@ export function HandsSetup({ song, difficulty, visual, settings, watermark, logo
             )}
             <Slider
               label="Nudge"
-              min={found - 5}
-              max={found + 5}
+              min={found - NUDGE_RANGE}
+              max={found + NUDGE_RANGE}
               step={0.01}
               value={hv.offset}
-              onChange={(offset) => setHv((h) => ({ ...h, offset, sync: h.sync ? { ...h.sync, method: h.sync.method } : { method: 'manual', found: offset, confidence: 0, level: 'low' } }))}
+              onChange={(offset) => setHv((h) => nudgeTo(h, offset))}
               format={(x) => `${x - found >= 0 ? '+' : ''}${((x - found) * 1000).toFixed(0)} ms`}
             />
             <div className="flex flex-wrap gap-2">
-              <Button size="sm" onClick={() => setHv((h) => ({ ...h, offset: Math.round((h.offset - 0.01) * 1000) / 1000 }))}>
+              <Button size="sm" onClick={() => setHv((h) => nudgeTo(h, h.offset - 0.01))}>
                 −10 ms
               </Button>
-              <Button size="sm" onClick={() => setHv((h) => ({ ...h, offset: Math.round((h.offset + 0.01) * 1000) / 1000 }))}>
+              <Button size="sm" onClick={() => setHv((h) => nudgeTo(h, h.offset + 0.01))}>
                 +10 ms
               </Button>
               <Button size="sm" variant="ghost" onClick={() => setHv((h) => ({ ...h, offset: found }))}>
@@ -557,7 +609,7 @@ export function HandsSetup({ song, difficulty, visual, settings, watermark, logo
             </div>
             {detectMsg && step === 'keys' && <p className="text-[12px] text-ink-300">{detectMsg}</p>}
             {outside > 0 && <p className="text-[12px] text-warn">{outside} {outside === 1 ? 'note is' : 'notes are'} outside the keys in your video and won’t be shown.</p>}
-            <p className="text-[11.5px] text-ink-400">Line up the lanes with the real keys. Zoom in to check both ends.</p>
+            <p className="text-[11.5px] text-ink-400">Line up the lanes with the real keys. Zoom in and check the left end, middle C and the right end.</p>
           </div>
         );
       case 'framing':
@@ -598,7 +650,7 @@ export function HandsSetup({ song, difficulty, visual, settings, watermark, logo
               Step {si + 1} of {steps.length} · {STEP_TITLE[step]}
             </p>
           </div>
-          <button className="focus-ring rounded-lg p-1.5 text-ink-300 hover:bg-ink-800 hover:text-ink-50" aria-label="Close" onClick={onClose}>
+          <button className="focus-ring rounded-lg p-1.5 text-ink-300 hover:bg-ink-800 hover:text-ink-50" aria-label="Close" onClick={requestClose}>
             <X size={18} />
           </button>
         </header>
@@ -615,15 +667,22 @@ export function HandsSetup({ song, difficulty, visual, settings, watermark, logo
           <Button variant="ghost" icon={<ArrowLeft size={15} />} disabled={si === 0} onClick={() => setSi((i) => Math.max(0, i - 1))}>
             Back
           </Button>
-          {si < steps.length - 1 ? (
-            <Button variant="primary" icon={<ArrowRight size={15} />} disabled={!canNext} onClick={() => setSi((i) => i + 1)}>
-              Next
-            </Button>
-          ) : (
-            <Button variant="primary" icon={<Check size={15} />} onClick={save}>
-              Save
-            </Button>
-          )}
+          <div className="flex items-center gap-2">
+            {canSaveEarly && (
+              <Button icon={<Check size={15} />} onClick={save} data-testid="hands-save-early" title={hv0.calibration ? 'Save all your changes now' : 'Save the sync now (set up the keyboard later)'}>
+                Save
+              </Button>
+            )}
+            {!last ? (
+              <Button variant="primary" icon={<ArrowRight size={15} />} disabled={!canNext} onClick={() => setSi((i) => i + 1)}>
+                Next
+              </Button>
+            ) : (
+              <Button variant="primary" icon={<Check size={15} />} onClick={save} data-testid="hands-save">
+                Save
+              </Button>
+            )}
+          </div>
         </footer>
       </div>
     </div>

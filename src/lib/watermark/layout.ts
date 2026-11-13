@@ -57,6 +57,16 @@ const margin = (W: number, H: number) => 0.04 * Math.min(W, H);
  * Where everything goes. `band`: the space reserved at the bottom (hands video layout), the bottom
  * line is centered in it; `avoidBottom`: the Studio keyboard's height (a bottom watermark sits above it).
  */
+/**
+ * The watermark with its logo moved out of `corner` (the picture-in-picture video's corner) to the other
+ * side, so the logo is never drawn over the small video.
+ */
+export function logoClearOf(w: WatermarkSettings, corner: 'tl' | 'tr' | 'bl' | 'br' | null | undefined): WatermarkSettings {
+  if (!corner || !w.logo || w.logo.position !== corner) return w;
+  const other = `${corner[0]}${corner[1] === 'l' ? 'r' : 'l'}` as WatermarkPosition;
+  return { ...w, logo: { ...w.logo, position: other } };
+}
+
 export function watermarkLayout(w: WatermarkSettings, W: number, H: number, measure: Measure, opts: { band?: number; avoidBottom?: number; logoAspect?: number } = {}): WatermarkLayout {
   const px = textPx(w, W, H);
   const font = fontFor(w, px);

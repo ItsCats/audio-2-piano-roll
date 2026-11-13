@@ -1,15 +1,42 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { drawOriented, type FrameImage, type Orient } from './hooks';
+import { FrameCanvas } from './FrameCanvas';
+
+const LOUPE = 104;
+const Z = 3;
+
+/** the picture around one point, magnified (drawn from the frame itself: nothing encoded) */
+function Loupe({ image, orient, w, h, px, py }: { image: FrameImage; orient?: Orient | null; w: number; h: number; px: number; py: number }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const c = ref.current;
+    const ctx = c?.getContext('2d');
+    if (!c || !ctx) return;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const s = Math.round(LOUPE * dpr);
+    if (c.width !== s) c.width = c.height = s;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, LOUPE, LOUPE);
+    drawOriented(ctx, image.canvas, orient, LOUPE / 2 - px * Z, LOUPE / 2 - py * Z, w * Z, h * Z);
+  }, [image, orient, w, h, px, py]);
+  return <canvas ref={ref} className="absolute inset-0 h-full w-full" />;
+}
 
 /** Four draggable corners (fractions 0..1 of the picture) over an image, with a magnifier while dragging. */
 export function QuadEditor({
   image,
+  orient,
   aspect,
   corners,
   labels,
   onChange,
   maxHeight = '52vh',
 }: {
-  image: string;
+  /** the frame, as decoded */
+  image: FrameImage;
+  /** how it is shown (Turn 180°, Mirror) */
+  orient?: Orient | null;
   /** width ÷ height of the picture */
   aspect: number;
   corners: [number, number][];
@@ -67,8 +94,6 @@ export function QuadEditor({
     setSaid(`${labels[i]}: ${where(next[i])}`);
   };
   const pts = corners.map((c) => `${c[0] * 1000},${c[1] * 1000}`).join(' ');
-  const LOUPE = 104;
-  const Z = 3;
   let loupe = null;
   if (active !== null && size.w) {
     const px = corners[active][0] * size.w;
@@ -83,12 +108,9 @@ export function QuadEditor({
           top: above ? py - LOUPE - 28 : py + 28,
           width: LOUPE,
           height: LOUPE,
-          backgroundImage: `url(${image})`,
-          backgroundRepeat: 'no-repeat',
-          backgroundSize: `${size.w * Z}px ${size.h * Z}px`,
-          backgroundPosition: `${LOUPE / 2 - px * Z}px ${LOUPE / 2 - py * Z}px`,
         }}
       >
+        <Loupe image={image} orient={orient} w={size.w} h={size.h} px={px} py={py} />
         <span className="absolute top-1/2 left-0 h-px w-full bg-accent-400" />
         <span className="absolute top-0 left-1/2 h-full w-px bg-accent-400" />
       </div>
@@ -97,7 +119,7 @@ export function QuadEditor({
   return (
     <div className="flex justify-center px-4 select-none sm:px-1" data-testid="quad-editor">
       <div ref={box} className="relative w-full" style={{ aspectRatio: String(aspect), maxHeight, maxWidth: `calc(${maxHeight} * ${aspect})` }}>
-        <img src={image} alt="A frame from your video" draggable={false} className="absolute inset-0 block h-full w-full rounded-md" />
+        <FrameCanvas img={image} orient={orient} className="absolute inset-0 block h-full w-full rounded-md" label="A frame from your video" />
         <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden>
           <path d={`M0,0H1000V1000H0Z M${corners.map((c) => `${c[0] * 1000},${c[1] * 1000}`).join(' L')} Z`} fill="rgba(0,0,0,0.4)" fillRule="evenodd" />
           <polygon points={pts} fill="none" stroke="var(--color-accent-400, #8aa2ff)" strokeWidth={2} vectorEffect="non-scaling-stroke" />

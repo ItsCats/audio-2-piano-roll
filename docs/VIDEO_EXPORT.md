@@ -98,8 +98,13 @@ corner. Code: `src/lib/handcam/*`, UI: `src/components/handcam/*`.
 **Setup** (Sync > Pick a frame > Corners > Keys > Framing, saved per song): drag the 4 corners onto the
 keys (auto-suggested from the long horizontal edge and the key pattern; a "Clean frame" median hides
 the hands; Turn 180° / Mirror), see the keyboard straightened by a perspective warp, pick 88 / 76 / 61
-keys or any range and match the lanes to the real keys (live overlay, Auto-match, 3× zoom), then set
-where the notes land, how much of the hands area shows and which keys are shown.
+keys or any range and match the lanes to the real keys (live overlay, Auto-match, zoom up to 5× with
+Left end / Middle C / Right end), then set where the notes land, how much of the hands area shows and
+which keys are shown. Save is on every step once the keyboard was set up before (on the Sync step it
+saves just the sync); closing with unsaved changes asks first. The setup's pictures are drawn straight
+into canvases (never encoded as images), and all previews of a song share one open file that decodes
+one frame at a time; the dialog's preview and thumbnail let go of the file while the setup or an export
+runs, so the page stays responsive while the video is read and synced.
 
 **Export**: each output frame decodes the exact video frame for its time (mediabunny
 `VideoSampleSink.samplesAtTimestamps`: the last frame starting at or before that time, so variable
@@ -115,10 +120,13 @@ A text line (e.g. YOUTUBE.COM/YOURNAME, spaced capitals, the name after the last
 of the title-page fonts, with size, color, opacity and position (bottom center by default), and an
 optional PNG/SVG logo (downscaled to 512 px, stored in the `media` store). Shown on every roll frame
 and, if chosen, on the title page and end card. Saved as your default (localStorage
-`piano2vision-watermark`). With "hands at the bottom" a band under the video is kept free for it.
+`piano2vision-watermark`). With "hands at the bottom" a band under the video is kept free for it; with
+picture-in-picture a logo in the small video's corner moves to the other side. The text and logo are
+drawn once into a small picture of their own, so each frame costs one image copy.
 
 **Tests**: `tests/unit/handcam/*` (homography, lanes for 61/76/88 keys, output layout, auto-sync on
-synthetic signals at different sample rates, watermark layout, the v2 → v3 database upgrade);
+synthetic signals at different sample rates, watermark layout, the v2 → v3 database upgrade, the
+sync worker fallback, the nudge range, gaps in streamed sound, damaged stored hands videos);
 `node tests/e2e/handcam-export.mjs` (dev server: lanes, sync, watermark, length, PiP + WebM + title
 page); `node tests/e2e/handcam.mjs --dist <build> [--out DIR]` (the whole flow on the production build:
 import, setup by dragging, export, cancel, auto-sync of a video added later against a recording and

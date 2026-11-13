@@ -226,12 +226,13 @@ async function dismissToasts(page) {
 }
 async function saveSetup(page) {
   await dismissToasts(page);
+  // through every step to the last one's Save (an earlier step's Save keeps only what was set up before)
   for (let i = 0; i < 6; i++) {
-    const save = setup(page).getByRole('button', { name: 'Save' });
+    const save = setup(page).getByTestId('hands-save');
     if (await save.isVisible().catch(() => false)) break;
     await nextStep(page);
   }
-  await setup(page).getByRole('button', { name: 'Save' }).click();
+  await setup(page).getByTestId('hands-save').click();
   await setup(page).waitFor({ state: 'detached' });
   await page.waitForTimeout(1200); // the Studio saves the song after 600 ms
 }
@@ -243,6 +244,16 @@ try {
   // sound-loading icon) under the dialog's blurred backdrop keep it so busy that reading a
   // frame back (the setup screen's pictures) takes many seconds
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2, acceptDownloads: true, reducedMotion: 'reduce' });
+  // the longest the page was frozen (ms): a timer that should fire every 100 ms
+  await ctx.addInitScript(() => {
+    window.__lag = 0;
+    let last = performance.now();
+    setInterval(() => {
+      const n = performance.now();
+      window.__lag = Math.max(window.__lag, n - last - 100);
+      last = n;
+    }, 100);
+  });
   page = await ctx.newPage();
   page.on('console', (m) => {
     if (m.type() !== 'error') return;
@@ -270,9 +281,9 @@ try {
   await setup(page).waitFor();
   check('setup: an imported video is already in sync', /already in sync/.test(await setup(page).getByTestId('sync-step').innerText()));
   await nextStep(page); // pick a frame
-  await setup(page).getByAltText('The frame used to set up the keyboard').waitFor({ timeout: 120000 });
+  await setup(page).getByRole('img', { name: 'The frame used to set up the keyboard' }).waitFor({ timeout: 120000 });
   await nextStep(page); // corners
-  const qe = setup(page).getByTestId('quad-editor').locator('img');
+  const qe = setup(page).getByTestId('quad-editor').locator('canvas').first();
   await qe.waitFor({ timeout: 30000 });
   await page.waitForTimeout(800); // auto-detection runs once
   const dragCorners = async () => {
@@ -450,9 +461,12 @@ try {
   // ---------------- 4a. add a video that starts later: sync against the song's recording ----------------
   {
     await hs.scrollIntoViewIfNeeded();
+    await page.evaluate(() => (window.__lag = 0));
     await hs.getByTestId('hands-video-file').setInputFiles(videoB);
     await setup(page).waitFor({ timeout: 60000 });
     const txt = await waitSync(page);
+    const lag = await page.evaluate(() => window.__lag);
+    check('add a hands video: the page stays responsive while it opens and syncs (longest freeze < 3 s)', lag < 3000, `${Math.round(lag)} ms`);
     await page.waitForTimeout(1200);
     await shot(page, 'sync-desktop.png');
     await saveSetup(page);

@@ -64,7 +64,7 @@ export async function renderWav(
 /** Portable project file (notes, arrangements, tempo — not the original audio). */
 export function exportProject(song: Song): void {
   // the format id predates the Piano2Vision name; kept so older project files still import
-  const data = { format: 'pianovision-project', version: 1, exportedAt: new Date().toISOString(), song: { ...song, thumbnail: undefined } };
+  const data = { format: 'pianovision-project', version: 1, exportedAt: new Date().toISOString(), song: { ...song, thumbnail: undefined, handVideo: undefined } }; // the video file isn't in the project file
   downloadBlob(new Blob([JSON.stringify(data)], { type: 'application/json' }), `${safeFileName(song.title)}.piano2vision.json`);
 }
 
@@ -73,6 +73,8 @@ export async function importProject(file: File): Promise<Song> {
   const data = JSON.parse(await file.text());
   if (data?.format !== 'pianovision-project' || !data.song?.arrangements) throw new Error('Not a Piano2Vision project file.');
   const song: Song = { ...data.song, id: newId(), hasAudio: false, hasPosteriors: false, updatedAt: Date.now() };
+  // a hands video's file is never in a project file (older files may still name one)
+  delete song.handVideo;
   for (const d of ['easy', 'medium', 'hard'] as const) {
     if (!Array.isArray(song.arrangements[d]?.notes)) throw new Error('Project file is missing arrangement data.');
     bumpNoteIds(song.arrangements[d].notes);

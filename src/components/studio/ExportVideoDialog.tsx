@@ -13,7 +13,7 @@ import { useWatermark, watermarkSettings } from '../../state/watermarkStore';
 import { watermarkActive, type WatermarkSettings } from '../../lib/watermark/types';
 import type { HandsLayout } from '../../lib/handcam/types';
 import { PreviewPainter } from '../handcam/previewPainter';
-import { useHandFrames, useLogo, useVideoFrame } from '../handcam/hooks';
+import { useHandFrames, useHeldFrame, useLogo, useVideoFrame } from '../handcam/hooks';
 import { HandsSection } from '../handcam/HandsSection';
 import { WatermarkSection } from '../handcam/WatermarkSection';
 import { HandsSetup } from '../handcam/HandsSetup';
@@ -60,7 +60,8 @@ function useStoredOriginal(songId: string | undefined, hasAudio: boolean | undef
   return state.has ? 'yes' : 'no';
 }
 
-function CompositionPreview({ settings, previewTime, layout, watermark }: { settings: ExportSettings; previewTime: number; layout: HandsLayout; watermark: WatermarkSettings | null }) {
+/** `active` false (the setup screen is open, an export runs): the hands video file is let go of and the last frame stays. */
+function CompositionPreview({ settings, previewTime, layout, watermark, active }: { settings: ExportSettings; previewTime: number; layout: HandsLayout; watermark: WatermarkSettings | null; active: boolean }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const song = useStudio((s) => s.song)!;
   const difficulty = useStudio((s) => s.difficulty);
@@ -97,8 +98,8 @@ function CompositionPreview({ settings, previewTime, layout, watermark }: { sett
   const decalImg = useDecalImage(visual.decal);
   const restored = useCanvasRestored(ref);
   const hv = layout !== 'off' ? (song.handVideo ?? null) : null;
-  const { frames } = useHandFrames(song, !!hv);
-  const frame = useVideoFrame(frames, hv ? previewTime + hv.offset : null, 60);
+  const { frames } = useHandFrames(song, !!hv && active);
+  const frame = useHeldFrame(useVideoFrame(frames, hv ? previewTime + hv.offset : null, 60), hv ? `${song.id}|${hv.addedAt}|${previewTime + hv.offset}` : '');
   const logo = useLogo(watermark?.logo?.mediaId);
   const painter = useRef<PreviewPainter | null>(null);
   useEffect(
@@ -177,6 +178,8 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
   const wmAll = useWatermark(useShallow(watermarkSettings));
   const watermark = watermarkActive(wmAll) ? wmAll : null;
   const [setup, setSetup] = useState<{ autoStart: boolean } | null>(null);
+  /** the setup screen's own close (it asks before throwing away unsaved changes) */
+  const setupClose = useRef<(() => void) | null>(null);
 
   useEffect(() => () => {
     if (resultUrl) URL.revokeObjectURL(resultUrl);
@@ -273,7 +276,7 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
   return (
     // while the hands video setup covers the screen, the dialog under it is not drawn (a blurred backdrop
     // redrawn under it slows everything else that needs the graphics process) and Escape closes the setup only
-    <Modal open={open} onClose={setup ? () => setSetup(null) : close} title="Export video" wide hidden={!!(setup && song.handVideo)}>
+    <Modal open={open} onClose={setup ? () => (setupClose.current ? setupClose.current() : setSetup(null)) : close} title="Export video" wide hidden={!!(setup && song.handVideo)}>
       <div className="grid gap-0 lg:grid-cols-[1fr_340px]">
         <div className="flex flex-col gap-3 border-b border-ink-700 p-4 lg:border-r lg:border-b-0">
           {result && resultUrl ? (
@@ -299,7 +302,7 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
             </div>
           ) : (
             <>
-              <CompositionPreview settings={settings} previewTime={previewTime} layout={handsLayout} watermark={watermark} />
+              <CompositionPreview settings={settings} previewTime={previewTime} layout={handsLayout} watermark={watermark} active={!setup && !busy} />
               <div className="flex items-center gap-3">
                 <span className="w-10 font-mono text-[11.5px] text-ink-300">{formatTime(previewTime)}</span>
                 <input
@@ -448,7 +451,7 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
             {longExport && <p className="text-[12px] text-warn">Long export — rendering can take several minutes. Keep this tab open.</p>}
           </div>
 
-          <HandsSection song={song} settings={settings} setExport={setExport} updateSong={updateSong} onSetup={(autoStart) => setSetup({ autoStart })} webCodecs={webCodecs} />
+          <HandsSection song={song} settings={settings} setExport={setExport} updateSong={updateSong} onSetup={(autoStart) => setSetup({ autoStart })} webCodecs={webCodecs} paused={!!setup || busy} />
           <div className="flex flex-col gap-3 border-b border-ink-700 p-4">
             <span className="text-[11px] font-semibold tracking-[0.08em] text-ink-300 uppercase">Content</span>
             <div className="flex flex-col gap-2">
@@ -552,7 +555,7 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
         </footer>
       )}
       {setup && song.handVideo && (
-        <HandsSetupHost song={song} difficulty={difficulty} visual={visual} settings={settings} watermark={watermark} autoStart={setup.autoStart} setLayout={(handsLayout) => setExport({ handsLayout })} onClose={() => setSetup(null)} onSave={(hv) => { updateSong({ handVideo: hv }); if (settings.handsLayout === 'off') setExport({ handsLayout: 'bottom' }); setSetup(null); }} />
+        <HandsSetupHost song={song} difficulty={difficulty} visual={visual} settings={settings} watermark={watermark} autoStart={setup.autoStart} closeRef={setupClose} setLayout={(handsLayout) => setExport({ handsLayout })} onClose={() => setSetup(null)} onSave={(hv) => { updateSong({ handVideo: hv }); if (settings.handsLayout === 'off') setExport({ handsLayout: hv.calibration ? 'bottom' : 'pip' }); setSetup(null); }} />
       )}
     </Modal>
   );

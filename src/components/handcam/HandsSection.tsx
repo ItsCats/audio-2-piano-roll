@@ -3,6 +3,7 @@
  * automatically), set it up, choose the layout (under the falling notes, or a picture-in-picture).
  */
 import { useRef, useState } from 'react';
+import { FrameCanvas } from './FrameCanvas';
 import { Loader2, RefreshCw, SlidersHorizontal, Trash2, Video } from 'lucide-react';
 import { Button, Segmented, Slider, Toggle, cn } from '../ui';
 import type { Song } from '../../lib/music/types';
@@ -14,7 +15,7 @@ import { HEVC_MESSAGE, handVideoFrom, probeVideo } from '../../lib/handcam/media
 import { deleteHandVideoBlob, requestPersistence, saveHandVideoBlob, storageEstimate } from '../../lib/storage/db';
 import { isMemoryConstrained, pageDeviceInfo } from '../../lib/transcription/backendChoice';
 import { checkVideoForKeeping } from '../import/HandsVideoImport';
-import { useFrameUrl, useHandFrames, useVideoFrame } from './hooks';
+import { useHandFrames, useHeldFrame, useVideoFrame } from './hooks';
 import { formatTime } from '../../lib/music/theory';
 
 const LEVEL_LABEL = { high: 'High', medium: 'Medium', low: 'Low' } as const;
@@ -39,15 +40,15 @@ export function syncSummary(hv: HandVideo): string {
   return `${offsetSentence(hv.offset)} Match: ${LEVEL_LABEL[s.level]}.`;
 }
 
-function Thumb({ song }: { song: Song }) {
-  const { frames, error } = useHandFrames(song);
+/** A small picture of the video (paused: the file is let go of, the last picture stays). */
+function Thumb({ song, paused }: { song: Song; paused: boolean }) {
+  const { frames, error } = useHandFrames(song, !paused);
   const hv = song.handVideo!;
   const t = hv.calibration?.frameTime ?? Math.min(hv.duration / 2, 2);
-  const img = useVideoFrame(frames, t, 0);
-  const url = useFrameUrl(img, 192, 0.75);
+  const img = useHeldFrame(useVideoFrame(frames, t, 0), `${song.id}|${hv.addedAt}|${t}`);
   return (
     <div className="flex h-[54px] w-[96px] shrink-0 items-center justify-center overflow-hidden rounded-md bg-black ring-1 ring-white/10">
-      {url ? <img src={url} alt="Your hands video" className="h-full w-full object-cover" /> : error ? <Video size={16} className="text-ink-400" /> : <Loader2 size={14} className="animate-spin text-ink-400" />}
+      {img ? <FrameCanvas img={img} maxW={192} className="h-full w-full object-cover" label="Your hands video" /> : error ? <Video size={16} className="text-ink-400" /> : <Loader2 size={14} className="animate-spin text-ink-400" />}
     </div>
   );
 }
@@ -59,6 +60,7 @@ export function HandsSection({
   updateSong,
   onSetup,
   webCodecs,
+  paused = false,
 }: {
   song: Song;
   settings: ExportSettings;
@@ -67,6 +69,8 @@ export function HandsSection({
   /** open the setup screen (autoStart: run the automatic sync first) */
   onSetup: (autoStart: boolean) => void;
   webCodecs: boolean;
+  /** the setup screen or an export is running: the thumbnail lets go of the video */
+  paused?: boolean;
 }) {
   const input = useRef<HTMLInputElement>(null);
   const [adding, setAdding] = useState<string | null>(null);
@@ -156,7 +160,7 @@ export function HandsSection({
       ) : (
         <>
           <div className="flex items-start gap-3">
-            <Thumb song={song} />
+            <Thumb song={song} paused={paused} />
             <div className="flex min-w-0 flex-col gap-0.5 text-[12px]">
               <span className="truncate text-ink-100" title={hv.fileName}>
                 {hv.fileName}
@@ -176,9 +180,7 @@ export function HandsSection({
             <Button size="sm" icon={adding ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />} disabled={!!adding} onClick={() => input.current?.click()}>
               {adding ?? 'Change video'}
             </Button>
-            <Button size="sm" variant="ghost" icon={<Trash2 size={14} />} onClick={() => void remove()}>
-              Remove
-            </Button>
+            <Button size="sm" variant="ghost" icon={<Trash2 size={14} />} onClick={() => void remove()} aria-label="Remove the hands video" title="Remove the hands video" />
           </div>
           <div className="flex flex-col gap-1">
             <span className="text-[12.5px] text-ink-200">Layout</span>

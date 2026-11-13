@@ -12,7 +12,7 @@ import { HandsCompositor } from '../../lib/handcam/compose';
 import { noteSpan } from '../../lib/handcam/calibration';
 import type { HandVideo, HandsLayout } from '../../lib/handcam/types';
 import { watermarkActive, type WatermarkSettings } from '../../lib/watermark/types';
-import { watermarkBand } from '../../lib/watermark/layout';
+import { logoClearOf, watermarkBand } from '../../lib/watermark/layout';
 import { watermarkPainter } from '../../lib/watermark/draw';
 
 export interface PreviewScene {
@@ -53,7 +53,7 @@ export class PreviewPainter {
     r.setNotes(arr.notes, arr.pedal, sc.song.tempo, sc.song.key);
     if (sc.bg) r.setBackgroundMedia(sc.bg.source, sc.bg.kind);
     if (sc.decal) r.setDecalImage(sc.decal.source, sc.decal.width, sc.decal.height);
-    const wm = sc.watermark && watermarkActive(sc.watermark) ? sc.watermark : null;
+    const wm = sc.watermark && watermarkActive(sc.watermark) ? logoClearOf(sc.watermark, layout === 'pip' ? (sc.settings.pipCorner ?? 'br') : null) : null;
     const bottom = layout === 'bottom' && !!sc.hv?.calibration;
     const wmBand = wm && bottom ? watermarkBand(wm, W, H) : 0;
     const drawnKeys = visual.showKeyboard ? Math.round(H * visual.keyboardHeight) : 0;

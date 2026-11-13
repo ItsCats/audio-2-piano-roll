@@ -7,14 +7,21 @@ import { getAudio } from '../storage/db';
 import { decodeToRate } from '../transcription/decode';
 import { videoSound8k } from './media';
 import { SYNC_SR, findOffset, type SyncInput, type SyncResult } from './sync';
-import type { HandVideoSync } from './types';
+import type { HandVideo, HandVideoSync } from './types';
 
 export const SYNC_FAILED = 'Couldn’t find where your video lines up with the song. Line it up with the slider.';
 
-function runMath(input: SyncInput, signal?: AbortSignal): Promise<SyncResult> {
+const syncWorker = () => new Worker(new URL('./syncWorker.ts', import.meta.url), { type: 'module' });
+
+/**
+ * Runs the sync math in a worker, or on this thread when there is none (old browsers: the constructor
+ * throws, or the script fails to load). The input is copied to the worker, not handed over, so the
+ * fallback still has it.
+ */
+export function runMath(input: SyncInput, signal?: AbortSignal, makeWorker: () => Worker = syncWorker): Promise<SyncResult> {
   let worker: Worker | null = null;
   try {
-    worker = new Worker(new URL('./syncWorker.ts', import.meta.url), { type: 'module' });
+    worker = makeWorker();
   } catch {
     worker = null;
   }
@@ -42,7 +49,8 @@ function runMath(input: SyncInput, signal?: AbortSignal): Promise<SyncResult> {
         reject(err);
       }
     };
-    w.postMessage(input, [input.video.buffer as ArrayBuffer, ...(input.ref.kind === 'audio' ? [input.ref.samples.buffer as ArrayBuffer] : [])]);
+    // copied (a few MB at 8 kHz): the buffers stay usable here if the worker fails
+    w.postMessage(input);
   });
 }
 
@@ -88,6 +96,19 @@ export async function autoSync(
     offset: r.offset,
     sync: { method: r.method, found: r.offset, confidence: Math.round(r.ratio * 100) / 100, level: r.level, ...(r.drift ? { drift: true } : {}) },
   };
+}
+
+/** the nudge slider reaches this far (s) either side of the offset found */
+export const NUDGE_RANGE = 5;
+
+/**
+ * The video moved to `offset` by hand. The slider stays centered on the offset found (or, with no sync
+ * yet, on the offset before the first nudge), and keeps within ±NUDGE_RANGE of it, in whole ms.
+ */
+export function nudgeTo(h: HandVideo, offset: number): HandVideo {
+  const sync: HandVideoSync = h.sync ?? { method: 'manual', found: h.offset, confidence: 0, level: 'low' };
+  const o = Math.round(Math.max(sync.found - NUDGE_RANGE, Math.min(sync.found + NUDGE_RANGE, offset)) * 1000) / 1000;
+  return { ...h, offset: o, sync };
 }
 
 /** "Your video starts 3.42 s before the song." */

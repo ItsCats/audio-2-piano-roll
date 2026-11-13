@@ -132,10 +132,20 @@ export class PreviewFrames {
     const h = Math.max(2, Math.round(track.displayHeight * k));
     return new PreviewFrames(input, track, first, end, w, h);
   }
-  /** the frame shown at video time t (clamped to the video) */
-  async frameAt(t: number): Promise<HTMLCanvasElement | OffscreenCanvas | null> {
-    const r = await this.sink.getCanvas(clampVideoTime(t, this.first, this.end));
-    return r ? r.canvas : null;
+  /** the request being decoded (one at a time: several previews share this file) */
+  private queue: Promise<unknown> = Promise.resolve();
+  /**
+   * The frame shown at video time t (clamped to the video), as a new canvas the caller may keep.
+   * Requests run one after another, so previews sharing this file never run decoders side by side
+   * (each would compete with the export or the sync for the graphics process).
+   */
+  frameAt(t: number): Promise<HTMLCanvasElement | OffscreenCanvas | null> {
+    const run = this.queue.then(async () => {
+      const r = await this.sink.getCanvas(clampVideoTime(t, this.first, this.end));
+      return r ? r.canvas : null;
+    });
+    this.queue = run.catch(() => null);
+    return run;
   }
   /**
    * A frame with the hands removed: the per-pixel median of `n` frames spread over the video (the keys

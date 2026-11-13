@@ -7,6 +7,7 @@ import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 import type { Song, SongSource, SongSummary } from '../music/types';
 import type { StoredPosteriors } from '../transcription/posteriors';
 import { bumpNoteIds } from '../music/cleanup';
+import { sanitizeHandVideo } from '../handcam/calibration';
 
 export interface MediaItem {
   id: string;
@@ -198,6 +199,13 @@ export async function getSong(id: string): Promise<Song | undefined> {
   if (song) {
     bumpNoteIds(song.base);
     for (const a of Object.values(song.arrangements)) bumpNoteIds(a.notes);
+    // a damaged hands video entry is repaired or dropped (it never breaks an export)
+    if ('handVideo' in song) {
+      const hv = sanitizeHandVideo(song.handVideo);
+      // the song's own recording as its video: only while the recording is kept
+      if (hv && (hv.store === 'handcam' || song.hasAudio)) song.handVideo = hv;
+      else delete song.handVideo;
+    }
   }
   return song;
 }

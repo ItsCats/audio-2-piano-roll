@@ -14,7 +14,7 @@
 import { BLACK_OFFSET, type KeyboardLayout, type KeyGeom } from '../render/layout';
 import { isBlack, noteName, PIANO_MAX, PIANO_MIN } from '../music/theory';
 import { UNIT_SQUARE, affine, chain, displayToCoded, homography, invert3, orientedToDisplay, type Mat3, type Pt } from '../geom/homography';
-import type { Corner, KeyboardCalibration } from './types';
+import type { Corner, HandVideo, HandVideoSync, KeyboardCalibration } from './types';
 
 /** a standard piano key: 23.5 mm wide (white), 150 mm long */
 export const WHITE_KEY_MM = 23.5;
@@ -70,6 +70,9 @@ const clamp = (x: number, a: number, b: number) => Math.max(a, Math.min(b, x));
 const num = (x: unknown, d: number) => (typeof x === 'number' && Number.isFinite(x) ? x : d);
 
 /** A calibration read from storage, with every field checked (older or damaged data never breaks an export). */
+/** how far the edges can be moved (white keys): the Match slider plus half the Key width slider */
+export const edgeLimit = (lo: number, hi: number): number => EDGE_RANGE + 0.015 * whitesBetween(lo, hi) + 1e-9;
+
 export function sanitizeCalibration(c: unknown): KeyboardCalibration | undefined {
   if (!c || typeof c !== 'object') return undefined;
   const r = c as Partial<KeyboardCalibration>;
@@ -94,8 +97,9 @@ export function sanitizeCalibration(c: unknown): KeyboardCalibration | undefined
     corners,
     lo,
     hi,
-    edgeL: clamp(num(r.edgeL, 0), -EDGE_RANGE, EDGE_RANGE),
-    edgeR: clamp(num(r.edgeR, 0), -EDGE_RANGE, EDGE_RANGE),
+    // the Match slider (±EDGE_RANGE) plus half the Key width slider (±3% of the keys)
+    edgeL: clamp(num(r.edgeL, 0), -edgeLimit(lo, hi), edgeLimit(lo, hi)),
+    edgeR: clamp(num(r.edgeR, 0), -edgeLimit(lo, hi), edgeLimit(lo, hi)),
     keyLength: clamp(num(r.keyLength, 1), ...KEY_LENGTH_RANGE),
     hitV: clamp(num(r.hitV, 0), ...HIT_V_RANGE),
     hands: clamp(num(r.hands, d.hands), ...HANDS_RANGE),
@@ -334,4 +338,43 @@ export function cornersValid(c: Pt[] | [number, number][]): boolean {
   }
   const area = Math.abs(c.reduce((acc, p, i) => acc + p[0] * c[(i + 1) % 4][1] - c[(i + 1) % 4][0] * p[1], 0)) / 2;
   return sign > 0 && area > 0.002;
+}
+
+const SYNC_METHODS: HandVideoSync['method'][] = ['import', 'original', 'notes', 'manual'];
+
+/**
+ * A song's hands video as stored, checked: undefined when it can't be used (missing or damaged), with
+ * a damaged calibration or sync dropped or repaired. Older or damaged data never breaks an export.
+ */
+export function sanitizeHandVideo(h: unknown): HandVideo | undefined {
+  if (!h || typeof h !== 'object') return undefined;
+  const r = h as Partial<HandVideo>;
+  if (r.store !== 'audio' && r.store !== 'handcam') return undefined;
+  const w = num(r.displayW, 0);
+  const ht = num(r.displayH, 0);
+  if (w < 2 || ht < 2) return undefined;
+  const s = r.sync as Partial<HandVideoSync> | undefined;
+  const sync: HandVideoSync | undefined =
+    s && typeof s === 'object' && SYNC_METHODS.includes(s.method as HandVideoSync['method']) && Number.isFinite(s.found)
+      ? { method: s.method!, found: s.found!, confidence: num(s.confidence, 0), level: s.level === 'high' || s.level === 'medium' ? s.level : 'low', ...(s.drift ? { drift: true } : {}) }
+      : undefined;
+  const out: HandVideo = {
+    v: 1,
+    store: r.store,
+    fileName: typeof r.fileName === 'string' ? r.fileName : 'video',
+    mimeType: typeof r.mimeType === 'string' ? r.mimeType : '',
+    size: Math.max(0, num(r.size, 0)),
+    duration: Math.max(0, num(r.duration, 0)),
+    displayW: Math.round(w),
+    displayH: Math.round(ht),
+    rotation: [0, 90, 180, 270].includes(r.rotation as number) ? (r.rotation as number) : 0,
+    offset: clamp(num(r.offset, 0), -36000, 36000),
+    addedAt: num(r.addedAt, 0),
+  };
+  if (Number.isFinite(r.fps) && (r.fps as number) > 0) out.fps = r.fps;
+  if (typeof r.codec === 'string') out.codec = r.codec;
+  if (sync) out.sync = sync;
+  const cal = r.calibration ? sanitizeCalibration(r.calibration) : undefined;
+  if (cal) out.calibration = cal;
+  return out;
 }

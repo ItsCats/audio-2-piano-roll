@@ -4,7 +4,53 @@ import { getHandVideoBlob } from '../../lib/storage/db';
 import { PreviewFrames } from '../../lib/handcam/frames';
 import { loadLogo } from '../../lib/watermark/logo';
 
-/** The song's hands video, opened for previews (one file handle while mounted). */
+interface OpenVideo {
+  refs: number;
+  ready: Promise<{ frames: PreviewFrames; blob: Blob }>;
+  closeTimer?: ReturnType<typeof setTimeout>;
+}
+/** one open file per song for all previews (thumbnail, export preview, setup): one decoder at a time */
+const openVideos = new Map<string, OpenVideo>();
+
+function acquireVideo(key: string, song: Pick<Song, 'id' | 'handVideo'>): Promise<{ frames: PreviewFrames; blob: Blob }> {
+  let v = openVideos.get(key);
+  if (!v) {
+    const ready = (async () => {
+      const blob = await getHandVideoBlob(song);
+      if (!blob) throw new Error('The video for this song is no longer saved. Add it again.');
+      return { frames: await PreviewFrames.open(blob, 960), blob };
+    })();
+    v = { refs: 0, ready };
+    openVideos.set(key, v);
+    // a failed open is not kept (the next screen tries again)
+    ready.catch(() => {
+      if (openVideos.get(key) === v) openVideos.delete(key);
+    });
+  }
+  if (v.closeTimer) clearTimeout(v.closeTimer);
+  v.closeTimer = undefined;
+  v.refs++;
+  return v.ready;
+}
+
+function releaseVideo(key: string): void {
+  const v = openVideos.get(key);
+  if (!v) return;
+  v.refs = Math.max(0, v.refs - 1);
+  if (v.refs > 0) return;
+  // kept a moment: moving from the dialog to the setup screen doesn't reopen the file
+  v.closeTimer = setTimeout(() => {
+    if (openVideos.get(key) !== v || v.refs > 0) return;
+    openVideos.delete(key);
+    void v.ready.then(({ frames }) => frames.dispose()).catch(() => {});
+  }, 1500);
+}
+
+/**
+ * The song's hands video, opened for previews. All previews of a song share one open file, and it
+ * decodes one frame at a time (PreviewFrames), so the setup screen, the thumbnail and the export
+ * preview never run decoders side by side. `enabled` false lets go of it (a hidden preview).
+ */
 export function useHandFrames(song: Pick<Song, 'id' | 'handVideo'> | null, enabled = true): { frames: PreviewFrames | null; blob: Blob | null; error: string | null; loading: boolean } {
   const hv = song?.handVideo;
   const key = song && hv && enabled ? `${song.id}|${hv.store}|${hv.addedAt}` : '';
@@ -12,25 +58,13 @@ export function useHandFrames(song: Pick<Song, 'id' | 'handVideo'> | null, enabl
   useEffect(() => {
     if (!key || !song) return;
     let alive = true;
-    let opened: PreviewFrames | null = null;
-    void (async () => {
-      try {
-        const blob = await getHandVideoBlob(song);
-        if (!blob) throw new Error('The video for this song is no longer saved. Add it again.');
-        const frames = await PreviewFrames.open(blob, 960);
-        if (!alive) {
-          frames.dispose();
-          return;
-        }
-        opened = frames;
-        setState({ key, frames, blob, error: null });
-      } catch (e) {
-        if (alive) setState({ key, frames: null, blob: null, error: (e as Error).message });
-      }
-    })();
+    acquireVideo(key, song).then(
+      ({ frames, blob }) => alive && setState({ key, frames, blob, error: null }),
+      (e: Error) => alive && setState({ key, frames: null, blob: null, error: e.message }),
+    );
     return () => {
       alive = false;
-      opened?.dispose();
+      releaseVideo(key);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
@@ -57,11 +91,10 @@ export function useVideoFrame(frames: PreviewFrames | null, t: number | null, de
       frames
         .frameAt(t)
         .then((c) => {
+          // the sink draws every frame into a new canvas (poolSize 0), so it can be kept as is; it stays
+          // on the graphics side (no copy into ordinary memory, no image encoding)
           if (my !== seq.current || !c) return;
-          // copy: the sink may reuse its canvases
-          const { canvas: copy, ctx } = cpuCanvas(c.width, c.height);
-          ctx.drawImage(c as CanvasImageSource, 0, 0);
-          setImg({ canvas: copy, w: c.width, h: c.height, t });
+          setImg({ canvas: c as CanvasImageSource, w: c.width, h: c.height, t });
         })
         // the file was closed meanwhile (the screen was left): nothing to show
         .catch(() => {});
@@ -69,6 +102,13 @@ export function useVideoFrame(frames: PreviewFrames | null, t: number | null, de
     return () => clearTimeout(timer);
   }, [frames, t, delay]);
   return frames ? img : null;
+}
+
+/** The last frame shown, kept while the preview is paused (it lets go of the file); `key` names the video. */
+export function useHeldFrame(live: FrameImage | null, key: string): FrameImage | null {
+  const kept = useRef<{ key: string; img: FrameImage } | null>(null);
+  if (live) kept.current = { key, img: live };
+  return live ?? (kept.current?.key === key ? kept.current.img : null);
 }
 
 /** The watermark logo image (null when none). */
@@ -91,40 +131,6 @@ export function useLogo(mediaId: string | null | undefined): ImageBitmap | null 
   return mediaId && bmp?.id === mediaId ? bmp.bmp : null;
 }
 
-/**
- * An image URL (blob:) of a canvas `make` draws, encoded in the background with toBlob: encoding a
- * frame synchronously (toDataURL) while rendering blocks the page, for seconds when the graphics
- * process is busy. The previous URL stays shown until the new one is ready, and is then released.
- */
-export function useCanvasUrl(make: () => HTMLCanvasElement | null, deps: unknown[], quality = 0.85): string | null {
-  const [url, setUrl] = useState<string | null>(null);
-  useEffect(() => {
-    const c = make();
-    if (!c) {
-      setUrl(null);
-      return;
-    }
-    let alive = true;
-    c.toBlob(
-      (b) => {
-        if (!alive || !b) return;
-        setUrl(URL.createObjectURL(b));
-      },
-      'image/jpeg',
-      quality,
-    );
-    return () => {
-      alive = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
-  // release each URL once a newer one replaces it (and on unmount)
-  useEffect(() => () => {
-    if (url) URL.revokeObjectURL(url);
-  }, [url]);
-  return url;
-}
-
 /** A canvas in ordinary memory (pixels read back cheaply: toBlob, getImageData). */
 export function cpuCanvas(w: number, h: number): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {
   const canvas = document.createElement('canvas');
@@ -133,17 +139,22 @@ export function cpuCanvas(w: number, h: number): { canvas: HTMLCanvasElement; ct
   return { canvas, ctx: canvas.getContext('2d', { willReadFrequently: true })! };
 }
 
-/** A frame as an image URL, at most `maxW` wide (made in the background). */
-export function useFrameUrl(img: FrameImage | null, maxW = 960, quality = 0.8): string | null {
-  return useCanvasUrl(
-    () => {
-      if (!img) return null;
-      const k = Math.min(1, maxW / Math.max(1, img.w));
-      const { canvas, ctx } = cpuCanvas(img.w * k, img.h * k);
-      ctx.drawImage(img.canvas, 0, 0, canvas.width, canvas.height);
-      return canvas;
-    },
-    [img, maxW],
-    quality,
-  );
+/** How a frame is shown: turned 180° and/or mirrored (the setup's Turn and Mirror). */
+export interface Orient {
+  turn?: 0 | 180;
+  mirror?: boolean;
+}
+
+/**
+ * Draws `src` (w × h) into `ctx` over (x, y, dw, dh), turned / mirrored. A canvas to canvas copy stays on
+ * the graphics side: nothing is read back or encoded, so it never waits for the decoders.
+ */
+export function drawOriented(ctx: CanvasRenderingContext2D, src: CanvasImageSource, o: Orient | null | undefined, dx: number, dy: number, dw: number, dh: number, sx = 0, sy = 0, sw?: number, sh?: number): void {
+  ctx.save();
+  ctx.translate(dx + dw / 2, dy + dh / 2);
+  if (o?.turn === 180) ctx.rotate(Math.PI);
+  if (o?.mirror) ctx.scale(-1, 1);
+  if (sw !== undefined && sh !== undefined) ctx.drawImage(src, sx, sy, sw, sh, -dw / 2, -dh / 2, dw, dh);
+  else ctx.drawImage(src, -dw / 2, -dh / 2, dw, dh);
+  ctx.restore();
 }

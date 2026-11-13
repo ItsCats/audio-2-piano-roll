@@ -76,10 +76,10 @@ import {
   type ExportTimeline,
   type OriginalSource,
 } from './originalMix';
-import type { HandVideo, HandsLayout } from '../handcam/types';
+import type { Corner, HandVideo, HandsLayout } from '../handcam/types';
 import type { WatermarkSettings } from '../watermark/types';
 import { watermarkActive } from '../watermark/types';
-import { watermarkBand, displayText } from '../watermark/layout';
+import { watermarkBand, displayText, logoClearOf } from '../watermark/layout';
 import { watermarkPainter, type WatermarkPainter } from '../watermark/draw';
 import type { Ctx2D } from '../render/color';
 import type { HandsCompositor } from '../handcam/compose';
@@ -250,9 +250,9 @@ async function prepareHands(job: ExportJob, layout: HandsLayout, W: number, H: n
 }
 
 /** The watermark painter for a W × H frame (fonts loaded first; never fails the export). */
-async function prepareWatermark(job: ExportJob, W: number, H: number, ctx: Ctx2D, opts: { band: number; avoidBottom: number }): Promise<{ painter: WatermarkPainter; logo: ImageBitmap | null } | null> {
-  const w = job.watermark;
-  if (!w || !watermarkActive(w)) return null;
+async function prepareWatermark(job: ExportJob, W: number, H: number, ctx: Ctx2D, opts: { band: number; avoidBottom: number; pipCorner?: Corner | null }): Promise<{ painter: WatermarkPainter; logo: ImageBitmap | null } | null> {
+  if (!job.watermark || !watermarkActive(job.watermark)) return null;
+  const w = logoClearOf(job.watermark, opts.pipCorner);
   try {
     const text = displayText(w);
     if (text) {
@@ -526,7 +526,7 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
   renderer.setNotes(arr.notes, arr.pedal, song.tempo, song.key);
   if (hands) renderer.setStage(hands.compositor.stage());
   const ctx2d = canvas.getContext('2d')!;
-  const mark = await prepareWatermark(job, width, height, ctx2d, { band: wmBand, avoidBottom: handsLayout === 'bottom' ? 0 : drawnKeys });
+  const mark = await prepareWatermark(job, width, height, ctx2d, { band: wmBand, avoidBottom: handsLayout === 'bottom' ? 0 : drawnKeys, pipCorner: handsLayout === 'pip' ? (s.pipCorner ?? 'br') : null });
 
   const videoTrack = new CanvasSource(canvas, {
     codec: videoCodec,

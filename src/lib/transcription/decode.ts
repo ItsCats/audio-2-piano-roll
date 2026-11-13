@@ -51,20 +51,27 @@ async function decodeWithMediabunny(blob: Blob, sampleRate: number): Promise<Aud
   const duration = await track.computeDuration();
   if (duration > MAX_DURATION_SECONDS) throw new Error(tooLong(duration));
   const sink = new AudioBufferSink(track);
-  const chunks: AudioBuffer[] = [];
-  for await (const { buffer } of sink.buffers()) chunks.push(buffer);
+  const chunks: { buffer: AudioBuffer; timestamp: number }[] = [];
+  for await (const { buffer, timestamp } of sink.buffers()) chunks.push({ buffer, timestamp });
   if (!chunks.length) throw new Error('The audio track is empty.');
-  const srcRate = chunks[0].sampleRate;
-  const total = chunks.reduce((s, b) => s + b.length, 0);
+  const srcRate = chunks[0].buffer.sampleRate;
+  // each block where its timestamp puts it: a gap in the file (an interrupted recording, an edited
+  // file) stays a silent gap, so everything after it keeps its place on the file's timeline
+  const at = placeByTimestamp(
+    chunks.map((c) => c.timestamp),
+    chunks.map((c) => c.buffer.length),
+    srcRate,
+  );
+  const total = chunks.reduce((m, c, i) => Math.max(m, at[i] + c.buffer.length), 0);
   const mono = new Float32Array(total);
-  let off = 0;
-  for (const b of chunks) {
+  chunks.forEach(({ buffer: b }, k) => {
+    const piece = new Float32Array(b.length);
     for (let c = 0; c < b.numberOfChannels; c++) {
       const d = b.getChannelData(c);
-      for (let i = 0; i < d.length; i++) mono[off + i] += d[i] / b.numberOfChannels;
+      for (let i = 0; i < d.length; i++) piece[i] += d[i] / b.numberOfChannels;
     }
-    off += b.length;
-  }
+    mono.set(piece, at[k]);
+  });
   // resample with the browser's high-quality resampler
   const outLen = Math.ceil((total * sampleRate) / srcRate);
   const ctx = new OfflineAudioContext(1, outLen, sampleRate);
@@ -75,6 +82,25 @@ async function decodeWithMediabunny(blob: Blob, sampleRate: number): Promise<Aud
   node.connect(ctx.destination);
   node.start();
   return await ctx.startRendering();
+}
+
+/**
+ * Where each decoded block goes (frames from the first block's start), from its timestamp. Blocks that
+ * follow on within a couple of frames are joined end to end (timestamps are rounded in the file), so
+ * only a real gap or overlap moves a block.
+ */
+export function placeByTimestamp(timestamps: number[], lengths: number[], rate: number): number[] {
+  const out: number[] = [];
+  if (!timestamps.length) return out;
+  const t0 = timestamps[0];
+  let next = 0;
+  for (let i = 0; i < timestamps.length; i++) {
+    const want = Math.round((timestamps[i] - t0) * rate);
+    const at = Math.abs(want - next) <= 2 ? next : Math.max(0, want);
+    out.push(at);
+    next = at + lengths[i];
+  }
+  return out;
 }
 
 const tooLong = (d: number) =>
