@@ -9,7 +9,7 @@ import { END_LAYOUT } from '../../src/lib/render/titleCard/exportHooks';
 import { FLOURISH_BOUNDS, getFlourishPath } from '../../src/lib/render/titleCard/flourishes';
 
 export const TEXTS: Record<string, TitleText> = {
-  clair: { title: 'Clair de Lune', subtitle: 'Suite Bergamasque', composer: 'Debussy', credit: 'Piano2Vision', small: 'For you' },
+  short: { title: 'Light on Snow', subtitle: 'Suite Winterlight', composer: 'A. Vane', credit: 'Piano2Vision', small: 'For you' },
   nocturne: { title: 'Nocturne', subtitle: 'Op. 9 No. 2', composer: 'Frédéric Chopin', credit: 'Piano2Vision', small: 'Dedicated to you' },
   long: { title: 'The Most Wonderful Moonlight Variations Ever Written For Piano', subtitle: 'Suite for the Long Winter Evenings, Book Two', composer: 'Johann Sebastian Bach and Carl Philipp Emanuel', credit: 'Arranged by a Very Long Channel Name', small: 'Dedicated to everyone who listens' },
   word: { title: 'Pneumonoultramicroscopicsilicovolcanoconiosis', subtitle: '', composer: 'Supercalifragilisticexpialidocious', credit: '', small: '' },

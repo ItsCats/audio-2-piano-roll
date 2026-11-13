@@ -73,7 +73,9 @@ function localBpm(beats: number[], from: number, count: number): number {
  */
 export function buildGrid(tempo: TempoInfo, duration: number, notes: { start: number }[]): TimeMap {
   const { beatsPerBar, beatUnit, compound } = resolveMeter(tempo);
-  const firstStart = notes.length ? Math.min(...notes.map((n) => n.start)) : 0;
+  // loops, not Math.min(...notes): Safari can't spread tens of thousands of arguments
+  let firstStart = notes.length ? Infinity : 0;
+  for (const n of notes) if (n.start < firstStart) firstStart = n.start;
   const fallbackBpm = tempo.bpm > 0 && Number.isFinite(tempo.bpm) ? tempo.bpm : 120;
   let beats: number[];
   let db: number;
@@ -109,7 +111,7 @@ export function buildGrid(tempo: TempoInfo, duration: number, notes: { start: nu
   let originQ = 0;
   let pickupQ = 0;
   if (notes.length) {
-    const minQ = Math.min(...notes.map((n) => toQ(n.start)));
+    const minQ = toQ(firstStart);
     if (minQ < -tol) {
       const need = -minQ;
       if (need <= measureQ + tol) {

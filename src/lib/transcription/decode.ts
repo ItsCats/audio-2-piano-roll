@@ -10,15 +10,18 @@ export const MAX_DURATION_SECONDS = 20 * 60;
 
 export const AUDIO_EXTENSIONS = ['mp3', 'wav', 'm4a', 'mp4', 'aac', 'ogg', 'oga', 'opus', 'flac', 'webm', 'mov', 'mkv', 'aif', 'aiff', 'wma'];
 export const MIDI_EXTENSIONS = ['mid', 'midi', 'kar'];
+/** Sheet-music files (lib/score): MusicXML, compressed MusicXML, MuseScore. */
+export const SCORE_EXTENSIONS = ['musicxml', 'xml', 'mxl', 'mscz', 'mscx'];
 
 export function fileExtension(name: string): string {
   const m = /\.([a-z0-9]+)$/i.exec(name);
   return m ? m[1].toLowerCase() : '';
 }
 
-export function classifyFile(file: File): 'audio' | 'midi' | 'unsupported' {
+export function classifyFile(file: File): 'audio' | 'midi' | 'score' | 'unsupported' {
   const ext = fileExtension(file.name);
   if (MIDI_EXTENSIONS.includes(ext) || file.type === 'audio/midi' || file.type === 'audio/x-midi') return 'midi';
+  if (SCORE_EXTENSIONS.includes(ext) || /musicxml/.test(file.type)) return 'score';
   if (AUDIO_EXTENSIONS.includes(ext) || file.type.startsWith('audio/') || file.type.startsWith('video/')) return 'audio';
   return 'unsupported';
 }

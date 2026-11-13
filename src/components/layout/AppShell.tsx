@@ -1,5 +1,6 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { Home, Upload, Piano, Library, Settings as SettingsIcon, Gauge, Heart } from 'lucide-react';
+import { Home, Upload, Piano, Library, Settings as SettingsIcon, Gauge, Heart, Code } from 'lucide-react';
+import { SOURCE_CODE_LABEL, SOURCE_CODE_URL } from '../../lib/credits';
 import { cn } from '../ui';
 import { Toaster } from './Toaster';
 import { useStudio } from '../../state/studioStore';
@@ -86,6 +87,14 @@ export function AppShell() {
             >
               <Heart size={14} /> Credits &amp; licences
             </NavLink>
+            <a
+              href={SOURCE_CODE_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="focus-ring mt-0.5 flex items-center gap-2 rounded-lg px-2 py-1.5 text-[12px] text-ink-300 hover:text-ink-100"
+            >
+              <Code size={14} /> {SOURCE_CODE_LABEL}
+            </a>
             <p className="mt-2 text-[11px] leading-relaxed text-ink-400">
               Everything stays in your browser. Songs are stored locally on this device.
             </p>

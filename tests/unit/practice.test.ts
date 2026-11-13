@@ -34,12 +34,12 @@ describe('practice scoring', () => {
 
 describe('YouTube URLs', () => {
   it.each([
-    ['https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'dQw4w9WgXcQ'],
-    ['https://youtu.be/dQw4w9WgXcQ?t=10', 'dQw4w9WgXcQ'],
-    ['https://www.youtube.com/shorts/dQw4w9WgXcQ', 'dQw4w9WgXcQ'],
-    ['https://music.youtube.com/watch?v=dQw4w9WgXcQ&list=x', 'dQw4w9WgXcQ'],
-    ['youtube.com/embed/dQw4w9WgXcQ', 'dQw4w9WgXcQ'],
-    ['https://example.com/watch?v=dQw4w9WgXcQ', null],
+    ['https://www.youtube.com/watch?v=abcDEF12345', 'abcDEF12345'],
+    ['https://youtu.be/abcDEF12345?t=10', 'abcDEF12345'],
+    ['https://www.youtube.com/shorts/abcDEF12345', 'abcDEF12345'],
+    ['https://music.youtube.com/watch?v=abcDEF12345&list=x', 'abcDEF12345'],
+    ['youtube.com/embed/abcDEF12345', 'abcDEF12345'],
+    ['https://example.com/watch?v=abcDEF12345', null],
     ['not a url', null],
   ])('%s', (url, expected) => expect(parseYouTubeId(url)).toBe(expected));
 });

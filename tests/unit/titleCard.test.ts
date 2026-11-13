@@ -25,7 +25,7 @@ const fake: Measurer = {
 };
 
 const TEXTS: Record<string, TitleText> = {
-  short: { title: 'Clair de Lune', subtitle: 'Suite Bergamasque', composer: 'Debussy', credit: 'Piano2Vision', small: 'For you' },
+  short: { title: 'Light on Snow', subtitle: 'Suite Winterlight', composer: 'A. Vane', credit: 'Piano2Vision', small: 'For you' },
   long: {
     title: 'The Most Wonderful Moonlight Variations Ever Written For The Piano In Winter',
     subtitle: 'Suite for the Long Winter Evenings, Book Two, Opus Forty',
@@ -133,7 +133,7 @@ describe('title page layout', () => {
     const t = L.blocks[0];
     expect(t.lines.join('')).toBe(TEXTS.cjk.title);
     expect(t.lines.length).toBeGreaterThan(1);
-    expect(layoutTitleCard(1920, 1080, resolveLook({ ...DEFAULT_LOOK, preset: 'classic' }), TEXTS.short, fake).blocks[0].lines[0]).toBe('CLAIR DE LUNE');
+    expect(layoutTitleCard(1920, 1080, resolveLook({ ...DEFAULT_LOOK, preset: 'classic' }), TEXTS.short, fake).blocks[0].lines[0]).toBe('LIGHT ON SNOW');
   });
 
   it('a Latin word is never broken between letters; only an extremely long one is hyphenated', () => {
@@ -213,7 +213,7 @@ describe('title page layout', () => {
 
   it('the script title keeps its case', () => {
     const L = layoutTitleCard(1920, 1080, resolveLook({ ...DEFAULT_LOOK, preset: 'script' }), TEXTS.short, fake);
-    expect(L.blocks[0].lines[0]).toBe('Clair de Lune');
+    expect(L.blocks[0].lines[0]).toBe('Light on Snow');
   });
 });
 
@@ -413,7 +413,7 @@ describe('title page settings', () => {
     const rem = { credit: 'My Channel', small: 'For you' };
     expect(defaultTextForSong({ title: 'Chopin - Ballade No. 1' }, rem)).toEqual({ title: 'Ballade No. 1', subtitle: '', composer: 'Chopin', credit: 'My Channel', small: 'For you' });
     expect(defaultTextForSong({ title: 'Nocturne – Op. 9', artist: 'Chopin' }, rem).title).toBe('Nocturne – Op. 9');
-    expect(defaultTextForSong({ title: 'Clair de Lune' }, rem).composer).toBe('');
+    expect(defaultTextForSong({ title: 'Light on Snow' }, rem).composer).toBe('');
     expect(splitTitle('Re-Animator')).toBeNull();
     const s = { ...DEFAULT_TITLE_CARD, remembered: rem, songs: { a: { text: { subtitle: 'Op. 23', credit: '' }, at: 1 } } };
     expect(textForSong({ id: 'a', title: 'Ballade' }, s)).toMatchObject({ title: 'Ballade', subtitle: 'Op. 23', credit: '' });

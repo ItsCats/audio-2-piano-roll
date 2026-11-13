@@ -1,4 +1,11 @@
 /// <reference lib="webworker" />
+/*
+ * SPDX-License-Identifier: AGPL-3.0-or-later AND Apache-2.0
+ * The audio windowing and overlap trimming around the model are derived from the inference code of
+ * spotify/basic-pitch (https://github.com/spotify/basic-pitch), Copyright 2022 Spotify AB,
+ * licensed under the Apache License, Version 2.0 (full text: public/models/basic-pitch/LICENSE).
+ * Modified: rewritten in TypeScript by the Piano2Vision authors.
+ */
 /**
  * Transcription worker: runs the Basic Pitch neural network (Spotify, Apache-2.0) with
  * TensorFlow.js off the main thread and extracts notes from its output.

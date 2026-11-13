@@ -57,7 +57,7 @@ async function runExport(name: string, opts: { title?: number; end?: number; pre
     audio: { ...DEFAULT_AUDIO_SETTINGS, reverbType: 'off', mechanicalNoise: false },
     settings,
     loop: null,
-    titleCard: opts.title || opts.end ? { settings: tc, text: { title: 'Clair de Lune', subtitle: 'Suite Bergamasque', composer: 'Debussy', credit: 'Piano2Vision', small: 'For you' }, onWarning: (m) => warnings.push(m) } : undefined,
+    titleCard: opts.title || opts.end ? { settings: tc, text: { title: 'Light on Snow', subtitle: 'Suite Winterlight', composer: 'A. Vane', credit: 'Piano2Vision', small: 'For you' }, onWarning: (m) => warnings.push(m) } : undefined,
   });
   await send(name, r.blob);
   return { name, duration: r.duration, videoCodec: r.videoCodec, audioCodec: r.audioCodec, bytes: r.blob.size, ms: Math.round(performance.now() - t0), warnings };

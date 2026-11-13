@@ -70,6 +70,13 @@ def test_health_reports_stems(client):
     assert h["features"]["separation"] is True and h["features"]["stems"] is True
 
 
+def test_root_links_to_source(client):
+    r = client.get("/").json()
+    assert r["license"] == "AGPL-3.0-or-later"
+    assert r["source"].startswith("https://")
+    assert client.get("/api/health").json()["source"] == r["source"]
+
+
 def test_separation_job_returns_two_aligned_stems(client, tmp_path):
     r = client.post("/api/jobs/separate", files={"file": ("tone.wav", _wav(5.0), "audio/wav")})
     assert r.status_code == 200, r.text

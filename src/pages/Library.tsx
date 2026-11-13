@@ -12,7 +12,7 @@ import { toast } from '../state/toastStore';
 import { useStudio } from '../state/studioStore';
 
 type Sort = 'recent' | 'title' | 'duration' | 'created';
-type Filter = 'all' | 'favorites' | 'audio' | 'midi' | 'youtube';
+type Filter = 'all' | 'favorites' | 'audio' | 'midi' | 'youtube' | 'score';
 
 export default function LibraryPage() {
   const { songs, loaded, refresh, remove } = useLibrary();
@@ -110,6 +110,7 @@ export default function LibraryPage() {
               { value: 'audio', label: 'Audio' },
               { value: 'youtube', label: 'YouTube' },
               { value: 'midi', label: 'MIDI' },
+              { value: 'score', label: 'Sheet music' },
             ]}
           />
           <Select<Sort>

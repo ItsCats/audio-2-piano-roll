@@ -2,9 +2,13 @@ import { useRef, useState, type ReactNode } from 'react';
 import { UploadCloud } from 'lucide-react';
 import { cn } from '../ui';
 
-export const ACCEPT = '.mp3,.wav,.m4a,.mp4,.aac,.ogg,.oga,.opus,.flac,.webm,.mov,.mkv,.aif,.aiff,.mid,.midi,.kar,audio/*,video/*';
+export const ACCEPT = '.mp3,.wav,.m4a,.mp4,.aac,.ogg,.oga,.opus,.flac,.webm,.mov,.mkv,.aif,.aiff,.mid,.midi,.kar,.musicxml,.xml,.mxl,.mscz,.mscx,audio/*,video/*';
 
-export function Dropzone({ onFile, compact, children }: { onFile: (f: File) => void; compact?: boolean; children?: ReactNode }) {
+/**
+ * `accept`: file-picker filter ('' = any file; phones grey out file types they don't know, such
+ * as .mxl or .mscz, when a filter is set).
+ */
+export function Dropzone({ onFile, compact, children, accept = ACCEPT }: { onFile: (f: File) => void; compact?: boolean; children?: ReactNode; accept?: string }) {
   const [over, setOver] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   return (
@@ -42,7 +46,7 @@ export function Dropzone({ onFile, compact, children }: { onFile: (f: File) => v
       <input
         ref={input}
         type="file"
-        accept={ACCEPT}
+        accept={accept || undefined}
         className="hidden"
         onChange={(e) => {
           const f = e.target.files?.[0];

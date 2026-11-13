@@ -43,7 +43,7 @@ const check = (name, ok, info = '') => {
   console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${info ? '  ' + info : ''}`);
 };
 
-const TEXT = { Title: 'Clair de Lune', Subtitle: 'Suite Bergamasque', 'Composer or artist': 'Debussy', Credit: 'Piano2Vision', 'Small line': 'For you' };
+const TEXT = { Title: 'Light on Snow', Subtitle: 'Suite Winterlight', 'Composer or artist': 'A. Vane', Credit: 'Piano2Vision', 'Small line': 'For you' };
 
 async function openDialog(page, phone) {
   const errors = [];
@@ -209,7 +209,7 @@ try {
     await page.waitForTimeout(600);
     const after = await previewPixels(page, 'Title page preview');
     check('phone: typing changes the preview', before !== after);
-    await titleSection(page).getByLabel('Title', { exact: true }).fill('Clair de Lune');
+    await titleSection(page).getByLabel('Title', { exact: true }).fill('Light on Snow');
     const customize = titleSection(page).getByRole('button', { name: 'Customize' });
     if ((await customize.getAttribute('aria-expanded')) !== 'true') await customize.tap();
     const overflow = await page.evaluate(() => ({ doc: document.documentElement.scrollWidth, body: document.body.scrollWidth }));

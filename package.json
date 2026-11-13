@@ -2,6 +2,7 @@
   "name": "piano2vision",
   "private": true,
   "version": "0.1.0",
+  "license": "AGPL-3.0-or-later",
   "type": "module",
   "description": "Turn audio, YouTube and MIDI into an interactive falling-note piano roll with realistic piano playback and video export.",
   "scripts": {
@@ -35,6 +36,7 @@
     "@tensorflow/tfjs-converter": "^4.22.0",
     "@tensorflow/tfjs-core": "^4.22.0",
     "@tonejs/midi": "^2.0.28",
+    "fflate": "0.8.3",
     "idb": "^8.0.4",
     "jspdf": "4.2.1",
     "lucide-react": "^1.71.0",

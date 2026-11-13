@@ -49,13 +49,13 @@ try {
     [1080, 1920],
     [1080, 1080],
   ];
-  const texts = ['clair', 'long', 'cjk', 'word', 'bare'];
+  const texts = ['short', 'long', 'cjk', 'word', 'bare'];
   let n = 0;
   for (const preset of presets)
     for (const [W, H] of sizes)
       for (const text of texts) {
         const name = `${preset}-${W}x${H}-${text}`;
-        const r = await page.evaluate((job) => window.renderCard(job), { preset, W, H, text, checks: true, png: !!peek && (text === 'clair' || text === 'long') });
+        const r = await page.evaluate((job) => window.renderCard(job), { preset, W, H, text, checks: true, png: !!peek && (text === 'short' || text === 'long') });
         n++;
         if (peek && r.png) {
           fs.mkdirSync(peek, { recursive: true });
@@ -82,7 +82,7 @@ try {
             const err = Math.abs(w.ink - w.textW) / w.textW;
             if (err > 0.03) fail(`${name}: ${w.role} ink width ${w.ink} vs measured ${w.textW.toFixed(1)} (${(err * 100).toFixed(1)} %)`);
           }
-        if (text === 'clair') console.log(`ok? ${name}  k=${r.k.toFixed(2)}  ${r.ms1.toFixed(0)}/${r.ms2.toFixed(0)} ms  ${r.blocks.map((b) => `${b.role}:${b.lines.length}@${b.px}${b.mode ? '/' + b.mode : ''}`).join(' ')}`);
+        if (text === 'short') console.log(`ok? ${name}  k=${r.k.toFixed(2)}  ${r.ms1.toFixed(0)}/${r.ms2.toFixed(0)} ms  ${r.blocks.map((b) => `${b.role}:${b.lines.length}@${b.px}${b.mode ? '/' + b.mode : ''}`).join(' ')}`);
       }
   // extras for the user's peek folder: fills, images, end card, animation frames
   if (peek) {
@@ -98,7 +98,7 @@ try {
       ['ornate-shine-t1.8', { preset: 'ornate', reveal: false, t: 1.8 }],
     ];
     for (const [name, j] of extra) {
-      const r = await page.evaluate((job) => window.renderCard(job), { W: 1920, H: 1080, text: 'clair', png: true, ...j });
+      const r = await page.evaluate((job) => window.renderCard(job), { W: 1920, H: 1080, text: 'short', png: true, ...j });
       fs.writeFileSync(path.join(peek, `x-${name}.png`), Buffer.from(r.png.split(',')[1], 'base64'));
     }
   }

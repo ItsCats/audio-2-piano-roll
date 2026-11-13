@@ -16,8 +16,12 @@ export type { Score } from './types';
 const cache = new WeakMap<Arrangement, { tempo: Song['tempo']; key: Song['key']; duration: number; score: Score }>();
 const tempoCache = new WeakMap<Song['tempo'], Song['tempo']>();
 
-/** The beat grid the sheet is written on (grid.ts sheetTempo), memoised per song tempo. */
+/**
+ * The beat grid the sheet is written on (grid.ts sheetTempo), memoised per song tempo. A song read
+ * from sheet music keeps its written grid: its bars are exact, never re-estimated from the notes.
+ */
 export function songSheetTempo(song: Song): Song['tempo'] {
+  if (song.transcription?.method === 'score-file') return song.tempo;
   let t = tempoCache.get(song.tempo);
   if (!t) tempoCache.set(song.tempo, (t = sheetTempo(song.tempo, song.base ?? [], song.duration)));
   return t;

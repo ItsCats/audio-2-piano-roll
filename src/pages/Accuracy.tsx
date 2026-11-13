@@ -22,6 +22,7 @@ import {
   type Rating,
 } from '../lib/accuracyStats';
 import { Badge, cn } from '../components/ui';
+import { SOURCE_CODE_LABEL, SOURCE_CODE_URL } from '../lib/credits';
 
 const pct = (x: number) => `${Math.round(x * 100)}%`;
 /** like pct, but never rounds a score below 1 up to "100%" */
@@ -627,6 +628,9 @@ export default function AccuracyPage() {
             <Link to="/credits" className="inline-flex items-center gap-1.5 text-accent-400 hover:text-accent-300">
               <Heart size={13} /> Credits &amp; licences
             </Link>
+            <a href={SOURCE_CODE_URL} target="_blank" rel="noopener noreferrer" className="text-accent-400 hover:text-accent-300">
+              {SOURCE_CODE_LABEL}
+            </a>
             <Link to="/import" className="text-accent-400 hover:text-accent-300">
               Import a song
             </Link>

@@ -3,6 +3,14 @@
  * Shown on the Credits page (/credits). Keep this list in sync when adding a model, sound,
  * font or library (and check the licence allows redistribution from a public website).
  */
+/**
+ * Where the source code of Piano2Vision is published (GNU AGPL-3.0-or-later, see LICENSE). Linked from the sidebar,
+ * Settings, the Accuracy page and the Credits page to offer the source to every user (AGPL section 13). If you run a
+ * modified version, point this at your own source.
+ */
+export const SOURCE_CODE_URL = 'https://github.com/ItsCats/audio-2-piano-roll';
+export const SOURCE_CODE_LABEL = 'Source code (AGPL-3.0)';
+
 export interface Credit {
   name: string;
   /** What Piano2Vision uses it for. */
@@ -208,8 +216,16 @@ export const CREDITS: CreditGroup[] = [
         note: 'With svgpath, cssesc, specificity and font-family-papandreou (MIT).',
       },
       {
+        name: 'fflate',
+        use: 'Opens compressed sheet-music files (.mxl, MuseScore .mscz) when you import them.',
+        author: 'Arjun Barrett',
+        license: 'MIT',
+        licenseUrl: LIC.mit,
+        url: 'https://github.com/101arrowz/fflate',
+      },
+      {
         name: 'MusicXML 4.0',
-        use: 'The open sheet-music file format of the MusicXML download.',
+        use: 'The open sheet-music file format of the MusicXML download and of sheet-music imports.',
         author: 'W3C Music Notation Community Group',
         license: 'W3C Community Final Specification Agreement',
         licenseUrl: 'https://www.w3.org/community/about/agreements/final/',
@@ -244,8 +260,7 @@ export const CREDITS: CreditGroup[] = [
         url: 'https://magenta.tensorflow.org/datasets/maestro',
       },
       { name: 'ASAP dataset', use: 'Aligned score of Chopin’s Ballade No. 1 (used to check an earlier measurement).', author: 'Francesco Foscarin et al.', license: 'CC BY-NC-SA 4.0', licenseUrl: LIC.ccbyncsa4, url: 'https://github.com/fosfrancesco/asap-dataset' },
-      { name: 'Musopen', use: 'Recording of Chopin’s Nocturne Op. 55 No. 1.', author: 'Musopen', license: 'Public domain (CC0)', licenseUrl: LIC.cc0, url: 'https://musopen.org' },
-      { name: 'Mutopia Project', use: 'Score of Debussy’s Clair de lune (used to check an earlier measurement).', author: 'Mutopia contributors', license: 'Public domain', url: 'https://www.mutopiaproject.org' },
+      { name: 'Musopen', use: 'A public-domain solo piano recording (solo piano recording 4 on the Accuracy page).', author: 'Musopen', license: 'Public domain (CC0)', licenseUrl: LIC.cc0, url: 'https://musopen.org' },
       {
         name: 'High-resolution Piano Transcription (reference runs)',
         use: 'The original PyTorch version of the piano model above, used as a second opinion on recordings without an exact answer key and to check that our browser version gives the same notes.',

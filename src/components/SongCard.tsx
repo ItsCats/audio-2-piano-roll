@@ -1,11 +1,15 @@
 import { Link } from 'react-router-dom';
-import { Music2, SquarePlay, FileAudio, Sparkles, Mic } from 'lucide-react';
+import { Music2, SquarePlay, FileAudio, FileMusic, Sparkles, Mic } from 'lucide-react';
 import type { SongSummary } from '../lib/music/types';
 import { formatTime } from '../lib/music/theory';
 import { Badge } from './ui';
 
 export const sourceIcon = (kind: SongSummary['source']['kind']) =>
-  kind === 'youtube' ? SquarePlay : kind === 'midi' ? Music2 : kind === 'demo' ? Sparkles : kind === 'capture' ? Mic : FileAudio;
+  kind === 'youtube' ? SquarePlay : kind === 'midi' ? Music2 : kind === 'score' ? FileMusic : kind === 'demo' ? Sparkles : kind === 'capture' ? Mic : FileAudio;
+
+/** What a song was made from, in a few words (when there is no artist to show). */
+export const sourceLabel = (kind: SongSummary['source']['kind']) =>
+  kind === 'midi' ? 'MIDI file' : kind === 'score' ? 'Sheet music' : kind === 'demo' ? 'Demo' : 'Audio transcription';
 
 export function SongCard({ song }: { song: SongSummary }) {
   const Icon = sourceIcon(song.source.kind);
@@ -22,7 +26,7 @@ export function SongCard({ song }: { song: SongSummary }) {
         <p className="truncate text-[13.5px] font-medium text-ink-50">{song.title}</p>
         <div className="flex items-center gap-1.5 text-[11.5px] text-ink-300">
           <Icon size={13} />
-          <span className="truncate">{song.artist || (song.source.kind === 'midi' ? 'MIDI file' : song.source.kind === 'demo' ? 'Demo' : 'Audio transcription')}</span>
+          <span className="truncate">{song.artist || sourceLabel(song.source.kind)}</span>
           {song.estimated && (
             <Badge tone="warn" title="Notes were estimated from audio">
               AI

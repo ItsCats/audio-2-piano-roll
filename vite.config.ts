@@ -4,6 +4,7 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import type { Plugin } from 'vite';
 import { fileURLToPath } from 'node:url';
+import { thirdPartyLicenses } from './scripts/third-party-licenses.ts';
 
 // jsPDF's optional helpers, only used by features we never call (doc.html, addSvgAsImage)
 const jspdfStub = fileURLToPath(new URL('./src/lib/sheet/stub.ts', import.meta.url));
@@ -40,9 +41,20 @@ function crossOriginIsolation(): Plugin {
   };
 }
 
+// dist/THIRD_PARTY_LICENSES.txt: licences of the npm packages bundled into the site (main build + workers)
+const licenses = thirdPartyLicenses({
+  header: [
+    'Piano2Vision is free software under the GNU Affero General Public License, version 3 or later.',
+    'Source code: https://github.com/ItsCats/audio-2-piano-roll (third-party notices: THIRD_PARTY_NOTICES.md there).',
+    'The AI models in /models/ and the piano samples in /samples/ have their own LICENSE and README.md files next to them.',
+    '',
+    'Below: the npm packages (code, WebAssembly, fonts) bundled into this website, with their licences.',
+  ].join('\n'),
+});
+
 export default defineConfig({
-  plugins: [react(), tailwindcss(), crossOriginIsolation()],
-  worker: { format: 'es' },
+  plugins: [react(), tailwindcss(), crossOriginIsolation(), licenses.plugin()],
+  worker: { format: 'es', plugins: () => [licenses.plugin()] },
   resolve: { alias: { html2canvas: jspdfStub, dompurify: jspdfStub, canvg: jspdfStub } },
   optimizeDeps: {
     include: [

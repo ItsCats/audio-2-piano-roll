@@ -66,7 +66,7 @@
    "bassRef": true,
    "stems": true
   },
-  "heroic": {
+  "piano-solo-1": {
    "kind": "piano-classical",
    "suggested": "piano",
    "presets": [
@@ -76,7 +76,7 @@
     "mix"
    ],
    "ptiRef": true,
-   "note": "Chopin, Polonaise in A-flat major Op. 53 ('Heroic') — solo piano (earlier mislabelled as an instrumental band track)"
+   "note": "solo piano (earlier mislabelled as an instrumental band track)"
   },
   "piano-jazz-1": {
    "kind": "piano-jazz",
@@ -89,7 +89,7 @@
    ],
    "ptiRef": true
   },
-  "chopin-ballade-1": {
+  "piano-solo-2": {
    "kind": "piano-classical",
    "suggested": "piano",
    "presets": [
@@ -101,7 +101,7 @@
    "noteRef": "snapped",
    "ptiRef": true
   },
-  "clair-de-lune": {
+  "piano-solo-3": {
    "kind": "piano-classical",
    "suggested": "piano",
    "presets": [
@@ -113,7 +113,7 @@
    "noteRef": "snapped",
    "ptiRef": true
   },
-  "nocturne": {
+  "piano-solo-4": {
    "kind": "piano-classical",
    "suggested": "piano",
    "presets": [
@@ -201,7 +201,7 @@
    ],
    "noteRef": "exact",
    "ptiRef": true,
-   "note": "MAESTRO train split (the PTI reference model was trained on it); same piece as chopin-ballade-1",
+   "note": "MAESTRO train split (the PTI reference model was trained on it)",
    "maestroSplit": "train"
   }
  }

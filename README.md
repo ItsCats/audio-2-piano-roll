@@ -1,6 +1,6 @@
 # Piano2Vision
 
-Turn songs, recordings, YouTube videos and MIDI files into an interactive **falling-note piano roll** — with a real sampled grand piano, Easy / Medium / Hard arrangements, note editing, practice tools with MIDI-keyboard scoring, and **1080p60 video export**.
+Turn songs, recordings, YouTube videos, MIDI files and sheet music into an interactive **falling-note piano roll** — with a real sampled grand piano, Easy / Medium / Hard arrangements, note editing, practice tools with MIDI-keyboard scoring, and **1080p60 video export**.
 
 Everything runs in the browser. Audio is transcribed on the user's device by a neural network; songs are stored locally. An optional self-hosted processing server adds YouTube fetching and faster source separation (separation also runs in the browser).
 
@@ -10,7 +10,7 @@ Everything runs in the browser. Audio is transcribed on the user's device by a n
 
 | Area | What you get |
 | --- | --- |
-| **Import** | MP3, WAV, M4A/AAC, MP4/MOV/WebM/MKV (audio track), FLAC, OGG/Opus, MIDI; microphone recording; YouTube (via your processing server, or by recording the official embedded player's tab audio) |
+| **Import** | MP3, WAV, M4A/AAC, MP4/MOV/WebM/MKV (audio track), FLAC, OGG/Opus, MIDI; sheet music (MusicXML `.musicxml`/`.xml`/`.mxl`, MuseScore 3–5 `.mscz`/`.mscx`, repeats played out in order); microphone recording; YouTube (via your processing server, or by recording the official embedded player's tab audio) |
 | **Transcription** | Spotify's Basic Pitch model (polyphonic) running in a Web Worker on WebGL/WASM, with a piano-tuned note-extraction pipeline (register curve for the top/bottom octaves, chopped-note join), beat tracking, key detection and hand assignment. **Separate vocals & drums** (SCNet, in the browser, on by default for "Full song") puts the singer's melody on the right hand and transcribes the accompaniment without drums. Re-tune detection afterwards without re-running the model. For solo piano, an optional second model, **Solo piano – high accuracy (slower)** (ByteDance's piano transcription model, ONNX in the browser): far more accurate notes, note lengths and velocities on piano recordings, but a ≈ 41 MB one-time download, about 5× slower (≈ 38 s per audio minute with 3 threads, ≈ 97 s single-threaded) and ≈ 0.7 GB more memory, and no help for songs with vocals or drums. Measured accuracy: in-app **Accuracy** page. |
 | **Arrangements** | Easy (the sung melody — or one smooth instrument tune — on 8th notes + sustained bass), Medium (tune + chord tones, simplified left hand, never more than an octave per hand), Hard (full transcription, hands rebalanced for reach) — switch instantly, edit each independently |
 | **Piano roll** | Smooth canvas renderer locked to the audio clock, 49–88 keys or fit-to-song, note speed/zoom, hand colours, glow, trails, sparks, guides, pedal lane, loop markers |
@@ -85,7 +85,7 @@ The piano presets were tuned on five of the six MAESTRO pieces (Liszt held out) 
 
 ## Deploying to Netlify
 
-1. Push this repository to a **private** GitHub repository.
+1. Push this repository (or your fork of it) to your own GitHub repository.
 2. In Netlify: **Add new site → Import an existing project → GitHub** and pick the repository. Netlify reads `netlify.toml`:
    - build command `npm run build`, publish directory `dist`, Node 22
    - SPA redirect, long-term caching for `/assets`, `/samples` and `/models`
@@ -138,6 +138,7 @@ src/
     render/          piano-roll renderer, keyboard layout, themes, backgrounds
     export/          video export (WebCodecs/mediabunny), downloads, presets
     sheet/           sheet music: notes → measures/voices/spelling → MusicXML; OSMD view, PDF
+    score/           sheet-music import: MusicXML / .mxl / MuseScore → repeats unrolled → notes, pedal, beats (importMusicXml is the entry point for PDF/photo recognition)
     midiInput/       Web MIDI input and practice scoring
     storage/         IndexedDB persistence
     youtube/         URL parsing, oEmbed, IFrame player, tab-audio capture
@@ -155,7 +156,7 @@ tests/               unit tests and the browser accuracy harness
 
 ## Credits & licences
 
-The full list (models, sounds, fonts, libraries, server components and the data used to measure accuracy) is on the in-app **Credits** page (`/credits`, source `src/lib/credits.ts`; linked from the sidebar, Settings and the Accuracy page). In short:
+The full list (models, sounds, fonts, libraries, server components and the data used to measure accuracy) is on the in-app **Credits** page (`/credits`, source `src/lib/credits.ts`; linked from the sidebar, Settings and the Accuracy page) and, with copyright lines and licence details, in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). In short:
 
 - [Basic Pitch](https://github.com/spotify/basic-pitch) model by Spotify — Apache-2.0
 - [Salamander Grand Piano V3](https://freepats.zenvoid.org/Piano/acoustic-grand-piano.html) by Alexander Holm — CC-BY 3.0
@@ -166,4 +167,21 @@ The full list (models, sounds, fonts, libraries, server components and the data 
 - [ONNX Runtime](https://github.com/microsoft/onnxruntime) (onnxruntime-web in the browser, onnxruntime on the server) — MIT
 - TensorFlow.js (Apache-2.0), mediabunny (MPL-2.0), @tonejs/midi (MIT), React (MIT), OpenSheetMusicDisplay (BSD-3-Clause, with VexFlow MIT), jsPDF and svg2pdf.js (MIT); server only: yt-dlp (Unlicense), FastAPI (MIT), Uvicorn (BSD-3), python-multipart (Apache-2.0), NumPy (BSD-3), FFmpeg (LGPL)
 
-Users are responsible for having the rights to the music they import, and for complying with YouTube's Terms of Service.
+**Users are responsible for having the rights to the music they import, and for complying with YouTube's Terms of Service.** No copyrighted music is included in this repository; the songs used to measure accuracy were used privately and are not distributed.
+
+## Licence
+
+Piano2Vision
+Copyright (C) 2026 Jack Anderson
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License along with this program (see [LICENSE](LICENSE)). If not, see <https://www.gnu.org/licenses/>.
+
+SPDX identifier: `AGPL-3.0-or-later`. Source code: <https://github.com/ItsCats/audio-2-piano-roll>.
+
+- The AGPL also covers network use: if you run a modified version as a website or server, you must offer its users the source of your version (section 13). The app links to its source from the sidebar and the Credits page, and the optional server from its root response; keep those links pointing at your own source if you change the code.
+- Third-party parts keep their own licences: the AI models in `public/models/` (each folder has its own `LICENSE` and `README.md`), the piano samples in `public/samples/` (CC BY 3.0 and CC0, see [public/samples/README.md](public/samples/README.md)), and the npm packages and fonts bundled into the built site. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+

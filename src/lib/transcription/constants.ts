@@ -1,3 +1,10 @@
+/*
+ * SPDX-License-Identifier: AGPL-3.0-or-later AND Apache-2.0
+ * Derived from the model constants (basic_pitch/constants.py) of
+ * spotify/basic-pitch (https://github.com/spotify/basic-pitch), Copyright 2022 Spotify AB,
+ * licensed under the Apache License, Version 2.0 (full text: public/models/basic-pitch/LICENSE).
+ * Modified: rewritten in TypeScript by the Piano2Vision authors.
+ */
 /**
  * Constants of the Basic Pitch model (spotify/basic-pitch, Apache-2.0).
  * See basic_pitch/constants.py in the reference implementation.

@@ -24,6 +24,11 @@ from .config import settings
 from .jobs import Job, manager
 
 VERSION = "2.0.0"
+# Piano2Vision is licensed under the GNU AGPL-3.0-or-later. Section 13 asks a server that people use over the
+# network to offer them its source: the root response and /api/health link to it. If you run a modified version,
+# set SOURCE_CODE_URL to where your modified source is published.
+LICENSE_ID = "AGPL-3.0-or-later"
+SOURCE_CODE_URL = os.environ.get("SOURCE_CODE_URL", "https://github.com/ItsCats/audio-2-piano-roll")
 STEMS = ("vocals", "accomp", "mix")
 
 app = FastAPI(title="Piano2Vision processing server", version=VERSION)
@@ -82,11 +87,24 @@ def _separate_into(job: Job, source_path: str, out_dir: str) -> None:
     job.separation_ms = round((time.perf_counter() - t0) * 1000)
 
 
+@app.get("/")
+def root() -> dict:
+    return {
+        "name": "Piano2Vision processing server",
+        "version": VERSION,
+        "license": LICENSE_ID,
+        "source": SOURCE_CODE_URL,
+        "health": "/api/health",
+    }
+
+
 @app.get("/api/health")
 def health() -> dict:
     return {
         "ok": True,
         "version": VERSION,
+        "license": LICENSE_ID,
+        "source": SOURCE_CODE_URL,
         # stems: separation returns ?stem=vocals|accomp (SCNet); older servers returned one "piano part" file
         "features": {"youtube": youtube.available(), "separation": separation_enabled(), "stems": True},
         "separationModel": "scnet-int8" if separation_enabled() else None,
