@@ -345,7 +345,7 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
                       onClick={() => setPdf({ ...pdf, selected: on ? pdf.selected.filter((p) => p !== page) : [...pdf.selected, page].sort((a, b) => a - b) })}
                       className={cn(
                         'focus-ring relative overflow-hidden rounded-lg border-2 bg-white transition-opacity disabled:cursor-default',
-                        on ? 'border-accent-500' : 'border-ink-700 opacity-55 hover:opacity-80',
+                        on ? 'border-accent-500' : 'border-ink-700 opacity-40 grayscale hover:opacity-70',
                         full && 'opacity-35',
                       )}
                     >

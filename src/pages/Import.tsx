@@ -131,6 +131,12 @@ function JobProgress() {
   const navigate = useNavigate();
   const [touch] = useState(isTouchDevice);
   const [, force] = useState(0);
+  // a new import: bring its card into view (on a phone the button that started it is far below)
+  const card = useRef<HTMLDivElement>(null);
+  const jobId = job?.id;
+  useEffect(() => {
+    if (jobId !== undefined) card.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+  }, [jobId]);
   useEffect(() => {
     const t = setInterval(() => force((x) => x + 1), 500);
     return () => clearInterval(t);
@@ -146,7 +152,7 @@ function JobProgress() {
   const err = job.stage === 'error';
   const failedHere = err && failed?.jobId === job.id ? failed : null;
   return (
-    <div className="panel animate-fade-in p-5" aria-live="polite">
+    <div ref={card} className="panel animate-fade-in scroll-mt-4 p-5" aria-live="polite">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <p className="truncate text-[15px] font-semibold text-ink-50">{job.title}</p>

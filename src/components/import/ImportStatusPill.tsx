@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { Loader2, CheckCircle2, XCircle } from 'lucide-react';
-import { STAGE_LABELS, useImport } from '../../state/importStore';
+import { stageLabel, useImport } from '../../state/importStore';
 import { ProgressBar } from '../ui';
 
 /** Compact import status shown in the sidebar while an import runs in the background. */
@@ -18,7 +18,7 @@ export function ImportStatusPill() {
         {done ? <CheckCircle2 size={14} className="text-ok" /> : err ? <XCircle size={14} className="text-bad" /> : <Loader2 size={14} className="animate-spin text-accent-400" />}
         <span className="truncate font-medium text-ink-100">{job.title}</span>
       </div>
-      <p className="mt-1 text-[11.5px] text-ink-300">{done ? 'Ready — open in Studio' : STAGE_LABELS[job.stage]}</p>
+      <p className="mt-1 text-[11.5px] text-ink-300">{done ? 'Ready — open in Studio' : stageLabel(job, job.stage)}</p>
       {!done && !err && (
         <div className="mt-2">
           <ProgressBar value={job.progress} />
