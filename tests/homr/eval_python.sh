@@ -8,7 +8,7 @@ set -e
 OUT=$1; shift
 HERE=$(cd "$(dirname "$0")" && pwd)
 SPIKE=${SPIKE:?set SPIKE to the OMR spike directory}
-M21=${M21:-$SPIKE/../m21venv/bin/python}
+M21=${M21:-$SPIKE/venv/bin/python}
 for cat in clean clean_real photo photo_real; do
   imgs=$(ls "$SPIKE"/testset/$cat/*.png "$SPIKE"/testset/$cat/*.jpg 2>/dev/null || true)
   "$SPIKE"/venv3/bin/python -I "$HERE"/homr_run.py --out "$OUT/$cat" "$@" $imgs 2>&1 | grep -E "staffs [0-9]+ s=" || true
