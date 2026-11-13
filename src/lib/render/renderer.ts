@@ -24,6 +24,19 @@ export interface EditOverlay {
   marquee?: { x0: number; y0: number; x1: number; y1: number } | null;
 }
 
+/**
+ * A real keyboard (hands video, lib/handcam) in place of the drawn one: the lanes are the camera's
+ * keys, notes land at `hitY`, and `paintKeys` paints the video band instead of the keyboard. Effects
+ * (sparks, key light, bursts, dust) use the same geometry, so they land on the real keys.
+ */
+export interface RendererStage {
+  layout: KeyboardLayout;
+  hitY: number;
+  /** height of the keys below the hit line (where key light is drawn) */
+  kbH: number;
+  paintKeys(ctx: Ctx2D): void;
+}
+
 export interface FrameOptions {
   time: number;
   /** keys currently held on a MIDI/computer keyboard */
@@ -64,6 +77,7 @@ export class PianoRollRenderer {
   private decalImageSize = { w: 1, h: 1 };
   private flats = false;
   private supportsFilter: boolean;
+  private stage: RendererStage | null = null;
 
   constructor(canvas: AnyCanvas, settings: VisualSettings) {
     this.canvas = canvas;
@@ -140,7 +154,17 @@ export class PianoRollRenderer {
     return null;
   }
 
+  /** A real keyboard in place of the drawn one (null: back to normal). */
+  setStage(stage: RendererStage | null): void {
+    this.stage = stage;
+    this.relayout();
+  }
+
   private relayout() {
+    if (this.stage) {
+      this.layout = this.stage.layout;
+      return;
+    }
     const [lo, hi] = rangeFor(this.s.range, this.notes);
     this.layout = computeLayout(this.w, lo, hi);
   }
@@ -150,10 +174,11 @@ export class PianoRollRenderer {
     return this.h / 1080;
   }
   get keyboardHeight(): number {
+    if (this.stage) return this.stage.kbH;
     return this.s.showKeyboard ? Math.round(this.h * this.s.keyboardHeight) : 0;
   }
   get hitY(): number {
-    return this.h - this.keyboardHeight;
+    return this.stage ? this.stage.hitY : this.h - this.keyboardHeight;
   }
   get pxPerSec(): number {
     return this.hitY / Math.max(0.5, this.s.lookahead);
@@ -617,8 +642,16 @@ export class PianoRollRenderer {
       ctx.globalCompositeOperation = 'source-over';
     }
 
-    // keyboard
-    if (kbH > 0) {
+    // keyboard (or the hands video: the background under the hit line first, so no note shows below it)
+    if (this.stage) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, hitY, w, this.h - hitY);
+      ctx.clip();
+      this.drawBackground(ctx);
+      ctx.restore();
+      this.stage.paintKeys(ctx);
+    } else if (kbH > 0) {
       if (s.keyboardStyle === 'realistic') {
         drawRealisticKeyboard(ctx, L, this.keyColorFn(active, opts), {
           top: hitY,
