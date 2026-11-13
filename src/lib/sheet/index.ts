@@ -40,6 +40,11 @@ export function buildSheet(song: Song, difficulty: Difficulty): Score {
     level: difficulty,
     lock: song.sheet?.grid,
     bars: song.sheet?.bars,
+    keys: song.sheet?.keys,
+    meters: song.sheet?.meters,
+    tempos: song.sheet?.tempos,
+    marks: arr.marks,
+    pedal: arr.showPedal ? arr.pedal : undefined,
   });
   cache.set(arr, { tempo: song.tempo, key: song.key, duration: song.duration, sheet: song.sheet, score });
   return score;

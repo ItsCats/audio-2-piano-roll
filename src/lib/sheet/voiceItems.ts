@@ -54,14 +54,15 @@ function tripletMarks(items: Item[]) {
 export function voiceItems(score: Score, chords: Chord[], m: number, voice: 0 | 1): Item[] {
   const t = score.time;
   const a = t.measureStart(m);
-  const len = m === 0 && t.pickup ? t.pickup : t.measureLen;
+  const len = t.measureLenAt(m);
   const b = a + len;
-  const ctx: RhythmContext = { measureStart: a, measureLen: len, beatLen: t.beatLen, compound: t.compound, isTriplet: (q) => score.tripletQuarters.has(q) };
+  const mt = t.changes ? t.meterAt(m) : t;
+  const ctx: RhythmContext = { measureStart: a, measureLen: len, beatLen: mt.beatLen, compound: mt.compound, isTriplet: (q) => score.tripletQuarters.has(q) };
   const items: Item[] = [];
   if (!chords.length) {
     // a whole-measure rest; in a pickup measure written out (readers take measure rests as full bars)
     if (voice === 1) items.push({ kind: 'forward', piece: { pos: a, dur: len, type: 'whole', dots: 0, triplet: false } });
-    else if (len === t.measureLen) items.push({ kind: 'mrest', piece: { pos: a, dur: len, type: 'whole', dots: 0, triplet: false } });
+    else if (len === mt.measureLen) items.push({ kind: 'mrest', piece: { pos: a, dur: len, type: 'whole', dots: 0, triplet: false } });
     else for (const piece of decompose(a, b, ctx, true)) items.push({ kind: 'rest', piece });
     return items;
   }
@@ -117,7 +118,7 @@ export function voiceItems(score: Score, chords: Chord[], m: number, voice: 0 | 
   tripletMarks(items);
   // beams
   const beamItems = items.map((it) => ({ pos: it.piece.pos, dur: it.piece.dur, type: it.piece.type, triplet: it.piece.triplet, rest: it.kind !== 'note' }));
-  const easyHalfBar = score.level === 'easy' && len === 48 && t.beatLen === 12;
+  const easyHalfBar = score.level === 'easy' && len === 48 && mt.beatLen === 12;
   const bs = beams(beamItems, ctx, easyHalfBar ? 24 : undefined);
   items.forEach((it, i) => (it.beams = bs[i]));
   return items;

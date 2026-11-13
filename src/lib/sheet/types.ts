@@ -3,7 +3,7 @@
  * divisions → voiced chords per staff → MusicXML. Positions and durations are integers in
  * DIVISIONS per quarter note (12: a 16th is 3, a triplet 8th 4, a triplet 16th 2).
  */
-import type { Difficulty } from '../music/types';
+import type { Articulation, Difficulty, SheetMark, TempoUnit } from '../music/types';
 
 export const DIV = 12;
 
@@ -78,7 +78,16 @@ export interface Ottava {
   stop: number;
 }
 
-/** Beat grid and measures of a song. */
+export interface MeterInfo {
+  beatsPerBar: number;
+  beatUnit: 2 | 4 | 8;
+  compound: boolean;
+  beatLen: number;
+  /** The full measure length of this meter (a cut-short measure is shorter: measureLenAt). */
+  measureLen: number;
+}
+
+/** Beat grid and measures of a song. The meter fields are those of measure 0. */
 export interface TimeMap {
   beatsPerBar: number;
   beatUnit: 2 | 4 | 8;
@@ -95,6 +104,12 @@ export interface TimeMap {
   posToTime(pos: number): number;
   measureStart(m: number): number;
   measureOf(pos: number): number;
+  /** Length of measure m in divisions (the pickup, a measure cut short by a time-signature change). */
+  measureLenAt(m: number): number;
+  /** The meter of measure m (time-signature changes, Song.sheet.meters). */
+  meterAt(m: number): MeterInfo;
+  /** Whether the meter changes anywhere (false: every measure has the measure-0 meter). */
+  changes: boolean;
   /** Start bpm in beat units, for the tempo mark. */
   bpm: number;
   /** Where the beats came from. */
@@ -107,6 +122,24 @@ export interface TempoMark {
   bpm: number;
   /** Quarter notes per minute, for <sound tempo>. */
   qpm: number;
+  /** A tempo mark placed on the sheet (Song.sheet.tempos): its beat unit and words. */
+  unit?: TempoUnit;
+  text?: string;
+}
+
+/** A key signature in force from a measure on. */
+export interface KeySig {
+  measure: number;
+  fifths: number;
+  mode: 'major' | 'minor';
+  /** Pitch class of the tonic in a minor key (leading-tone spelling). */
+  minorTonic?: number;
+}
+
+/** What is written on a Song note besides its pitch and rhythm. */
+export interface NoteMarks {
+  finger?: number;
+  art?: Articulation[];
 }
 
 export interface Score {
@@ -127,4 +160,12 @@ export interface Score {
   clefs: [ClefSign[], ClefSign[]];
   ottavas: Ottava[];
   tempoMarks: TempoMark[];
+  /** Key signatures (the first at measure 0: fifths / mode / minorTonic above). */
+  keys: KeySig[];
+  /** Markings of the level (dynamics, hairpins, words, slurs); absent: none. */
+  marks?: SheetMark[];
+  /** Fingering and articulations by Song note id; absent: none. */
+  noteMarks?: Map<number, NoteMarks>;
+  /** Pedal written on the sheet (Arrangement.showPedal), in divisions on the level grid; absent: not shown. */
+  pedals?: { on: number; off: number }[];
 }

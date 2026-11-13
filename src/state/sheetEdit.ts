@@ -6,12 +6,15 @@ import { buildSheet } from '../lib/sheet';
 import { sortNotes } from '../lib/music/cleanup';
 import { ensureSheet } from '../lib/sheet/lock';
 import type { SheetCtx, SheetEditResult } from '../lib/sheet/edit';
+import { fixSlurs } from '../lib/sheet/marks';
 import { getPlayer } from './playback';
 import { useStudio } from './studioStore';
 
 /** When the last sheet edit was made (the sheet view redraws it on the next frame, not after 400 ms). */
 let lastSheetEditAt = 0;
 export const sheetEditedRecently = (ms = 250) => performance.now() - lastSheetEditAt < ms;
+/** Marks the next song change as a sheet edit (redrawn on the next frame). */
+export const markSheetEdited = () => void (lastSheetEditAt = performance.now());
 
 /** The open song's sheet context, or null. */
 export function sheetCtx(): SheetCtx | null {
@@ -31,8 +34,16 @@ export function runSheetEdit(op: (ctx: SheetCtx) => SheetEditResult | null, opts
   lastSheetEditAt = performance.now();
   st.editSong((s) => {
     const sheet = ensureSheet(s, level);
+    const arr = s.arrangements[level];
+    // slurs on deleted notes go too; a tie re-points the slurs of the note it merged
+    const marks = fixSlurs(arr.marks, res.notes, res.repoint);
+    const next = { ...arr, notes: sortNotes(res.notes), edited: true };
+    if (marks !== arr.marks) {
+      if (marks?.length) next.marks = marks;
+      else delete next.marks;
+    }
     return {
-      arrangements: { ...s.arrangements, [level]: { ...s.arrangements[level], notes: sortNotes(res.notes), edited: true } },
+      arrangements: { ...s.arrangements, [level]: next },
       sheet: res.bars !== undefined && res.bars > (sheet.bars ?? 0) ? { ...sheet, bars: res.bars } : sheet,
       ...(res.duration !== undefined ? { duration: res.duration } : {}),
     };

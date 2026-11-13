@@ -3,7 +3,7 @@
  * beat grid (tracked beats, a MIDI tempo map, or a regular grid when there is none).
  */
 import { beatToTime, estimateTempo, regularBeats, timeToBeat, upperBound } from '../music/beats';
-import type { Note, SheetGridLock, TempoInfo } from '../music/types';
+import type { Note, SheetGridLock, SheetMeter, TempoInfo } from '../music/types';
 import { DIV, type TimeMap } from './types';
 
 export function resolveMeter(tempo: TempoInfo): { beatsPerBar: number; beatUnit: 2 | 4 | 8; compound: boolean } {
@@ -134,33 +134,106 @@ export function gridParams(tempo: TempoInfo, duration: number, notes: { start: n
   return { beats, db, bpm, beatsPerBar, beatUnit, originQ, pickup: Math.round(pickupQ * DIV) };
 }
 
-/** The TimeMap of grid values (buildGrid's, or a song's locked grid). */
-export function gridFromLock(lock: SheetGridLock, source: TempoInfo['source']): TimeMap {
-  const { beats, db, bpm, beatsPerBar, beatUnit, originQ, pickup } = lock;
+/** Beat group (divisions) and compound flag of a meter. */
+export function meterShape(beatsPerBar: number, beatUnit: 2 | 4 | 8): { compound: boolean; beatLen: number; measureLen: number } {
   const compound = beatUnit === 8 && beatsPerBar % 3 === 0;
+  return { compound, beatLen: compound ? 18 : beatUnit === 2 ? 24 : beatUnit === 8 ? 6 : 12, measureLen: Math.round(beatsPerBar * (4 / beatUnit) * DIV) };
+}
+
+/** A run of measures in one meter (time-signature changes split the piece into these). */
+interface Seg {
+  pos: number;
+  m0: number;
+  len: number;
+  beatsPerBar: number;
+  beatUnit: 2 | 4 | 8;
+  compound: boolean;
+  beatLen: number;
+}
+
+/**
+ * The TimeMap of grid values (buildGrid's, or a song's locked grid). `meters` (Song.sheet.meters)
+ * relabel the bars from a measure start: positions and seconds never change, only the grouping
+ * into measures (a change that isn't on a bar line ends the measure before it early).
+ */
+export function gridFromLock(lock: SheetGridLock, source: TempoInfo['source'], meters?: SheetMeter[]): TimeMap {
+  const { beats, db, bpm, beatsPerBar, beatUnit, originQ, pickup } = lock;
+  const { compound, beatLen, measureLen } = meterShape(beatsPerBar, beatUnit);
   const qPerBeat = 4 / beatUnit;
   const toQ = (t: number) => (timeToBeat(beats, t, bpm) - db) * qPerBeat;
-  const measureQ = beatsPerBar * qPerBeat;
-  const measureLen = Math.round(measureQ * DIV);
-  const beatLen = compound ? 18 : beatUnit === 2 ? 24 : beatUnit === 8 ? 6 : 12;
-  const measureStart = (m: number) => (pickup ? (m <= 0 ? 0 : pickup + (m - 1) * measureLen) : Math.max(0, m) * measureLen);
-  const measureOf = (pos: number) => {
-    if (pos <= 0) return 0;
-    if (!pickup) return Math.floor(pos / measureLen);
-    return pos < pickup ? 0 : 1 + Math.floor((pos - pickup) / measureLen);
-  };
-  return {
+  const base = {
     beatsPerBar,
     beatUnit,
     compound,
     beatLen,
     measureLen,
     pickup,
-    toPos: (t) => (toQ(t) - originQ) * DIV,
-    posToTime: (pos) => beatToTime(beats, (pos / DIV + originQ) / qPerBeat + db, bpm),
-    measureStart,
-    measureOf,
+    toPos: (t: number) => (toQ(t) - originQ) * DIV,
+    posToTime: (pos: number) => beatToTime(beats, (pos / DIV + originQ) / qPerBeat + db, bpm),
     bpm,
     source,
+  };
+  if (!meters?.length) {
+    // one meter: the plain formulas
+    const measureStart = (m: number) => (pickup ? (m <= 0 ? 0 : pickup + (m - 1) * measureLen) : Math.max(0, m) * measureLen);
+    const measureOf = (pos: number) => {
+      if (pos <= 0) return 0;
+      if (!pickup) return Math.floor(pos / measureLen);
+      return pos < pickup ? 0 : 1 + Math.floor((pos - pickup) / measureLen);
+    };
+    const meter = { beatsPerBar, beatUnit, compound, beatLen, measureLen };
+    return {
+      ...base,
+      measureStart,
+      measureOf,
+      measureLenAt: (m) => (pickup && m <= 0 ? pickup : measureLen),
+      meterAt: () => meter,
+      changes: false,
+    };
+  }
+  // measure-0 segment (a meter at pos 0 relabels it; the pickup stays), then one per change
+  const at0 = meters.find((x) => x.pos === 0);
+  const first = at0 ? { beatsPerBar: at0.beatsPerBar, beatUnit: at0.beatUnit, ...meterShape(at0.beatsPerBar, at0.beatUnit) } : { beatsPerBar, beatUnit, compound, beatLen, measureLen };
+  const segs: Seg[] = [{ pos: 0, m0: 0, len: first.measureLen, beatsPerBar: first.beatsPerBar, beatUnit: first.beatUnit, compound: first.compound, beatLen: first.beatLen }];
+  const segStart = (sg: Seg, m: number) => (sg.m0 === 0 && pickup ? (m <= 0 ? 0 : pickup + (m - 1) * sg.len) : sg.pos + (m - sg.m0) * sg.len);
+  const segOf = (sg: Seg, pos: number) => (sg.m0 === 0 && pickup ? (pos < pickup ? 0 : 1 + Math.floor((pos - pickup) / sg.len)) : sg.m0 + Math.floor((pos - sg.pos) / sg.len));
+  for (const x of [...meters].sort((a, b) => a.pos - b.pos)) {
+    if (x.pos <= 0 || (pickup && x.pos < pickup)) continue;
+    const prev = segs[segs.length - 1];
+    if (x.pos <= prev.pos) continue;
+    const pm = segOf(prev, x.pos);
+    const m0 = segStart(prev, pm) === x.pos ? pm : pm + 1;
+    const sh = meterShape(x.beatsPerBar, x.beatUnit);
+    const sg: Seg = { pos: x.pos, m0, len: sh.measureLen, beatsPerBar: x.beatsPerBar, beatUnit: x.beatUnit, compound: sh.compound, beatLen: sh.beatLen };
+    if (m0 === prev.m0) segs[segs.length - 1] = { ...sg, pos: prev.pos };
+    else segs.push(sg);
+  }
+  const segByM = (m: number) => {
+    let i = segs.length - 1;
+    while (i > 0 && segs[i].m0 > m) i--;
+    return segs[i];
+  };
+  const segByPos = (pos: number) => {
+    let i = segs.length - 1;
+    while (i > 0 && segs[i].pos > pos) i--;
+    return segs[i];
+  };
+  const measureStart = (m: number) => (m <= 0 ? 0 : segStart(segByM(m), m));
+  const measureOf = (pos: number) => (pos <= 0 ? 0 : segOf(segByPos(pos), pos));
+  return {
+    ...base,
+    beatsPerBar: first.beatsPerBar,
+    beatUnit: first.beatUnit,
+    compound: first.compound,
+    beatLen: first.beatLen,
+    measureLen: first.measureLen,
+    measureStart,
+    measureOf,
+    measureLenAt: (m) => measureStart(m + 1) - measureStart(m),
+    meterAt: (m) => {
+      const sg = segByM(m);
+      return { beatsPerBar: sg.beatsPerBar, beatUnit: sg.beatUnit, compound: sg.compound, beatLen: sg.beatLen, measureLen: sg.len };
+    },
+    changes: true,
   };
 }

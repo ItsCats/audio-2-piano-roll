@@ -10,6 +10,7 @@ import { newNoteId } from '../music/cleanup';
 import { pinValid } from './score';
 import { stepInKey } from './pitch';
 import { writtenIndex, writtenSpan } from './written';
+import { articulatedSound, levelAt } from './marks';
 import { DIV, type Score, type Staff } from './types';
 
 export interface SheetCtx {
@@ -26,6 +27,8 @@ export interface SheetEditResult {
   bars?: number;
   /** Notes to select afterwards. */
   select?: number[];
+  /** Slurs on these notes now end on others (a tie merged b into a). */
+  repoint?: Map<number, number>;
 }
 
 /** Note lengths of the palette (divisions): 16th, 8th, dotted 8th, quarter, dotted quarter, half, dotted half, whole. */
@@ -85,6 +88,12 @@ export function placeAt(ctx: SheetCtx, n: Note, on: number, off: number): Note {
   const t = ctx.score.time;
   const start = t.posToTime(on);
   const dur = Math.max(0.01, t.posToTime(off) - start);
+  if (n.art?.length) {
+    // articulations sound from the new written length
+    const base = { dur, vel: n.artBase?.vel ?? n.vel };
+    const snd = articulatedSound(base, n.art, dur);
+    return { ...n, start, dur: snd.dur, vel: snd.vel, artBase: base, pin: { on, off, t: start, d: snd.dur } };
+  }
   return { ...n, start, dur, pin: { on, off, t: start, d: dur } };
 }
 
@@ -257,7 +266,10 @@ export function deleteOp(ctx: SheetCtx, ids: Set<number>): SheetEditResult | nul
 }
 
 /** The velocity a new note gets (no dynamics yet in this version: the level of the notes around it). */
-function velocityNear(ctx: SheetCtx, start: number, hand: Hand): number {
+function velocityNear(ctx: SheetCtx, start: number, hand: Hand, pos?: number): number {
+  // the dynamic in force there, when the level has dynamics
+  const lv = pos !== undefined ? levelAt(ctx.song.arrangements[ctx.level].marks, pos, hand) : null;
+  if (lv !== null) return lv;
   let best: Note | null = null;
   for (const n of arrNotes(ctx)) if (n.hand === hand && (!best || Math.abs(n.start - start) < Math.abs(best.start - start))) best = n;
   return best && Math.abs(best.start - start) < 4 ? Math.round(best.vel * 100) / 100 : 0.7;
@@ -270,7 +282,7 @@ export function addOp(ctx: SheetCtx, at: { pos: number; midi: number; staff: Sta
   const hand: Hand = at.staff === 1 ? 'R' : 'L';
   const id = newNoteId();
   const start = ctx.score.time.posToTime(on);
-  const base: Note = { id, midi: Math.max(21, Math.min(108, at.midi)), start, dur: 0.1, vel: velocityNear(ctx, start, hand), hand };
+  const base: Note = { id, midi: Math.max(21, Math.min(108, at.midi)), start, dur: 0.1, vel: velocityNear(ctx, start, hand, on), hand };
   const n = placeAt(ctx, base, on, off);
   return finish(ctx, [...arrNotes(ctx), n], new Set([id]), [id]);
 }
@@ -302,11 +314,19 @@ export function tieOp(ctx: SheetCtx, ids: Set<number>, at?: number): SheetEditRe
     const sb = spanOf(ctx, b);
     if (Math.abs(sb.on - sa.off) > gridStep(ctx.score, sa.off)) return null;
     const end = b.start + b.dur;
-    const merged: Note = { ...a, dur: Math.max(0.01, end - a.start), pin: { on: sa.on, off: sb.off, t: a.start, d: Math.max(0.01, end - a.start) } };
+    // articulations: staccato from b, the rest from a
+    const art = [...new Set([...(a.art ?? []).filter((x) => x !== 'staccato'), ...(b.art ?? []).filter((x) => x === 'staccato')])];
+    const { art: _a, artBase: _b, ...plain } = a;
+    void _a;
+    const aBase = { ...plain, dur: _b?.dur ?? a.dur, vel: _b?.vel ?? a.vel };
+    const bEnd = b.start + (b.artBase?.dur ?? b.dur);
+    let merged: Note = { ...aBase, dur: Math.max(0.01, bEnd - a.start), pin: { on: sa.on, off: sb.off, t: a.start, d: Math.max(0.01, bEnd - a.start) } };
+    if (art.length) merged = placeAt(ctx, { ...merged, art }, sa.on, sb.off);
+    void end;
     const notes = arrNotes(ctx)
       .filter((n) => n.id !== b.id)
       .map((n) => (n.id === a.id ? merged : n));
-    return finish(ctx, notes, new Set([a.id]), [a.id]);
+    return { ...finish(ctx, notes, new Set([a.id]), [a.id]), repoint: new Map([[b.id, a.id]]) };
   }
   if (sel.length !== 1) return null;
   const n = sel[0];
@@ -321,7 +341,23 @@ export function tieOp(ctx: SheetCtx, ids: Set<number>, at?: number): SheetEditRe
   const bStart = t.posToTime(cut);
   const bEnd = n.start + n.dur;
   const id = newNoteId();
-  const second: Note = { ...n, id, start: bStart, dur: Math.max(0.01, bEnd - bStart), pin: { on: cut, off: s.off, t: bStart, d: Math.max(0.01, bEnd - bStart) } };
+  let second: Note = { ...n, id, start: bStart, dur: Math.max(0.01, bEnd - bStart), pin: { on: cut, off: s.off, t: bStart, d: Math.max(0.01, bEnd - bStart) } };
+  // untie: staccato moves to the second note; fingering stays on the first
+  delete second.finger;
+  if (n.art?.length) {
+    const aArt = n.art.filter((x) => x !== 'staccato');
+    const bArt = n.art.filter((x) => x === 'staccato');
+    const { art: _x, artBase: _y, ...plainB } = second;
+    void _x;
+    void _y;
+    second = bArt.length ? placeAt(ctx, { ...plainB, vel: n.artBase?.vel ?? n.vel, art: bArt }, cut, s.off) : { ...plainB, vel: n.artBase?.vel ?? n.vel, dur: Math.max(0.01, t.posToTime(s.off) - bStart), pin: { on: cut, off: s.off, t: bStart, d: Math.max(0.01, t.posToTime(s.off) - bStart) } };
+    const { art: _p, artBase: _q, ...plainA } = first;
+    void _p;
+    void _q;
+    const firstPlain = { ...plainA, vel: n.artBase?.vel ?? n.vel };
+    const notes = arrNotes(ctx).flatMap((x) => (x.id === n.id ? [aArt.length ? placeAt(ctx, { ...firstPlain, art: aArt }, s.on, cut) : firstPlain, second] : [x]));
+    return finish(ctx, notes, new Set([n.id, id]), [n.id]);
+  }
   const notes = arrNotes(ctx).flatMap((x) => (x.id === n.id ? [first, second] : [x]));
   return finish(ctx, notes, new Set([n.id, id]), [n.id]);
 }

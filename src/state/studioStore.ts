@@ -43,6 +43,8 @@ interface StudioState {
   difficulty: Difficulty;
   editMode: boolean;
   selection: Set<number>;
+  /** A selected marking on the sheet (lib/sheet/marks.ts MarkRef id); selecting notes clears it. */
+  markSel: string | null;
   past: HistorySnap[];
   future: HistorySnap[];
   saving: boolean;
@@ -54,6 +56,7 @@ interface StudioState {
   setEditMode: (on: boolean) => void;
   select: (ids: number[], additive?: boolean) => void;
   clearSelection: () => void;
+  selectMark: (id: string | null) => void;
   /** apply an edit to the current arrangement's notes (undoable) */
   edit: (fn: (notes: Note[]) => Note[], opts?: { coalesceKey?: string }) => void;
   /** apply an edit to the current arrangement as a whole: notes, pedal (undoable) */
@@ -150,6 +153,7 @@ export const useStudio = create<StudioState>((set, get) => {
     difficulty: useSettings.getState().defaultDifficulty,
     editMode: false,
     selection: new Set(),
+    markSel: null,
     past: [],
     future: [],
     saving: false,
@@ -163,24 +167,25 @@ export const useStudio = create<StudioState>((set, get) => {
         if (!song) throw new Error('Song not found. It may have been deleted.');
         song.lastPlayedAt = Date.now();
         void saveSong(song);
-        set({ song, loading: false, past: [], future: [], selection: new Set(), editMode: false });
+        set({ song, loading: false, past: [], future: [], selection: new Set(), markSel: null, editMode: false });
       } catch (err) {
         set({ loading: false, error: err instanceof Error ? err.message : String(err) });
       }
     },
-    openSong: (song) => set({ song, past: [], future: [], selection: new Set(), editMode: false, error: null }),
-    close: () => set({ song: null, past: [], future: [], selection: new Set() }),
-    setDifficulty: (d) => set({ difficulty: d, past: [], future: [], selection: new Set() }),
-    setEditMode: (on) => set({ editMode: on, selection: on ? get().selection : new Set() }),
+    openSong: (song) => set({ song, past: [], future: [], selection: new Set(), markSel: null, editMode: false, error: null }),
+    close: () => set({ song: null, past: [], future: [], selection: new Set(), markSel: null }),
+    setDifficulty: (d) => set({ difficulty: d, past: [], future: [], selection: new Set(), markSel: null }),
+    setEditMode: (on) => set({ editMode: on, selection: on ? get().selection : new Set(), markSel: on ? get().markSel : null }),
     select: (ids, additive) => {
       const sel = additive ? new Set(get().selection) : new Set<number>();
       for (const id of ids) {
         if (additive && sel.has(id)) sel.delete(id);
         else sel.add(id);
       }
-      set({ selection: sel });
+      set({ selection: sel, markSel: null });
     },
-    clearSelection: () => set({ selection: new Set() }),
+    clearSelection: () => set({ selection: new Set(), markSel: null }),
+    selectMark: (id) => set({ markSel: id, ...(id ? { selection: new Set<number>() } : {}) }),
     edit: (fn, opts) => {
       const s = get();
       const arr = arrangement(s);
