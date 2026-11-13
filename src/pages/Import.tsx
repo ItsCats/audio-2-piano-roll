@@ -462,8 +462,16 @@ function RecordTab({ busy }: { busy: boolean }) {
         const blob = new Blob(chunks.current, { type: r.mimeType || 'audio/webm' });
         // the Blob holds the data now: don't keep a second reference to every chunk
         chunks.current = [];
-        // (no preset or model choice on this tab: Basic Pitch with the current preset, as always)
-        void importBlob(blob, { title: `Recording ${new Date().toLocaleString()}`, source: { kind: 'capture', mimeType: blob.type, fileSize: blob.size }, transcriber: 'basic-pitch' });
+        // the current preset with Basic Pitch, or (ticked below) the high-accuracy piano model with the
+        // "Piano solo" preset; read at stop time so a tick during the recording counts
+        const transcriber = transcriberChoice(useImport.getState().prefs, 'piano');
+        const piano = transcriber === 'piano-specialist';
+        void importBlob(blob, {
+          title: `Recording ${new Date().toLocaleString()}`,
+          source: { kind: 'capture', mimeType: blob.type, fileSize: blob.size },
+          transcriber,
+          ...(piano ? { presetId: 'piano' as const } : {}),
+        });
         // the import has asked for its own lock by now (importStore.ts)
         void wake.hold(false);
       };
@@ -479,6 +487,7 @@ function RecordTab({ busy }: { busy: boolean }) {
   return (
     <div className="flex flex-col items-center gap-4 py-8 text-center">
       <p className="max-w-md text-[13px] text-ink-300">Play piano (or anything) into your microphone. A quiet room and a close mic give the best transcription.</p>
+      <PianoModelOption alwaysOffered className="w-full max-w-md" />
       {rec ? (
         <>
           <div className="flex items-center gap-2 text-[14px] text-ink-50">
