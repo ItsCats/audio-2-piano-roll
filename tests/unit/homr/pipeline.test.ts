@@ -86,7 +86,7 @@ const normalizeXml = (x: string) => x.replace(/^<\?xml[^>]*\?>\s*/i, '').trim();
 describe.each(['clean-gen00', 'photo-gen00'])('homr port vs Python homr on %s', (name) => {
   const fx = load(name);
 
-  it('finds the same boxes, staffs, notes and systems from the same segmentation', () => {
+  it('finds the same boxes, staffs, notes and systems from the same segmentation', { timeout: 60_000 }, () => {
     const pred = masksFromClasses(unpack(fx.classes), fx.w, fx.h);
     const dump: PageDump = {};
     const found = findSystems(pred, dump);

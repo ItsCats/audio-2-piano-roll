@@ -73,6 +73,10 @@ symbol that is not a note (a volta ending, a slur). Headless Chromium produces t
 `tests/unit/homr/pipeline.test.ts` checks the image analysis step by step against Python homr's
 intermediate results on two generated pages.
 
+**Photos with page corners** (as after the app's corner screen: the photo is straightened to the four
+corners first, `src/lib/omr/homr/page.ts`, then homr's own steps run): notes F1 0.985 on the synthetic photos
+(one page lost part of a staff; 1.000 uncropped) and 0.993 on the real photos (0.987 uncropped).
+
 **Speed** (headless Chromium, `tests/e2e/homr-bench.mjs`, models from the cache, on a 4-core machine that
 another browser job was using at the same time, so these are upper bounds):
 
