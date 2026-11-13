@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AT_A_GLANCE, EXPECTATIONS, LIMITATIONS, MAESTRO_ROWS, SONG_ROWS, SPECIALIST, SPECIALIST_ROWS } from '../../src/lib/accuracyStats';
+import { AT_A_GLANCE, EXPECTATIONS, LIMITATIONS, MAESTRO_ROWS, SHEET_READER, SONG_ROWS, SPECIALIST, SPECIALIST_ROWS } from '../../src/lib/accuracyStats';
 
 const pct = (x: number) => Math.round(x * 100);
 const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
@@ -47,5 +47,18 @@ describe('Accuracy page figures', () => {
     expect(AT_A_GLANCE[0].sub).toContain(`${pct(SPECIALIST.mean.f1)}% on the 5 it was not trained on`);
     const ends = test.map((r) => pct(r.ends));
     expect(LIMITATIONS.find((l) => l.title.startsWith('Note lengths'))!.body).toContain(`${Math.min(...ends)}–${Math.max(...ends)}%`);
+  });
+});
+
+describe('sheet-music reader numbers', () => {
+  it('every row has both numbers, photos are labelled simulated, and the measure is explained', () => {
+    for (const r of SHEET_READER.rows) {
+      expect(r.before).toMatch(/^\d+%$/);
+      expect(r.after).toMatch(/^(\d+%|—)$/);
+      if (/photo/i.test(r.what)) expect(r.what).toMatch(/Simulated/);
+    }
+    expect(SHEET_READER.intro).toMatch(/real phone photos have not been measured/);
+    expect(SHEET_READER.metric).toMatch(/wrong time/);
+    expect(SHEET_READER.limits.map((l) => l.title)).toEqual(expect.arrayContaining(['Lay the page flat', 'Very high or very low notes']));
   });
 });

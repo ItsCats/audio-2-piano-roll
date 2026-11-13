@@ -370,3 +370,38 @@ export const DATASETS: Dataset[] = [
   { name: 'librosa (pYIN) & mir_eval', use: 'Independent second pitch tracker; standard accuracy metrics', license: 'ISC; MIT', url: 'https://github.com/mir-evaluation/mir_eval' },
   { name: 'Test songs and recordings', use: '5 songs with a singer, 1 instrumental soundtrack track, 4 piano recordings — used privately for measuring only, never copied into the app or shared', license: 'Copyrighted (not distributed)' },
 ];
+
+/**
+ * Sheet-music reader (beta, src/lib/omr): measured 2026-11-13 with the shipped pipeline (Sheet Music
+ * Transformer, Camera-GrandStaff checkpoint, 8-bit weights) in headless Chromium, the way the app's
+ * import job runs it, after the review fixes. Rows use pages the reader was NOT tuned on: 16 new pieces
+ * generated in code (keys, metres and textures the tuning pages lack), engraved by two notation programs,
+ * plus 6 public-domain Mutopia pages; photos are simulated. public/models/omr/README.md has the details.
+ * Notes / rhythm: see `metric`.
+ */
+export const SHEET_READER = {
+  intro:
+    'Printed piano music in a PDF or a photo is read by the Sheet Music Transformer, an AI model that runs on your device. It is a Beta: it gets most notes right on clear printed pages, but rhythm mistakes are common, and photos are harder than PDFs. The photo numbers below come from simulated phone photos; real phone photos have not been measured yet.',
+  rows: [
+    { what: 'Clean printed PDFs', note: '16 new test pieces in many keys and time signatures, exact answer key', before: '88%', after: '81%' },
+    { what: 'Clean printed pages, another notation program', note: 'the same 16 pieces, engraved differently', before: '90%', after: '83%' },
+    { what: 'Real printed scores', note: '6 public-domain pages (Mutopia Project: études, Bach songs)', before: '80%', after: '59%' },
+    { what: 'Simulated phone photos, corners set', note: 'the 16 pieces with tilt, shadow, blur and JPEG noise added', before: '87%', after: '77%' },
+    { what: 'Simulated photos of real scores, corners set', note: 'the 6 Mutopia pages', before: '76%', after: '55%' },
+    { what: 'Simulated phone photos, corners not adjusted', note: 'automatic corners (one of 16 found no music); on photos of real scores only 50% of notes', before: '76%', after: '68%' },
+    { what: 'Curved page, blur or dim light (simulated)', note: 'even with the corners set exactly', before: '32%', after: '19%' },
+  ],
+  metric:
+    '“Notes right” counts notes found with the right pitch in the right order (missed and extra notes both count against it); a note still counts when it comes at the wrong time. “Rhythm right” also needs the time since the previous note to be right. On the 12 pages we tuned the reader on it scored 93% / 84%; those are left out above because they flatter it.',
+  speed:
+    'A full page of piano music took 20–35 seconds on a computer (a page with two lines: a few seconds). Phones are slower: we estimate about 50 seconds a page (not yet measured on a real phone), so a phone reads up to 3 pages at a time. The reader is a 24 MB download, once, and needs about 0.5–1 GB of memory while it reads.',
+  limits: [
+    { title: 'Printed piano music only', body: 'Two staves (right and left hand). A vocal line, more than two staves, or band and orchestra scores come out wrong.' },
+    { title: 'Lay the page flat', body: 'A curved page, a blurry or dim photo comes out mostly wrong, even with the corners set. Lay the page flat, light it evenly and hold the phone straight above it.' },
+    { title: 'Rhythm is the weak spot', body: 'The reader sometimes reads a note twice or gets a length wrong. A bar with too many beats is made longer so no note is lost; the notes after it then come a little later than on your page.' },
+    { title: 'Very high or very low notes', body: 'Notes with many ledger lines above or below the staff (or under an 8va sign) are often missed or put in the wrong octave.' },
+    { title: 'One key', body: 'The key used most is kept for the whole piece; a key change partway through is not followed. If the key signature is misread, every sharp or flat note is a semitone off — the app warns when lines disagree.' },
+    { title: 'No handwriting, no text', body: 'Hand-written music is not supported. Lyrics, chord symbols, fingering, dynamics and tempo words are not read.' },
+    { title: 'Repeats as written', body: 'Repeat signs are not followed: the music plays straight through, as printed.' },
+  ],
+} as const;

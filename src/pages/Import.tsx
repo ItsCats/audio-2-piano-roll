@@ -6,7 +6,8 @@ import { SeparationOption, useSeparationChoice } from '../components/import/Sepa
 import { PianoModelOption, usePianoModelChoice } from '../components/import/PianoModelOption';
 import type { TranscriptionEngine } from '../lib/transcription/pipeline';
 import { Badge, Button, ProgressBar, Segmented, cn } from '../components/ui';
-import { STAGE_LABELS, rememberServerHealth, useImport, type ImportJob, type ImportStage } from '../state/importStore';
+import { STAGE_LABELS, rememberServerHealth, stageLabel, useImport, type ImportJob, type ImportStage } from '../state/importStore';
+import { SheetMusicTab } from '../components/import/SheetMusicTab';
 import { useSettings } from '../state/settingsStore';
 import { configuredBackendUrl, health, type BackendHealth } from '../lib/backend/client';
 import { createPlayer, fetchVideoMeta, parseYouTubeId, startTabCapture, tabCaptureSupported, type TabCapture, type VideoMeta, type YTPlayer } from '../lib/youtube/youtube';
@@ -92,8 +93,12 @@ function formatEta(sec: number): string {
  * The step the speed measurement covers ("separation", "pitch detection 1 of 2"): the ETA is for
  * this step only, so it says which one (more steps follow, see the checklist below the bar).
  */
-function etaStep(job: Pick<ImportJob, 'stage' | 'detail' | 'transcriber'>): string {
+/** "reading: 1 min left" → "Reading: 1 min left" (the sheet reader's plain progress line) */
+const sentence = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+function etaStep(job: Pick<ImportJob, 'stage' | 'detail' | 'transcriber' | 'sheet'>): string {
   const part = job.detail?.match(/\((\d+) of (\d+)\)/);
+  if (job.sheet) return job.stage === 'analyzing' ? 'reading' : job.stage === 'loading-model' ? 'download' : stageLabel(job, job.stage).toLowerCase();
   switch (job.stage) {
     case 'separating':
       return 'separation';
@@ -129,6 +134,12 @@ function JobProgress() {
   const navigate = useNavigate();
   const [touch] = useState(isTouchDevice);
   const [, force] = useState(0);
+  // a new import: bring its card into view (on a phone the button that started it is far below)
+  const card = useRef<HTMLDivElement>(null);
+  const jobId = job?.id;
+  useEffect(() => {
+    if (jobId !== undefined) card.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+  }, [jobId]);
   useEffect(() => {
     const t = setInterval(() => force((x) => x + 1), 500);
     return () => clearInterval(t);
@@ -144,12 +155,12 @@ function JobProgress() {
   const err = job.stage === 'error';
   const failedHere = err && failed?.jobId === job.id ? failed : null;
   return (
-    <div className="panel animate-fade-in p-5" aria-live="polite">
+    <div ref={card} className="panel animate-fade-in scroll-mt-4 p-5" aria-live="polite">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <p className="truncate text-[15px] font-semibold text-ink-50">{job.title}</p>
           <p className="mt-0.5 text-[12.5px] text-ink-300">
-            {done ? (job.kind === 'score' || job.kind === 'midi' ? 'Ready' : 'Transcription complete') : err ? 'Import failed' : job.detail ?? STAGE_LABELS[job.stage]} · {formatTime(elapsed)}
+            {done ? (job.kind === 'score' || job.kind === 'midi' ? 'Ready' : 'Transcription complete') : err ? 'Import failed' : job.detail ? `${job.detail}${job.sheet && job.stage !== 'saving' ? '…' : ''}` : stageLabel(job, job.stage)} · {formatTime(elapsed)}
           </p>
         </div>
         {!done && !err && (
@@ -161,14 +172,18 @@ function JobProgress() {
       {!done && !err && (
         <div className="mt-4">
           <ProgressBar value={job.progress} />
-          {touch && job.kind !== 'midi' && job.kind !== 'demo' && job.kind !== 'score' && (
+          {touch && job.kind !== 'midi' && job.kind !== 'demo' && (job.kind !== 'score' || job.sheet) && (
             <p className="mt-2 flex items-center gap-1.5 text-[12px] text-ink-300">
-              <Smartphone size={13} className="shrink-0 text-accent-400" /> Keep this page open while it’s analysing.
+              <Smartphone size={13} className="shrink-0 text-accent-400" /> {job.sheet ? 'Keep this page open while it reads the music.' : 'Keep this page open while it’s analysing.'}
             </p>
           )}
           {job.progress !== null && (
-            <p className="mt-1.5 flex justify-between gap-3 font-mono text-[11px] text-ink-300">
-              <span>{eta ?? ((job.stage === 'separating' || job.stage === 'analyzing') && job.progress < 0.99 ? `${etaStep(job)}: measuring speed…` : '')}</span>
+            <p className={cn('mt-1.5 flex justify-between gap-3 text-ink-300', job.sheet ? 'text-[12px]' : 'font-mono text-[11px]')}>
+              <span>
+                {job.sheet
+                  ? sentence(eta ?? (job.stage === 'analyzing' && job.progress < 0.99 ? 'Working out the time left…' : ''))
+                  : (eta ?? ((job.stage === 'separating' || job.stage === 'analyzing') && job.progress < 0.99 ? `${etaStep(job)}: measuring speed…` : ''))}
+              </span>
               <span>{Math.round(job.progress * 100)}%</span>
             </p>
           )}
@@ -181,12 +196,17 @@ function JobProgress() {
           return (
             <li key={st} className="flex items-center gap-2 text-[12.5px]">
               {state === 'done' ? <CheckCircle2 size={14} className="text-ok" /> : state === 'active' ? <Loader2 size={14} className="animate-spin text-accent-400" /> : state === 'failed' ? <XCircle size={14} className="text-bad" /> : <Circle size={14} className="text-ink-500" />}
-              <span className={state === 'todo' ? 'text-ink-400' : 'text-ink-100'}>{STAGE_LABELS[st]}</span>
+              <span className={state === 'todo' ? 'text-ink-400' : 'text-ink-100'}>{stageLabel(job, st)}</span>
             </li>
           );
         })}
       </ol>
       {err && <p className="mt-4 rounded-lg border border-bad/30 bg-bad/10 px-3 py-2 text-[13px] text-bad">{job.error}</p>}
+      {done && job.sheet && (
+        <p className="mt-4 flex gap-2 text-[12.5px] text-ink-200">
+          <Info size={14} className="mt-0.5 shrink-0 text-warn" /> Read from sheet music (Beta) — check the notes against your page.
+        </p>
+      )}
       {job.warnings.length > 0 && (
         <ul className="mt-4 flex flex-col gap-1">
           {job.warnings.map((w) => (
@@ -627,17 +647,11 @@ export default function ImportPage() {
               </div>
             )}
             {tab === 'midi' && (
-              <div className="flex flex-col gap-3">
-                <Dropzone onFile={onFile} accept="">
-                  <p className="text-[15px] font-medium text-ink-50">Drop a MIDI or sheet-music file</p>
-                  <p className="text-[12.5px] text-ink-300">MIDI (.mid) · MusicXML (.musicxml, .mxl) · MuseScore (.mscz)</p>
-                </Dropzone>
-                <p className="text-[12.5px] text-ink-300">
-                  The notes are used exactly as written, and repeats are played in order. Hard is the piece as written; Easy and Medium are
-                  made simpler for you.
-                </p>
-                <p className="text-[12px] text-ink-400">From other notation apps, save or export as MusicXML. PDFs and photos of sheet music are coming soon.</p>
-              </div>
+              <SheetMusicTab
+                busy={busy}
+                onScoreFile={onFile}
+                onStarted={() => (startedHere.current = useImport.getState().job?.id ?? 0)}
+              />
             )}
             {tab === 'record' && <RecordTab busy={busy} />}
           </div>

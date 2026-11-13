@@ -37,9 +37,35 @@ export interface InterruptedNotice {
  * Try again will use.
  */
 export function interruptedNotice(
-  rec: Pick<PendingImport, 'title' | 'kind' | 'blob'> & { transcriber?: string },
+  rec: Pick<PendingImport, 'title' | 'kind' | 'blob'> & { transcriber?: string; sheet?: PendingImport['sheet'] },
   retryWith?: 'basic-pitch' | 'piano-specialist',
 ): InterruptedNotice {
+  // sheet-music reader (beta): a PDF or photos, read again from the kept copy
+  if (rec.kind === 'score') {
+    const kept = !!rec.blob && !!rec.sheet;
+    const n = rec.sheet ? (rec.sheet.kind === 'pdf' ? rec.sheet.pages.length : rec.sheet.photos.length) : 0;
+    const what = rec.sheet?.kind === 'photo' ? (n > 1 ? 'Your photos were kept.' : 'Your photo was kept.') : 'Your file was kept.';
+    if (rec.sheet?.lowMemory) {
+      // it already stopped once and was read again in the low-memory mode: do not offer the same again
+      return {
+        title: 'Reading the sheet music stopped again',
+        body: `Reading “${rec.title}” stopped again, even in the slower mode that uses less memory. This device does not have enough free memory for it right now. Try ${n > 1 ? 'one page at a time' : 'again after restarting the browser'}, or use a computer.`,
+        canRetry: false,
+        canSave: false,
+      };
+    }
+    const advice = kept
+      ? ' Try again reads it once more in a slower mode that uses less memory. Close other tabs and apps first.'
+      : n > 1
+        ? ' Reading sheet music needs a lot of memory: close other tabs and apps, or read fewer pages at a time.'
+        : ' Reading sheet music needs a lot of memory: close other tabs and apps first.';
+    return {
+      title: 'Your last import was interrupted',
+      body: `Reading “${rec.title}” was interrupted — your browser probably ran out of memory. ${kept ? what : 'Choose the file again to try once more.'}${advice}`,
+      canRetry: kept,
+      canSave: false,
+    };
+  }
   const kept = !!rec.blob;
   const what = isRecording(rec) ? 'Your recording was kept.' : kept ? 'Your file was kept.' : 'Choose the file again to try once more.';
   const model =

@@ -1,5 +1,6 @@
-import { Link } from 'react-router-dom';
-import { AlertTriangle, CheckCircle2, Gauge, Info, Wand2, Timer, Mic2, Music2, Heart, ExternalLink, Piano } from 'lucide-react';
+import { useEffect } from 'react';
+import { Link, useLocation } from 'react-router-dom';
+import { AlertTriangle, CheckCircle2, Gauge, Info, Wand2, Timer, Mic2, Music2, Heart, ExternalLink, Piano, ScanLine } from 'lucide-react';
 import {
   ACCURACY_UPDATED,
   AT_A_GLANCE,
@@ -13,6 +14,7 @@ import {
   OTHER_PIANO_ROWS,
   PLAYABILITY,
   SEPARATION_EFFECT,
+  SHEET_READER,
   SONG_ROWS,
   SONG_SUMMARY,
   SPECIALIST,
@@ -159,7 +161,8 @@ function Note({ children }: { children: React.ReactNode }) {
   );
 }
 
-function BeforeAfterTable({ rows, cols = ['What we measured', 'Before', 'Now'] }: { rows: { what: string; before: string; after: string; note?: string }[]; cols?: [string, string, string] | string[] }) {
+/** `even`: two measurements side by side (both columns alike), not before → after. */
+function BeforeAfterTable({ rows, cols = ['What we measured', 'Before', 'Now'], even }: { rows: { what: string; before: string; after: string; note?: string }[]; cols?: [string, string, string] | string[]; even?: boolean }) {
   return (
     <div className="panel overflow-x-auto">
       <table className="w-full text-left text-[13px]">
@@ -177,7 +180,7 @@ function BeforeAfterTable({ rows, cols = ['What we measured', 'Before', 'Now'] }
                 <p className="text-ink-100">{r.what}</p>
                 {r.note && <p className="text-[12px] text-ink-400">{r.note}</p>}
               </td>
-              <td className="px-2 py-2.5 text-right font-mono text-ink-400 sm:px-3 sm:whitespace-nowrap">{r.before}</td>
+              <td className={cn('px-2 py-2.5 text-right font-mono sm:px-3 sm:whitespace-nowrap', even ? 'font-semibold text-ink-50' : 'text-ink-400')}>{r.before}</td>
               <td className="px-3 py-2.5 text-right font-mono font-semibold text-ink-50 sm:px-4 sm:whitespace-nowrap">{r.after}</td>
             </tr>
           ))}
@@ -187,7 +190,38 @@ function BeforeAfterTable({ rows, cols = ['What we measured', 'Before', 'Now'] }
   );
 }
 
+/** Sheet music from PDFs and photos (Beta): measured numbers and limits. */
+function SheetReaderSection() {
+  return (
+    <section id="sheet-reader" className="scroll-mt-6">
+      <h2 className="mb-1 flex flex-wrap items-center gap-2 text-[15px] font-semibold text-ink-50">
+        <ScanLine size={16} className="text-accent-400" /> Sheet music from PDFs and photos <Badge tone="warn">Beta</Badge>
+      </h2>
+      <p className="mb-3 max-w-3xl text-[12.5px] leading-relaxed text-ink-300">{SHEET_READER.intro}</p>
+      <BeforeAfterTable rows={[...SHEET_READER.rows]} cols={['What was read', 'Notes right', 'Rhythm right']} even />
+      <Note>{SHEET_READER.metric}</Note>
+      <Note>{SHEET_READER.speed}</Note>
+      <Note>
+        Songs read this way are labelled <b className="text-warn">Sheet music · Beta</b> in the Studio. Compare them with your page and fix mistakes in Edit
+        mode. Have the music as a MusicXML or MuseScore file? Import that instead — it is exact.
+      </Note>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {SHEET_READER.limits.map((l) => (
+          <div key={l.title} className="rounded-xl border border-ink-700 bg-ink-900/60 p-4">
+            <p className="text-[13.5px] font-medium text-ink-50">{l.title}</p>
+            <p className="mt-1 text-[12.5px] leading-relaxed text-ink-300">{l.body}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export default function AccuracyPage() {
+  const { hash } = useLocation();
+  useEffect(() => {
+    if (hash === '#sheet-reader' || hash === '#high-accuracy') document.getElementById(hash.slice(1))?.scrollIntoView();
+  }, [hash]);
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto flex max-w-5xl flex-col gap-9 px-4 py-8 sm:px-5 md:px-10">
@@ -522,6 +556,8 @@ export default function AccuracyPage() {
           <BeforeAfterTable rows={SPEED_ROWS} cols={['', 'Without separation', 'With separation']} />
         </section>
 
+        <SheetReaderSection />
+
         <section>
           <h2 className="mb-3 text-[15px] font-semibold text-ink-50">What to expect by type of music</h2>
           <div className="grid gap-3 md:grid-cols-2">
@@ -567,6 +603,7 @@ export default function AccuracyPage() {
               'Re-tune detection in the Notes tab — it re-runs in seconds without re-analysing the audio.',
               'Fix remaining mistakes in Edit mode; your edits are saved per difficulty level.',
               'Have a MIDI file? Import that instead — it’s exact.',
+              'Printed piano music? A PDF or photo can be read too (Beta) — check the notes afterwards.',
             ].map((t, i) => (
               <li key={t} className="flex gap-3">
                 <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent-500/20 text-[11px] font-semibold text-accent-300">{i + 1}</span>

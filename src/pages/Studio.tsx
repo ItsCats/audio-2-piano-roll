@@ -32,6 +32,7 @@ import { attachInput } from '../state/practiceRuntime';
 import { PianoRollView } from '../components/studio/PianoRollView';
 import { Transport } from '../components/studio/Transport';
 import { EditToolbar } from '../components/studio/EditToolbar';
+import { SheetReaderBadge, SheetReaderNotice, readFromSheet } from '../components/studio/SheetReaderNotice';
 import { ExportVideoDialog } from '../components/studio/ExportVideoDialog';
 import { SheetPdfDialog } from '../components/studio/SheetPdfDialog';
 import { FullscreenStage } from '../components/studio/FullscreenStage';
@@ -398,6 +399,8 @@ export default function StudioPage() {
               <Link to="/accuracy" title="Notes were estimated from audio by AI and may contain mistakes — see how accurate it is" className="focus-ring rounded-md">
                 <Badge tone="warn">AI transcription</Badge>
               </Link>
+            ) : readFromSheet(song) ? (
+              <SheetReaderBadge song={song} />
             ) : (
               <Badge tone="ok">{song.source.kind === 'midi' ? 'MIDI' : song.source.kind === 'score' ? 'Sheet music' : 'Exact'}</Badge>
             )}
@@ -434,6 +437,7 @@ export default function StudioPage() {
             {panelOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
           </IconButton>
         </header>
+        <SheetReaderNotice key={song.id} song={song} />
         {editMode && <EditToolbar />}
         {/* full screen covers the app and the controls around the view (edit mode is for the normal layout) */}
         {/* the sheet music has its own toolbar in the stage's corner: its Full screen button lives there */}

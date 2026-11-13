@@ -38,7 +38,21 @@ export interface PendingImport {
   /** detection preset at the time */
   presetId: string;
   separate: boolean;
+  /**
+   * Sheet-music reader imports (kind 'score'): what to read again. A PDF is `blob` with the chosen
+   * pages; photos are `photos` (in page order; `blob` is the first one) with their page corners.
+   * Absent in older records and for audio.
+   */
+  sheet?: PendingSheet;
 }
+
+export type PendingSheet = (
+  | { kind: 'pdf'; pages: number[] }
+  | { kind: 'photo'; photos: { blob: Blob; name: string; quad: [number, number][] | null }[] }
+) & {
+  /** this read is already a retry after a crash, in the slower low-memory mode (one thread) */
+  lowMemory?: boolean;
+};
 
 interface PVSchema extends DBSchema {
   songs: { key: string; value: Song };
