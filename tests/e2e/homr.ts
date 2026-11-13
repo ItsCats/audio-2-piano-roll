@@ -14,6 +14,7 @@ declare global {
     readPage: (threads?: number) => Promise<unknown>;
     readAbort: () => Promise<unknown>;
     readRaw: (url: string, w: number, h: number, threads?: number) => Promise<unknown>;
+    readUrl: (url: string, o?: { threads?: number; release?: boolean; quad?: [number, number][] | null }) => Promise<unknown>;
   }
 }
 
@@ -201,6 +202,37 @@ window.readRaw = async (url, w, h, threads) => {
   const t0 = performance.now();
   const res = await homrEngine.readPages([new ImageData(rgba, w, h)], { threads });
   return { seconds: +((performance.now() - t0) / 1000).toFixed(1), staves: res.staves, lines: res.lines, stats: res.stats, musicXml: res.musicXml };
+};
+
+/**
+ * A page image file (PNG / JPEG) decoded the way the import screen does (createImageBitmap from the
+ * file, EXIF orientation applied) and read: tests/e2e/homr-prod.mjs on a production build.
+ */
+window.readUrl = async (url, o = {}) => {
+  const blob = await (await fetch(url)).blob();
+  const bmp = await createImageBitmap(blob, { imageOrientation: 'from-image' });
+  const stages: Record<string, number> = {};
+  let stage = '';
+  let since = performance.now();
+  const t0 = since;
+  try {
+    const res = await homrEngine.readPages([{ image: bmp, quad: o.quad ?? null }], {
+      threads: o.threads,
+      release: o.release,
+      onProgress: (p) => {
+        if (p.stage === stage) return;
+        const now = performance.now();
+        if (stage) stages[stage] = (stages[stage] ?? 0) + now - since;
+        stage = p.stage;
+        since = now;
+      },
+    });
+    const end = performance.now();
+    if (stage) stages[stage] = (stages[stage] ?? 0) + end - since;
+    return { seconds: +((end - t0) / 1000).toFixed(1), stageSeconds: Object.fromEntries(Object.entries(stages).map(([k, v]) => [k, +(v / 1000).toFixed(1)])), w: bmp.width, h: bmp.height, staves: res.staves, lines: res.lines, warnings: res.warnings, stats: res.stats, musicXml: res.musicXml };
+  } finally {
+    bmp.close();
+  }
 };
 
 log('ready');
