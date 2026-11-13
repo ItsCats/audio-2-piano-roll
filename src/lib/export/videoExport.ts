@@ -17,6 +17,13 @@
  * Optional title page / end card (src/lib/render/titleCard/exportHooks.ts): the roll export is
  * unchanged; the cards wrap its audio and video tracks (everything moves by the title's length).
  *
+ * Optional hands video (src/lib/handcam): a video of the player's hands, decoded frame by frame in step
+ * with the timeline (video time = song time + offset), straightened and shown under the falling notes
+ * ('bottom', the notes land on the real keys) or in a corner ('pip'). Its sound can be the sound track
+ * (sample-exact, through the same mixing as the original recording). Speed is locked to 100 %.
+ *
+ * Optional watermark (src/lib/watermark): a text line and/or logo over every roll frame (and the cards).
+ *
  * Fallback (no WebCodecs): real-time capture with MediaRecorder (WebM), piano only.
  */
 import {
@@ -44,7 +51,7 @@ import { PianoRollRenderer } from '../render/renderer';
 import { renderOfflineChunks } from '../audio/offlineRender';
 import { PianoEngine } from '../audio/pianoEngine';
 import { buildEvents } from '../audio/events';
-import { getAudio, getMedia } from '../storage/db';
+import { getAudio, getHandVideoBlob, getMedia } from '../storage/db';
 import { decodeToRate } from '../transcription/decode';
 import { isMemoryConstrained, pageDeviceInfo } from '../transcription/backendChoice';
 import { outputSize, type ExportSettings, type ExportSound } from './types';
@@ -62,13 +69,26 @@ import {
   neededSpan,
   originalGain,
   shouldDownmix,
+  soundWithoutPiano,
   trimOriginal,
+  usesHandsSound,
+  usesOriginalRecording,
   type ExportTimeline,
   type OriginalSource,
 } from './originalMix';
+import type { HandVideo, HandsLayout } from '../handcam/types';
+import type { WatermarkSettings } from '../watermark/types';
+import { watermarkActive } from '../watermark/types';
+import { watermarkBand, displayText } from '../watermark/layout';
+import { watermarkPainter, type WatermarkPainter } from '../watermark/draw';
+import type { Ctx2D } from '../render/color';
+import type { HandsCompositor } from '../handcam/compose';
+import type { FrameStream, HandFrames } from '../handcam/frames';
+import { noteSpan } from '../handcam/calibration';
 
 export interface ExportProgress {
-  phase: 'preparing' | 'original' | 'audio' | 'video' | 'finalizing';
+  /** 'handsAudio': reading the hands video's sound; 'handsVideo': drawing frames while decoding the hands video */
+  phase: 'preparing' | 'original' | 'handsAudio' | 'audio' | 'video' | 'handsVideo' | 'finalizing';
   fraction: number; // overall 0..1
   framesDone?: number;
   framesTotal?: number;
@@ -103,12 +123,30 @@ export interface ExportJob {
   onProgress?: (p: ExportProgress) => void;
   /** loads the song's original recording (default: from storage); a test hook */
   loadOriginal?: () => Promise<Blob | undefined>;
+  /** loads the song's hands video file (default: from storage); a test hook */
+  loadHandVideo?: () => Promise<Blob | undefined>;
+  /** the creator's watermark (absent or disabled: none) */
+  watermark?: WatermarkSettings;
+  /** loads the watermark logo (default: from the media store); a test hook */
+  loadLogo?: (mediaId: string) => Promise<ImageBitmap | null>;
 }
 
 /** What the exported sound track holds for this job (piano only without WebCodecs or a recording). */
 export function jobSound(job: Pick<ExportJob, 'song' | 'settings'>) {
-  return effectiveSound(job.settings, { hasOriginal: !!job.song.hasAudio, webCodecs: webCodecsAvailable() });
+  return effectiveSound(job.settings, { hasOriginal: !!job.song.hasAudio, webCodecs: webCodecsAvailable(), hasHandsSound: job.song.handVideo?.store === 'handcam' });
 }
+
+/** The hands video layout this job really uses ('off' without a video, or 'bottom' without a calibration). */
+export function jobHandsLayout(job: Pick<ExportJob, 'song' | 'settings'>): HandsLayout {
+  const hv = job.song.handVideo;
+  const want = job.settings.handsLayout ?? 'off';
+  if (!hv || want === 'off') return 'off';
+  if (want === 'bottom' && !hv.calibration) return 'off';
+  return want;
+}
+
+export const HANDS_NEED_WEBCODECS = 'Hands videos need a browser that can encode video (Chrome, Edge, Firefox, or Safari 16.4 or later).';
+export const NO_HAND_VIDEO_MESSAGE = 'The hands video for this song is no longer saved. Add it again, or turn the hands video off.';
 
 export { STALL_MESSAGE } from './guard';
 export const NO_ORIGINAL_MESSAGE = 'The original recording for this song is no longer saved. Choose “Piano” to export without it.';
@@ -156,6 +194,77 @@ async function loadOriginalSource(job: ExportJob, range: { start: number; end: n
   return src;
 }
 
+/** The hands video's sound for the part of the song this export can hear (video time = song time + offset). */
+async function loadHandsSound(job: ExportJob, hv: HandVideo, range: { start: number; end: number }, tl: ExportTimeline, onProgress: (f: number) => void): Promise<OriginalSource> {
+  const blob = await (job.loadHandVideo ?? (() => getHandVideoBlob(job.song)))().catch(() => undefined);
+  if (!blob) throw new Error(NO_HAND_VIDEO_MESSAGE);
+  const device = pageDeviceInfo();
+  const span = neededSpan(range, tl.lead, tl.tail, tl.rate);
+  const { videoSoundForSpan } = await import('../handcam/media');
+  return videoSoundForSpan(blob, hv.offset, span, tl.sr, {
+    mono: !!device && isMemoryConstrained(device) && span.end - span.start > 4 * 60,
+    signal: job.signal,
+    onProgress,
+  });
+}
+
+interface HandsRuntime {
+  compositor: HandsCompositor;
+  frames: HandFrames;
+  stream: FrameStream | null;
+  hv: HandVideo;
+}
+
+/** Opens the hands video and builds the compositor (before the output file exists, so a failure leaves nothing). */
+async function prepareHands(job: ExportJob, layout: HandsLayout, W: number, H: number, opts: { wmBand: number; pipBottom: number; hitLine: boolean }): Promise<HandsRuntime | null> {
+  const hv = job.song.handVideo;
+  if (layout === 'off' || !hv) return null;
+  const blob = await (job.loadHandVideo ?? (() => getHandVideoBlob(job.song)))().catch(() => undefined);
+  if (!blob) throw new Error(NO_HAND_VIDEO_MESSAGE);
+  const [{ HandFrames: Frames }, { HandsCompositor: Compositor }] = await Promise.all([import('../handcam/frames'), import('../handcam/compose')]);
+  const frames = await Frames.open(blob);
+  try {
+    const arr = job.song.arrangements[job.difficulty];
+    const compositor = new Compositor(W, H, {
+      layout: layout === 'bottom' ? 'bottom' : 'pip',
+      cal: hv.calibration,
+      display: { w: hv.displayW, h: hv.displayH },
+      pipCorner: job.settings.pipCorner,
+      pipSize: job.settings.pipSize,
+      wmBand: opts.wmBand,
+      pipBottom: opts.pipBottom,
+      song: noteSpan(arr.notes),
+      hitLine: opts.hitLine,
+    });
+    return { compositor, frames, stream: null, hv };
+  } catch (e) {
+    frames.dispose();
+    throw e;
+  }
+}
+
+/** The watermark painter for a W × H frame (fonts loaded first; never fails the export). */
+async function prepareWatermark(job: ExportJob, W: number, H: number, ctx: Ctx2D, opts: { band: number; avoidBottom: number }): Promise<{ painter: WatermarkPainter; logo: ImageBitmap | null } | null> {
+  const w = job.watermark;
+  if (!w || !watermarkActive(w)) return null;
+  try {
+    const text = displayText(w);
+    if (text) {
+      const { ensureFont } = await import('../render/titleCard/fonts');
+      await ensureFont(w.font, w.font === 'cormorant' ? 600 : 400, text).catch(() => null);
+    }
+    let logo: ImageBitmap | null = null;
+    if (w.logo) {
+      const load = job.loadLogo ?? (async (id: string) => (await import('../watermark/logo')).loadLogo(id));
+      logo = await load(w.logo.mediaId).catch(() => null);
+    }
+    const painter = watermarkPainter(w, W, H, ctx, { band: opts.band, avoidBottom: opts.avoidBottom, logo, logoAspect: logo ? logo.width / Math.max(1, logo.height) : 1 });
+    return { painter, logo };
+  } catch {
+    return null;
+  }
+}
+
 export function webCodecsAvailable(): boolean {
   return typeof VideoEncoder !== 'undefined' && typeof AudioEncoder !== 'undefined' && typeof OffscreenCanvas !== 'undefined';
 }
@@ -179,18 +288,33 @@ export function exportRange(job: Pick<ExportJob, 'song' | 'settings' | 'loop'>, 
 }
 
 /** Visual settings used for export, derived from the Studio look plus export options. */
-export function exportVisual(job: Pick<ExportJob, 'visual' | 'settings'>): VisualSettings {
+export function exportVisual(job: Pick<ExportJob, 'visual' | 'settings'>, handsLayout: HandsLayout = 'off'): VisualSettings {
   const v = job.visual;
   const s = job.settings;
   const range = s.keyboardRange === 'match' ? v.range : s.keyboardRange;
   // vertical videos have little width: fewer, wider keys look much better
   const portraitRange = s.orientation === 'portrait' && range === 'full' ? 'auto' : range;
-  return {
+  const out: VisualSettings = {
     ...v,
     range: portraitRange,
     showKeyboard: s.showKeyboard,
     keyboardHeight: s.orientation === 'portrait' ? Math.min(v.keyboardHeight, 0.12) : v.keyboardHeight,
   };
+  if (handsLayout === 'bottom') {
+    // the real keys light up and sparkle where the notes land (the export's own switches)
+    const keyLight = s.handsKeyLight !== false;
+    const sparkles = s.handsSparkles !== false;
+    out.showKeyboard = true;
+    out.particles = sparkles;
+    out.effects = {
+      ...v.effects,
+      keyLight,
+      keyLightIntensity: keyLight ? Math.max(0.6, v.effects.keyLightIntensity) : v.effects.keyLightIntensity,
+      bursts: sparkles,
+      burstIntensity: sparkles ? Math.max(0.5, v.effects.burstIntensity) : v.effects.burstIntensity,
+    };
+  }
+  return out;
 }
 
 function bitrateFor(width: number, height: number, fps: number, quality: 'standard' | 'high'): number {
@@ -323,7 +447,11 @@ function applyDecal(renderer: PianoRollRenderer, bmp: ImageBitmap | null): void 
 }
 
 export async function exportVideo(job: ExportJob): Promise<ExportResult> {
-  if (!webCodecsAvailable()) return exportWithMediaRecorder(job);
+  const handsLayout = jobHandsLayout(job);
+  if (!webCodecsAvailable()) {
+    if (handsLayout !== 'off') throw new Error(HANDS_NEED_WEBCODECS);
+    return exportWithMediaRecorder(job);
+  }
   const { song, settings: s, signal } = job;
   const progress = (p: ExportProgress) => job.onProgress?.(p);
   progress({ phase: 'preparing', fraction: 0 });
@@ -331,7 +459,7 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
   const fps = s.fps;
   const sound = jobSound(job);
   const range = exportRange(job, sound);
-  const rate = effectiveRate(s, sound);
+  const rate = effectiveRate(s, sound, handsLayout !== 'off');
   const sr = EXPORT_SAMPLE_RATE;
   const tl = exportTimeline(s, range, rate, sr);
   const { lead, tail, duration } = tl;
@@ -344,12 +472,38 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
 
   // the original recording is decoded before the output file exists, so a failure leaves nothing behind
   let orig: OriginalSource | null = null;
-  if (sound !== 'piano') {
+  if (usesOriginalRecording(sound)) {
     progress({ phase: 'original', fraction: 0.005 });
     orig = await loadOriginalSource(job, range, tl);
     if (signal?.aborted) throw abortError();
+  } else if (usesHandsSound(sound) && song.handVideo) {
+    progress({ phase: 'handsAudio', fraction: 0.005 });
+    orig = await loadHandsSound(job, song.handVideo, range, tl, (f) => progress({ phase: 'handsAudio', fraction: 0.005 + 0.02 * f }));
+    if (signal?.aborted) throw abortError();
   }
   const origGain = originalGain(s, job.audio.originalVolume);
+
+  // the hands video, the watermark: opened before the output file exists too
+  const visual = exportVisual(job, handsLayout);
+  const wm = job.watermark && watermarkActive(job.watermark) ? job.watermark : null;
+  const wmBand = wm && handsLayout === 'bottom' ? watermarkBand(wm, width, height) : 0;
+  const drawnKeys = visual.showKeyboard ? Math.round(height * visual.keyboardHeight) : 0;
+  let hands: HandsRuntime | null = null;
+  try {
+    hands = await prepareHands(job, handsLayout, width, height, {
+      wmBand,
+      pipBottom: drawnKeys + (wm && wm.position[0] === 'b' ? Math.round(2.6 * 26 * (Math.min(width, height) / 1080) * wm.size) : 0),
+      hitLine: visual.hitLine,
+    });
+  } catch (e) {
+    orig = null;
+    throw e;
+  }
+  if (signal?.aborted) {
+    hands?.compositor.dispose();
+    hands?.frames.dispose();
+    throw abortError();
+  }
 
   const ext = s.format;
   const mime = s.format === 'mp4' ? 'video/mp4' : 'video/webm';
@@ -360,11 +514,13 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
   });
 
   const canvas = new OffscreenCanvas(width, height);
-  const visual = exportVisual(job);
   const renderer = new PianoRollRenderer(canvas, visual);
   renderer.resize(width, height);
   const arr = song.arrangements[job.difficulty];
   renderer.setNotes(arr.notes, arr.pedal, song.tempo, song.key);
+  if (hands) renderer.setStage(hands.compositor.stage());
+  const ctx2d = canvas.getContext('2d')!;
+  const mark = await prepareWatermark(job, width, height, ctx2d, { band: wmBand, avoidBottom: handsLayout === 'bottom' ? 0 : drawnKeys });
 
   const videoTrack = new CanvasSource(canvas, {
     codec: videoCodec,
@@ -376,7 +532,21 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
   const audioTrack = new AudioSampleSource({ codec: audioCodec, bitrate: 192e3 });
   output.addAudioTrack(audioTrack);
   // ---- title page / end card: wrap the tracks (null when off, then nothing changes) ----
-  const cards = await prepareTitleCards(job.titleCard, { width, height, fps, visual, canvas, renderer, rollFrames: totalFrames, signal, guard: (step) => guardStep(step, signal, STEP_TIMEOUT_MS), sampleRate: 48000, onFrame: (done, total, part) => progress({ phase: 'video', fraction: part === 'end' ? 0.98 : 0.18, framesDone: done, framesTotal: total }) });
+  const cardMark = mark && wm?.onCards ? mark : null;
+  const cards = await prepareTitleCards(job.titleCard, {
+    width,
+    height,
+    fps,
+    visual,
+    canvas,
+    renderer,
+    rollFrames: totalFrames,
+    signal,
+    guard: (step) => guardStep(step, signal, STEP_TIMEOUT_MS),
+    sampleRate: 48000,
+    onFrame: (done, total, part) => progress({ phase: 'video', fraction: part === 'end' ? 0.98 : 0.18, framesDone: done, framesTotal: total }),
+    overlay: cardMark ? (c) => cardMark.painter.draw(c) : undefined,
+  });
   const videoSource = cards ? cards.video(videoTrack) : videoTrack;
   const audioSource = cards ? cards.audio(audioTrack) : audioTrack;
   const picFadeIn = cards?.timeline.intro ? 0 : s.fadeIn; // the title page crossfades into the roll instead
@@ -408,7 +578,7 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
     };
     // lead-in: silence, or the original from before range.start
     if (lead > 0) await addBlock(new Float32Array(tl.leadFrames * 2), tl.leadFrames, 0, 0);
-    if (sound === 'original') {
+    if (soundWithoutPiano(sound)) {
       // no piano: the same 45 s pieces, holding only the original
       const chunk = 45 * sr;
       for (let f0 = 0; f0 < tl.bodyFrames; f0 += chunk) {
@@ -454,18 +624,59 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
     bg = await backgroundProvider(visual, function* () {
       for (let i = 0; i < totalFrames; i++) yield i / fps;
     });
+    const videoPhase = hands ? 'handsVideo' : 'video';
+    let handsDraw: ((o: number) => Promise<void>) | null = null;
+    if (hands) {
+      const h = hands;
+      const { endFade } = await import('../handcam/frames');
+      const offset = h.hv.offset;
+      // video time for each output frame, in order (the decoder reads each packet once)
+      h.stream = h.frames.stream(
+        (function* () {
+          for (let i = 0; i < totalFrames; i++) yield songTimeAt(i / fps) + offset;
+        })(),
+      );
+      let lastTs = NaN;
+      let lastRot = 0;
+      handsDraw = async (o: number) => {
+        const tv = songTimeAt(o) + offset;
+        const alpha = endFade(tv, h.frames.end);
+        const sample = await guardStep(h.stream!.next(), signal, STEP_TIMEOUT_MS);
+        if (!sample) {
+          if (Number.isNaN(lastTs)) h.compositor.setFrame(null, 0, 0, 0);
+          else h.compositor.redraw(lastRot, alpha);
+          return;
+        }
+        try {
+          if (sample.timestamp !== lastTs) {
+            const frame = sample.toVideoFrame();
+            try {
+              h.compositor.setFrame(frame, frame.displayWidth, frame.displayHeight, sample.rotation, alpha);
+            } finally {
+              frame.close();
+            }
+            lastTs = sample.timestamp;
+            lastRot = sample.rotation;
+          } else h.compositor.redraw(lastRot, alpha);
+        } finally {
+          sample.close();
+        }
+      };
+    }
     const t0 = performance.now();
     for (let i = 0; i < totalFrames; i++) {
       if (signal?.aborted) throw abortError();
       const o = i / fps;
       if (bg.kind) renderer.setBackgroundMedia(await bg.frameAt(o), bg.kind);
+      if (handsDraw) await handsDraw(o);
       renderer.render({ time: songTimeAt(o) });
+      if (handsLayout === 'pip') hands?.compositor.drawPip(ctx2d);
+      mark?.painter.draw(ctx2d);
       // fade the picture in/out with the audio
       const fade = fadeGain(o, duration, picFadeIn, s.fadeOut);
       if (fade < 1) {
-        const ctx = canvas.getContext('2d')!;
-        ctx.fillStyle = `rgba(0,0,0,${1 - fade})`;
-        ctx.fillRect(0, 0, width, height);
+        ctx2d.fillStyle = `rgba(0,0,0,${1 - fade})`;
+        ctx2d.fillRect(0, 0, width, height);
       }
       // the title page goes first, each of its frames under its own time limit (not all of them under this frame's)
       if (i === 0) await cards?.intro();
@@ -474,7 +685,7 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
         const elapsed = (performance.now() - t0 - (cards?.introMs ?? 0)) / 1000; // without the title page frames
         const rfps = (i + 1) / Math.max(0.001, elapsed);
         progress({
-          phase: 'video',
+          phase: videoPhase,
           fraction: audioWeight + ((i + 1) / totalFrames) * (1 - audioWeight - 0.02),
           framesDone: i + 1,
           framesTotal: totalFrames,
@@ -500,8 +711,13 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
     orig = null;
     bg?.dispose();
     renderer.setDecalImage(null);
+    renderer.setStage(null);
     decal?.close();
     cards?.dispose();
+    hands?.stream?.close();
+    hands?.frames.dispose();
+    hands?.compositor.dispose();
+    mark?.logo?.close();
   }
 }
 
@@ -530,7 +746,8 @@ async function exportWithMediaRecorder(job: ExportJob): Promise<ExportResult> {
   if (bg.kind === 'image') renderer.setBackgroundMedia(await bg.frameAt(0), 'image');
   const decal = await loadDecalBitmap(visual);
   applyDecal(renderer, decal);
-  // title page / end card, drawn in real time around the roll (null when off)
+  const c2 = canvas.getContext('2d')!;
+  const mark = await prepareWatermark(job, width, height, c2, { band: 0, avoidBottom: visual.showKeyboard ? Math.round(height * visual.keyboardHeight) : 0 });
   const cards = await prepareTitleCards(job.titleCard, { width, height, fps: s.fps, visual, canvas, renderer, rollFrames: Math.ceil(duration * s.fps), signal });
   const intro = cards?.timeline.intro ?? 0;
   const rollEnd = intro + duration;
@@ -540,6 +757,7 @@ async function exportWithMediaRecorder(job: ExportJob): Promise<ExportResult> {
     renderer.setDecalImage(null);
     decal?.close();
     cards?.dispose();
+    mark?.logo?.close();
   };
 
   // audio graph + capture stream: released in `finally` so a cancelled or failed export doesn't leak a running AudioContext
@@ -590,7 +808,10 @@ async function exportWithMediaRecorder(job: ExportJob): Promise<ExportResult> {
         const c2d = canvas.getContext('2d')!;
         if (cards && o < intro) cards.drawIntro(c2d, Math.max(0, o));
         else if (cards && o >= rollEnd) cards.drawOutro(c2d, o - rollEnd);
-        else renderer.render({ time: range.start + (o - intro - lead) * rate });
+        else {
+          renderer.render({ time: range.start + (o - intro - lead) * rate });
+          mark?.painter.draw(c2d);
+        }
         job.onProgress?.({ phase: 'video', fraction: Math.max(0, Math.min(1, o / total)) });
         if (o >= total) resolve();
         else requestAnimationFrame(frame);
