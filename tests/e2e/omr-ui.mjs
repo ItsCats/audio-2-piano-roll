@@ -391,10 +391,15 @@ try {
 
     // ---- library and accuracy page
     await page.goto(base + '/library');
-    await page.getByText('Read from a photo').first().waitFor({ timeout: 15000 }).catch(() => undefined);
+    await page.getByText('Beta', { exact: true }).first().waitFor({ timeout: 15000 }).catch(() => undefined);
     await page.waitForTimeout(600);
-    check(`${dev}: Library labels the read songs`, (await page.getByText('Read from a photo').count()) > 0 && (await page.getByText('Read from a PDF').count()) > 0 && (await page.getByText('Beta', { exact: true }).count()) >= 2);
+    check(`${dev}: Library cards show Beta on the read songs`, (await page.getByText('Beta', { exact: true }).count()) >= 2 && (await page.getByText('Photo', { exact: true }).count()) > 0 && (await page.getByText('PDF', { exact: true }).count()) > 0);
     await shot(page, `${dev}-library`);
+    await page.getByRole('button', { name: 'List view' }).click();
+    await page.waitForTimeout(400);
+    check(`${dev}: Library list says what they were read from`, (await page.getByText(/Read from a photo/).count()) > 0 && (await page.getByText(/Read from a PDF/).count()) > 0);
+    await shot(page, `${dev}-library-list`);
+    await page.getByRole('button', { name: 'Grid view' }).click().catch(() => undefined);
     await page.goto(base + '/accuracy#sheet-reader');
     await page.getByText('Sheet music from PDFs and photos').waitFor();
     await page.waitForTimeout(800);
