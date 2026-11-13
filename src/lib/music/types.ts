@@ -75,6 +75,11 @@ export interface SongSource {
    * are the reader's estimate and should be checked (absent: a sheet-music file, notes as written).
    */
   reader?: 'pdf' | 'photo';
+  /**
+   * which sheet-music reader read it (src/lib/omr/readers.ts): 'accurate' (homr) or 'quick' (the Sheet
+   * Music Transformer, Beta). Absent on songs read before there was a choice: the quick reader.
+   */
+  sheetReader?: 'accurate' | 'quick';
   /** pages read (sheet-music reader) */
   pages?: number;
 }

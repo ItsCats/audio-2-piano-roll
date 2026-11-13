@@ -43,7 +43,7 @@ export function InterruptedImportNotice() {
       const actions: ToastAction[] = [];
       if (n.canRetry) {
         actions.push({
-          label: 'Try again',
+          label: n.retryLabel ?? 'Try again',
           variant: 'primary',
           onClick: async () => {
             if (importBusy(useImport.getState().job)) {

@@ -91,7 +91,7 @@ export const CREDITS: CreditGroup[] = [
       },
       {
         name: 'homr',
-        use: 'Reads printed sheet music from PDFs and photos: finds the staffs, notes, bar lines and clefs, then transcribes each staff (the default sheet-music reader). Downloaded only when you first read a PDF or photo.',
+        use: 'The Accurate sheet-music reader (the default on computers): reads printed sheet music from PDFs and photos — finds the staffs, notes, bar lines and clefs, then transcribes each staff. Downloaded only when you first read a PDF or photo with it.',
         author: 'Christian Liebhardt and the homr contributors',
         license: 'AGPL-3.0-only (code and model weights)',
         licenseUrl: LIC.agpl3,
@@ -127,7 +127,7 @@ export const CREDITS: CreditGroup[] = [
       },
       {
         name: 'Sheet Music Transformer (SMT)',
-        use: 'Reads printed piano music from PDFs and photos (beta). Downloaded only when you first read a PDF or photo.',
+        use: 'The Quick sheet-music reader (Beta; the default on phones): reads printed piano music from PDFs and photos with a smaller download. Downloaded only when you first read a PDF or photo with it.',
         author: 'Antonio Ríos-Vila, Jorge Calvo-Zaragoza, Thierry Paquet (“Sheet Music Transformer: End-To-End Optical Music Recognition Beyond Monophonic Transcription”, ICDAR 2024)',
         license: 'MIT',
         licenseUrl: LIC.mit,
@@ -237,7 +237,7 @@ export const CREDITS: CreditGroup[] = [
       { name: 'React Router', use: 'Pages and navigation.', author: 'Remix Software and contributors', license: 'MIT', licenseUrl: LIC.mit, url: 'https://reactrouter.com' },
       { name: 'Zustand', use: 'App state.', author: 'Poimandres', license: 'MIT', licenseUrl: LIC.mit, url: 'https://github.com/pmndrs/zustand' },
       { name: 'TensorFlow.js', use: 'Runs the Basic Pitch model (WebGL / WebAssembly).', author: 'Google and contributors', license: 'Apache-2.0', licenseUrl: LIC.apache, url: 'https://www.tensorflow.org/js' },
-      { name: 'ONNX Runtime Web', use: 'Runs the SCNet separation model, the high-accuracy piano model and the sheet-music reader (WebAssembly).', author: 'Microsoft and contributors', license: 'MIT', licenseUrl: LIC.mit, url: 'https://onnxruntime.ai' },
+      { name: 'ONNX Runtime Web', use: 'Runs the SCNet separation model, the high-accuracy piano model and both sheet-music readers (WebAssembly).', author: 'Microsoft and contributors', license: 'MIT', licenseUrl: LIC.mit, url: 'https://onnxruntime.ai' },
       { name: 'Mediabunny', use: 'Video export (MP4 / WebM) and decoding unusual file types.', author: 'Vanilagy', license: 'MPL-2.0', licenseUrl: LIC.mpl, url: 'https://mediabunny.dev' },
       {
         name: 'Mediabunny AAC encoder (includes FFmpeg)',
@@ -279,7 +279,7 @@ export const CREDITS: CreditGroup[] = [
       },
       {
         name: 'PDF.js',
-        use: 'Opens PDF sheet music for the sheet-music reader (beta); loaded only when you read a PDF.',
+        use: 'Opens PDF sheet music for the sheet-music readers; loaded only when you read a PDF.',
         author: 'Mozilla and contributors',
         license: 'Apache-2.0',
         licenseUrl: LIC.apache,

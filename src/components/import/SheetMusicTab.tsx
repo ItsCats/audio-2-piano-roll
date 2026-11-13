@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, Camera, Check, Crop, FileText, ImagePlus, Loader2, ScanLine, Smartphone, Trash2, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, ArrowRight, Camera, Check, Crop, FileText, ImagePlus, Loader2, ScanLine, Smartphone, Trash2, X } from 'lucide-react';
 import { Dropzone } from './Dropzone';
 import { CornerEditor, fullCorners, type Corners } from './CornerEditor';
 import { Badge, Button, cn } from '../ui';
@@ -8,6 +8,10 @@ import { useImport } from '../../state/importStore';
 import { isTouchDevice } from '../../lib/wakeLock';
 import { titleFromFileName } from '../../lib/songs';
 import type { Gray, PdfDocument, SheetReaderSupport } from '../../lib/omr';
+// small: sizes and estimates only (the accurate reader's code loads when it reads)
+import { homrReaderSupport, type ReaderSupport } from '../../lib/omr/homr/support';
+import { aboutTime, readerFacts, readerMayBeTooHeavy, sheetReaderChoice, SHEET_READER_INFO, type SheetReaderId } from '../../lib/omr/readers';
+import { pageDeviceInfo } from '../../lib/transcription/backendChoice';
 
 /** Most pages read in one go from this screen (the reader takes up to 20; this keeps waits sensible). */
 export const MAX_READ_PAGES = 10;
@@ -65,13 +69,6 @@ function grayUrl(omr: Omr, img: Gray, maxSide: number, type = 'image/jpeg'): str
   return url;
 }
 
-/** "about 2 min" for a number of seconds */
-function aboutTime(sec: number): string {
-  if (sec < 50) return `about ${Math.max(10, Math.round(sec / 10) * 10)} seconds`;
-  const m = Math.round(sec / 60);
-  return m <= 1 ? 'about a minute' : `about ${m} minutes`;
-}
-
 /** Song title for photos: the file name, unless it is a camera's own name (IMG_1234). */
 function photoTitle(name: string): string {
   const t = titleFromFileName(name);
@@ -111,6 +108,12 @@ let photoSeq = 1;
 export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean; onScoreFile: (f: File) => void; onStarted: () => void }) {
   const [touch] = useState(isTouchDevice);
   const [support, setSupport] = useState<SheetReaderSupport | null>(null);
+  const [accurate] = useState<ReaderSupport>(() => homrReaderSupport());
+  const [device] = useState(pageDeviceInfo);
+  const readerPref = useImport((s) => s.prefs.sheetReader);
+  const setReaderPref = useImport((s) => s.setSheetReaderPref);
+  // the remembered pick, else accurate on computers and quick on phones / low-memory devices
+  const reader: SheetReaderId = sheetReaderChoice(readerPref, device, { accurate: accurate.available, quick: support ? support.available : undefined });
   const [pdf, setPdf] = useState<PdfState | null>(null);
   const [photos, setPhotos] = useState<PhotoItem[]>([]);
   const [editing, setEditing] = useState<number | null>(null);
@@ -146,7 +149,9 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
     };
   }, []);
 
-  const canRead = !!support?.available;
+  // pages are prepared with the quick reader's module (PDF.js, photos), so it is needed for both readers
+  const canRead = !!support?.available && (reader === 'quick' || accurate.available);
+  const chosen: Pick<SheetReaderSupport, 'estSecondsPerPage' | 'phone'> | null = reader === 'accurate' ? accurate : support;
   const maxPages = maxPagesFor(support);
   const mode: 'pick' | 'pdf' | 'photo' = pdf ? 'pdf' : photos.length || opening ? 'photo' : 'pick';
 
@@ -314,7 +319,7 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
   const readPdf = async () => {
     if (!pdf || !pdf.selected.length || busy) return;
     const { file, selected } = pdf;
-    const p = importSheet({ kind: 'pdf', file, fileName: file.name, pages: [...selected].sort((a, b) => a - b).slice(0, maxPages) });
+    const p = importSheet({ kind: 'pdf', file, fileName: file.name, pages: [...selected].sort((a, b) => a - b).slice(0, maxPages) }, { reader });
     onStarted();
     reset();
     await p;
@@ -323,14 +328,14 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
     if (!photos.length || photos.length > maxPages || busy) return;
     const omr = await loadOmr();
     const list = photos.map((p) => ({ blob: p.file as Blob, name: p.file.name, image: p.image, quad: omr.orderQuad(p.corners) }));
-    const p = importSheet({ kind: 'photo', photos: list, fileName: photos[0].file.name, title: photoTitle(photos[0].file.name) });
+    const p = importSheet({ kind: 'photo', photos: list, fileName: photos[0].file.name, title: photoTitle(photos[0].file.name) }, { reader });
     onStarted();
     reset();
     await p;
   };
 
   const nPages = mode === 'pdf' ? (pdf?.selected.length ?? 0) : photos.length;
-  const estimate = support && nPages ? aboutTime(nPages * support.estSecondsPerPage) : null;
+  const estimate = chosen && nPages ? aboutTime(nPages * chosen.estSecondsPerPage) : null;
   const busyNote = busy ? 'Another import is still running — wait for it to finish (progress is shown above).' : null;
 
   return (
@@ -350,7 +355,7 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
         </>
       )}
 
-      <BetaNote support={support} />
+      <ReaderNote support={support} accurate={accurate} reader={reader} onReader={setReaderPref} disabled={busy} />
 
       {error && (
         <p role="alert" className="flex items-start gap-2 rounded-lg border border-bad/30 bg-bad/10 px-3 py-2 text-[13px] text-bad">
@@ -443,7 +448,7 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
             onRead={() => void readPdf()}
             estimate={estimate}
             pages={pdf.selected.length}
-            support={support}
+            support={chosen}
             note={busyNote}
           />
         </div>
@@ -530,7 +535,7 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
                   onRead={() => void readPhotos()}
                   estimate={estimate}
                   pages={photos.length}
-                  support={support}
+                  support={chosen}
                   note={busyNote}
                 />
               )}
@@ -562,23 +567,91 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
   );
 }
 
-/** The Beta label, what the reader is good at, and this device's advice (phones: time and memory). */
-function BetaNote({ support }: { support: SheetReaderSupport | null }) {
+/**
+ * The two readers to choose from (default: accurate on computers, quick on phones; the pick is
+ * remembered), what each is good at, and this device's advice.
+ */
+function ReaderNote({
+  support,
+  accurate,
+  reader,
+  onReader,
+  disabled,
+}: {
+  support: SheetReaderSupport | null;
+  accurate: ReaderSupport;
+  reader: SheetReaderId;
+  onReader: (r: SheetReaderId) => void;
+  disabled: boolean;
+}) {
+  const heavy = readerMayBeTooHeavy('accurate');
+  const chosen = reader === 'accurate' ? accurate : support;
+  const options: { id: SheetReaderId; facts: string; sub?: string; available: boolean }[] = [
+    { id: 'accurate', facts: readerFacts('accurate', accurate), available: accurate.available },
+    {
+      id: 'quick',
+      facts: readerFacts('quick', { downloadMB: support?.downloadMB ?? 24, estSecondsPerPage: support?.estSecondsPerPage ?? 30 }),
+      sub: 'Smaller download, less accurate',
+      available: support ? support.available : true,
+    },
+  ];
   return (
-    <div className="flex flex-col gap-1.5 rounded-xl border border-ink-700 bg-ink-900/60 p-3">
+    <div className="flex flex-col gap-2 rounded-xl border border-ink-700 bg-ink-900/60 p-3" data-testid="sheet-reader-choice">
       <p className="flex flex-wrap items-center gap-2 text-[13px] font-medium text-ink-50">
         <ScanLine size={15} className="text-accent-400" /> PDFs and photos of sheet music
-        <Badge tone="warn">Beta</Badge>
       </p>
-      <p className="text-[12.5px] text-ink-200">Works best with clear printed piano music. Check the notes afterwards.</p>
-      {support && !support.available && <p className="text-[12px] text-bad">{support.reason}</p>}
-      {support?.available && !support.recommended && support.reason && (
+      <p className="text-[12.5px] text-ink-200">Works best with clear printed music. Check the notes afterwards.</p>
+      <fieldset className="flex flex-col gap-1.5" disabled={disabled}>
+        <legend className="sr-only">Sheet-music reader</legend>
+        {options.map((o) => {
+          const on = reader === o.id;
+          const info = SHEET_READER_INFO[o.id];
+          return (
+            <label
+              key={o.id}
+              data-testid={`reader-${o.id}`}
+              className={cn(
+                'flex cursor-pointer gap-2.5 rounded-lg border px-3 py-2 transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-accent-400',
+                on ? 'border-accent-500 bg-accent-500/10' : 'border-ink-700 hover:border-ink-500',
+                !o.available && 'cursor-not-allowed opacity-50',
+              )}
+            >
+              <input type="radio" name="sheet-reader" value={o.id} checked={on} disabled={!o.available} onChange={() => onReader(o.id)} className="mt-1 accent-accent-500" />
+              <span className="flex min-w-0 flex-col gap-0.5">
+                <span className="flex flex-wrap items-center gap-1.5 text-[13px] font-medium text-ink-50">
+                  {info.name}
+                  {o.id === 'accurate' && !heavy && <Badge tone="accent">Recommended</Badge>}
+                  {info.beta && <Badge tone="warn">Beta</Badge>}
+                  {o.sub && <span className="text-[12px] font-normal text-ink-300">({o.sub})</span>}
+                </span>
+                <span className="text-[12px] text-ink-300">{o.facts}{accurate.phone ? ' on a phone' : ''}</span>
+                {o.id === 'accurate' && heavy && (
+                  <span className="flex gap-1.5 text-[12px] text-warn" data-testid="reader-heavy">
+                    <AlertTriangle size={13} className="mt-0.5 shrink-0" /> May be too heavy for this phone; if the page reloads, use the Quick reader.
+                  </span>
+                )}
+              </span>
+            </label>
+          );
+        })}
+      </fieldset>
+      {chosen && !chosen.available && <p className="text-[12px] text-bad">{chosen.reason}</p>}
+      {reader === 'quick' && support?.available && !support.recommended && support.reason && (
         <p className="flex gap-1.5 text-[12px] text-ink-300">
           <Smartphone size={13} className="mt-0.5 shrink-0 text-accent-400" /> {support.reason}
         </p>
       )}
+      {reader === 'accurate' && heavy && (
+        <p className="flex gap-1.5 text-[12px] text-ink-300">
+          <Smartphone size={13} className="mt-0.5 shrink-0 text-accent-400" /> Close other apps and tabs first. A computer is much faster.
+        </p>
+      )}
       <p className="text-[12px] text-ink-400">
-        The reader ({support?.downloadMB ?? 24} MB) is downloaded once, the first time, and runs on your device.{' '}
+        The reader is downloaded once, the first time, and runs on your device. The Accurate reader is based on{' '}
+        <Link to="/credits#models" className="text-accent-400 hover:text-accent-300">
+          homr (AGPL-3.0)
+        </Link>
+        .{' '}
         <Link to="/accuracy#sheet-reader" className="text-accent-400 hover:text-accent-300">
           How accurate is it?
         </Link>
@@ -601,7 +674,7 @@ function ReadBar({
   onRead: () => void;
   estimate: string | null;
   pages: number;
-  support: SheetReaderSupport | null;
+  support: Pick<SheetReaderSupport, 'phone'> | null;
   note: string | null;
 }) {
   return (

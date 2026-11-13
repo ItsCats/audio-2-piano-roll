@@ -29,6 +29,7 @@ import { isMemoryConstrained, pageDeviceInfo } from '../lib/transcription/backen
 import type { Song, SongSource } from '../lib/music/types';
 import type { ParsedScore, ScoreMeta } from '../lib/score';
 import type { Gray, Quad, ReadProgress } from '../lib/omr';
+import { isSheetReaderId, readerOf, sheetReaderChoice, type SheetReaderId } from '../lib/omr/readers';
 import { toast } from './toastStore';
 import { holdReload } from '../lib/newVersion';
 
@@ -57,8 +58,10 @@ export interface ImportJob {
   separation?: SeparationEngine;
   /** transcription model of this import (absent: Basic Pitch) */
   transcriber?: TranscriptionEngine;
-  /** a PDF or photos read by the sheet-music reader (beta) */
+  /** a PDF or photos read by the sheet-music reader */
   sheet?: 'pdf' | 'photo';
+  /** which sheet-music reader (src/lib/omr/readers.ts) */
+  sheetReader?: SheetReaderId;
   /**
    * Speed measurement for the current phase (same stage and same kind of detail message): where
    * progress was when the phase started, and the time remaining extrapolated from the measured
@@ -77,6 +80,8 @@ export interface FailedImport {
   retry: () => Promise<string | null>;
   /** a failed high-accuracy piano model run: the same import with the normal model (and that choice selected) */
   retryFast?: () => Promise<string | null>;
+  /** a failed read with the accurate sheet-music reader: the same pages with the quick reader (and that choice selected) */
+  retryQuick?: () => Promise<string | null>;
   recording?: { blob: Blob; fileName: string };
 }
 
@@ -118,6 +123,8 @@ export interface ImportPrefs {
   engine?: Partial<Record<PresetId, SeparationEngine>>;
   /** "High-accuracy piano model" picked (used with the "Piano solo" preset only; off unless ticked) */
   pianoModel?: boolean;
+  /** the sheet-music reader picked on the "MIDI / Sheet music" tab (absent: the device default, src/lib/omr/readers.ts) */
+  sheetReader?: SheetReaderId;
 }
 
 interface ImportState {
@@ -128,6 +135,8 @@ interface ImportState {
   setSeparatePref: (preset: PresetId, value: boolean, engine?: SeparationEngine | null) => void;
   /** remember the high-accuracy piano model choice */
   setPianoModelPref: (value: boolean) => void;
+  /** remember the sheet-music reader picked */
+  setSheetReaderPref: (value: SheetReaderId) => void;
   /** the last failed import's retry and recording (cleared by the next import, Dismiss or Cancel) */
   failed: FailedImport | null;
   /** `separate` defaults to the user's choice for the current detection preset */
@@ -137,8 +146,11 @@ interface ImportState {
    * same as importing a .musicxml file. `source` defaults to a sheet-music file named `fileName`.
    */
   importMusicXml: (xml: string, meta?: ScoreMeta & { title?: string; source?: SongSource & { kind: 'score' } }) => Promise<string | null>;
-  /** Read printed piano music from a PDF or photos (beta, lib/omr) and import it like a sheet-music file. */
-  importSheet: (input: SheetInput, opts?: { pendingId?: string; lowMemory?: boolean }) => Promise<string | null>;
+  /**
+   * Read printed music from a PDF or photos (lib/omr) and import it like a sheet-music file. `reader`
+   * defaults to the remembered pick, else this device's default (sheetReaderChoice).
+   */
+  importSheet: (input: SheetInput, opts?: { pendingId?: string; lowMemory?: boolean; reader?: SheetReaderId }) => Promise<string | null>;
   importAudioBlob: (
     blob: Blob,
     meta: { title: string; artist?: string; source: SongSource; separate?: boolean } & ImportRunOptions,
@@ -173,7 +185,7 @@ function loadPrefs(): ImportPrefs {
   }
 }
 
-/** The stored prefs (older records lack `engine` and `pianoModel`; anything unexpected is dropped). */
+/** The stored prefs (older records lack `engine`, `pianoModel` and `sheetReader`; anything unexpected is dropped). */
 export function parsePrefs(raw: string | null): ImportPrefs {
   try {
     if (!raw) return { separate: {} };
@@ -185,7 +197,7 @@ export function parsePrefs(raw: string | null): ImportPrefs {
       const e = p.engine?.[k];
       if (e === 'server' || e === 'browser') engine[k] = e;
     }
-    return { separate: sep, engine, ...(p.pianoModel === true ? { pianoModel: true } : {}) };
+    return { separate: sep, engine, ...(p.pianoModel === true ? { pianoModel: true } : {}), ...(isSheetReaderId(p.sheetReader) ? { sheetReader: p.sheetReader } : {}) };
   } catch {
     return { separate: {} };
   }
@@ -840,6 +852,13 @@ export const useImport = create<ImportState>((set, get) => {
       savePrefs(prefs);
     },
 
+    setSheetReaderPref: (value) => {
+      if (!isSheetReaderId(value)) return;
+      const prefs: ImportPrefs = { ...get().prefs, sheetReader: value };
+      set({ prefs });
+      savePrefs(prefs);
+    },
+
     setSeparatePref: (preset, value, engine) => {
       const cur = get().prefs;
       const eng = { ...cur.engine };
@@ -935,10 +954,13 @@ export const useImport = create<ImportState>((set, get) => {
     importSheet: async (input, opts = {}) => {
       const fileName = input.fileName;
       const title = input.title ?? sheetTitle(fileName);
+      const reader: SheetReaderId = opts.reader ?? sheetReaderChoice(get().prefs.sheetReader);
       const ctx = start(title, 'score', SHEET_PLAN);
-      ctx.update({ sheet: input.kind, detail: input.kind === 'pdf' ? 'Opening the PDF' : 'Opening the photos' });
+      ctx.update({ sheet: input.kind, sheetReader: reader, detail: input.kind === 'pdf' ? 'Opening the PDF' : 'Opening the photos' });
       const { update, signal } = ctx;
       const nPages = input.kind === 'pdf' ? input.pages.length : input.photos.length;
+      /** bitmaps handed to the accurate reader (closed when the read ends) */
+      const bitmaps: ImageBitmap[] = [];
       try {
         // keep the PDF / photos until this import ends, so "Try again" works after a crash (persistPending)
         const sheet: PendingSheet = {
@@ -949,7 +971,9 @@ export const useImport = create<ImportState>((set, get) => {
         };
         const first = input.kind === 'pdf' ? input.file : input.photos[0]?.blob;
         const size = input.kind === 'pdf' ? input.file.size : input.photos.reduce((a, p) => a + p.blob.size, 0);
-        const source: SongSource & { kind: 'score' } = { kind: 'score', reader: input.kind, fileName, pages: nPages, ...(first?.type ? { mimeType: first.type } : {}), fileSize: size };
+        // the reader is recorded on the source (also kept on the interrupted-import record: a crash of the
+        // accurate reader offers the quick one)
+        const source: SongSource & { kind: 'score' } = { kind: 'score', reader: input.kind, sheetReader: reader, fileName, pages: nPages, ...(first?.type ? { mimeType: first.type } : {}), fileSize: size };
         await pend(ctx, {
           id: opts.pendingId,
           title,
@@ -961,10 +985,12 @@ export const useImport = create<ImportState>((set, get) => {
           separate: false,
           ...(size <= PENDING_COPY_MAX_BYTES ? { sheet } : {}),
         });
-        const omr = await import('../lib/omr');
+        // pages are prepared by the quick reader's module (PDF.js, photo decoding); the accurate reader's
+        // code loads only when it is used
+        const [omr, homr] = await Promise.all([import('../lib/omr'), reader === 'accurate' ? import('../lib/omr/homr') : null]);
         if (signal.aborted) return null;
         // 1. the page images
-        let pages: { image: Gray; quad?: Quad | null }[];
+        let pages: { image: Gray | ImageBitmap; quad?: Quad | null }[];
         if (input.kind === 'pdf') {
           update({ stage: 'validating', progress: 0, detail: nPages > 1 ? `Preparing page 1 of ${nPages}` : 'Preparing the page' });
           const images = await omr.renderPdfPages(new Uint8Array(await input.file.arrayBuffer()), {
@@ -980,12 +1006,17 @@ export const useImport = create<ImportState>((set, get) => {
             const p = input.photos[i];
             update({ stage: 'validating', progress: i / nPages, detail: nPages > 1 ? `Preparing photo ${i + 1} of ${nPages}` : 'Preparing the photo' });
             const image = p.image ?? (await omr.loadPhoto(p.blob)).image;
-            pages.push({ image, quad: p.quad });
+            // the accurate reader was measured on the photo in color (its page cropping looks at the paper's
+            // color): the photo itself, scaled like the gray image the corners were set on
+            const bmp = homr ? await photoBitmap(p.blob, image).catch(() => null) : null;
+            if (bmp) bitmaps.push(bmp);
+            const s = bmp ? bmp.width / image.w : 1;
+            pages.push({ image: bmp ?? image, quad: p.quad && s !== 1 ? (p.quad.map(([x, y]) => [x * s, y * s]) as Quad) : p.quad });
           }
         }
         if (signal.aborted) return null;
         // 2. read them
-        const mb = omr.sheetReaderSupport(input.kind).downloadMB;
+        const mb = homr ? homr.homrReaderSupport().downloadMB : omr.sheetReaderSupport(input.kind).downloadMB;
         let last = '';
         const onProgress = (p: ReadProgress) => {
           if (p.stage === 'loading-model') {
@@ -993,10 +1024,12 @@ export const useImport = create<ImportState>((set, get) => {
             update({
               stage: 'loading-model',
               progress: p.total ? Math.min(1, (p.loaded ?? 0) / p.total) : null,
-              detail: downloading ? `Downloading the sheet-music reader (once, ${mb} MB)` : 'Starting the sheet-music reader',
+              detail: downloading ? `Downloading the ${READER_NAME[reader]} (once, ${mb} MB)` : `Starting the ${READER_NAME[reader]}`,
             });
           } else if (p.stage === 'finding-lines') {
-            update({ stage: 'analyzing', progress: 0, detail: 'Finding the lines of music' });
+            const pg = p.page !== undefined && (p.pages ?? 1) > 1 ? ` on page ${p.page + 1} of ${p.pages}` : '';
+            // the accurate reader finds the lines page by page (the bar keeps going over the whole job)
+            update({ stage: 'analyzing', progress: homr ? Math.max(0, Math.min(1, (p.progress - 0.2) / 0.8)) : 0, detail: `Finding the lines of music${pg}` });
           } else {
             if (p.page !== undefined && p.pageLine !== undefined) {
               const pg = (p.pages ?? 1) > 1 ? `Reading page ${p.page + 1} of ${p.pages}, ` : 'Reading ';
@@ -1006,7 +1039,13 @@ export const useImport = create<ImportState>((set, get) => {
           }
         };
         // after a crash: one WASM thread (about half the memory) and the model freed right after
-        const result = await omr.readSheetImages(pages, { kind: input.kind, signal, title, onProgress, ...(opts.lowMemory ? { threads: 1, release: true } : {}) });
+        const low = opts.lowMemory ? { threads: 1, release: true } : {};
+        const result = homr
+          ? await homr.readSheetImages(
+              pages.map((p) => ({ image: p.image, quad: p.quad })),
+              { signal, title, onProgress, ...low },
+            )
+          : await omr.readSheetImages(pages as { image: Gray; quad?: Quad | null }[], { kind: input.kind, signal, title, onProgress, ...low });
         pages.length = 0;
         if (signal.aborted) return null;
         // 3. the MusicXML goes through the normal score import
@@ -1019,7 +1058,18 @@ export const useImport = create<ImportState>((set, get) => {
           song.transcription.processingMs = Math.round(result.stats.ms);
         });
       } catch (err) {
-        return fail(ctx, err, { retry: () => get().importSheet(input, { lowMemory: opts.lowMemory }) });
+        return fail(ctx, err, {
+          retry: () => get().importSheet(input, { lowMemory: opts.lowMemory, reader }),
+          retryQuick:
+            reader === 'accurate'
+              ? () => {
+                  get().setSheetReaderPref('quick');
+                  return get().importSheet(input, { reader: 'quick' });
+                }
+              : undefined,
+        });
+      } finally {
+        for (const b of bitmaps) b.close();
       }
     },
 
@@ -1064,9 +1114,13 @@ export const useImport = create<ImportState>((set, get) => {
         const sheet = rec.sheet;
         if (!sheet) return null;
         const fileName = rec.fileName || rec.source.fileName || 'Sheet music';
-        // the tab most likely ran out of memory: read again in the low-memory mode (interruptedNotice
-        // says so; a second crash in that mode is not offered again)
-        const again = { pendingId: rec.id, lowMemory: true };
+        // the tab most likely ran out of memory (interruptedNotice says so). The accurate reader: read
+        // with the quick one, which needs less memory (and pick it for next time; the choice can be
+        // changed back). The quick reader: again in the low-memory mode (a second crash in that mode is
+        // not offered again).
+        const crashedAccurate = readerOf(rec.source) === 'accurate';
+        if (crashedAccurate) get().setSheetReaderPref('quick');
+        const again = crashedAccurate ? { pendingId: rec.id, reader: 'quick' as const } : { pendingId: rec.id, lowMemory: true, reader: 'quick' as const };
         if (sheet.kind === 'pdf') return get().importSheet({ kind: 'pdf', file: rec.blob, fileName, pages: sheet.pages, title: rec.title }, again);
         const photos: SheetPhoto[] = sheet.photos.map((p) => ({ blob: p.blob, name: p.name, quad: p.quad && p.quad.length === 4 ? (p.quad as Quad) : null }));
         return get().importSheet({ kind: 'photo', photos, fileName, title: rec.title }, again);
@@ -1255,6 +1309,31 @@ if (typeof window !== 'undefined') {
         .then(() => resolve());
     }, 0),
   );
+}
+
+/** The readers' names in progress messages ("Downloading the accurate sheet-music reader"). */
+const READER_NAME: Record<SheetReaderId, string> = { accurate: 'accurate sheet-music reader', quick: 'quick sheet-music reader' };
+
+/** Longest side the accurate reader takes (src/lib/omr/homr/page.ts MAX_INPUT_SIDE). */
+const HOMR_INPUT_SIDE = 4000;
+
+/**
+ * A photo decoded in color for the accurate reader, upright per its EXIF, about the size of `gray` (the
+ * gray image the corners were set on, at most 3000 px) or a little larger, never over 4000 px; a 48 MP
+ * photo is decoded straight at that size.
+ */
+async function photoBitmap(blob: Blob, gray: { w: number; h: number }): Promise<ImageBitmap> {
+  // gray images at the gray size limit came from a larger photo: decode at up to 4000 px instead
+  const big = Math.max(gray.w, gray.h) >= 2990;
+  if (!big) return createImageBitmap(blob, { imageOrientation: 'from-image' });
+  const s = HOMR_INPUT_SIDE / Math.max(gray.w, gray.h);
+  const bmp = await createImageBitmap(blob, { imageOrientation: 'from-image', resizeWidth: Math.round(gray.w * s), resizeHeight: Math.round(gray.h * s), resizeQuality: 'high' });
+  // a browser that ignored the orientation or the resize: not the picture the corners were set on
+  if (Math.abs(bmp.width / bmp.height - gray.w / gray.h) > 0.02) {
+    bmp.close();
+    throw new Error('photo decoded differently');
+  }
+  return bmp;
 }
 
 /**

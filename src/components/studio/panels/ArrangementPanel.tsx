@@ -1,5 +1,5 @@
 import { resolveMeter } from '../../../lib/sheet/grid';
-import { readFromSheet, readerWhat } from '../SheetReaderNotice';
+import { readByBeta, readFromSheet, readerWhat } from '../SheetReaderNotice';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, Wand2 } from 'lucide-react';
@@ -114,7 +114,7 @@ export function ArrangementPanel() {
           <div className="flex gap-2 rounded-lg border border-warn/25 bg-warn/10 p-3 text-[12.5px] leading-relaxed text-ink-100">
             <AlertTriangle size={16} className="mt-0.5 shrink-0 text-warn" />
             <div>
-              <p className="font-medium text-warn">Read from {readerWhat(song)} (Beta)</p>
+              <p className="font-medium text-warn">Read from {readerWhat(song)}{readByBeta(song) ? ' (Beta)' : ''}</p>
               <p className="mt-0.5 text-ink-200">
                 The sheet-music reader estimated these notes from the page. Wrong rhythms and missing sharps or flats are the most common
                 mistakes: compare with your page, then fix notes in Edit mode.{' '}

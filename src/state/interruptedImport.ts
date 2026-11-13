@@ -6,6 +6,7 @@
  */
 import { deletePending, getPending, listPending, type PendingImport } from '../lib/storage/db';
 import { PENDING_LOCK_PREFIX } from './importStore';
+import { readerOf } from '../lib/omr/readers';
 
 /** When this document started loading (records written by this page are newer). */
 export const PAGE_LOADED_AT = typeof performance !== 'undefined' && performance.timeOrigin ? Math.round(performance.timeOrigin) : Date.now();
@@ -29,6 +30,8 @@ export interface InterruptedNotice {
   canRetry: boolean;
   /** offer "Save recording" (microphone and tab recordings) */
   canSave: boolean;
+  /** the Try again button's label when it does something other than the same again */
+  retryLabel?: string;
 }
 
 /**
@@ -37,7 +40,7 @@ export interface InterruptedNotice {
  * Try again will use.
  */
 export function interruptedNotice(
-  rec: Pick<PendingImport, 'title' | 'kind' | 'blob'> & { transcriber?: string; sheet?: PendingImport['sheet'] },
+  rec: Pick<PendingImport, 'title' | 'kind' | 'blob'> & { transcriber?: string; sheet?: PendingImport['sheet']; source?: { sheetReader?: unknown } },
   retryWith?: 'basic-pitch' | 'piano-specialist',
 ): InterruptedNotice {
   // sheet-music reader (beta): a PDF or photos, read again from the kept copy
@@ -45,6 +48,18 @@ export function interruptedNotice(
     const kept = !!rec.blob && !!rec.sheet;
     const n = rec.sheet ? (rec.sheet.kind === 'pdf' ? rec.sheet.pages.length : rec.sheet.photos.length) : 0;
     const what = rec.sheet?.kind === 'photo' ? (n > 1 ? 'Your photos were kept.' : 'Your photo was kept.') : 'Your file was kept.';
+    if (readerOf(rec.source) === 'accurate') {
+      // the accurate reader needs about 1 GB more memory: offer the quick reader (importStore resumePending)
+      return {
+        title: 'Your last import was interrupted',
+        body: `Reading “${rec.title}” with the Accurate reader was interrupted — it probably needed more memory than this device had free. ${
+          kept ? `${what} The Quick reader needs much less memory: read it with that one, or close other tabs and apps first.` : 'Choose the file again and pick the Quick reader, which needs much less memory.'
+        }`,
+        canRetry: kept,
+        canSave: false,
+        retryLabel: 'Use the Quick reader',
+      };
+    }
     if (rec.sheet?.lowMemory) {
       // it already stopped once and was read again in the low-memory mode: do not offer the same again
       return {
