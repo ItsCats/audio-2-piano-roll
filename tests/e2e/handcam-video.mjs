@@ -84,6 +84,18 @@ function keyAt(u, v) {
   return 108;
 }
 
+const DROP = 100;
+/**
+ * The source video's frame times (s): ±3.5 ms jitter and one dropped frame (VFR, like a phone); frame N
+ * is shown at frameTime(N), the same formula ffmpeg's setpts gets in makeHandsVideo.
+ */
+export function sourceFrameTimes({ seconds, fps = 30, vfr = true }) {
+  const frameTime = (N) => (N + (vfr && N >= DROP ? 1 : 0)) / fps + (vfr && N > 0 ? 0.0035 * Math.sin(N * 1.7) : 0);
+  const times = [];
+  for (let N = 0; frameTime(N) < seconds; N++) times.push(frameTime(N));
+  return times;
+}
+
 /** the center u of a key (for the tests) */
 export function keyCenterU(midi) {
   const ww = 1 / 52;
@@ -189,10 +201,7 @@ export async function makeHandsVideo({ out, notes, seconds, shift = 0, width = 6
   writeFileSync(wav, Buffer.concat([hdr, Buffer.from(pcm.buffer)]));
   // frame times: jitter (±3.5 ms) and one dropped frame (VFR, like a phone); frame N is shown at
   // frameTime(N), the same formula ffmpeg's setpts gets below
-  const DROP = 100;
-  const frameTime = (N) => (N + (vfr && N >= DROP ? 1 : 0)) / fps + (vfr && N > 0 ? 0.0035 * Math.sin(N * 1.7) : 0);
-  const times = [];
-  for (let N = 0; frameTime(N) < seconds; N++) times.push(frameTime(N));
+  const times = sourceFrameTimes({ seconds, fps, vfr });
   const rawMkv = out + '.raw.mkv';
   // 1) frames → lossless intermediate
   await run(['-y', '-v', 'error', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-s', `${W}x${H}`, '-r', String(fps), '-i', 'pipe:0', '-c:v', 'libx264', '-qp', '0', '-preset', 'ultrafast', rawMkv], async (stdin) => {

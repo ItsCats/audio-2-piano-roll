@@ -14,7 +14,7 @@ import { createServer } from 'vite';
 import { execFileSync, spawn } from 'node:child_process';
 import { appendFileSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { makeHandsVideo, makeNotes, QUAD } from './handcam-video.mjs';
+import { makeHandsVideo, makeNotes, sourceFrameTimes, QUAD } from './handcam-video.mjs';
 
 const args = process.argv.slice(2);
 const keep = args.includes('--keep') ? args[args.indexOf('--keep') + 1] : null;
@@ -135,24 +135,43 @@ try {
   }
   const worst = Math.max(...errs);
   check('lanes line up with the lit keys (< 0.25 white key)', worst < 0.25, `worst ${worst.toFixed(3)} key, mean ${(errs.reduce((a, b) => a + b, 0) / errs.length).toFixed(3)} (${notes.length} notes)`);
-  // (b) sound and picture: tone onset vs the first frame showing the key lit
-  const syncErr = [];
+  // (b) sound and picture. The camera only shows a key lit from its first frame at or after the note
+  // (the source is ~30 FPS with jitter and a dropped frame), so the exact export shows it on the first
+  // output frame whose video time reaches that camera frame. Checked: the tone sits at its note time
+  // (sample-exact mixing), and the first lit output frame is that frame (within one frame).
+  const srcTimes = sourceFrameTimes({ seconds: SECONDS, fps: 30 });
+  const shownAt = (tv) => {
+    let k = -1;
+    for (let j = 0; j < srcTimes.length && srcTimes[j] <= tv + 1e-6; j++) k = j;
+    return k < 0 ? null : srcTimes[k];
+  };
+  const toneErr = [];
+  const picErr = [];
   for (const n of notes) {
     const exp = A.lead + n.start;
     const on = onsetNear(audio, exp);
+    toneErr.push(on === null ? Infinity : on - exp);
+    // the first output frame an exact export shows lit
+    let want = null;
+    for (let fi = Math.round((exp - 0.2) * FPS); fi < (exp + 0.3) * FPS; fi++) {
+      const ts = shownAt(fi / FPS - A.lead);
+      if (ts !== null && ts >= n.start && ts < n.start + n.dur) {
+        want = fi;
+        break;
+      }
+    }
     let first = null;
     for (let fi = Math.round((exp - 0.2) * FPS); fi < (exp + 0.3) * FPS; fi++) {
       const x = frames.has(fi) ? green(frames.get(fi), W, rowFor(n.midi), A.lanes[n.midi] - whiteW, A.lanes[n.midi] + whiteW) : null;
       if (x !== null) {
-        first = fi / FPS;
+        first = fi;
         break;
       }
     }
-    // the first lit frame is the first frame at or after the onset: 0 .. 1 frame later
-    syncErr.push(on === null || first === null ? Infinity : first - on);
+    picErr.push(want === null || first === null ? Infinity : first - want);
   }
-  const worstSync = Math.max(...syncErr.map((e) => (e < 0 ? -e + 1 / FPS : e)));
-  check('sound and picture within one frame', syncErr.every((e) => e >= -0.003 && e <= 1 / FPS + 0.003), `${syncErr.map((e) => (e * 1000).toFixed(0)).join(' ')} ms (worst ${(worstSync * 1000).toFixed(0)})`);
+  check('sound at the note times (sample-exact, < 3 ms)', toneErr.every((e) => Math.abs(e) < 0.003), toneErr.map((e) => (e * 1000).toFixed(1)).join(' ') + ' ms');
+  check('picture: each camera frame on the right output frame (within one frame)', picErr.every((e) => Math.abs(e) <= 1), picErr.join(' ') + ' frames');
   // (c) watermark pixels
   const bright = (f, w, b) => {
     let n = 0;
