@@ -10,7 +10,7 @@ import type { TranscriptionEngine } from '../../lib/transcription/pipeline';
  * lib/pianoSpecialist; unticked = Basic Pitch, the default). Off unless the user ticks it; the choice is
  * remembered in the import prefs (importStore `pianoModel`).
  */
-export function usePianoModelChoice(): {
+export function usePianoModelChoice(alwaysOffered = false): {
   /** the choice is shown (preset "Piano solo") */
   offered: boolean;
   checked: boolean;
@@ -23,9 +23,10 @@ export function usePianoModelChoice(): {
   const prefs = useImport((s) => s.prefs);
   const setPref = useImport((s) => s.setPianoModelPref);
   const support = useMemo(() => pianoSpecialistSupport(), []);
-  const transcriber = transcriberChoice(prefs, preset, support.available);
+  // the Record tab (microphone, usually a piano in the room) offers it whatever the preset
+  const transcriber = transcriberChoice(prefs, alwaysOffered ? 'piano' : preset, support.available);
   return {
-    offered: preset === 'piano',
+    offered: alwaysOffered || preset === 'piano',
     checked: support.available && prefs.pianoModel === true,
     setChecked: setPref,
     transcriber,
@@ -33,14 +34,15 @@ export function usePianoModelChoice(): {
   };
 }
 
-export function PianoModelOption({ className }: { className?: string }) {
-  const { offered, checked, setChecked, support } = usePianoModelChoice();
+/** `alwaysOffered`: shown whatever the detection preset (the Record tab, which has no preset picker). */
+export function PianoModelOption({ className, alwaysOffered = false }: { className?: string; alwaysOffered?: boolean }) {
+  const { offered, checked, setChecked, support } = usePianoModelChoice(alwaysOffered);
   if (!offered) return null;
   const unavailable = !support.available;
   return (
     <label
       className={cn(
-        'flex items-start gap-2.5 rounded-lg border p-3 transition-colors',
+        'flex items-start gap-2.5 rounded-lg border p-3 text-left transition-colors',
         checked ? 'border-accent-500/60 bg-accent-500/[0.07]' : 'border-ink-700 bg-ink-900/60',
         unavailable ? 'cursor-not-allowed opacity-50' : 'cursor-pointer hover:border-ink-600',
         className,
