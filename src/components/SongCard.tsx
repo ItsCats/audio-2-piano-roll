@@ -36,7 +36,8 @@ export function SongCard({ song }: { song: SongSummary }) {
         <p className="truncate text-[13.5px] font-medium text-ink-50">{song.title}</p>
         <div className="flex items-center gap-1.5 text-[11.5px] text-ink-300">
           <Icon size={13} />
-          <span className="truncate">{song.artist || sourceLabel(song.source.kind, song.source.reader)}</span>
+          {/* read songs: a short word here (the Beta badge's tooltip has the full label) */}
+          <span className="truncate">{song.artist || (song.source.kind === 'score' && song.source.reader ? (song.source.reader === 'pdf' ? 'PDF' : 'Photo') : sourceLabel(song.source.kind))}</span>
           {song.estimated && (
             <Badge tone="warn" title="Notes were estimated from audio">
               AI
