@@ -276,7 +276,7 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
   return (
     // while the hands video setup covers the screen, the dialog under it is not drawn (a blurred backdrop
     // redrawn under it slows everything else that needs the graphics process) and Escape closes the setup only
-    <Modal open={open} onClose={setup ? () => (setupClose.current ? setupClose.current() : setSetup(null)) : close} title="Export video" wide hidden={!!(setup && song.handVideo)}>
+    <Modal open={open} onClose={setup ? () => (setupClose.current ? setupClose.current() : setSetup(null)) : close} title="Export video" wide hidden={!!(setup && song.handVideo)} noBlur>
       <div className="grid gap-0 lg:grid-cols-[1fr_340px]">
         <div className="flex flex-col gap-3 border-b border-ink-700 p-4 lg:border-r lg:border-b-0">
           {result && resultUrl ? (

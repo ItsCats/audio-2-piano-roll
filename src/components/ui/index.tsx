@@ -301,6 +301,7 @@ export function Modal({
   wide,
   footer,
   hidden,
+  noBlur,
 }: {
   open: boolean;
   onClose: () => void;
@@ -310,6 +311,12 @@ export function Modal({
   footer?: ReactNode;
   /** kept mounted but not drawn (another full-screen step is on top of it) */
   hidden?: boolean;
+  /**
+   * dim the page behind without blurring it. A blurred full-screen backdrop is drawn again on every
+   * frame while anything in the dialog animates (a spinner), which on a slow or software GPU holds
+   * up other GPU work for seconds: the video export's frame reads stalled behind it.
+   */
+  noBlur?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -330,7 +337,7 @@ export function Modal({
   }, [open, onClose]);
   if (!open) return null;
   return (
-    <div className={cn('fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm sm:items-center sm:p-6', hidden && 'invisible')} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className={cn('fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-6', noBlur ? 'bg-black/75' : 'bg-black/60 backdrop-blur-sm', hidden && 'invisible')} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div
         ref={ref}
         tabIndex={-1}
