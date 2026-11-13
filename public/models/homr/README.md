@@ -66,10 +66,16 @@ paper itself).
 | notes F1, Python homr, same models | 1.000 | 0.984 | 1.000 | 0.987 |
 | notes F1, Python homr, float32 models | 1.000 | 0.984 | 1.000 | 0.988 |
 | agreement of the port's notes with Python homr (same models), notes F1 | 1.000 | 1.000 | 1.000 | 1.000 |
-| pages with identical MusicXML (same models) | 12/12 | 4/6 | 12/12 | 3/6 |
+| pages with identical MusicXML (same models) | 12/12 | 6/6 | 12/12 | 4/6 |
 
-The five MusicXML files that are not identical have the same notes; each differs in one decoded
-symbol that is not a note (a volta ending, a slur). Headless Chromium produces the same MusicXML as Node.
+The two real photos whose MusicXML is not identical have the same notes and rhythm; each differs in one
+articulation (an accent; staccato instead of staccatissimo). Their class maps and staff images are identical
+to Python homr's; the difference comes from the int8 encoder: onnxruntime-web's WASM kernels and native
+onnxruntime quantize the activations with different rounding, so the two encoder outputs differ by up to
+0.25 (the float32 encoder agrees to 1e-4), and the decoder's articulation choice on those two notes had a
+small margin (0.17 and 0.38 logits). Fed Python's encoder output, the port decodes the same symbols. Neither
+output is closer to the float32 encoder's (RMS error 0.051 for both). Headless Chromium (production build,
+3 threads, 1 thread, CPU-capped) produces the same MusicXML as Node.
 `tests/unit/homr/pipeline.test.ts` checks the image analysis step by step against Python homr's
 intermediate results on two generated pages.
 
@@ -94,6 +100,15 @@ Segmentation takes 17–35 s of that (54 windows of 320 x 320 for a 1920 px wide
 6 s per system. The decoder session runs on one thread: its one-token steps lose time to thread
 synchronisation (30 s instead of 41 s for the étude page with three threads). Python homr on the CPU
 (4 threads) takes 9–13 s per page.
+
+**Whole test set, production build** (`tests/e2e/homr-prod.mjs`: `npm run build` output served with
+netlify.toml's headers, page images decoded in the page; 2026-11-13, while other jobs' browsers used about
+2 of the 4 cores, so upper bounds): median 73 s per page with 3 threads (cross-origin isolated) and 66 s
+with 1 thread, about 25 s per system either way; no CSP violations. With the whole browser capped at one
+core (four cores at a quarter speed, a phone estimate): 123–141 s for pages of 2–3 systems and 188–274 s for
+5 systems. Memory: the browser's PSS grew by about 1,000–1,080 MB on the first page and by at most
+850 MB on later pages; the peak was 1.7 GB for the whole browser. The first page downloads 108 MB
+(93 MB models, 15 MB onnxruntime WASM shared with the app's other readers).
 
 **Memory**: the browser's resident memory grew by 1,010 MB while reading the first page (model download,
 the three sessions, one page) and by 390 MB for later pages with the sessions kept; the worker is
