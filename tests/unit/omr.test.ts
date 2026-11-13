@@ -156,6 +156,19 @@ describe('parseKernSystems', () => {
     expect(q.measures[1].meter).toEqual({ beats: 2, beatType: 4 });
   });
 
+  it('trusts the bars over a misread time signature', () => {
+    const bar = [['=', '='], ['2C', '4c'], ['.', '4d'], ['2D', '4e'], ['.', '4f']];
+    const k = K([['**kern', '**kern'], ['*M3/4', '*M3/4'], ...bar, ...bar, ...bar, ...bar, ...bar, ...bar, ['*-', '*-']]);
+    const p = parseKernSystems([k]);
+    expect(p.meter).toEqual({ beats: 4, beatType: 4 });
+    expect(p.overfullBars).toBe(0);
+    // a real 3/4 piece with a few wrong bars keeps its time signature
+    const bar3 = [['=', '='], ['2.C', '2.c']];
+    const odd = [['=', '='], ['1C', '1c']];
+    const q = parseKernSystems([K([['**kern', '**kern'], ['*M3/4', '*M3/4'], ...bar3, ...bar3, ...odd, ...bar3, ...bar3, ...odd, ['*-', '*-']])]);
+    expect(q.meter).toEqual({ beats: 3, beatType: 4 });
+  });
+
   it('uses the most common key signature of the systems', () => {
     const sys = (k: string) => K([['**kern', '**kern'], [`*k[${k}]`, `*k[${k}]`], ['*M2/4', '*M2/4'], ['=', '='], ['2C', '2c'], ['*-', '*-']]);
     const p = parseKernSystems([sys('b-'), sys('b-e-'), sys('b-')]);

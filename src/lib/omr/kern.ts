@@ -312,6 +312,35 @@ function median(v: number[]): number {
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
 
+const meterFromQuarters = (q: number): Meter | null =>
+  Number.isInteger(q) && q >= 1 && q <= 12 ? { beats: q, beatType: 4 } : Number.isInteger(2 * q) && q > 0 && q <= 6 ? { beats: 2 * q, beatType: 8 } : null;
+
+/**
+ * The model sometimes misreads the time signature itself (3/4 for 4/4). When most full bars agree on
+ * one length and hardly any match the written time signature, the bars win: every occurrence of that
+ * time signature is replaced (pickup and last bar left out of the vote).
+ */
+function fixMisreadMeter(raw: RawBar[]): void {
+  const declared = raw.find((b) => b.meter)?.meter;
+  if (!declared) return;
+  const inner = raw.slice(1, -1).filter((b) => b.notes.length);
+  if (inner.length < 4) return;
+  const len = (b: RawBar) => {
+    const f = max(b.span[1], b.span[2]);
+    return f.n / f.d;
+  };
+  const counts = new Map<number, number>();
+  for (const b of inner) counts.set(len(b), (counts.get(len(b)) ?? 0) + 1);
+  let mode = 0;
+  let modeCount = 0;
+  for (const [v, c] of counts) if (c > modeCount) (mode = v), (modeCount = c);
+  const want = barLength(declared).n / barLength(declared).d;
+  const agree = counts.get(want) ?? 0;
+  const fixed = meterFromQuarters(mode);
+  if (!fixed || Math.abs(mode - want) < 1e-9 || modeCount < 0.5 * inner.length || agree > 0.25 * inner.length) return;
+  for (const b of raw) if (b.meter && sameMeter(b.meter, declared)) b.meter = fixed;
+}
+
 /**
  * The systems of a piece, top to bottom and page by page, as **kern texts (bekernToKern) → measures
  * on one time line. The first system's time signature carries over: later systems usually show none,
@@ -350,6 +379,7 @@ export function parseKernSystems(systems: string[], opts: KernOptions = {}): Ker
     if (!b.systemStart || b.fifths === undefined) continue;
     if (usualFifths === undefined || keyVotes.get(b.fifths)! > keyVotes.get(usualFifths)!) usualFifths = b.fifths;
   }
+  fixMisreadMeter(raw);
   for (let k = 0; k < raw.length; k++) {
     const b = raw[k];
     let meterChange: Meter | undefined;
