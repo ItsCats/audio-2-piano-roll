@@ -244,7 +244,11 @@ try {
   // frame back (the setup screen's pictures) takes many seconds
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2, acceptDownloads: true, reducedMotion: 'reduce' });
   page = await ctx.newPage();
-  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+  page.on('console', (m) => {
+    if (m.type() !== 'error') return;
+    errors.push(m.text());
+    log('console error:', m.text().slice(0, 160));
+  });
   page.on('pageerror', (e) => errors.push(e.message));
 
   // ---------------- 1. import a video of me playing ----------------

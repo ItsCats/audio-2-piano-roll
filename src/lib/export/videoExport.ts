@@ -714,7 +714,7 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
     renderer.setStage(null);
     decal?.close();
     cards?.dispose();
-    hands?.stream?.close();
+    await hands?.stream?.close().catch(() => {});
     hands?.frames.dispose();
     hands?.compositor.dispose();
     mark?.logo?.close();

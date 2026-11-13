@@ -42,7 +42,8 @@ async function openTrack(blob: Blob): Promise<{ input: Input; track: InputVideoT
 export interface FrameStream {
   /** the frame for the next requested time (null when the video has none) */
   next(): Promise<VideoSample | null>;
-  close(): void;
+  /** stops decoding; resolves once the decoder has let go of the file (dispose the file after it) */
+  close(): Promise<void>;
 }
 
 /** Frames for an export. */
@@ -72,19 +73,30 @@ export class HandFrames {
       })(),
     );
     let done = false;
+    let closed = false;
+    /** a request whose answer has not reached the caller yet (the caller gave up waiting: abort, time limit) */
+    let inflight: Promise<IteratorResult<VideoSample | null> | null> | null = null;
     return {
       async next() {
         if (done) return null;
-        const r = await gen.next();
+        const p = gen.next();
+        // a request still running when the export stops must not end as an unhandled error
+        inflight = p.catch(() => null);
+        const r = await p;
+        inflight = null;
         if (r.done) {
           done = true;
           return null;
         }
         return r.value;
       },
-      close() {
-        done = true;
-        void gen.return(undefined).catch(() => {});
+      async close() {
+        if (closed) return;
+        closed = done = true;
+        const wait = <T,>(p: Promise<T>) => Promise.race([p, new Promise<null>((r) => setTimeout(() => r(null), 2000))]);
+        // let an abandoned request finish and close its frame, then end the decoder
+        if (inflight) (await wait(inflight))?.value?.close();
+        await wait(gen.return(undefined).catch(() => null));
       },
     };
   }

@@ -54,13 +54,17 @@ export function useVideoFrame(frames: PreviewFrames | null, t: number | null, de
     if (!frames || t === null) return;
     const my = ++seq.current;
     const timer = setTimeout(() => {
-      void frames.frameAt(t).then((c) => {
-        if (my !== seq.current || !c) return;
-        // copy: the sink may reuse its canvases
-        const { canvas: copy, ctx } = cpuCanvas(c.width, c.height);
-        ctx.drawImage(c as CanvasImageSource, 0, 0);
-        setImg({ canvas: copy, w: c.width, h: c.height, t });
-      });
+      frames
+        .frameAt(t)
+        .then((c) => {
+          if (my !== seq.current || !c) return;
+          // copy: the sink may reuse its canvases
+          const { canvas: copy, ctx } = cpuCanvas(c.width, c.height);
+          ctx.drawImage(c as CanvasImageSource, 0, 0);
+          setImg({ canvas: copy, w: c.width, h: c.height, t });
+        })
+        // the file was closed meanwhile (the screen was left): nothing to show
+        .catch(() => {});
     }, delay);
     return () => clearTimeout(timer);
   }, [frames, t, delay]);

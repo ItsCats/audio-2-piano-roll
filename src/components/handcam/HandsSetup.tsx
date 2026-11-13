@@ -259,6 +259,8 @@ export function HandsSetup({ song, difficulty, visual, settings, watermark, logo
     setCleaning(true);
     try {
       setClean(await frames.cleanFrame(9));
+    } catch {
+      setDetectMsg('Couldn’t make a clean frame. Pick a moment where your hands cover few keys.');
     } finally {
       setCleaning(false);
     }
@@ -491,6 +493,7 @@ export function HandsSetup({ song, difficulty, visual, settings, watermark, logo
                 Mirror
               </Button>
             </div>
+            {detectMsg && step === 'frame' && <p className="text-[12px] text-warn">{detectMsg}</p>}
             <p className="text-[11.5px] text-ink-400">The lowest keys should be on the left. If the camera faces you, use Turn 180°; for a selfie camera, Mirror.</p>
           </div>
         );
