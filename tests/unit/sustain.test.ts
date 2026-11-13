@@ -59,3 +59,49 @@ describe('held tune line', () => {
     expect(out.find((n) => n.id === a.id)).toBe(a);
   });
 });
+
+describe('bass re-detections', () => {
+  it('folds a same-pitch bass note without a new attack into the note before', async () => {
+    const { foldBassRestrikes } = await import('../../src/lib/music/cleanup');
+    const a = note(40, 0, 0.4);
+    const b = note(40, 0.45, 0.4); // the kick fired the onset head; the bass note rang on
+    const c = note(40, 1.5, 0.3); // after a rest: a new note
+    const high = note(52, 0.45, 0.4); // not bass
+    const out = foldBassRestrikes([a, b, c, high], (n) => (n === b ? 0.02 : 0.5));
+    expect(out.filter((n) => n.midi === 40).map((n) => [n.start, +(n.start + n.dur).toFixed(3)])).toEqual([
+      [0, 0.85],
+      [1.5, 1.8],
+    ]);
+    expect(out).toContain(high);
+    // re-struck (the frame activation rises again): kept apart
+    expect(foldBassRestrikes([a, b], () => 0.3)).toHaveLength(2);
+    expect(foldBassRestrikes([note(52, 0, 0.4), note(52, 0.45, 0.4)], () => 0)).toHaveLength(2);
+  });
+});
+
+describe('Full song pipeline', () => {
+  it('holds a tune note while the frame posterior stays above the off level, not with a sung line', async () => {
+    const { accompFromRaw, EXTRACTION_PRESETS } = await import('../../src/lib/transcription/pipeline');
+    const { BP_N_PITCHES, timeToFrame } = await import('../../src/lib/transcription/constants');
+    const n = timeToFrame(5);
+    const frames = new Float32Array(n * BP_N_PITCHES);
+    const onsets = new Float32Array(n * BP_N_PITCHES);
+    const ev = (midi: number, a: number, b: number) => ({ midi, startFrame: timeToFrame(a), endFrame: timeToFrame(b), amplitude: 0.8, onset: 0.9 });
+    const set = (midi: number, a: number, b: number, v: number) => {
+      for (let t = timeToFrame(a); t < timeToFrame(b); t++) frames[t * BP_N_PITCHES + midi - 21] = v;
+    };
+    set(40, 0, 4, 0.6);
+    set(76, 0, 0.4, 0.6);
+    set(76, 0.4, 1.4, 0.25); // still heard, under the detection threshold
+    set(79, 1.5, 1.9, 0.6);
+    const raw = [ev(40, 0, 4), ev(76, 0, 0.4), ev(79, 1.5, 1.9)];
+    const rms = new Float32Array(600).fill(0.3);
+    const ctx = { frames, onsets, nFrames: n };
+    const r = accompFromRaw(raw, raw, rms, EXTRACTION_PRESETS.mix, 5, ctx);
+    const e5 = r.notes.find((x) => x.midi === 76)!;
+    expect(e5.start + e5.dur).toBeGreaterThan(1.3);
+    expect(r.main.find((x) => x.midi === 76)!.dur).toBeLessThan(0.5); // the tempo still sees the detected notes
+    const sung = accompFromRaw(raw, raw, rms, EXTRACTION_PRESETS.mix, 5, ctx, { melody: [note(64, 3, 0.5, 0.7, { role: 'melody' })] });
+    expect(sung.notes.find((x) => x.midi === 76)!.dur).toBeLessThan(0.5);
+  });
+});

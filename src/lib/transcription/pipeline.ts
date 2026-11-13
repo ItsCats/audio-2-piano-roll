@@ -24,7 +24,7 @@ import { BP_FPS, BP_MIDI_OFFSET, BP_N_PITCHES, BP_SAMPLE_RATE, frameToTime, time
 import type { NoteExtractionOptions, RawNoteEvent } from './noteExtraction';
 import type { TranscriptionStage, WorkerRequest, WorkerResponse } from './workerProtocol';
 import { analyzeLevel, decodeToRate, mixToMono } from './decode';
-import { DRUM_HIT_RULE, RESTRIKE, TAIL_GATE, mergeContinuations, mergeFragments, newNoteId, removeShortQuiet, removeTailGhosts, sortNotes, suppressDrumHits, suppressHarmonics } from '../music/cleanup';
+import { BASS_FOLD, DRUM_HIT_RULE, RESTRIKE, TAIL_GATE, mergeContinuations, mergeFragments, newNoteId, removeShortQuiet, removeTailGhosts, sortNotes, suppressDrumHits, suppressHarmonics, foldBassRestrikes } from '../music/cleanup';
 import { assignHands } from '../music/hands';
 import { estimateTempo } from '../music/beats';
 import { detectKey } from '../music/theory';
@@ -538,7 +538,9 @@ export function accompFromRaw(
   if (!leadParams || !leadRaw?.length) return { notes: main, main };
   const candidates = cleanNotes(leadRaw, rms, leadParams, duration, ctx);
   const { frames, onsets, nFrames } = ctx;
-  const notes = recoverLead(main, candidates, duration, {
+  // one bass note the kick drum chopped into several (music/cleanup.ts foldBassRestrikes)
+  const bass = frames && nFrames && BASS_FOLD.enabled ? foldBassRestrikes(main, (n) => frameRise(frames, nFrames, timeToFrame(n.start + ONSET_LATENCY), n.midi)) : main;
+  const notes = recoverLead(bass, candidates, duration, {
     ...(frames && nFrames
       ? {
           evidence: (n: Note) => ({
