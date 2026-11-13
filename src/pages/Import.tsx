@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useEffect, useRef, useState, type ComponentType } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { FileAudio, SquarePlay, FileMusic, Mic, Loader2, CheckCircle2, XCircle, Circle, ArrowRight, Square, Info, Server, RotateCcw, Download, Smartphone } from 'lucide-react';
+import { FileAudio, SquarePlay, FileMusic, Mic, Loader2, CheckCircle2, XCircle, Circle, ArrowRight, Square, Info, Server, RotateCcw, Download, Smartphone, Gamepad2 } from 'lucide-react';
 import { Dropzone } from '../components/import/Dropzone';
 import { SeparationOption, useSeparationChoice } from '../components/import/SeparationOption';
 import { PianoModelOption, usePianoModelChoice } from '../components/import/PianoModelOption';
@@ -16,6 +16,20 @@ import { toast } from '../state/toastStore';
 import { createScreenWakeLock, isTouchDevice } from '../lib/wakeLock';
 import { saveBlobAs } from '../lib/saveBlob';
 import { YOUTUBE_IMPORT_PATH, documentIsolated, isYouTubeImportPath, switchDocument } from '../lib/isolation';
+import { offerGame } from '../lib/games/offer';
+
+// the mini-games load only when opened (their own chunk); offline, the button just says so
+const GameOverlay = lazy<ComponentType<{ jobId: number; onClose: () => void; onOpenSong: (songId: string) => void }>>(() =>
+  import('../components/games/GameOverlay').catch(() => ({
+    default: function GamesUnavailable({ onClose }: { onClose: () => void }) {
+      useEffect(() => {
+        toast.error('Couldn’t load the games', 'Check your connection and try again.');
+        onClose();
+      }, [onClose]);
+      return null;
+    },
+  })),
+);
 
 type Tab = 'audio' | 'youtube' | 'midi' | 'record';
 
@@ -124,7 +138,7 @@ function etaText(job: ImportJob): string | null {
   return `${etaStep(job)}: ${left > 0 ? formatEta(left) : 'finishing…'}`;
 }
 
-function JobProgress() {
+function JobProgress({ onPlayGame }: { onPlayGame: () => void }) {
   const job = useImport((s) => s.job);
   const cancel = useImport((s) => s.cancel);
   const clear = useImport((s) => s.clear);
@@ -155,7 +169,7 @@ function JobProgress() {
   const err = job.stage === 'error';
   const failedHere = err && failed?.jobId === job.id ? failed : null;
   return (
-    <div ref={card} className="panel animate-fade-in scroll-mt-4 p-5" aria-live="polite">
+    <div ref={card} data-import-card tabIndex={-1} className="panel animate-fade-in scroll-mt-4 p-5 outline-none" aria-live="polite">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <p className="truncate text-[15px] font-semibold text-ink-50">{job.title}</p>
@@ -186,6 +200,11 @@ function JobProgress() {
               </span>
               <span>{Math.round(job.progress * 100)}%</span>
             </p>
+          )}
+          {offerGame(job, Date.now()) && (
+            <Button size="sm" className="mt-3" onClick={onPlayGame} icon={<Gamepad2 size={15} />}>
+              Play a game while you wait
+            </Button>
           )}
         </div>
       )}
@@ -560,11 +579,24 @@ export default function ImportPage() {
   const separate = sep.checked && !pianoModel;
   const busy = !!job && job.stage !== 'done' && job.stage !== 'error';
 
+  // "Play a game while you wait": the import it was opened for
+  const [gameFor, setGameFor] = useState<number | null>(null);
+  /** the import a game was played during: it doesn't jump to the studio (the game says the song is ready) */
+  const gamePlayedFor = useRef<number | null>(null);
+  const openGame = () => {
+    if (!job) return;
+    gamePlayedFor.current = job.id;
+    setGameFor(job.id);
+  };
+
   // jump to the studio as soon as an import started on this page finishes
   const startedHere = useRef<number | null>(null);
   useEffect(() => {
-    if (job?.stage === 'done' && job.songId && startedHere.current === job.id) {
-      const t = setTimeout(() => navigate(`/studio/${job.songId}`), 700);
+    if (job?.stage === 'done' && job.songId && startedHere.current === job.id && gamePlayedFor.current !== job.id) {
+      const id = job.id;
+      const t = setTimeout(() => {
+        if (gamePlayedFor.current !== id) navigate(`/studio/${job.songId}`);
+      }, 700);
       return () => clearTimeout(t);
     }
   }, [job?.stage, job?.songId, job?.id, navigate]);
@@ -611,7 +643,12 @@ export default function ImportPage() {
           </p>
         </header>
 
-        {job && <JobProgress />}
+        {job && <JobProgress onPlayGame={openGame} />}
+        {gameFor !== null && (
+          <Suspense fallback={<div className="fixed inset-0 z-[58] bg-ink-950" aria-busy="true" />}>
+            <GameOverlay jobId={gameFor} onClose={() => setGameFor(null)} onOpenSong={(id) => navigate(`/studio/${id}`)} />
+          </Suspense>
+        )}
 
         <div className="panel overflow-hidden">
           <div ref={tabListRef} role="tablist" className="relative flex overflow-x-auto border-b border-ink-700 px-1 sm:px-2">
