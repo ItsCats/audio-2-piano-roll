@@ -43,3 +43,33 @@ describe('Privacy page and the processing server', () => {
     expect(t).not.toContain('are not sent anywhere');
   });
 });
+
+describe('Contact on the Privacy, Terms and Copyright pages', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  async function pageHtml(page: 'privacy' | 'terms' | 'copyright'): Promise<string> {
+    vi.resetModules();
+    const { default: LegalPage } = await import('../../src/pages/Legal');
+    return renderToStaticMarkup(createElement(MemoryRouter, null, createElement(LegalPage, { page })));
+  }
+
+  it('shows the site e-mail as a mailto link, and keeps the GitHub issues link', async () => {
+    const { CONTACT_EMAIL, CONTACT_URL, DEFAULT_CONTACT_EMAIL } = await import('../../src/lib/site');
+    expect(CONTACT_EMAIL).toBe(DEFAULT_CONTACT_EMAIL);
+    expect(CONTACT_EMAIL).toMatch(/^[^@\s]+@[^@\s]+\.[a-z]+$/);
+    for (const page of ['privacy', 'terms', 'copyright'] as const) {
+      const html = await pageHtml(page);
+      expect(html).toContain(`href="mailto:${CONTACT_EMAIL}"`);
+      expect(html).toContain(`href="${CONTACT_URL}"`);
+    }
+  });
+
+  it('a deployment can set its own address', async () => {
+    vi.stubEnv('VITE_CONTACT_EMAIL', 'hello@example.org');
+    const html = await pageHtml('privacy');
+    expect(html).toContain('href="mailto:hello@example.org"');
+  });
+});

@@ -46,18 +46,21 @@ function List({ children }: { children: ReactNode }) {
   return <ul className="flex list-disc flex-col gap-1.5 pl-5 marker:text-ink-400">{children}</ul>;
 }
 
-/** How to reach us: the public issue tracker, plus an e-mail address once the owner has set one. */
+/** How to reach us: e-mail (when the site has an address) and the public issue tracker. */
 function Contact({ email, privateNote }: { email: string; privateNote: string }) {
   return (
     <>
       {email && (
         <p>
-          E-mail: <Ext href={`mailto:${email}`}>{email}</Ext>
+          E-mail:{' '}
+          <a href={`mailto:${email}`} className="text-accent-400 underline-offset-2 hover:text-accent-300 hover:underline">
+            {email}
+          </a>
         </p>
       )}
       <p>
         {email ? 'Or open' : 'Open'} an issue on GitHub: <Ext href={CONTACT_URL}>{CONTACT_URL.replace(/^https:\/\//, '')}</Ext>. Issues are public, so
-        don’t put private details there. {privateNote}
+        don’t put private details there{email ? ': e-mail us instead.' : `. ${privateNote}`}
       </p>
     </>
   );
