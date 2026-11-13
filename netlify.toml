@@ -45,7 +45,7 @@
   for = "/models/piano-specialist/*"
   [headers.values]
     Cache-Control = "public, max-age=31536000, immutable"
-# Sheet-music reader models (beta, src/lib/omr; two models of ~23 MB in pieces under 10 MB, plus a shared
+# Sheet-music reader model (beta, src/lib/omr; one model of ~23 MB in pieces under 10 MB, plus its
 # vocabulary). Requested with ?v=<sha256 prefix> and sha256-checked like the piano model, so a long cache is safe.
 [[headers]]
   for = "/models/omr/*"

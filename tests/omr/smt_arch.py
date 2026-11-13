@@ -1,6 +1,10 @@
 """Clean-room-ish re-implementation of the Sheet Music Transformer (SMT) inference path, written from the
-reviewed upstream modeling_smt.py (MIT, Antonio Rios-Vila) so no downloaded code is executed. Adds a KV cache
-for the decoder (the upstream predict() recomputes the whole prefix every step).
+reviewed upstream modeling_smt.py (MIT, Antonio Rios-Vila) so no downloaded code is executed.
+
+Based on https://github.com/antoniorv6/SMT: Copyright (c) 2023 Antonio Rios-Vila. MIT License; the full
+licence text and permission notice are in public/models/omr/LICENSE (a verbatim copy of the upstream file).
+
+Adds a KV cache for the decoder (the upstream predict() recomputes the whole prefix every step).
 
 Weights: model.safetensors + config.json from Hugging Face (PRAIG/smt-fp-grandstaff, antoniorv6/smt-grandstaff,
 antoniorv6/smt-camera-grandstaff; MIT).

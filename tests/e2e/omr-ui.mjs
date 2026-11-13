@@ -40,6 +40,7 @@ let pdfFile = opt('pdf') && path.resolve(opt('pdf'));
 const port = Number(opt('port', '5396'));
 const shots = opt('shots', fs.mkdtempSync(path.join(os.tmpdir(), 'p2v-omr-ui-')));
 const only = opt('only'); // desktop | iphone
+const dsf = Number(opt('dsf', '1')); // desktop screenshots' device scale factor
 if (!dist || !fs.existsSync(path.join(dist, 'index.html')) || !photo || !fs.existsSync(photo)) {
   console.error('usage: node tests/e2e/omr-ui.mjs --dist BUILD_DIR --photo PHOTO.jpg [--pdf FILE.pdf] [--port N] [--shots DIR]');
   process.exit(2);
@@ -61,7 +62,7 @@ await new Promise((r) => setTimeout(r, 800));
 const browser = await chromium.launch();
 
 const DEVICES = {
-  desktop: { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 },
+  desktop: { viewport: { width: 1440, height: 900 }, deviceScaleFactor: dsf },
   iphone: { ...devices['iPhone 14'], deviceScaleFactor: 2 },
 };
 
@@ -314,15 +315,66 @@ try {
     const c2 = await cornerCenter(page, 0);
     check(`${dev} photo: dragged back`, Math.abs(c2.x - c0.x) < 4 && Math.abs(c2.y - c0.y) < 4);
     check(`${dev} photo: corner screen has no sideways scroll`, (await sideScroll(page)) <= 0);
+    // Retake, then cancel the picker: the photo and its corners stay (it used to be deleted first)
+    const retakeName = phone ? 'Retake' : 'Choose another photo';
+    const before = await cornerCenter(page, 2);
+    const [chooser1] = await Promise.all([page.waitForEvent('filechooser'), page.getByRole('button', { name: retakeName }).click()]);
+    void chooser1; // not answered: as if the camera or picker was cancelled
+    await page.waitForTimeout(500);
+    const stillThere = (await page.locator('[data-corner]').count()) === 4 && JSON.stringify(await cornerCenter(page, 2)) === JSON.stringify(before);
+    check(`${dev} photo: cancelling Retake keeps the photo and its corners`, stillThere);
+    // Retake with a new photo: it takes the old one's place (still one page)
+    const [chooser2] = await Promise.all([page.waitForEvent('filechooser'), page.getByRole('button', { name: retakeName }).click()]);
+    await chooser2.setFiles(photo2);
+    await page.waitForTimeout(1500);
+    await page.waitForSelector('[data-testid="corner-editor"] [data-corner="3"]', { timeout: 30000 });
+    check(`${dev} photo: corner screen has the focus (keyboard users)`, await page.evaluate(() => !!document.activeElement?.closest('[data-testid="corner-editor"]')));
     await page.getByRole('button', { name: 'Looks good' }).click();
     await page.getByRole('button', { name: /^Read 1 page/ }).waitFor();
+    check(`${dev} photo: a retaken photo replaces the old one`, (await page.locator('[data-testid="photo-pages"] li img').count()) === 1);
     await shot(page, `${dev}-photo-list`, true);
     await page.getByRole('button', { name: /^Read 1 page/ }).click();
     const r2 = await readUntilStudio(page, `${dev}-photo`);
     check(`${dev} photo: read with progress`, r2.seen.some((s) => /Reading line 1 of \d+/.test(s)), r2);
     await studioChecks(page, dev, 'photo');
 
+    if (phone) {
+      // ---- more photos than a phone reads at once: the first 3 are kept, and it says so
+      await page.goto(base + '/import?tab=midi');
+      await page.getByText('PDFs and photos of sheet music').waitFor();
+      await dropInput(page).setInputFiles([photo, photo2, photo, photo2]);
+      await page.getByRole('alert').waitFor({ timeout: 30000 });
+      check('iphone photos: only the first 3 of 4 are added, with a plain note', /Only the first 3 photos were added: up to 3 pages/.test(await page.getByRole('alert').innerText()));
+      await page.getByText('Page 1: adjust the corners').waitFor({ timeout: 30000 });
+      for (let i = 0; i < 3; i++) await page.getByRole('button', { name: 'Looks good' }).click();
+      await page.getByRole('button', { name: /^Read 3 pages/ }).waitFor();
+      check('iphone photos: 3 pages listed, no "add" buttons', (await page.locator('[data-testid="photo-pages"] li img').count()) === 3 && !(await page.getByRole('button', { name: 'Photo of the next page' }).count()));
+      await page.getByRole('button', { name: 'Start over' }).click();
+    }
+
     if (!phone) {
+      // ---- a long PDF: "Show more pages" after 30 (made here with jsPDF: 35 pages of staff lines)
+      const { jsPDF } = await import('jspdf');
+      const doc = new jsPDF();
+      for (let i = 0; i < 35; i++) {
+        if (i) doc.addPage();
+        doc.text(`Page ${i + 1}`, 20, 20);
+        for (let l = 0; l < 5; l++) doc.line(20, 40 + l * 2, 190, 40 + l * 2);
+      }
+      const longPdf = path.join(shots, 'long-35-pages.pdf');
+      fs.writeFileSync(longPdf, Buffer.from(doc.output('arraybuffer')));
+      await page.goto(base + '/import?tab=midi');
+      await dropInput(page).setInputFiles(longPdf);
+      await page.waitForSelector('[data-testid="pdf-pages"] button[aria-label="Page 30"] img', { timeout: 60000 });
+      check(`${dev} long pdf: 30 thumbnails first`, (await page.locator('[data-testid="pdf-pages"] button[aria-label^="Page "]').count()) === 30);
+      await page.getByRole('button', { name: /Show more pages \(31–35 of 35\)/ }).click();
+      await page.waitForSelector('[data-testid="pdf-pages"] button[aria-label="Page 35"] img', { timeout: 60000 });
+      check(`${dev} long pdf: "Show more pages" shows the rest`, (await page.locator('[data-testid="pdf-pages"] button[aria-label^="Page "]').count()) === 35);
+      // 10 are chosen: tapping an 11th says why instead of doing nothing
+      await page.locator('[data-testid="pdf-pages"] button[aria-label="Page 33"]').click({ force: true }); // aria-disabled: still answers a tap
+      check(`${dev} long pdf: an 11th page says "up to 10 pages"`, await page.getByText(/Up to 10 pages can be read at a time\. Tap a chosen page to remove it first/).isVisible());
+      await page.getByRole('button', { name: 'Choose another file' }).click();
+
       // ---- two photos, two pages: a corner screen for each, then reordered
       await page.goto(base + '/import?tab=midi');
       await dropInput(page).setInputFiles([photo, photo2]);
@@ -347,7 +399,8 @@ try {
       await dropInput(page).setInputFiles({ name: 'IMG_0001.heic', mimeType: 'image/heic', buffer: Buffer.from('not really a heic file') });
       await page.getByRole('alert').waitFor({ timeout: 15000 });
       const heic = await page.getByRole('alert').innerText();
-      check(`${dev}: a HEIC photo the browser cannot open gets a plain message`, /HEIC photo, which this browser can’t open/.test(heic), heic);
+      check(`${dev}: a HEIC photo the browser cannot open gets a plain message`, /is in HEIC format, which this browser can’t open\. Choose it again from the Photos app/.test(heic), heic);
+      check(`${dev}: the photo picker lets the phone convert HEIC (accept image/* only)`, (await page.locator('input[type="file"][multiple][accept]').evaluateAll((els) => els.map((e) => e.getAttribute('accept')))).every((a) => a === 'image/*' || a === ''));
       await shot(page, `${dev}-heic`);
 
       // ---- crash recovery: reload mid-read, then Try again from the notice
@@ -372,7 +425,7 @@ try {
       await page.getByText('Your last import was interrupted').waitFor({ timeout: 20000 });
       await page.waitForTimeout(400);
       await shot(page, `${dev}-interrupted`);
-      check(`${dev}: the notice says the photo was kept`, await page.getByText(/Your photo was kept/).isVisible());
+      check(`${dev}: the notice says the photo was kept and Try again uses less memory`, (await page.getByText(/Your photo was kept/).isVisible()) && (await page.getByText(/slower mode that uses less memory/).isVisible()));
       await page.getByRole('button', { name: 'Try again' }).click();
       await readUntilStudio(page, `${dev}-resumed`, { midShot: false });
       await page.waitForSelector('[data-testid="sheet-reader-notice"]', { timeout: 30000 });
