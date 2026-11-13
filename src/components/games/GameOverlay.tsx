@@ -389,12 +389,10 @@ function ImportLine({ status, title, progress, songId, onOpenSong }: { status: I
       {status === 'done' && (
         <div className="flex items-center gap-2">
           <CheckCircle2 size={15} className="shrink-0 text-ok" />
-          <span className="truncate text-[13px] font-medium text-ink-50">
-            {songId ? <span className="sm:hidden">Ready</span> : null}
-            <span className={songId ? 'hidden sm:inline' : undefined}>Your song is ready</span>
-          </span>
+          {/* on a phone the check mark and the button say it (no room for "Rea…") */}
+          <span className={cn('truncate text-[13px] font-medium text-ink-50', songId && 'sr-only sm:not-sr-only')}>Your song is ready</span>
           {songId && (
-            <Button size="sm" variant="primary" className="ml-auto" onClick={() => onOpenSong(songId)}>
+            <Button size="sm" variant="primary" className="ml-auto shrink-0" onClick={() => onOpenSong(songId)}>
               Open song
             </Button>
           )}
