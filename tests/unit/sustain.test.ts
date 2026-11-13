@@ -50,13 +50,16 @@ describe('held tune line', () => {
     expect(r.filter((n) => n.midi === 79)).toHaveLength(2);
   });
 
-  it('leaves notes below the tune register and excluded ranges alone', () => {
+  it('leaves notes below the tune register alone', () => {
     const low = [note(55, 0, 0.3), note(57, 1, 0.3)];
     expect(sustainTuneLine([...bass(), ...low], 8, { heldEnd: heldTo(new Map()) })).toEqual([...bass().map((n) => expect.objectContaining({ midi: n.midi })), ...low]);
-    const a = note(76, 0, 0.3);
-    const b = note(79, 1, 0.3);
-    const out = sustainTuneLine([...bass(), a, b], 8, { heldEnd: heldTo(new Map()), exclude: [[-1, 0.5]] });
-    expect(out.find((n) => n.id === a.id)).toBe(a);
+  });
+
+  it('the step-down stop only looks at notes starting near or after the end', () => {
+    const top = note(79, 2, 0.3);
+    const earlier = note(74, 0.5, 0.2, 0.3); // a clear note long before: no stop
+    const r = sustainTuneLine([...bass(), note(81, 0, 0.3), earlier, top], 8, { heldEnd: heldTo(new Map()), onset: () => 0.8 });
+    expect(r.find((n) => n.id === top.id)!.start + r.find((n) => n.id === top.id)!.dur).toBeGreaterThan(3);
   });
 });
 
@@ -103,5 +106,40 @@ describe('Full song pipeline', () => {
     expect(r.main.find((x) => x.midi === 76)!.dur).toBeLessThan(0.5); // the tempo still sees the detected notes
     const sung = accompFromRaw(raw, raw, rms, EXTRACTION_PRESETS.mix, 5, ctx, { melody: [note(64, 3, 0.5, 0.7, { role: 'melody' })] });
     expect(sung.notes.find((x) => x.midi === 76)!.dur).toBeLessThan(0.5);
+    // a "Full song" re-detection whose main pass is as sensitive as the lead pass (no extra pass):
+    // still held; the presets without the lead pass are not
+    const sensitive = { ...EXTRACTION_PRESETS.mix, frameThreshold: 0.3, minNoteMs: 50 };
+    const s2 = accompFromRaw(raw, raw, rms, sensitive, 5, ctx);
+    expect(s2.notes.find((x) => x.midi === 76)!.start + s2.notes.find((x) => x.midi === 76)!.dur).toBeGreaterThan(1.3);
+    const piano = accompFromRaw(raw, raw, rms, { ...EXTRACTION_PRESETS.mix, leadPass: undefined }, 5, ctx);
+    expect(piano.notes.find((x) => x.midi === 76)!.dur).toBeLessThan(0.5);
+  });
+
+  it('folds a kick-chopped bass note, with or without the lead pass', async () => {
+    const { accompFromRaw, EXTRACTION_PRESETS } = await import('../../src/lib/transcription/pipeline');
+    const { BP_N_PITCHES, timeToFrame } = await import('../../src/lib/transcription/constants');
+    const n = timeToFrame(5);
+    const frames = new Float32Array(n * BP_N_PITCHES);
+    const onsets = new Float32Array(n * BP_N_PITCHES);
+    for (let t = timeToFrame(0); t < timeToFrame(2.2); t++) frames[t * BP_N_PITCHES + 40 - 21] = 0.6; // one held bass note
+    const ev = (midi: number, a: number, b: number) => ({ midi, startFrame: timeToFrame(a), endFrame: timeToFrame(b), amplitude: 0.8, onset: 0.9 });
+    const raw = [ev(40, 0, 1), ev(40, 1.1, 2.2)]; // the kick fired the onset head at 1.1
+    const rms = new Float32Array(600).fill(0.3);
+    const ctx = { frames, onsets, nFrames: n };
+    const bassOf = (r: { notes: Note[] }) => r.notes.filter((x) => x.midi === 40);
+    expect(bassOf(accompFromRaw(raw, raw, rms, EXTRACTION_PRESETS.mix, 5, ctx))).toHaveLength(1);
+    expect(bassOf(accompFromRaw(raw, undefined, rms, EXTRACTION_PRESETS.mix, 5, ctx))).toHaveLength(1);
+    expect(bassOf(accompFromRaw(raw, raw, rms, { ...EXTRACTION_PRESETS.mix, leadPass: undefined }, 5, ctx))).toHaveLength(2);
+  });
+
+  it('re-detection passes the stored onsets on (the lead onset test)', async () => {
+    const { storedContext } = await import('../../src/lib/transcription/pipeline');
+    const frames = new Uint8Array(88);
+    const onsets = new Uint8Array(88);
+    const drums = new Uint8Array(4);
+    const ctx = storedContext({ frames, onsets, nFrames: 1, drums } as unknown as Parameters<typeof storedContext>[0]);
+    expect(ctx.onsets).toBe(onsets);
+    expect(ctx.frames).toBe(frames);
+    expect(ctx.drums).toBe(drums);
   });
 });

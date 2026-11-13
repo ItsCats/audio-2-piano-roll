@@ -16,7 +16,11 @@
  * past the next note of the same pitch, a new attack of its pitch, or a clear new note a little
  * below it (the tune stepping down while the old note rings on). The tune line (melody.ts
  * instrumentLine, as Easy and Medium use) is chosen on that copy, and only the notes it goes through
- * get their longer ending, capped at the start of the next line note. Extending every right-hand
+ * get their longer ending, capped at the start of the next line note. The line is the one through
+ * all notes, Hard-only recovered notes included (as Hard plays it): a main note Easy and Medium use
+ * as their tune note is not held where Hard's line goes through a recovered note instead, a held
+ * main note stops where a recovered note starts, and folding can lengthen a main note across a
+ * recovered one. Extending every right-hand
  * note was measured and is worse: held chord tops and repeated accompaniment notes then sit over
  * the tune (band-instrumental-1 Hard R_top 50 -> 43 %).
  *
@@ -67,14 +71,6 @@ export interface SustainOptions {
   onset?: (n: Note) => number;
   /** frame-activation rise at a note's start (pipeline frameRise): the re-strike test; without it nothing is folded */
   rise?: (n: Note) => number;
-  /** time ranges (s) where nothing is lengthened (sung phrases) */
-  exclude?: [number, number][];
-}
-
-function inRanges(ranges: [number, number][] | undefined, t: number): boolean {
-  if (!ranges) return false;
-  for (const [a, b] of ranges) if (t >= a && t < b) return true;
-  return false;
 }
 
 /** `notes` with the tune line's notes held (see the module comment); other notes are the same objects. */
@@ -92,18 +88,30 @@ export function sustainTuneLine(notes: Note[], duration: number, opts: SustainOp
   }
   // clear new right-hand notes (the step-down stop), time-sorted
   const strong = opts.onset ? sorted.filter((n) => hand.get(n.id) === 'R' && opts.onset!(n) >= rule.stopOnset) : [];
+  const strongStarts = strong.map((n) => n.start);
+  const firstFrom = (t: number) => {
+    let lo = 0;
+    let hi = strongStarts.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (strongStarts[mid] < t) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  };
   const ext = new Map<number, number>();
   for (const [midi, arr] of byPitch) {
     if (midi < rule.minMidi) continue;
     for (let i = 0; i < arr.length; i++) {
       const n = arr[i];
-      if (hand.get(n.id) !== 'R' || inRanges(opts.exclude, n.start)) continue;
+      if (hand.get(n.id) !== 'R') continue;
       const end = n.start + n.dur;
       let limit = Math.min(duration, end + rule.maxExtend, i + 1 < arr.length ? arr[i + 1].start - rule.gap : Infinity);
       if (rule.stopBelow > 0) {
-        for (const x of strong) {
+        for (let k = firstFrom(end - 0.03); k < strong.length; k++) {
+          const x = strong[k];
           if (x.start >= limit) break;
-          if (x.start >= end - 0.03 && x.midi < midi && x.midi >= midi - rule.stopBelow) {
+          if (x.midi < midi && x.midi >= midi - rule.stopBelow) {
             limit = x.start - rule.gap;
             break;
           }
@@ -139,7 +147,6 @@ export function sustainTuneLine(notes: Note[], duration: number, opts: SustainOp
       if (
         a &&
         b.midi === a.midi &&
-        !inRanges(opts.exclude, b.start) &&
         b.start - endOf(a) <= rule.joinGap &&
         !(a.role === 'lead' && b.role !== 'lead') &&
         opts.rise(b) < rule.joinRise

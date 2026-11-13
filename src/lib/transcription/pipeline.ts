@@ -516,6 +516,8 @@ export interface LeadContext {
  * music/leadRecovery.ts) in `notes`. Shared by import and re-detection.
  *
  * The recovered notes are always Hard-only (role 'lead': Easy and Medium are built without them).
+ * (A main note of the tune line the lead pass shows re-struck is split in two; those pieces are main
+ * notes, so all levels get them: music/leadRecovery.ts splitRestrikes.)
  * Letting Easy and Medium use them was measured and is not worth it: without separation it filled
  * the singer's pauses of the 5 sung test songs (Easy voicing-counted accuracy 0.533 -> 0.491, Easy
  * LH bass 0.648 -> 0.639); with singing it doubled the instrumental-gap tune (vocal-1 62 -> 112
@@ -534,33 +536,43 @@ export function accompFromRaw(
 ): { notes: Note[]; main: Note[] } {
   const melody = lead.melody ?? [];
   const main = cleanNotes(raw, rms, params, duration, ctx);
-  const leadParams = leadPassParams(params);
-  if (!leadParams || !leadRaw?.length) return { notes: main, main };
-  const candidates = cleanNotes(leadRaw, rms, leadParams, duration, ctx);
+  // everything below is the "Full song" preset's (ExtractionParams.leadPass); it does not depend on
+  // the extra pass having run (a re-detection with a more sensitive main pass has none)
+  if (!params.leadPass) return { notes: main, main };
   const { frames, onsets, nFrames } = ctx;
+  const rise = frames && nFrames ? (n: Note) => frameRise(frames, nFrames, timeToFrame(n.start + ONSET_LATENCY), n.midi) : undefined;
   // one bass note the kick drum chopped into several (music/cleanup.ts foldBassRestrikes)
-  const bass = frames && nFrames && BASS_FOLD.enabled ? foldBassRestrikes(main, (n) => frameRise(frames, nFrames, timeToFrame(n.start + ONSET_LATENCY), n.midi)) : main;
-  const notes = recoverLead(bass, candidates, duration, {
-    ...(frames && nFrames
-      ? {
-          evidence: (n: Note) => ({
-            ...noteActivation(frames, nFrames, n),
-            rise: frameRise(frames, nFrames, timeToFrame(n.start + ONSET_LATENCY), n.midi),
-            ...(onsets ? { onset: onsetPeak(onsets, nFrames, n) } : {}),
-          }),
-        }
-      : {}),
-    ...(melody.length ? { exclude: sungRanges(melody) } : {}),
-    hardOnly: true,
-  });
-  // with a sung line the singer carries the tune: nothing is held (holding the instruments' tune in
-  // the singer's pauses lowered the 5 sung test songs' voicing-counted Easy / Medium accuracy)
-  if (!frames || !nFrames || melody.length) return { notes, main };
+  let notes = rise && BASS_FOLD.enabled ? foldBassRestrikes(main, rise) : main;
+  const leadParams = leadPassParams(params);
+  if (leadParams && leadRaw?.length) {
+    const candidates = cleanNotes(leadRaw, rms, leadParams, duration, ctx);
+    notes = recoverLead(notes, candidates, duration, {
+      ...(frames && nFrames && rise
+        ? {
+            evidence: (n: Note) => ({
+              ...noteActivation(frames, nFrames, n),
+              rise: rise(n),
+              ...(onsets ? { onset: onsetPeak(onsets, nFrames, n) } : {}),
+            }),
+          }
+        : {}),
+      ...(melody.length ? { exclude: sungRanges(melody) } : {}),
+      hardOnly: true,
+    });
+  }
+  // With a sung line the singer carries the tune: nothing is held (holding the instruments' tune in
+  // the singer's pauses lowered the 5 sung test songs' voicing-counted Easy / Medium accuracy).
+  // Without separation there is no vocal stem to tell a sung song from an instrumental, so a sung
+  // song's instruments are held as well (accepted: on the 5 sung test songs without separation Easy
+  // / Medium right-hand chroma accuracy rose, 0.236 -> 0.247 / 0.225 -> 0.242, and the
+  // voicing-counted accuracy fell, 0.533 -> 0.526 / 0.571 -> 0.556, held notes running into the
+  // singer's rests).
+  if (!frames || !nFrames || !rise || melody.length) return { notes, main };
   // the tune line's notes held while the model still hears them (music/sustain.ts)
   const held = sustainTuneLine(notes, duration, {
     heldEnd: (n, limit) => heldEnd(frames, onsets, nFrames, n, limit),
     ...(onsets ? { onset: (n: Note) => onsetPeak(onsets, nFrames, n) } : {}),
-    rise: (n) => frameRise(frames, nFrames, timeToFrame(n.start + ONSET_LATENCY), n.midi),
+    rise,
   });
   return { notes: held, main };
 }
@@ -1027,9 +1039,14 @@ export async function redetectNotes(
   return { notes, tempo: transcriptionTempo(main, notes, duration) };
 }
 
+/** The clean context of stored posteriors (re-detection): the same evidence an import passes to accompFromRaw. */
+export function storedContext(post: StoredPosteriors): CleanContext {
+  return { frames: post.frames, onsets: post.onsets, nFrames: post.nFrames, drums: post.drums };
+}
+
 async function reextract(post: StoredPosteriors, params: ExtractionParams, duration: number, opts: ReextractOptions): Promise<{ main: Note[]; notes: Note[] }> {
   const raw = await extractRaw(post, params);
   const melody = (opts.melody ?? []).filter((n) => n.role === 'melody').map((n) => ({ ...n, hand: 'R' as const }));
-  const accomp = accompFromRaw(raw.notes, raw.leadNotes, post.rms, params, duration, { frames: post.frames, onsets: post.onsets, nFrames: post.nFrames, drums: post.drums }, { melody });
+  const accomp = accompFromRaw(raw.notes, raw.leadNotes, post.rms, params, duration, storedContext(post), { melody });
   return { main: accomp.main, notes: mergeMelody(accomp.notes, melody, duration) };
 }
