@@ -48,8 +48,11 @@
 # homr sheet-music reader models (src/lib/omr/homr; ~93 MB in pieces under 10 MB, AGPL-3.0, see
 # public/models/homr/README.md). Requested with ?v=<sha256 prefix> and sha256-checked like the piano model,
 # so a long cache is safe.
+# Only the model pieces (*.bin): the LICENSE and README next to them keep Netlify's default caching
+# (revalidated), so a corrected notice reaches browsers at once ("segment*.ext" patterns are supported by
+# Netlify's header rules, see @netlify/headers-parser for_regexp).
 [[headers]]
-  for = "/models/homr/*"
+  for = "/models/homr/*.bin"
   [headers.values]
     Cache-Control = "public, max-age=31536000, immutable"
 # CREPE tiny pitch model (2 MB, src/lib/pitch)

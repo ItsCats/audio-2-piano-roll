@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Part of the homr sheet-music reader (see README.md here); written for Piano2Vision, 2026.
 /**
  * A minimal element tree (the parts of Python's xml.etree.ElementTree homr's MusicXML writer and
  * the page merging use), serialised like ElementTree.tostring.

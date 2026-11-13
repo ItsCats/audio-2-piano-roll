@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-only AND BSD-3-Clause AND Apache-2.0 AND MIT-CMU
+// Modified (TypeScript port of homr 0.7.1) by the Piano2Vision contributors, 2026; see README.md here.
+// Ports of OpenCV functions (LICENSE-OpenCV.txt here) and of Pillow's bicubic resampling (LICENSE-Pillow.txt
+// here): their copyright notices and licences are in those files.
 /**
  * The OpenCV / Pillow image operations homr's pipeline uses, ported to TypeScript with the same
  * arithmetic (fixed point where OpenCV uses it): BGR→gray (15-bit fixed point), CLAHE, Pillow's bicubic resize, OpenCV's
@@ -5,7 +9,7 @@
  * the noise filter, warpAffine, fillPoly and fillConvexPoly. No OpenCV.js: these few operations are small.
  *
  * Derived from homr (AGPL-3.0, Copyright the homr contributors, https://github.com/liebharc/homr);
- * the algorithms follow OpenCV (Apache-2.0) and Pillow (MIT-CMU / HPND).
+ * the algorithms follow OpenCV (3-clause BSD / Apache-2.0, LICENSE-OpenCV.txt) and Pillow (MIT-CMU, LICENSE-Pillow.txt).
  * tests/unit/homr/cv.test.ts compares them with cv2 / Pillow.
  */
 import { cvRound } from './geom';

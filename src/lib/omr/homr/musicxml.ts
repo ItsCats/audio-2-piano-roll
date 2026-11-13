@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-only AND Apache-2.0
+// Modified (TypeScript port of homr 0.7.1) by the Piano2Vision contributors, 2026; see README.md here.
+// The page joining follows homr/relieur.py, based on relieur (https://github.com/papoteur-mga/relieur,
+// Apache-2.0, Copyright Papoteur and contributors).
 /**
  * Symbols of the voices → MusicXML: port of homr/music_xml_generator.py (without the image-position
  * comments and the title) and of homr/relieur.py, which joins the pages of a document (relieur is

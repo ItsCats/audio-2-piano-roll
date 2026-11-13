@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Modified (TypeScript port of homr 0.7.1) by the Piano2Vision contributors, 2026; see README.md here.
 /**
  * The transformer's vocabulary and the cleanup of its symbols: port of
  * homr/transformer/vocabulary.py, plus a small exact fraction type (Python's fractions.Fraction).

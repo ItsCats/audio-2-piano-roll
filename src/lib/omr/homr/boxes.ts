@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Modified (TypeScript port of homr 0.7.1) by the Piano2Vision contributors, 2026; see README.md here.
 /**
  * Bounding boxes of the detected symbols: port of homr/bounding_boxes.py.
  *

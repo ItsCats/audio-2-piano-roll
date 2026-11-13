@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Modified (TypeScript port of homr 0.7.1) by the Piano2Vision contributors, 2026; see README.md here.
 /**
  * homr's page pipeline (homr/main.py process_image without title detection, homr --no-title):
  * page → crop / resize / CLAHE → segmentation → symbol boxes → staffs → notes → systems →

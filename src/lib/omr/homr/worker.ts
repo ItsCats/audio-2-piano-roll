@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Part of the homr sheet-music reader (see README.md here); written for Piano2Vision, 2026.
 /// <reference lib="webworker" />
 /**
  * Dedicated module worker: the homr sheet-music reader (src/lib/omr/homr, derived from homr,

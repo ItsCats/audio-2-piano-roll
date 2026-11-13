@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Part of the homr sheet-music reader (see README.md here); written for Piano2Vision, 2026.
 /**
  * Page images for the homr reader: pixels → the pipeline's image, and a photo straightened to the four
  * page corners the user confirmed (not part of homr, which instead crops a photo to the paper itself;

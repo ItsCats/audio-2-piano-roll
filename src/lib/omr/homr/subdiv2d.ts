@@ -1,10 +1,13 @@
+// SPDX-License-Identifier: AGPL-3.0-only AND BSD-3-Clause
+// Modified (TypeScript port of homr 0.7.1) by the Piano2Vision contributors, 2026; see README.md here.
+// Port of OpenCV's Subdiv2D: copyright notices and licence in LICENSE-OpenCV.txt here.
 /**
  * OpenCV's Subdiv2D Delaunay triangulation (quad-edge structure, incremental insertion with edge flips,
  * getTriangleList), ported so that homr's dewarping mesh gets the same triangles in the same order as
  * in Python homr: homr's PiecewiseAffineTransform paints the triangles one after the other, and pixels
  * on a shared edge keep the colour of the later triangle, so the order matters for those pixels.
  *
- * Follows modules/imgproc/src/subdivision2d.cpp of OpenCV 4.x (Apache-2.0); coordinates are float32
+ * Follows modules/imgproc/src/subdivision2d.cpp of OpenCV 4.x (3-clause BSD, see LICENSE-OpenCV.txt); coordinates are float32
  * (Point2f), the orientation tests double precision, as there. Used by staffImage.ts (homr
  * DelaunayTriangulation, derived from homr, AGPL-3.0, Copyright the homr contributors,
  * https://github.com/liebharc/homr).

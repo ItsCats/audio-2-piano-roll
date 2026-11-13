@@ -7,6 +7,36 @@ It is a port of homr 0.7.1's inference pipeline from Python to TypeScript, so it
 of homr and is itself licensed under the AGPL-3.0. Copyright of the original work: the homr
 contributors. Changes: Copyright the Piano2Vision contributors, 2026, also AGPL-3.0.
 
+## Licences of the files here
+
+homr is licensed under the AGPL **version 3 only** (its `pyproject.toml` says `AGPL-3.0`; neither its
+README nor its LICENSE offers "any later version"). So:
+
+| Files | Licence (SPDX, as in each file's first line) |
+|---|---|
+| ports of homr modules: `boxes.ts`, `model.ts`, `ort.ts`, `pipeline.ts`, `preprocess.ts`, `staffDetection.ts`, `staffImage.ts`, `symbols.ts`, `systemRepair.ts`, `triplets.ts`, `vocabulary.ts` | `AGPL-3.0-only` |
+| `musicxml.ts` (homr's writer, and its page joining based on relieur) | `AGPL-3.0-only AND Apache-2.0` |
+| `geom.ts`, `subdiv2d.ts` (OpenCV functions homr calls) | `AGPL-3.0-only AND BSD-3-Clause` |
+| `cv.ts` (OpenCV and Pillow image operations homr calls) | `AGPL-3.0-only AND BSD-3-Clause AND Apache-2.0 AND MIT-CMU` |
+| new code written for Piano2Vision: `index.ts`, `worker.ts`, `protocol.ts`, `page.ts`, `xml.ts`, `fp16w.ts`, `manifest.ts` | `AGPL-3.0-or-later` |
+| the model files in `public/models/homr/` | AGPL-3.0 (homr's weights; see the README there) |
+
+Every ported file says in its first lines that it was modified (a TypeScript port of homr 0.7.1) by the
+Piano2Vision contributors in 2026, and which homr module it follows.
+
+## Third-party notices
+
+| Component | Used for | Copyright | Licence |
+|---|---|---|---|
+| homr 0.7.1 (https://github.com/liebharc/homr) | the whole pipeline (ported) and the three networks | Christian Liebhardt and the homr contributors | AGPL-3.0 (`public/models/homr/LICENSE`, unchanged); homr has no NOTICE file |
+| relieur (https://github.com/papoteur-mga/relieur) | joining pages (via homr's `relieur.py`, ported in `musicxml.ts`) | Papoteur and contributors | Apache-2.0 (no NOTICE file upstream) |
+| OpenCV 4.x imgproc (https://github.com/opencv/opencv) | contours, hulls, rotated boxes, ellipses, Subdiv2D, polygon fill, CLAHE, resize, morphology, blur, warpAffine (ported in `geom.ts`, `subdiv2d.ts`, `cv.ts`) | Intel Corporation, Willow Garage, NVIDIA, Itseez, Advanced Micro Devices and others | 3-clause BSD and Apache-2.0: `LICENSE-OpenCV.txt` here |
+| Pillow (https://github.com/python-pillow/Pillow) | bicubic resize (ported in `cv.ts`) | Secret Labs AB, Fredrik Lundh, Jeffrey A. Clark and contributors | MIT-CMU: `LICENSE-Pillow.txt` here |
+| onnxruntime-web 1.31.1 | runs the networks (npm dependency) | Microsoft Corporation | MIT |
+
+When the app is built, these notices must also reach the repository-wide `THIRD_PARTY_NOTICES.md` and
+the Credits page (`src/lib/credits.ts` has the homr, training-data, OpenCV and Pillow entries).
+
 What was changed (summary, as the AGPL asks modified versions to state):
 
 - Python → TypeScript, module by module (the file headers name the homr module each one ports):
@@ -20,18 +50,25 @@ What was changed (summary, as the AGPL asks modified versions to state):
 - Not included: title recognition (RapidOCR), debug output, the staff-position files, GPU options.
 - `cv.ts` ports OpenCV's `fillPoly` / `fillConvexPoly` (outline lines and span filling, pixel for pixel)
   for the paper mask of the autocrop and the dewarping triangles.
-- `subdiv2d.ts` ports OpenCV's `Subdiv2D` (Apache-2.0) so the dewarping mesh has the same triangles in the
+- `subdiv2d.ts` ports OpenCV's `Subdiv2D` (3-clause BSD, `LICENSE-OpenCV.txt`) so the dewarping mesh has the same triangles in the
   same order as in homr (pixels on shared triangle edges take the later triangle's value).
 - Added: straightening a photo to four page corners given by the user (`page.ts`) before homr's steps,
-  progress / cancel / memory handling (`index.ts`), the page-by-page worker protocol (`protocol.ts`).
+  progress / cancel / memory handling (`index.ts`), the page-by-page worker protocol (`protocol.ts`),
+  a low-memory mode for phones (one network at a time, `ort.ts` `stagedInfer`), float16 weights expanded
+  to float32 before session creation (`fp16w.ts`, lower peak memory, same numbers), a size limit on
+  input images (scaled down to 4000 px; images over three times taller than wide are not read), and a
+  second try on landscape pages without music, turned by 90 degrees each way (sideways scans).
 
 Known differences from Python homr (measured, see `public/models/homr/README.md`):
 
 - OpenCV's `minAreaRect` / `boxPoints` float32 rounding is not reproduced bit for bit: on a few long,
   thin staff-line fragments the box can differ by up to 0.1 px (unit tests allow 2 % of boxes).
-- The transformer's int8 matrix products in onnxruntime-web (WASM) round slightly differently from
-  onnxruntime's native CPU kernels: on identical staff images, a decoded symbol that is not a note
-  (an accent, a slur, a staccato) can differ on a few staffs of the test set.
+- The transformer encoder's int8 matrix products in onnxruntime-web (WASM) round slightly differently
+  from onnxruntime's native CPU kernels: on identical staff images, a decoded symbol can differ. On the
+  test set that happened only to symbols that are not notes (an accent, a staccato), but on harder input
+  it can also change a rhythm (e.g. a low-resolution photo: eighths instead of a triplet group on one
+  staff). Neither side is closer to the float32 encoder. Shipping the encoder with float16 weights instead
+  (+9 MB) would give the same output as Python homr.
 - numpy's unstable `argsort` tie order in homr's peak finder is replaced by a stable order.
 - Where Python homr would stop with an exception (a staff without sample points, an empty voice) the
   port skips that staff instead.

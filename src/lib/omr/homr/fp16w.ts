@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Part of the homr sheet-music reader (see README.md here); written for Piano2Vision, 2026.
 /**
  * Weights stored as float16, expanded back to float32 before onnxruntime sees the model.
  *

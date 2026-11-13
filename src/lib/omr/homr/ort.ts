@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Modified (TypeScript port of homr 0.7.1) by the Piano2Vision contributors, 2026; see README.md here.
 /**
  * homr's three networks on onnxruntime-web: segmentation, the transformer's encoder, and its decoder
  * stepped greedily with the KV cache the ONNX export already has (homr/transformer/decoder_inference.py).

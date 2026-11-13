@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Modified (TypeScript port of homr 0.7.1) by the Piano2Vision contributors, 2026; see README.md here.
 /**
  * The image of one staff for the transformer: region, scaling, dewarping, cleanup and the
  * 1280 x 256 canvas. Port of prepare_staff_image and its helpers in homr/staff_parsing.py,

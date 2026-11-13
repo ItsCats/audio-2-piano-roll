@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Part of the homr sheet-music reader (see README.md here); written for Piano2Vision, 2026.
 /**
  * The homr sheet-music reader: PDF pages and photos of printed music → MusicXML, which then goes through
  * the normal score import (src/lib/score importMusicXml → songFromScore).

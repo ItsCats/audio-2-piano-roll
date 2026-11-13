@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Part of the homr sheet-music reader (see README.md here); written for Piano2Vision, 2026.
 // Written by tests/homr/package_models.py: the shipped model files (public/models/homr/).
 export const HOMR_MODELS = {
   "segnet": {

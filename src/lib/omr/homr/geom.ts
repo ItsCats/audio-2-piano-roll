@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only AND BSD-3-Clause
+// Modified (TypeScript port of homr 0.7.1) by the Piano2Vision contributors, 2026; see README.md here.
+// Ports of OpenCV functions: copyright notices and licence in LICENSE-OpenCV.txt here.
 /**
  * The OpenCV geometry functions homr uses, ported to TypeScript with OpenCV's own algorithms and
  * (where it decides results) its float32 arithmetic: findContours (Suzuki-Abe border following,
@@ -6,7 +9,7 @@
  * rotatedRectangleIntersection (does it intersect), boundingRect, contourArea.
  *
  * Derived from homr (AGPL-3.0, Copyright the homr contributors, https://github.com/liebharc/homr),
- * which calls these through opencv-python; the algorithms follow OpenCV (Apache-2.0).
+ * which calls these through opencv-python; the algorithms follow OpenCV (3-clause BSD / Apache-2.0, see LICENSE-OpenCV.txt).
  * tests/unit/homr/geom.test.ts compares them with cv2 on fixtures dumped by tests/homr/make_fixtures.py.
  */
 

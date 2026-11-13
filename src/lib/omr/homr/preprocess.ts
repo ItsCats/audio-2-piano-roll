@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Modified (TypeScript port of homr 0.7.1) by the Piano2Vision contributors, 2026; see README.md here.
 /**
  * Page preparation and the segmentation's output: ports of homr/autocrop.py, homr/resize.py,
  * homr/color_adjust.py, the patching of homr/segmentation/inference_segnet.py and
