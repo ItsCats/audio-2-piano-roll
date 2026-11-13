@@ -1,0 +1,134 @@
+/**
+ * Messages between src/lib/omr/homr/index.ts (page) and worker.ts (the homr reader's worker). Pure
+ * types and constants: no DOM, no onnxruntime. The shapes follow the Sheet Music Transformer reader
+ * (src/lib/omr/protocol.ts on its branch) so both engines plug into the same import screen.
+ */
+
+/** One model file as shipped: consecutive pieces (each under Netlify's 10 MB per file) joined in the worker. */
+export interface ModelFile {
+  /** cache key (and the URL when there are no parts) */
+  url: string;
+  /** piece URLs, in order (absent: fetch `url` itself) */
+  parts?: string[];
+  /** sha256 of the joined file (absent: not checked, test harnesses only) */
+  sha256?: string;
+  bytes: number;
+}
+
+export interface HomrModelSpec {
+  name: string;
+  segnet: ModelFile;
+  encoder: ModelFile;
+  decoder: ModelFile;
+}
+
+/** Four page corners in image pixels (top-left, top-right, bottom-right, bottom-left), from the corner screen. */
+export type Quad = [[number, number], [number, number], [number, number], [number, number]];
+
+export interface PageInput {
+  w: number;
+  h: number;
+  /** 1 = gray, 3 = RGB, 4 = RGBA (color helps homr find the paper in a photo) */
+  channels: 1 | 3 | 4;
+  /** row-major pixels (transferred) */
+  data: Uint8Array;
+  quad?: Quad | null;
+}
+
+/**
+ * A job. The worker then asks for the pages one by one (NeedPageMessage → PageMessage), so only one
+ * page's pixels are in its memory at a time.
+ */
+export interface RunRequest {
+  type: 'run';
+  jobId: number;
+  pageCount: number;
+  model: HomrModelSpec;
+  threads: number;
+  /** release the sessions after the job (phones: the page also terminates the worker) */
+  release: boolean;
+  title?: string;
+}
+
+export interface PageMessage {
+  type: 'page';
+  jobId: number;
+  index: number;
+  page: PageInput;
+}
+
+export type WorkerRequest = RunRequest | PageMessage;
+
+/** The same stage names as the Sheet Music Transformer reader. */
+export type Stage = 'loading-model' | 'finding-lines' | 'reading';
+
+export interface ProgressMessage {
+  type: 'progress';
+  jobId: number;
+  stage: Stage;
+  /** 0..1 within the stage (finding-lines / reading: within the current page) */
+  progress: number;
+  /** loading-model: bytes */
+  loaded?: number;
+  total?: number;
+  /** page index (0-based) / pages */
+  page?: number;
+  pages?: number;
+  /** reading: staffs done / staffs of the page */
+  line?: number;
+  lines?: number;
+}
+
+export interface HomrPageResult {
+  /** staffs found (a grand staff counts as two) */
+  staves: number;
+  /** systems (lines of music) */
+  systems: number;
+  /** the page could not be read (no staffs or notes): the message; the other pages still count */
+  error?: string;
+  ms: number;
+}
+
+export interface RunStats {
+  fromCache: boolean;
+  reusedSession: boolean;
+  loadMs: number;
+  createMs: number;
+  segmentMs: number;
+  encodeMs: number;
+  decodeMs: number;
+  steps: number;
+  threads: number;
+}
+
+export interface ResultMessage {
+  type: 'result';
+  jobId: number;
+  /** MusicXML of all pages (empty when no page could be read) */
+  musicXml: string;
+  pages: HomrPageResult[];
+  stats: RunStats;
+}
+
+export interface ErrorMessage {
+  type: 'error';
+  jobId: number;
+  message: string;
+}
+
+export interface NeedPageMessage {
+  type: 'need-page';
+  jobId: number;
+  index: number;
+}
+
+export type WorkerResponse = ProgressMessage | ResultMessage | ErrorMessage | NeedPageMessage;
+
+/**
+ * Plain-language error for a download that failed on the network (offline, a dropped mobile
+ * connection): the browsers' own texts tell a non-expert nothing.
+ */
+export function downloadFailedMessage(expectedBytes: number): string {
+  const mb = expectedBytes > 0 ? ` (${Math.round(expectedBytes / 1e6)} MB)` : '';
+  return `Could not download the sheet-music reader${mb}. Check your internet connection and try again.`;
+}

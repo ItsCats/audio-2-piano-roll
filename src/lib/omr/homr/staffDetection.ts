@@ -525,7 +525,7 @@ function findFiveLineGroups(image: Img, zones: Range[], unit: number): RotatedBo
   return result;
 }
 
-function predictOtherAnchorsFromClefs(clefAnchors: StaffAnchor[], image: Img): RotatedBoundingBox[] {
+export function predictOtherAnchorsFromClefs(clefAnchors: StaffAnchor[], image: Img): RotatedBoundingBox[] {
   if (!clefAnchors.length) return [];
   const unit = mean(clefAnchors.map((a) => a.averageUnitSize));
   const symbols = clefAnchors.map((a) => a.symbol);

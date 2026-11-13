@@ -35,6 +35,8 @@ const LIC = {
   cc0: 'https://creativecommons.org/publicdomain/zero/1.0/',
   bsd3: 'https://opensource.org/license/bsd-3-clause',
   unlicense: 'https://unlicense.org/',
+  agpl3: 'https://www.gnu.org/licenses/agpl-3.0.html',
+  ccbync4: 'https://creativecommons.org/licenses/by-nc/4.0/',
 };
 
 export const CREDITS: CreditGroup[] = [
@@ -78,6 +80,24 @@ export const CREDITS: CreditGroup[] = [
         licenseUrl: LIC.mit,
         url: 'https://github.com/marl/crepe',
         note: 'Converted to ONNX by us from torchcrepe’s “tiny” weights (see public/models/crepe/README.md).',
+      },
+      {
+        name: 'homr',
+        use: 'Reads printed sheet music from PDFs and photos: finds the staffs, notes, bar lines and clefs, then transcribes each staff (the default sheet-music reader). Downloaded only when you first read a PDF or photo.',
+        author: 'Christian Liebhardt and the homr contributors',
+        license: 'AGPL-3.0 (code and model weights)',
+        licenseUrl: LIC.agpl3,
+        url: 'https://github.com/liebharc/homr',
+        note: 'homr 0.7.1. Changed: we ported its image analysis and MusicXML writer from Python to TypeScript (src/lib/omr/homr, AGPL-3.0, published with this app’s source) and run its three networks with ONNX Runtime Web; the segmentation weights are stored as 16-bit floats and the encoder with 8-bit weights to halve the download; title recognition (OCR) is left out. Includes homr’s page joining, which is based on relieur by Papoteur (Apache-2.0). See public/models/homr/README.md.',
+      },
+      {
+        name: 'Training data of the homr models',
+        use: 'The data homr’s authors trained its networks on (not included in the app).',
+        author: 'DeepScoresV2 (Tuggener et al.; CC BY 4.0) for the segmentation; OpenScore Lieder and String Quartets (CC0), GrandStaff (Ríos-Vila et al.), Camera-PrIMuS (Calvo-Zaragoza, Rizo), PDMX (public-domain subset) and the MuseTrainer library for the transcription',
+        license: 'Mixed; Camera-PrIMuS: CC BY-NC 4.0 (non-commercial)',
+        licenseUrl: LIC.ccbync4,
+        url: 'https://github.com/liebharc/homr/blob/main/LICENSE_FAQ.md',
+        note: 'The transcription model was partly trained on Camera-PrIMuS, whose published copy is licensed for non-commercial use only. Piano2Vision is free and non-commercial; anyone reusing these weights should check homr’s licence FAQ.',
       },
     ],
   },
@@ -167,7 +187,7 @@ export const CREDITS: CreditGroup[] = [
       { name: 'React Router', use: 'Pages and navigation.', author: 'Remix Software and contributors', license: 'MIT', licenseUrl: LIC.mit, url: 'https://reactrouter.com' },
       { name: 'Zustand', use: 'App state.', author: 'Poimandres', license: 'MIT', licenseUrl: LIC.mit, url: 'https://github.com/pmndrs/zustand' },
       { name: 'TensorFlow.js', use: 'Runs the Basic Pitch model (WebGL / WebAssembly).', author: 'Google and contributors', license: 'Apache-2.0', licenseUrl: LIC.apache, url: 'https://www.tensorflow.org/js' },
-      { name: 'ONNX Runtime Web', use: 'Runs the SCNet separation model and the high-accuracy piano model (WebAssembly).', author: 'Microsoft and contributors', license: 'MIT', licenseUrl: LIC.mit, url: 'https://onnxruntime.ai' },
+      { name: 'ONNX Runtime Web', use: 'Runs the SCNet separation model, the high-accuracy piano model and the sheet-music reader (WebAssembly).', author: 'Microsoft and contributors', license: 'MIT', licenseUrl: LIC.mit, url: 'https://onnxruntime.ai' },
       { name: 'Mediabunny', use: 'Video export (MP4 / WebM) and decoding unusual file types.', author: 'Vanilagy', license: 'MPL-2.0', licenseUrl: LIC.mpl, url: 'https://mediabunny.dev' },
       {
         name: 'Mediabunny AAC encoder (includes FFmpeg)',

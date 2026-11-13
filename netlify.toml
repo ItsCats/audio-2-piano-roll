@@ -45,6 +45,13 @@
   for = "/models/piano-specialist/*"
   [headers.values]
     Cache-Control = "public, max-age=31536000, immutable"
+# homr sheet-music reader models (src/lib/omr/homr; ~93 MB in pieces under 10 MB, AGPL-3.0, see
+# public/models/homr/README.md). Requested with ?v=<sha256 prefix> and sha256-checked like the piano model,
+# so a long cache is safe.
+[[headers]]
+  for = "/models/homr/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
 # CREPE tiny pitch model (2 MB, src/lib/pitch)
 [[headers]]
   for = "/models/crepe/*"

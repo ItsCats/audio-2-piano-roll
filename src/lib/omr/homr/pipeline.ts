@@ -8,7 +8,7 @@
  */
 import { createBoundingEllipses, createRotatedBoundingBoxes, type RotatedBoundingBox } from './boxes';
 import { dilate, structuringElement, threshold, type Img } from './cv';
-import { median, MultiStaff } from './model';
+import { median, MultiStaff, type Staff } from './model';
 import { generateXml, joinPages } from './musicxml';
 import { applyMask, argmaxClasses, autocrop, extractPatch, masksFromClasses, noiseMask, PatchMerger, patchOrigins, preprocess, resizeToTarget, WIN, type Predictions } from './preprocess';
 import { breakWideFragments, detectStaff, estimateUnitSizeFromClefs } from './staffDetection';
@@ -101,23 +101,23 @@ export interface PageResult {
   xml: El;
 }
 
-/** homr process_image on one page image (RGB or gray). */
-export async function readPage(page: Img, infer: HomrInfer, opts: ReadPageOptions = {}): Promise<PageResult> {
-  const dump = opts.dump;
-  const cropped = autocrop(page);
-  if (dump) dump.crop = [cropped.x, cropped.y, cropped.image.w, cropped.image.h];
-  const resized = resizeToTarget(cropped.image);
-  if (dump) dump.resized = [resized.w, resized.h];
-  let pre = preprocess(resized);
-  opts.onProgress?.({ stage: 'segmenting', progress: 0 });
-  let pred = await segment(pre, infer, opts);
-  checkAbort(opts.signal);
-  opts.onProgress?.({ stage: 'finding-staffs', progress: 0 });
+export interface FoundSystems {
+  multi: MultiStaff[];
+  /** the staffs (with their notes) before grouping */
+  staffs: Staff[];
+  /** the noise filter's mask (1 = keep), if it cleared part of the page */
+  mask: Uint8Array | null;
+}
 
+/**
+ * homr's image analysis on the segmentation (detect_staffs_in_image after get_predictions, plus
+ * repair_systems): symbol boxes → staffs → notes → systems. Throws NoMusicError without staffs.
+ */
+export function findSystems(predIn: Predictions, dump?: PageDump): FoundSystems {
   // homr filter_predictions, make_lines_stronger
-  const mask = noiseMask(pred.staff);
+  const mask = noiseMask(predIn.staff);
+  let pred = { ...predIn };
   if (mask) {
-    pre = applyMask(pre, mask);
     pred = {
       ...pred,
       notehead: applyMask(pred.notehead, mask),
@@ -138,7 +138,6 @@ export async function readPage(page: Img, infer: HomrInfer, opts: ReadPageOption
   if (dump) dump.boxes = { noteheads: noteheads as unknown as RotatedBoundingBox[], staff_fragments: fragments, clefs_keys: clefs, stems_rest: stems, bar_lines: barCandidates };
   fragments = breakWideFragments(fragments);
   if (dump && dump.boxes) dump.boxes.staff_fragments_broken = fragments;
-  checkAbort(opts.signal);
 
   const withStems = combineNoteheadsWithStems(noteheads, stems);
   let unit: number;
@@ -161,10 +160,28 @@ export async function readPage(page: Img, infer: HomrInfer, opts: ReadPageOption
   let multi = findBracesBracketsAndGrandStaffLines(staffs, braceDot);
   multi = repairSystemsOfPage(multi);
   if (dump) dump.systems = multi.map(layoutOf);
+  return { multi, staffs, mask };
+}
+
+/** homr process_image on one page image (RGB or gray). */
+export async function readPage(page: Img, infer: HomrInfer, opts: ReadPageOptions = {}): Promise<PageResult> {
+  const dump = opts.dump;
+  const cropped = autocrop(page);
+  if (dump) dump.crop = [cropped.x, cropped.y, cropped.image.w, cropped.image.h];
+  const resized = resizeToTarget(cropped.image);
+  if (dump) dump.resized = [resized.w, resized.h];
+  let pre = preprocess(resized);
+  opts.onProgress?.({ stage: 'segmenting', progress: 0 });
+  const pred = await segment(pre, infer, opts);
+  checkAbort(opts.signal);
+  opts.onProgress?.({ stage: 'finding-staffs', progress: 0 });
+
+  const found = findSystems(pred, dump);
+  if (found.mask) pre = applyMask(pre, found.mask);
   checkAbort(opts.signal);
 
-  const voices = await parseStaffs(multi, pre, infer, opts);
-  return { voices, staffs: staffs.length, systems: multi.length, xml: generateXml(voices) };
+  const voices = await parseStaffs(found.multi, pre, infer, opts);
+  return { voices, staffs: found.staffs.length, systems: found.multi.length, xml: generateXml(voices) };
 }
 
 function slotsInLayout(row: string, layout: string): number[] | null {
@@ -268,7 +285,10 @@ async function parseStaffs(staffsIn: MultiStaff[], page: Img, infer: HomrInfer, 
 }
 
 /** MusicXML of several pages read one by one (homr run_homr: one file per page, joined with relieur). */
-export function pagesToMusicXml(pages: El[]): string {
+export function pagesToMusicXml(pages: El[], title = ''): string {
   if (!pages.length) throw new NoMusicError('No pages');
-  return serialize(pages.length === 1 ? pages[0] : joinPages(pages));
+  const root = pages.length === 1 ? pages[0] : joinPages(pages);
+  const t = root.find('work/work-title');
+  if (t && title) t.text = title;
+  return serialize(root);
 }

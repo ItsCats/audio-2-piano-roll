@@ -803,39 +803,41 @@ export function intersectConvexConvexArea(p1: Pt[], p2: Pt[]): number {
   return subject.length >= 3 ? Math.abs(orient(subject)) / 2 : 0;
 }
 
-/** cv2.rotatedRectangleIntersection(r1, r2)[0] != INTERSECT_NONE */
+/** Corners of a RotatedRect in double precision (as rotatedRectangleIntersection uses them). */
+function cornersD(r: RotatedRect): Pt[] {
+  const [[cx, cy], [w, h], angle] = r;
+  const t = (angle * Math.PI) / 180;
+  const b = Math.cos(t) * 0.5;
+  const a = Math.sin(t) * 0.5;
+  const p0: Pt = [cx - a * h - b * w, cy + b * h - a * w];
+  const p1: Pt = [cx + a * h - b * w, cy - b * h - a * w];
+  return [p0, p1, [2 * cx - p0[0], 2 * cy - p0[1]], [2 * cx - p1[0], 2 * cy - p1[1]]];
+}
+
+/**
+ * cv2.rotatedRectangleIntersection(r1, r2)[0] != INTERSECT_NONE. The OpenCV homr runs on (4.14) works
+ * in double precision here and reports no intersection for an empty rectangle; touching counts.
+ */
 export function rotatedRectsIntersect(r1: RotatedRect, r2: RotatedRect): boolean {
-  let samePointEps = f(1e-6 * Math.max(f(r1[1][0] * r1[1][1]), f(r2[1][0] * r2[1][1])));
-  const p1 = boxPoints(r1);
-  const p2 = boxPoints(r2);
-  let same = true;
-  for (let i = 0; i < 4; i++) {
-    if (Math.abs(p1[i][0] - p2[i][0]) > samePointEps || Math.abs(p1[i][1] - p2[i][1]) > samePointEps) {
-      same = false;
-      break;
-    }
-  }
-  if (same) return true;
+  if (!(r1[1][0] > 0 && r1[1][1] > 0 && r2[1][0] > 0 && r2[1][1] > 0)) return false;
+  const p1 = cornersD(r1);
+  const p2 = cornersD(r2);
   const v1: Pt[] = [];
   const v2: Pt[] = [];
   for (let i = 0; i < 4; i++) {
-    v1.push([f(p1[(i + 1) % 4][0] - p1[i][0]), f(p1[(i + 1) % 4][1] - p1[i][1])]);
-    v2.push([f(p2[(i + 1) % 4][0] - p2[i][0]), f(p2[(i + 1) % 4][1] - p2[i][1])]);
-  }
-  for (let i = 0; i < 4; i++) {
-    samePointEps = Math.min(samePointEps, f(Math.sqrt(f(f(v1[i][0] * v1[i][0]) + f(v1[i][1] * v1[i][1])))));
-    samePointEps = Math.min(samePointEps, f(Math.sqrt(f(f(v2[i][0] * v2[i][0]) + f(v2[i][1] * v2[i][1])))));
+    v1.push([p1[(i + 1) % 4][0] - p1[i][0], p1[(i + 1) % 4][1] - p1[i][1]]);
+    v2.push([p2[(i + 1) % 4][0] - p2[i][0], p2[(i + 1) % 4][1] - p2[i][1]]);
   }
   for (let i = 0; i < 4; i++) {
     for (let j = 0; j < 4; j++) {
-      const x21 = f(p2[j][0] - p1[i][0]);
-      const y21 = f(p2[j][1] - p1[i][1]);
+      const x21 = p2[j][0] - p1[i][0];
+      const y21 = p2[j][1] - p1[i][1];
       const [vx1, vy1] = v1[i];
       const [vx2, vy2] = v2[j];
-      const det = f(f(vx2 * vy1) - f(vx1 * vy2));
+      const det = vx2 * vy1 - vx1 * vy2;
       if (Math.abs(det) < 1e-12) continue;
-      const t1 = f(f(f(vx2 * y21) - f(vy2 * x21)) / det);
-      const t2 = f(f(f(vx1 * y21) - f(vy1 * x21)) / det);
+      const t1 = (vx2 * y21 - vy2 * x21) / det;
+      const t2 = (vx1 * y21 - vy1 * x21) / det;
       if (!Number.isFinite(t1) || !Number.isFinite(t2)) continue;
       if (t1 >= 0 && t1 <= 1 && t2 >= 0 && t2 <= 1) return true;
     }
@@ -848,8 +850,8 @@ export function rotatedRectsIntersect(r1: RotatedRect, r2: RotatedRect): boolean
       for (let j = 0; j < 4; j++) {
         const A = -vec[j][1];
         const B = vec[j][0];
-        const C = f(-f(f(A * other[j][0]) + f(B * other[j][1])));
-        const s = f(f(f(A * x) + f(B * y)) + C);
+        const C = -(A * other[j][0] + B * other[j][1]);
+        const s = A * x + B * y + C;
         if (s >= 0) pos++;
         else neg++;
       }
