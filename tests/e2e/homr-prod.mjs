@@ -12,7 +12,11 @@
  *   are available (default wasmThreads(4) = cores - 1, at most 4); plain: at /homr-plain (not isolated:
  *   one thread, like browsers without cross-origin isolation).
  * --throttle R: Chromium's CPU throttling (DevTools) at rate R on the page and, where the protocol allows,
- *   on its workers; the script prints which targets accepted it.
+ *   on its workers; the script prints which targets accepted it. Chromium refuses it for workers
+ *   ("only supported for pages"), and the reader runs in a worker, so it does not slow the reader down.
+ *   For a phone estimate, cap the whole browser's CPU instead, e.g. a cgroup-v1 cpu group with
+ *   cpu.cfs_quota_us = cpu.cfs_period_us (one core of a 4-core machine = four cores at a quarter speed)
+ *   holding this script's process (Chromium inherits it).
  * The test set (TESTSET/<category>/*.png|jpg, + *.quad.json corners for photos) stays outside the repo.
  */
 import { build } from 'vite';
