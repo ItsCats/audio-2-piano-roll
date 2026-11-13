@@ -333,8 +333,11 @@ try {
 
     // ---- quick: picked by hand, remembered across a reload
     await openTab(page);
+    // (still the Accurate reader after the crash: nothing was changed)
+    check(`${dev}: the Accurate reader is still chosen after the crash`, await checked(page, 'accurate'));
+    await page.getByTestId('reader-quick').click();
     await page.getByTestId('reader-accurate').click();
-    check(`${dev}: picking the Accurate reader again`, (await checked(page, 'accurate')) && (await prefs(page)).sheetReader === 'accurate');
+    check(`${dev}: picking a reader saves it`, (await checked(page, 'accurate')) && (await prefs(page)).sheetReader === 'accurate');
     await page.getByTestId('reader-quick').click();
     await page.reload();
     await page.getByTestId('sheet-reader-choice').waitFor();
