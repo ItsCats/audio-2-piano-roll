@@ -3,7 +3,9 @@
  *
  * The shared secret (PROCESSING_SHARED_SECRET) lives only in Netlify's environment and on
  * the processing server; the browser only ever receives a token valid for 10 minutes.
- * Requests from other origins are rejected so third-party sites can't mint tokens.
+ * Requests must carry an Origin header naming this site: browsers always send one with a POST,
+ * including same-origin fetches, so a request without one is not from the app and is refused.
+ * (This stops other websites and casual scripts; it is not authentication.)
  */
 import { createHmac, randomBytes } from 'node:crypto';
 
@@ -12,7 +14,7 @@ const TTL_SECONDS = 600;
 const b64url = (buf: Buffer) => buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
 function allowedOrigin(origin: string | null): boolean {
-  if (!origin) return true; // same-origin fetches may omit Origin
+  if (!origin) return false;
   const allowed = [process.env.URL, process.env.DEPLOY_PRIME_URL, process.env.DEPLOY_URL, ...(process.env.EXTRA_ALLOWED_ORIGINS ?? '').split(',')]
     .map((s) => s?.trim())
     .filter(Boolean);

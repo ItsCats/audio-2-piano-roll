@@ -40,7 +40,7 @@ the vocals and the accompaniment without drums.
 
 ### Security model
 
-* The browser calls `/.netlify/functions/backend-token`, which returns a 10-minute HMAC token signed with `PROCESSING_SHARED_SECRET` (requests from other origins are refused).
+* The browser calls `/.netlify/functions/backend-token`, which returns a 10-minute HMAC token signed with `PROCESSING_SHARED_SECRET` (requests without an Origin header naming this site are refused).
 * The server verifies the token with the same secret (`SHARED_SECRET`), restricts CORS to `ALLOWED_ORIGINS`, rate-limits jobs per IP, limits upload size and duration, validates media with ffprobe, only accepts YouTube hosts (no SSRF), and deletes job files after `JOB_TTL_SEC`.
 * This keeps random sites and bots off your server; it does not make a public deployment safe from a determined user of your own site — keep the rate limit sensible.
 
