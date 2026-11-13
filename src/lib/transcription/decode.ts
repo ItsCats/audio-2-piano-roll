@@ -171,3 +171,57 @@ export function analyzeLevel(mono: Float32Array): { peak: number; rms: number } 
   }
   return { peak, rms: Math.sqrt(sum / Math.ceil(mono.length / 4)) };
 }
+
+/**
+ * Resample mono audio from `from` Hz to `to` Hz with a Kaiser-windowed sinc (band-limited to 0.95 ×
+ * the lower Nyquist, ±`taps` input samples at the lower rate's scale). For buffers that are already
+ * decoded (the separated "other" stem at 22.05 kHz → the piano model's 16 kHz): decoding again would
+ * hold a second copy of the whole song while separation's memory is still being freed.
+ */
+export function resampleTo(x: Float32Array, from: number, to: number, taps = 16): Float32Array {
+  if (from === to) return x.slice();
+  const ratio = to / from;
+  const n = Math.max(0, Math.floor(x.length * ratio));
+  const out = new Float32Array(n);
+  // cutoff as a fraction of the input rate
+  const fc = 0.5 * Math.min(1, ratio) * 0.95;
+  const half = Math.ceil(taps / Math.min(1, ratio));
+  const beta = 8;
+  const i0 = (v: number) => {
+    let s = 1;
+    let t = 1;
+    for (let k = 1; k < 30; k++) {
+      t *= (v / (2 * k)) * (v / (2 * k));
+      s += t;
+      if (t < 1e-12 * s) break;
+    }
+    return s;
+  };
+  const i0b = i0(beta);
+  // the kernel is evaluated at fractional offsets: tabulate it finely and interpolate
+  const RES = 512;
+  const table = new Float32Array(half * RES + 2);
+  for (let k = 0; k < table.length; k++) {
+    const d = k / RES;
+    const w = d >= half ? 0 : i0(beta * Math.sqrt(1 - (d / half) * (d / half))) / i0b;
+    const s = d === 0 ? 2 * fc : Math.sin(2 * Math.PI * fc * d) / (Math.PI * d);
+    table[k] = s * w;
+  }
+  const kernel = (d: number) => {
+    const a = Math.abs(d) * RES;
+    const k = Math.floor(a);
+    if (k >= table.length - 1) return 0;
+    const f = a - k;
+    return table[k] + (table[k + 1] - table[k]) * f;
+  };
+  const len = x.length;
+  for (let j = 0; j < n; j++) {
+    const c = j / ratio;
+    const a = Math.max(0, Math.ceil(c - half));
+    const b = Math.min(len - 1, Math.floor(c + half));
+    let s = 0;
+    for (let i = a; i <= b; i++) s += x[i] * kernel(i - c);
+    out[j] = s;
+  }
+  return out;
+}

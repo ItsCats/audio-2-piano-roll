@@ -173,6 +173,12 @@ export function ArrangementPanel() {
               </dd>
             </>
           )}
+          {t.pianoBlend?.status === 'ok' && (
+            <>
+              <dt className="text-ink-300">Detection</dt>
+              <dd className="text-right text-ink-100">Full song + piano model</dd>
+            </>
+          )}
           {t.processingMs !== undefined && (
             <>
               <dt className="text-ink-300">Processing time</dt>

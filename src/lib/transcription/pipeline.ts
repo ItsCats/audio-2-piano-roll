@@ -19,21 +19,22 @@
  * (pianoSpecialist/postprocess.ts) → hands → tempo/beats → key. No separation and none of the
  * Basic Pitch cleanup (see specialistNotes).
  */
-import type { ExtractionParams, KeyInfo, Note, TempoInfo, TranscriptionInfo } from '../music/types';
+import type { ExtractionParams, KeyInfo, Note, PianoBlendInfo, TempoInfo, TranscriptionInfo } from '../music/types';
 import { BP_FPS, BP_MIDI_OFFSET, BP_N_PITCHES, BP_SAMPLE_RATE, frameToTime, timeToFrame } from './constants';
 import type { NoteExtractionOptions, RawNoteEvent } from './noteExtraction';
 import type { TranscriptionStage, WorkerRequest, WorkerResponse } from './workerProtocol';
-import { analyzeLevel, decodeToRate, mixToMono } from './decode';
+import { analyzeLevel, decodeToRate, mixToMono, resampleTo } from './decode';
 import { BASS_FOLD, DRUM_HIT_RULE, RESTRIKE, TAIL_GATE, mergeContinuations, mergeFragments, newNoteId, removeShortQuiet, removeTailGhosts, sortNotes, suppressDrumHits, suppressHarmonics, foldBassRestrikes } from '../music/cleanup';
 import { assignHands } from '../music/hands';
 import { estimateTempo } from '../music/beats';
 import { detectKey } from '../music/theory';
-import { extractMelodyLine, mergeMelody } from '../music/melody';
-import { recoverLead } from '../music/leadRecovery';
+import { addExtraLead, recoverLead, type LeadRecoveryOptions } from '../music/leadRecovery';
+import { PIANO_BLEND, blendFills, blendLeadCandidates, octaveFixes, packSpecNotes, prepareSpecialist, riffPassages, specNotesFromOutputs, unpackSpecNotes, type BlendEvidence, type SpecNote } from '../music/pianoBlend';
+import { extractMelodyLine, instrumentLine, mergeMelody, tuneCandidates } from '../music/melody';
 import { sustainTuneLine } from '../music/sustain';
 import type { StoredPosteriors } from './posteriors';
 import { BASS_BAND_PITCHES, BASS_LINE, bassBand, decodeBassLine, mergeBassLine, type BassPosteriors } from './bassLine';
-import { gapCue, pitchContinues, pitchHeldEnd, storedPitch, type StoredPitch } from './stemPitch';
+import { gapCue, pitchContinues, pitchHeldEnd, pitchSupport, storedPitch, type StoredPitch } from './stemPitch';
 import { isMemoryConstrained, pageDeviceInfo } from './backendChoice';
 import { BROWSER_SEPARATION_MAX_SECONDS, DRUM_ENV_FPS, longReason, separateStems, separationSupport, stemsFromBlobs, type SeparationResult } from '../separation';
 import { regressionToNotes, type RegressionOutputs } from '../pianoSpecialist/postprocess';
@@ -227,6 +228,21 @@ export interface TranscribeOptions {
    * options (it is for solo piano) and returns no posteriors.
    */
   engine?: TranscriptionEngine;
+  /**
+   * "Full song + piano model": run the piano model on the separated other stem and blend its notes in
+   * (music/pianoBlend.ts). Only used where pianoBlendRuns allows it (in-browser separation with a bass
+   * stem, the stem passes running, no sung line); a failure falls back to the standard result.
+   */
+  pianoBlend?: boolean;
+  /** the piano model's file, instead of the shipped pieces (tests) */
+  pianoModelUrl?: string;
+  /**
+   * The piano model's notes of this same audio from an earlier run (the accuracy harness's cache:
+   * tuning runs do not run the model again); used instead of running it.
+   */
+  specialistNotes?: SpecNote[];
+  /** called right before the piano model starts (the import moves its crash marker there) */
+  onPhase?: (phase: 'piano-blend') => void;
 }
 
 /**
@@ -366,6 +382,11 @@ export interface CleanContext {
   leadPitch?: StoredPitch;
   /** the song was separated (any engine): with no sung line, LEAD_EVERY_LEVEL applies */
   separated?: boolean;
+  /**
+   * The piano model's notes on the other stem ("Full song + piano model", music/pianoBlend.ts):
+   * blended in by accompFromRaw (separated, no sung line, "Full song" preset).
+   */
+  specialist?: SpecNote[];
 }
 
 /**
@@ -577,7 +598,7 @@ export function accompFromRaw(
   duration: number,
   ctx: CleanContext = {},
   lead: LeadContext = {},
-): { notes: Note[]; main: Note[] } {
+): { notes: Note[]; main: Note[]; blend?: BlendCounts } {
   const melody = lead.melody ?? [];
   let main = cleanNotes(raw, rms, params, duration, ctx);
   // the notes the beat is tracked on (the returned `main`): from before the bass-line swap below,
@@ -595,6 +616,13 @@ export function accompFromRaw(
   // one bass note the kick drum chopped into several (music/cleanup.ts foldBassRestrikes)
   // (not needed with the bass line: it has one note at a time and splits only at clear attacks)
   let notes = rise && BASS_FOLD.enabled && !bassLine.length ? foldBassRestrikes(main, rise) : main;
+  // "Full song + piano model" (music/pianoBlend.ts): separated, no sung line, with Basic Pitch's posteriors
+  const blendEv = ctx.specialist?.length && ctx.separated && !melody.length && frames && nFrames ? blendEvidence(ctx) : undefined;
+  const prepared = blendEv ? prepareSpecialist(ctx.specialist!, notes, blendEv) : undefined;
+  const leadOpts: LeadRecoveryOptions = {
+    ...(melody.length ? { exclude: sungRanges(melody) } : {}),
+    ...(LEAD_EVERY_LEVEL.instrumental && ctx.separated && !melody.length ? { doublesHardOnly: true } : { hardOnly: true }),
+  };
   const leadParams = leadPassParams(params);
   if (leadParams && leadRaw?.length) {
     const candidates = cleanNotes(leadRaw, rms, leadParams, duration, ctx);
@@ -608,9 +636,19 @@ export function accompFromRaw(
             }),
           }
         : {}),
-      ...(melody.length ? { exclude: sungRanges(melody) } : {}),
-      ...(LEAD_EVERY_LEVEL.instrumental && ctx.separated && !melody.length ? { doublesHardOnly: true } : { hardOnly: true }),
+      ...leadOpts,
     });
+  }
+  let counts: BlendCounts | undefined;
+  if (prepared && blendEv) {
+    // lead notes in holes of the tune line the instruments' notes make (recovered ones included);
+    // added as recovered lead notes are (leadRecovery.ts `extra`): the tune line's own notes stay
+    const inserts = blendLeadCandidates(prepared, tuneLineOf(notes, duration), blendEv);
+    const before = notes.length;
+    if (inserts.length) notes = addExtraLead(notes, inserts, leadOpts);
+    const fixed = octaveFixes(notes, tuneLineOf(notes, duration), prepared, blendEv);
+    notes = fixed.notes;
+    counts = { leadAdded: notes.length - before, fills: 0, riffSegments: 0, octaveFixes: fixed.moved };
   }
   // With a sung line the singer carries the tune: nothing is held (holding the instruments' tune in
   // the singer's pauses lowered the 5 sung test songs' voicing-counted Easy / Medium accuracy).
@@ -621,7 +659,7 @@ export function accompFromRaw(
   // singer's rests).
   if (!frames || !nFrames || !rise || melody.length) return { notes, main: tempoNotes };
   // the tune line's notes held while the model still hears them (music/sustain.ts)
-  const held = sustainTuneLine(notes, duration, {
+  let held = sustainTuneLine(notes, duration, {
     // ...and, on separated songs, while the stem's pitch track stays at their pitch class (stemPitch.ts)
     heldEnd: (n, limit) => {
       const e = heldEnd(frames, onsets, nFrames, n, limit);
@@ -636,7 +674,48 @@ export function accompFromRaw(
         }
       : {}),
   });
-  return { notes: held, main: tempoNotes };
+  if (prepared && blendEv && counts) {
+    // fills under the (held) tune line: keyboard parts and in-between notes
+    const line = tuneLineOf(held, duration);
+    const riff = PIANO_BLEND.riff.enabled ? riffPassages(line, prepared, duration) : [];
+    const f = blendFills(held, prepared, line, duration, blendEv, { riff });
+    held = f.notes;
+    counts = { ...counts, fills: f.fills.length, riffSegments: riff.reduce((k, [a, b]) => k + Math.round((b - a) / PIANO_BLEND.riff.seg), 0) };
+  }
+  return { notes: held, main: tempoNotes, ...(counts ? { blend: counts } : {}) };
+}
+
+/** What the piano-model blend added (TranscriptionInfo.pianoBlend without its version and status). */
+export type BlendCounts = Pick<PianoBlendInfo, 'leadAdded' | 'fills' | 'riffSegments' | 'octaveFixes'>;
+
+/** The instruments' tune line through `notes` as the arrangements see it (Hard-only doublings aside). */
+function tuneLineOf(notes: Note[], duration: number): Note[] {
+  return instrumentLine(tuneCandidates(assignHands(sortNotes(notes.filter((n) => n.role !== 'lead')), duration)));
+}
+
+/** Basic Pitch's evidence (and the drum and stem-pitch cues) for the piano-model blend. */
+function blendEvidence(ctx: CleanContext): BlendEvidence {
+  const frames = ctx.frames!;
+  const onsets = ctx.onsets;
+  const nFrames = ctx.nFrames!;
+  const note = (midi: number, start: number, dur: number): Note => ({ id: -1, midi, start, dur, vel: 0.5, hand: 'R' });
+  const drums = ctx.drums;
+  const pitch = ctx.leadPitch;
+  return {
+    mean: (midi, t0, t1) => noteActivation(frames, nFrames, note(midi, t0, Math.max(0.01, t1 - t0))).mean,
+    onset: (midi, t) => (onsets ? onsetPeak(onsets, nFrames, note(midi, t, 0.05)) : 0),
+    rise: (midi, t) => frameRise(frames, nFrames, timeToFrame(t + ONSET_LATENCY), midi),
+    ...(drums?.length ? { drum: (t0: number, t1: number) => drumOnsetMax(drums, t0, t1) } : {}),
+    ...(pitch
+      ? {
+          pitchAgrees: (midi: number, t0: number, t1: number) => {
+            const s = pitchSupport(pitch, midi, t0, t1);
+            return s.voiced >= 3 && s.pc >= 0.5;
+          },
+        }
+      : {}),
+    heldEnd: (midi, start, end, limit) => heldEnd(frames, onsets, nFrames, note(midi, start, end - start), limit),
+  };
 }
 
 /** Turn raw model note events into cleaned, hand-assigned notes. */
@@ -956,6 +1035,9 @@ async function transcribeAudioOnce(
   }
   // ---- the tune cue: pitch track of the other stem (failures only lose the cue)
   let leadPitch: StoredPitch | undefined;
+  // the piano model's input: the other stem at its rate (made before the stem is freed)
+  let other16: Float32Array | null = null;
+  const blend = !!opts.pianoBlend && !!other && pianoBlendRuns(params, duration, !!device && isMemoryConstrained(device), { separated: !!sep, bassStem: !!sep?.bass, sung: melody.length > 0 });
   if (other) {
     const detail = 'Following the tune in the instruments';
     try {
@@ -966,13 +1048,41 @@ async function transcribeAudioOnce(
       if (signal?.aborted || (err as Error)?.name === 'AbortError') throw aborted();
       console.warn('[transcription] stem pitch tracking failed', err);
     }
+    if (blend) other16 = resampleTo(other, BP_SAMPLE_RATE, SPECIALIST_SAMPLE_RATE);
     other = null;
   }
   if (signal?.aborted) throw aborted();
 
+  // ---- "Full song + piano model": the piano model on the other stem (a failure only loses the blend)
+  let specialist: SpecNote[] | undefined;
+  let pianoBlend: PianoBlendInfo | undefined;
+  if (blend && other16) {
+    opts.onPhase?.('piano-blend');
+    const input = other16;
+    other16 = null;
+    try {
+      specialist = opts.specialistNotes ?? (await runBlendModel(input, duration, onProgress, signal, opts.pianoModelUrl));
+    } catch (err) {
+      if (signal?.aborted || (err as Error)?.name === 'AbortError') throw aborted();
+      console.warn('[transcription] piano model (blend) failed', specialistFailureMessage(err), err);
+      warnings.push(PIANO_BLEND_FAILED);
+      pianoBlend = { v: 1, status: 'failed', input: 'other', leadAdded: 0, fills: 0, riffSegments: 0, octaveFixes: 0 };
+    }
+    if (signal?.aborted) throw aborted();
+  }
+
   onProgress({ stage: 'arranging', progress: null, detail: melody.length ? 'Fitting the vocal melody, assigning hands, tracking beats' : 'Cleaning notes, assigning hands, tracking beats' });
   const drums = sep?.drumOnsets;
-  const accomp = accompFromRaw(result.notes, result.leadNotes, result.rms, params, duration, { frames: result.frames, onsets: result.onsets, nFrames: result.nFrames, drums, bass, leadPitch, separated: !!sep }, { melody });
+  const accomp = accompFromRaw(
+    result.notes,
+    result.leadNotes,
+    result.rms,
+    params,
+    duration,
+    { frames: result.frames, onsets: result.onsets, nFrames: result.nFrames, drums, bass, leadPitch, separated: !!sep, ...(specialist ? { specialist } : {}) },
+    { melody },
+  );
+  if (specialist) pianoBlend = { v: 1, status: 'ok', input: 'other', leadAdded: 0, fills: 0, riffSegments: 0, octaveFixes: 0, ...accomp.blend };
   const accompNotes = accomp.notes;
   const notes = mergeMelody(accompNotes, melody, duration);
   if (result.backend === 'cpu') {
@@ -988,7 +1098,13 @@ async function transcribeAudioOnce(
     duration,
     tempo,
     key: detectKey(notes),
-    posteriors: { ...toStored(result, drums?.length ? drums : undefined), ...(bass ? { bass } : {}), ...(leadPitch ? { leadPitch } : {}), ...(sep ? { separated: true as const } : {}) },
+    posteriors: {
+      ...toStored(result, drums?.length ? drums : undefined),
+      ...(bass ? { bass } : {}),
+      ...(leadPitch ? { leadPitch } : {}),
+      ...(sep ? { separated: true as const } : {}),
+      ...(specialist ? { specialist: packSpecNotes(specialist) } : {}),
+    },
     info: {
       method: 'basic-pitch',
       estimated: true,
@@ -1007,11 +1123,59 @@ async function transcribeAudioOnce(
             },
           }
         : {}),
+      ...(pianoBlend ? { pianoBlend } : {}),
       warnings,
       confidence: Math.round(meanConf * 100) / 100,
     },
     ...(separationFailure ? { separationFailure } : {}),
   };
+}
+
+// ---------------------------------------------------------------- "Full song + piano model"
+
+/** Shown when the blend's piano model could not run (the song gets the standard Full song result). */
+export const PIANO_BLEND_FAILED = 'The piano model could not run, so this song uses the standard Full song result.';
+
+/**
+ * Whether the "Full song + piano model" blend runs for an import (asked for, and): the "Full song"
+ * preset's stem passes run (extraStemPasses: not on memory-constrained devices, at most
+ * EXTRA_STEM_PASS_MAX_SECONDS), the song was separated in the browser with a bass stem (server stems
+ * have none), and there is no sung line (the singer carries the tune there).
+ */
+export function pianoBlendRuns(params: ExtractionParams, duration: number, constrained: boolean, s: { separated: boolean; bassStem: boolean; sung: boolean }): boolean {
+  return extraStemPasses(params, duration, constrained) && s.separated && s.bassStem && !s.sung;
+}
+
+/** Progress text of the blend's piano model run (stage 'piano-model'). */
+export function blendDetail(e: { stage: 'loading-model' | 'analyzing'; loaded?: number; total?: number; done?: number; segments?: number }): string {
+  if (e.stage === 'loading-model') {
+    if (e.total && e.loaded !== undefined && e.loaded < e.total) return `Downloading the piano model (${Math.round(e.loaded / 1e6)} of ${Math.round(e.total / 1e6)} MB)`;
+    return 'Preparing the piano model';
+  }
+  return e.segments ? `Analyzing segment ${Math.min(e.segments, (e.done ?? 0) + 1)} of ${e.segments}` : 'Analyzing';
+}
+
+/**
+ * The piano model on the 16 kHz other stem (handed to its worker), its notes with the evidence the
+ * blend uses (music/pianoBlend.ts specNotesFromOutputs); the output maps are dropped. The worker is
+ * released afterwards (the Studio opens next).
+ */
+async function runBlendModel(audio16k: Float32Array, duration: number, onProgress: (e: ProgressEvent) => void, signal: AbortSignal | undefined, modelUrl?: string): Promise<SpecNote[]> {
+  onProgress({ stage: 'piano-model', progress: null, detail: 'Preparing the piano model' });
+  let runPianoSpecialist: typeof import('../pianoSpecialist').runPianoSpecialist;
+  try {
+    ({ runPianoSpecialist } = await import('../pianoSpecialist'));
+  } catch (err) {
+    throw new Error(SPECIALIST_CODE_FAILED, { cause: err });
+  }
+  if (signal?.aborted) throw aborted();
+  const run = await runPianoSpecialist(
+    audio16k,
+    (e) => onProgress({ stage: 'piano-model', progress: e.progress, detail: blendDetail(e) }),
+    signal,
+    { release: true, transfer: true, ...(modelUrl ? { modelUrl } : {}) },
+  );
+  return specNotesFromOutputs(run, duration);
 }
 
 // ---------------------------------------------------------------- piano specialist
@@ -1183,7 +1347,16 @@ export async function redetectNotes(
 
 /** The clean context of stored posteriors (re-detection): the same evidence an import passes to accompFromRaw. */
 export function storedContext(post: StoredPosteriors): CleanContext {
-  return { frames: post.frames, onsets: post.onsets, nFrames: post.nFrames, drums: post.drums, bass: post.bass, leadPitch: post.leadPitch, separated: !!post.separated };
+  return {
+    frames: post.frames,
+    onsets: post.onsets,
+    nFrames: post.nFrames,
+    drums: post.drums,
+    bass: post.bass,
+    leadPitch: post.leadPitch,
+    separated: !!post.separated,
+    ...(post.specialist?.length ? { specialist: unpackSpecNotes(post.specialist) } : {}),
+  };
 }
 
 async function reextract(post: StoredPosteriors, params: ExtractionParams, duration: number, opts: ReextractOptions): Promise<{ main: Note[]; notes: Note[] }> {

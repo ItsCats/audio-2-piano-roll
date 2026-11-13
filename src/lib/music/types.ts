@@ -20,6 +20,12 @@ export interface Note {
    * Easy's left hand follows it where it sounds.
    */
   role?: 'melody' | 'lead' | 'bass';
+  /**
+   * 'piano': added by the "Full song + piano model" blend (music/pianoBlend.ts) from the piano
+   * model's notes: a lead note in a hole of the tune line, or a fill (keyboard part, in-between
+   * note; never role 'melody' or 'lead'). Absent on every other note.
+   */
+  src?: 'piano';
 }
 
 /** Sustain pedal held from `start` to `end` (seconds). */
@@ -161,9 +167,31 @@ export interface TranscriptionInfo {
     ms: number;
     threads?: number;
   };
+  /**
+   * The "Full song + piano model" blend (pipeline.ts, music/pianoBlend.ts): absent when it was not
+   * asked for (and on every song imported before it existed).
+   */
+  pianoBlend?: PianoBlendInfo;
   warnings: string[];
   /** Rough 0..1 indicator of how clean the model output was (mean peak note confidence). */
   confidence?: number;
+}
+
+/** What the piano-model blend did on import (TranscriptionInfo.pianoBlend). */
+export interface PianoBlendInfo {
+  v: 1;
+  /** 'failed': the piano model did not run (the notes are the standard Full song result) */
+  status: 'ok' | 'failed';
+  /** the audio the piano model heard: the separated "other" stem (accompaniment minus bass) */
+  input: 'other';
+  /** lead notes added in holes of the tune line */
+  leadAdded: number;
+  /** fill notes added (keyboard parts, in-between notes) */
+  fills: number;
+  /** 2 s segments where fills may go above the tune ("riff on top", off unless enabled) */
+  riffSegments: number;
+  /** tune notes moved to the piano model's octave (off unless enabled) */
+  octaveFixes: number;
 }
 
 export interface Song {

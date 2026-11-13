@@ -29,7 +29,7 @@
  */
 import type { Note } from './types';
 import { newNoteId, sortNotes } from './cleanup';
-import { assignHands } from './hands';
+import { assignHands, handBySplit } from './hands';
 
 export interface MelodyOptions {
   /** Plausible sung range (MIDI). Notes outside it are ignored. */
@@ -546,6 +546,15 @@ function withoutRole(n: Note): Note {
  */
 export function mergeMelody(accomp: Note[], melody: Note[], duration: number): Note[] {
   const all = accomp.map(withoutRole);
+  // the piano-model blend's notes (Note.src, music/pianoBlend.ts) take no part in the hand split
+  // either: they get the hand of the split the others make, so those keep the hands they have without the blend
+  const blend = all.some((n) => n.src === 'piano' && n.role !== 'lead');
+  if (blend) {
+    const added = all.filter((n) => n.src === 'piano' && n.role !== 'lead');
+    const rest = mergeMelody(all.filter((n) => !(n.src === 'piano' && n.role !== 'lead')), melody, duration);
+    const hand = handBySplit(rest.filter((n) => n.role !== 'lead'), duration);
+    return sortNotes([...rest, ...added.map((n) => ({ ...n, hand: hand(n) }))]);
+  }
   const hardOnly = all.filter((n) => n.role === 'lead').map((n) => ({ ...n, hand: 'R' as const }));
   const acc = hardOnly.length ? all.filter((n) => n.role !== 'lead') : all;
   let merged: Note[];

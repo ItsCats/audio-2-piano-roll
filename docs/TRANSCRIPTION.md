@@ -10,6 +10,10 @@ file ─► validate (type, ≤300 MB) ─► decode + resample to 22 050 Hz mon
      ─► hand assignment ─► beat tracking ─► key detection
      ─► Easy / Medium / Hard arrangements (tune line, playability pass)
 
+"Full song" + "Add the high-accuracy piano model" (opt-in, section 3c): as above with in-browser
+separation, then the piano specialist on the separated "other" stem (16 kHz) ─► its notes blended
+into the Full song notes (lead notes in holes of the tune line, keyboard parts / in-between notes)
+
 "Piano solo" + "High-accuracy piano model" (opt-in, section 3b):
 file ─► validate ─► decode + resample to 16 000 Hz mono ─► piano specialist (ONNX, WASM worker)
      ─► regression post-processing (onset / offset / velocity) ─► hands ─► beats ─► key ─► arrangements
@@ -30,7 +34,7 @@ file ─► validate ─► decode + resample to 16 000 Hz mono ─► piano spe
 | When it is used | always, unless "High-accuracy piano model" is picked | only when picked (off by default on every device; the choice is remembered). Phones and low-memory devices (`backendChoice.ts isMemoryConstrained`) are told it is not recommended there: ≈ 750 MB more memory and slower (one iPhone test: an 8-minute piece in ≈ 9 minutes, ≈ 70 s per audio minute, single-threaded) |
 | Re-tune detection afterwards | yes (stored posteriors) | no Basic Pitch posteriors are stored, so the detection re-tuning does not apply to these notes |
 
-The specialist is offered with the "Piano solo" preset only. Separation ("Separate vocals & drums") is never combined with it.
+As its own engine the specialist is offered with the "Piano solo" preset only, and separation ("Separate vocals & drums") is never combined with it. With "Full song" it can be **added** to Basic Pitch instead ("Add the high-accuracy piano model", section 3c): Basic Pitch stays the engine, the specialist runs on the separated "other" stem, and only some of its notes are blended in.
 
 Everything runs on the user's device. Measured accuracy on real recordings is on the in-app
 **Accuracy** page (`/accuracy`, numbers in `src/lib/accuracyStats.ts`); how it was measured is in
@@ -75,6 +79,24 @@ Measured 2026-11-12 (the app's real pipeline in Chromium, whole recordings, 3 WA
 
 Licenses: trained weights **CC BY 4.0** (Zenodo record 4034264; changes: converted to ONNX with float16 weights, pedal model removed); inference code `piano_transcription_inference` **MIT** (PyPI metadata; the repository has no LICENSE file); training code `bytedance/piano_transcription` **Apache-2.0** (stated in its README); the STFT / log-mel layers in the graph come from torchlibrosa (MIT). Attribution is on the Credits page (`src/lib/credits.ts`). The model was trained on MAESTRO (CC BY-NC-SA 4.0); the dataset itself is not distributed.
 
+## 3c. Full song + piano model ("Add the high-accuracy piano model")
+
+Opt-in for the "Full song" preset (`importStore.ts PIANO_BLEND_DEFAULT`: off until its thresholds are tuned against the references; the choice is remembered in the import prefs as `pianoBlend`). Code: `transcription/pipeline.ts` (`pianoBlendRuns`, `runBlendModel`, `accompFromRaw`) and `music/pianoBlend.ts` (pure).
+
+Why: on an instrumental band test track the specialist heard far more of the band's keyboard part than Basic Pitch (63 % vs 24 % of a multi-instrument transcriber's piano notes at the exact pitch, ±80 ms; riffs note-exact) and some lead notes Basic Pitch misses in holes of the tune; but its top line was much worse (the lead on top at 23–26 % of lead onsets vs 53 %), its bass was poor (15–26 % vs 68 % of the bass notes) and it cannot settle the octave slips (the song doubles its tune in octaves; it has the wrong octave louder in a third of them). So the Full song result stays as it is and the specialist only **adds** notes:
+
+* **When it runs**: the option is ticked, the "Full song" stem passes run (`extraStemPasses`: not on memory-constrained devices, at most 10 minutes), the song was separated **in the browser** with a bass stem (server stems have none) and there is **no sung line**. Phones and low-memory devices get the checkbox disabled ("needs about 0.8 GB more memory"); without in-browser separation it is disabled too.
+* **Input and order**: the "other" stem (accompaniment minus bass, vocal stem added back as for transcription) is resampled from 22.05 to 16 kHz (`decode.ts resampleTo`, windowed sinc) after the stem pitch track and freed; the specialist runs after Basic Pitch's passes (separation has ended by then, so the tab's peak is about the larger of separation's and Basic Pitch + specialist, not their sum); its worker is released afterwards. Its notes keep the onset peak and frame mean read from its output maps (`SpecNote`); the maps are dropped.
+* **Preparation** (`prepareSpecialist`): shifted +5 ms; same-pitch fragments under 60 ms apart joined unless Basic Pitch shows a new attack; relative velocity in its 50 ms onset cluster; dropped: below MIDI 43, MIDI 43–54 without Basic Pitch frame evidence ≥ 0.30 or where the bass line has its pitch class, drum hits, overtones (12 / 19 / 24 semitones above a sounding app note with weak Basic Pitch evidence), re-detections inside a sounding app note of its pitch, notes under 50 ms. A note with an app note of its pitch starting within 80 ms is "matched" (already there).
+* **Lead notes in holes** (`blendLeadCandidates`): in a gap of at least 0.2 s between consecutive notes of the Full song's tune line, an unmatched note near the line between the gap's neighbors (±5 semitones, ±7 when they are over 1 s apart), loud in its cluster with a clear onset, heard by Basic Pitch or the stem pitch track, the highest of its cluster; at most 3 per second of gap. They go in through `leadRecovery.ts` `extra` (no posterior test, no tune-line pass, so the line's own notes are untouched) and get the roles recovered lead notes get (every level for a separated instrumental, Hard-only when doubling a main note an octave away).
+* **Fills** (`blendFills`): unmatched notes with fuse = 0.45·onset peak + 0.35·min(1, Basic Pitch mean / 0.25) + 0.20·relative velocity ≥ 0.55, at least 3 semitones under the tune note sounding at their start (any pitch where none sounds), held to Basic Pitch's held end (at least 0.12 s), at most 4 per second in any 2 s and at most 4 right-hand / 3 left-hand notes per onset cluster (app notes counted first, the bass line not). They take the hand of the split the app's notes make (`hands.ts handBySplit`), so no app note changes hand.
+* **Never changed**: the bass line, the app's notes and their hands, the held tune notes. Two further rules exist but are off until they meet their own measurement bars: moving a tune note to the specialist's octave (`PIANO_BLEND.octave`) and fills above the tune where the line is sparse and the specialist plays a riff (`PIANO_BLEND.riff`).
+* **Notes**: added notes carry `src: 'piano'` (fills have no role). Easy and Medium are built from them as from any note (difficulty.ts unchanged).
+* **Storage** (IndexedDB stays at version 3): the song's `transcription.pianoBlend` (`{v: 1, status, input: 'other', leadAdded, fills, riffSegments, octaveFixes}`) and the specialist's notes with the posteriors (`StoredPosteriors.specialist`, 6 numbers per note, about 0.4 KB per second), so re-detection blends them in again. The specialist's own maps are not stored: its thresholds cannot be re-tuned afterwards. Older songs have neither field and behave exactly as before; the method stays `basic-pitch`.
+* **Progress, cancel, failure**: its own stage ("Piano model: keyboard parts and in-between notes": downloading, preparing, "Analyzing segment 7 of 36"); Cancel stops its worker within seconds. Any other error (download, out of memory, a dead worker) is caught: the song gets the standard Full song result, with the notice "The piano model could not run, so this song uses the standard Full song result." While it runs, the crash marker moves from separation to the blend (`piano2vision-piano-blend-running`); after a tab that died there, the next load turns the option off, says "The piano model was turned off after the last import closed unexpectedly. You can turn it back on under Detection.", and the interrupted import resumes with separation on and the blend off.
+* **Cost**: about 40 s per minute of audio with 3 WASM threads on a 4-core machine (the specialist's own speed), plus the 41 MB download the first time; about 0.75 GB more memory while it runs.
+* **Measuring**: `tests/accuracy/transcribe.mjs --separate --presets mix-blend` (with `--specialist-notes DIR` the specialist's notes are cached, so tuning runs need no model run).
+
 ## 4. Note extraction and cleanup
 
 A typed-array port of Basic Pitch's `output_to_notes_polyphonic` (peak-picked onsets, notes tracked while the frame activation stays above threshold, optional melodia trick for sustained pitches without onsets), plus:
@@ -108,6 +130,7 @@ A typed-array port of Basic Pitch's `output_to_notes_polyphonic` (peak-picked on
 
 * **The tune**: with a sung line, Easy/Medium follow it (moved by whole phrases into the right-hand register, median E4–E5, clear of the left hand; Hard keeps the sung pitch). Without a singer — or where nobody sings for two bars or more — they follow the **instruments' tune**: `melody.ts instrumentLine` runs the same best-path reduction over the accompaniment's right-hand notes, so the right hand follows ONE smooth lead line instead of hopping between chord tops and the lead instrument (Easy right-hand leaps over an octave: 3.5 % → 1.4 % on MAESTRO, 8.4 % → 0.8 % on an instrumental band track).
 * **Playability pass** (`music/playability.ts`, reach per level `MAX_SPAN`: Easy 7, Medium 12, Hard 14 semitones): on Medium, notes out of one hand's reach move to the other hand when it is free and in range, otherwise the least important (inner / doubled) notes are dropped — Medium never asks for more than an octave (was 4–10 % of moments). Hard only reassigns notes to the other hand and keeps every note, so some wide stretches remain where both hands are busy.
+* **Full song + piano model** (section 3c): Hard is the blended notes; Easy and Medium are built from them by the same rules (the fills under a tune note thin out to chord tones on Medium; where no tune note sounds a fill can carry the line; lead notes added in holes follow the same rule as recovered lead notes).
 * Quantisation strength is scaled by tempo confidence so a poorly tracked tempo never drags notes onto a wrong grid.
 
 ## Presets

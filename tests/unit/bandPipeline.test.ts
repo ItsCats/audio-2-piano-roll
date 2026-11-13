@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { BASS_BAND_PITCHES, BASS_LINE, bassBand, decodeBassLine, type BassPosteriors } from '../../src/lib/transcription/bassLine';
 import { BP_FPS, BP_MIDI_OFFSET, BP_N_PITCHES, timeToFrame } from '../../src/lib/transcription/constants';
-import { EXTRACTION_PRESETS, EXTRA_STEM_PASS_MAX_SECONDS, accompFromRaw, extraStemPasses, stemLevelDb, storedContext } from '../../src/lib/transcription/pipeline';
+import { EXTRACTION_PRESETS, EXTRA_STEM_PASS_MAX_SECONDS, accompFromRaw, blendDetail, extraStemPasses, pianoBlendRuns, stemLevelDb, storedContext } from '../../src/lib/transcription/pipeline';
+import { resampleTo } from '../../src/lib/transcription/decode';
+import { packSpecNotes, type SpecNote } from '../../src/lib/music/pianoBlend';
+import { mergeMelody } from '../../src/lib/music/melody';
 import type { RawNoteEvent } from '../../src/lib/transcription/noteExtraction';
 import type { StoredPosteriors } from '../../src/lib/transcription/posteriors';
 import { storedPitch } from '../../src/lib/transcription/stemPitch';
@@ -84,5 +87,106 @@ describe('band pipeline (separated bass stem, stem passes)', () => {
     expect(old.bass).toBeUndefined();
     expect(old.leadPitch).toBeUndefined();
     expect(old.separated).toBe(false);
+  });
+});
+
+describe('"Full song + piano model" blend (pipeline)', () => {
+  const D = 6;
+  const nFrames = Math.ceil(D * BP_FPS) + 1;
+  /** accompaniment posteriors: `events` = [midi, start s, end s, frame level, onset level] */
+  function post(events: [number, number, number, number, number][]) {
+    const frames = new Float32Array(nFrames * BP_N_PITCHES);
+    const onsets = new Float32Array(nFrames * BP_N_PITCHES);
+    for (const [midi, a, b, level, on] of events) {
+      const f = midi - BP_MIDI_OFFSET;
+      for (let t = timeToFrame(a); t < timeToFrame(b); t++) frames[t * BP_N_PITCHES + f] = level;
+      for (let t = timeToFrame(a); t <= timeToFrame(a) + 1; t++) onsets[t * BP_N_PITCHES + f] = on;
+    }
+    return { frames, onsets, nFrames };
+  }
+  // a tune C5 (0-1 s) and E5 (2.2-3.2 s) over a held C3; the piano model also hears an E4 under the
+  // C5 (a fill), a D5 in the hole between them (a lead insert) and the tune notes themselves
+  const tune: [number, number, number][] = [[72, 0.1, 1.0], [76, 2.2, 3.2], [48, 0.1, 3.2]];
+  const raw = tune.map(([m, a, b]) => ev(m, timeToFrame(a), timeToFrame(b)));
+  const rms = new Float32Array(D * 100).fill(0.3);
+  const evidence = post([...tune.map(([m, a, b]) => [m, a, b, 0.8, 0.9] as [number, number, number, number, number]), [64, 0.3, 0.8, 0.3, 0.5], [74, 1.5, 1.9, 0.2, 0.5]]);
+  const specialist: SpecNote[] = [
+    { start: 0.1, dur: 0.9, midi: 72, vel: 0.8, onsetPeak: 0.95, frameMean: 0.8 },
+    { start: 0.3, dur: 0.5, midi: 64, vel: 0.7, onsetPeak: 0.9, frameMean: 0.7 },
+    { start: 1.5, dur: 0.4, midi: 74, vel: 0.8, onsetPeak: 0.9, frameMean: 0.7 },
+    { start: 2.2, dur: 1.0, midi: 76, vel: 0.8, onsetPeak: 0.95, frameMean: 0.8 },
+  ];
+  const ctx = { ...evidence, separated: true };
+  const strip = (ns: { midi: number; start: number; dur: number; role?: string; src?: string }[]) => ns.map((n) => [n.midi, +n.start.toFixed(4), +n.dur.toFixed(4), n.role ?? '', n.src ?? '']);
+
+  it('adds the piano model’s notes (a fill under the tune, a lead note in its hole) and keeps every other note as it is', () => {
+    const off = accompFromRaw(raw, undefined, rms, EXTRACTION_PRESETS.mix, D, ctx);
+    const on = accompFromRaw(raw, undefined, rms, EXTRACTION_PRESETS.mix, D, { ...ctx, specialist });
+    const added = on.notes.filter((n) => n.src === 'piano');
+    expect(added.map((n) => n.midi).sort()).toEqual([64, 74]);
+    expect(strip(on.notes.filter((n) => !n.src))).toEqual(strip(off.notes));
+    expect(on.blend).toEqual({ leadAdded: 1, fills: 1, riffSegments: 0, octaveFixes: 0 });
+    expect(off.blend).toBeUndefined();
+    // the beat is tracked on the same notes
+    expect(strip(on.main)).toEqual(strip(off.main));
+    // hands: the app's notes keep theirs
+    const hands = (ns: { midi: number; start: number; hand: string; src?: string }[]) => ns.filter((n) => !n.src).map((n) => [n.midi, n.start, n.hand]);
+    expect(hands(mergeMelody(on.notes, [], D))).toEqual(hands(mergeMelody(off.notes, [], D)));
+  });
+
+  it('does nothing for sung songs, unseparated songs or other presets, or without Basic Pitch posteriors', () => {
+    const plain = (c: object, params = EXTRACTION_PRESETS.mix, lead = {}) => strip(accompFromRaw(raw, undefined, rms, params, D, c, lead).notes);
+    const melody = [{ id: 9e6, midi: 79, start: 4, dur: 1, vel: 0.8, hand: 'R' as const, role: 'melody' as const }];
+    expect(plain({ ...ctx, specialist }, EXTRACTION_PRESETS.mix, { melody })).toEqual(plain(ctx, EXTRACTION_PRESETS.mix, { melody }));
+    expect(plain({ ...ctx, separated: false, specialist })).toEqual(plain({ ...ctx, separated: false }));
+    expect(plain({ ...ctx, specialist }, EXTRACTION_PRESETS.piano)).toEqual(plain(ctx, EXTRACTION_PRESETS.piano));
+    expect(plain({ separated: true, specialist })).toEqual(plain({ separated: true }));
+  });
+
+  it('re-detection gets the stored piano-model notes back (and older records none)', () => {
+    const stored: StoredPosteriors = { nFrames: 10, frames: new Uint8Array(880), onsets: new Uint8Array(880), rms: new Float32Array(10), separated: true, specialist: packSpecNotes(specialist) };
+    const back = storedContext(stored).specialist!;
+    expect(back.map((n) => n.midi)).toEqual(specialist.map((n) => n.midi));
+    back.forEach((n, i) => {
+      expect(n.start).toBeCloseTo(specialist[i].start, 6);
+      expect(n.onsetPeak).toBeCloseTo(specialist[i].onsetPeak, 6);
+    });
+    expect('specialist' in storedContext({ ...stored, specialist: undefined })).toBe(false);
+  });
+
+  it('runs only where the stem passes run, separated in the browser with a bass stem, without a sung line', () => {
+    const ok = { separated: true, bassStem: true, sung: false };
+    expect(pianoBlendRuns(EXTRACTION_PRESETS.mix, 200, false, ok)).toBe(true);
+    expect(pianoBlendRuns(EXTRACTION_PRESETS.mix, 200, true, ok)).toBe(false);
+    expect(pianoBlendRuns(EXTRACTION_PRESETS.mix, EXTRA_STEM_PASS_MAX_SECONDS + 1, false, ok)).toBe(false);
+    expect(pianoBlendRuns(EXTRACTION_PRESETS.piano, 200, false, ok)).toBe(false);
+    expect(pianoBlendRuns(EXTRACTION_PRESETS.mix, 200, false, { ...ok, bassStem: false })).toBe(false);
+    expect(pianoBlendRuns(EXTRACTION_PRESETS.mix, 200, false, { ...ok, sung: true })).toBe(false);
+    expect(pianoBlendRuns(EXTRACTION_PRESETS.mix, 200, false, { ...ok, separated: false })).toBe(false);
+  });
+
+  it('progress text', () => {
+    expect(blendDetail({ stage: 'loading-model', loaded: 12e6, total: 41e6 })).toBe('Downloading the piano model (12 of 41 MB)');
+    expect(blendDetail({ stage: 'loading-model' })).toBe('Preparing the piano model');
+    expect(blendDetail({ stage: 'analyzing', done: 6, segments: 36 })).toBe('Analyzing segment 7 of 36');
+  });
+});
+
+describe('resampleTo', () => {
+  const tone = (hz: number, rate: number, seconds: number) => Float32Array.from({ length: Math.round(rate * seconds) }, (_, i) => 0.5 * Math.sin((2 * Math.PI * hz * i) / rate));
+  const rmsOf = (x: Float32Array, a: number, b: number) => Math.sqrt(x.subarray(a, b).reduce((s, v) => s + v * v, 0) / (b - a));
+  it('22.05 kHz to 16 kHz: same length in time, a 1 kHz tone keeps its level and phase', () => {
+    const x = tone(1000, 22050, 1);
+    const y = resampleTo(x, 22050, 16000);
+    expect(y.length).toBe(16000);
+    const ref = tone(1000, 16000, 1);
+    expect(rmsOf(y, 1000, 15000)).toBeCloseTo(rmsOf(ref, 1000, 15000), 2);
+    let err = 0;
+    for (let i = 1000; i < 15000; i++) err = Math.max(err, Math.abs(y[i] - ref[i]));
+    expect(err).toBeLessThan(0.01);
+  });
+  it('removes what is above the new Nyquist frequency (no aliasing)', () => {
+    const y = resampleTo(tone(9500, 22050, 1), 22050, 16000);
+    expect(rmsOf(y, 1000, 15000)).toBeLessThan(0.01);
   });
 });
