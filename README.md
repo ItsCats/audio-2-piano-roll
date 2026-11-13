@@ -63,6 +63,8 @@ npm test             # unit tests (vitest): note extraction, timing, beats, hand
 npm run test:e2e     # browser benchmark: renders known pieces with the real piano engine, transcribes them, fails on F1 regression
 ```
 
+Sheet-music reading (PDF / photo, beta): `node tests/e2e/omr.mjs` engraves a made-up piece with OSMD, reads it back as a page image, a PDF and a phone-like photo, and fails below notes F1 0.8 (0.7 for the photo); the model and its measurements are described in `public/models/omr/README.md`.
+
 Sheet music: `node tests/e2e/sheet.mjs --dist <build>` checks the sheet view, cursor, tap-to-seek, PDF/MusicXML downloads and drawing speed in Chromium under the production headers; `tests/sheet/export.mjs` + `tests/sheet/validate_musicxml.py` check the MusicXML against the official 4.0 schema and music21 (see the files for setup).
 
 The E2E benchmark needs Chromium for Playwright (`npx playwright install chromium`). It is the regression gate on synthetic pieces (Bach BWV 846 F1 ≈ 0.94, chord/melody study ≈ 0.88, mean onset error ≈ 8–12 ms).
@@ -139,6 +141,7 @@ src/
     export/          video export (WebCodecs/mediabunny), downloads, presets
     sheet/           sheet music: notes → measures/voices/spelling → MusicXML; OSMD view, PDF
     score/           sheet-music import: MusicXML / .mxl / MuseScore → repeats unrolled → notes, pedal, beats (importMusicXml is the entry point for PDF/photo recognition)
+    omr/             sheet-music reading (beta): PDF pages / photos → page clean-up, staff finding → Sheet Music Transformer (ONNX worker) → **kern → MusicXML → score/
     midiInput/       Web MIDI input and practice scoring
     storage/         IndexedDB persistence
     youtube/         URL parsing, oEmbed, IFrame player, tab-audio capture
