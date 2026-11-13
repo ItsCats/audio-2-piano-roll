@@ -153,3 +153,17 @@ become a 1920 x 16,000 px page). Pages are sent to the worker one at a time.
 The changes do not alter the results: on 8 test pages (two per category) the production build gives
 byte-identical MusicXML before and after them, with all three networks kept loaded and in low-memory mode;
 the paper cropping gives identical crops and pixels on all 18 photo and real pages.
+**Held-out pieces, compared with the Quick reader** (2026-11-13, production build, `tests/e2e/homr-prod.mjs`,
+3 threads, corners given for the photos): the 16 pieces an independent review generated for the Sheet Music
+Transformer reader (`public/models/omr/README.md`, "Held-out re-measurement"; keys, meters and textures the
+test set above lacks, engraved with Verovio), scored with the same scorer (`tests/e2e/omrScore.ts`, notes
+via the app's MusicXML import), mean over pieces:
+
+| test set | homr notes / rhythm | Sheet Music Transformer notes / rhythm |
+|---|---|---|
+| new pieces, Verovio page images | 0.989 / 0.989 | 0.873 / 0.780 |
+| new pieces, simulated phone photos, corners set | 0.989 / 0.989 | 0.869 / 0.768 |
+
+15 of the 16 pieces came out perfect in both rows; the ledger-line piece (notes up to five ledger lines and
+an 8va passage) scored 0.843. 35–200 s per page (the slow ones while two other browser jobs shared the
+4 cores; 35–41 s on an idle machine).
