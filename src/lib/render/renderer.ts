@@ -558,6 +558,7 @@ export class PianoRollRenderer {
         ctx.stroke();
       }
       // label
+      let labelTop: number | null = null;
       if (showLabels && r.h >= s.labels.minNoteHeight * sc && r.w >= labelSize * 0.8) {
         const text = formatLabel(n.midi, s.labels.style, flats ? 'flats' : 'sharps', s.labels.custom);
         if (text) {
@@ -580,9 +581,12 @@ export class PianoRollRenderer {
             ctx.globalAlpha = alpha * s.labels.opacity;
             ctx.fillStyle = s.labels.color;
             ctx.fillText(text, r.x + r.w / 2, ty);
+            if (s.labels.position === 'bottom') labelTop = ty - size * 0.85;
           }
         }
       }
+      // fingering from the sheet: a small circled number near the note's start (above a bottom label)
+      if (n.finger && s.labels.fingering !== false) this.drawFinger(ctx, n.finger, r, hitY, labelTop, labelSize, sc, alpha);
       ctx.globalAlpha = 1;
     }
 
@@ -709,6 +713,30 @@ export class PianoRollRenderer {
    * keys. All notes are drawn into a quarter-resolution layer that is blurred once and added
    * on top of the background, so the cost doesn't grow with the number of notes.
    */
+  private drawFinger(ctx: Ctx2D, finger: number, r: { x: number; y: number; w: number; h: number }, hitY: number, labelTop: number | null, labelSize: number, sc: number, alpha: number): void {
+    const size = Math.max(9 * sc, Math.min(labelSize * 0.9, r.w * 0.8));
+    const rad = size * 0.62;
+    const top = Math.max(r.y, 0);
+    const bottom = labelTop ?? Math.min(r.y + r.h, hitY) - 3 * sc;
+    const cy = bottom - rad - 2 * sc;
+    if (r.w < rad * 1.6 || cy - rad < top + 1 * sc) return;
+    const cx = r.x + r.w / 2;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.beginPath();
+    ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(10,12,20,0.55)';
+    ctx.fill();
+    ctx.lineWidth = Math.max(1, 1.2 * sc);
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+    ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `700 ${size}px Inter Variable, Inter, system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText(String(finger), cx, cy + size * 0.36);
+    ctx.restore();
+  }
+
   private drawFallingGlow(ctx: Ctx2D, notes: Note[], now: number, opts: FrameOptions): void {
     const s = this.s;
     const ds = 4;
