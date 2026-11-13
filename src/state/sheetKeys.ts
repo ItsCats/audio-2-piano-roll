@@ -26,7 +26,8 @@ export type SheetAction =
   | { type: 'slur' }
   | { type: 'wedge'; dir: 'cresc' | 'dim' }
   | { type: 'pedal' }
-  | { type: 'picker'; picker: 'dyn' | 'text' | 'key' | 'time' | 'tempo' };
+  | { type: 'picker'; picker: 'dyn' | 'text' | 'key' | 'time' | 'tempo' }
+  | { type: 'help' };
 
 export interface SheetKeyLike {
   code: string;
@@ -46,6 +47,7 @@ export function sheetKeyAction(e: SheetKeyLike, hasSelection: boolean): SheetAct
     if (e.code === 'KeyA') return { type: 'selectAll' };
     return null;
   }
+  if (e.key === '?' || (e.code === 'Slash' && e.shiftKey)) return { type: 'help' };
   if (e.key === '<' || (e.code === 'Comma' && e.shiftKey)) return { type: 'wedge', dir: 'cresc' };
   if (e.key === '>' || (e.code === 'Period' && e.shiftKey)) return { type: 'wedge', dir: 'dim' };
   const digit = /^Digit([0-5])$/.exec(e.code);
@@ -141,6 +143,7 @@ export const SHEET_SHORTCUTS: [string, string][] = [
   ['Click a marking', 'Select it: Del removes it, ← / → move it (Shift: its end)'],
   ['Ctrl+Z / Ctrl+Shift+Z', 'Undo / redo'],
   ['Ctrl+A', 'Select all'],
+  ['?', 'Help and shortcuts'],
 ];
 
 /** Runs sheet actions; set by the sheet view while it is mounted (it loads with the notation code). */

@@ -53,7 +53,7 @@ import { useImport } from '../state/importStore';
 import { arrowSeekDelta, shouldHandleGlobalKey } from '../state/studioKeys';
 import { sheetActionHandler, sheetKeyAction } from '../state/sheetKeys';
 import { buildSheet } from '../lib/sheet';
-import { useCompactSheetUi } from '../state/sheetUi';
+import { useSheetDockLayout } from '../state/sheetUi';
 
 type PanelTab = 'look' | 'labels' | 'sound' | 'practice' | 'arrangement';
 
@@ -366,7 +366,9 @@ export default function StudioPage() {
   const [exportOpen, setExportOpen] = useState(false);
   const [pdfOpen, setPdfOpen] = useState(false);
   const view = useSettings((s) => s.sheet.view);
-  const compactSheet = useCompactSheetUi();
+  // the sheet's edit tools: a row under the header, a dock above the transport, or (a phone held
+  // sideways) a column beside the music that the sheet view draws itself
+  const sheetTools = useSheetDockLayout();
   const [computerKeys, setComputerKeys] = useState(false);
   const importDemo = useImport((s) => s.importDemo);
 
@@ -482,7 +484,7 @@ export default function StudioPage() {
         <SheetReaderNotice key={song.id} song={song} />
         {editMode &&
           (view === 'sheet' ? (
-            !compactSheet && (
+            sheetTools === 'row' && (
               <Suspense fallback={<div className="h-[45px] border-b border-ink-800 bg-ink-900/95" />}>
                 <SheetEditBar layout="row" />
               </Suspense>
@@ -509,7 +511,7 @@ export default function StudioPage() {
           )}
         </FullscreenStage>
         {/* phones and tablets: the sheet's edit tools as a dock above the transport */}
-        {editMode && view === 'sheet' && compactSheet && (
+        {editMode && view === 'sheet' && sheetTools === 'dock' && (
           <Suspense fallback={null}>
             <SheetEditBar layout="dock" />
           </Suspense>

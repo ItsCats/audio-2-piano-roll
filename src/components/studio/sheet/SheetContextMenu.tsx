@@ -1,5 +1,10 @@
-/** Right-click menu on the sheet in Edit mode: the selection's actions with their shortcuts. */
+/**
+ * Right-click menu on the sheet in Edit mode: the selection's actions with their shortcuts. A long
+ * press on a touch screen opens the same actions as a sheet at the bottom, with big buttons.
+ */
 import { useEffect, useRef } from 'react';
+import { currentArrangement } from '../../../state/studioStore';
+import { cn } from '../../ui';
 import { useSheetUi } from '../../../state/sheetUi';
 import { useStudio } from '../../../state/studioStore';
 import { sheetEdit, sheetMark } from './sheetActions';
@@ -11,7 +16,8 @@ export function SheetContextMenu() {
   const markSel = useStudio((s) => s.markSel);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!menu) return;
+    // the touch action sheet closes from its own backdrop
+    if (!menu || menu.touch) return;
     const close = (e: Event) => !ref.current?.contains(e.target as Node) && set({ menu: null });
     window.addEventListener('pointerdown', close, true);
     window.addEventListener('scroll', close, true);
@@ -21,6 +27,7 @@ export function SheetContextMenu() {
     };
   }, [menu, set]);
   if (!menu) return null;
+  if (menu.touch) return <TouchActions />;
   const items: [string, string, () => unknown, boolean][] = [
     ['Up a step', '↑', () => sheetEdit.pitch('step', 1), has],
     ['Down a step', '↓', () => sheetEdit.pitch('step', -1), has],
@@ -59,6 +66,62 @@ export function SheetContextMenu() {
           <span className="font-mono text-[11px] text-ink-400">{key}</span>
         </button>
       ))}
+    </div>
+  );
+}
+
+/** The action sheet of a long press on a note (touch). */
+function TouchActions() {
+  const menu = useSheetUi((s) => s.menu)!;
+  const set = useSheetUi((s) => s.set);
+  const selection = useStudio((s) => s.selection);
+  const arr = useStudio(currentArrangement);
+  const sel = arr?.notes.filter((n) => selection.has(n.id)) ?? [];
+  const finger = sel.length && sel.every((n) => n.finger === sel[0].finger) ? sel[0].finger : undefined;
+  const run = (fn: () => unknown, close = true) => () => {
+    if (close) set({ menu: null });
+    fn();
+  };
+  const big = 'focus-ring flex h-12 items-center justify-center rounded-xl bg-ink-800 px-3 text-[14px] font-medium text-ink-50 active:bg-ink-700 disabled:opacity-40';
+  const selectIds = (ids?: number[]) => ids?.length && useStudio.setState({ selection: new Set(ids), markSel: null });
+  return (
+    <div className="fixed inset-0 z-50 flex items-end bg-black/40" onPointerDown={(e) => e.target === e.currentTarget && set({ menu: null })} data-testid="sheet-actions">
+      <div role="menu" aria-label="Note actions" className="panel w-full rounded-b-none p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-2xl">
+        <p className="mb-2 px-1 text-[12.5px] text-ink-300">{sel.length === 1 ? '1 note selected' : `${sel.length} notes selected`}</p>
+        <div className="grid grid-cols-2 gap-2">
+          <button type="button" role="menuitem" className={big} disabled={!menu.chordIds?.length} onClick={run(() => selectIds(menu.chordIds), false)} data-testid="sheet-act-chord">
+            Select chord
+          </button>
+          <button type="button" role="menuitem" className={big} disabled={!menu.barIds?.length} onClick={run(() => selectIds(menu.barIds), false)} data-testid="sheet-act-bar">
+            Select bar
+          </button>
+          <button type="button" role="menuitem" className={big} onClick={run(() => sheetEdit.hand('toggle'))}>
+            Swap hands
+          </button>
+          <button type="button" role="menuitem" className={big} onClick={run(sheetEdit.tie)}>
+            Tie / untie
+          </button>
+        </div>
+        <p className="mt-3 mb-1.5 px-1 text-[12px] text-ink-400">Fingering</p>
+        <div className="grid grid-cols-6 gap-2">
+          {([1, 2, 3, 4, 5] as const).map((f) => (
+            <button key={f} type="button" role="menuitem" aria-pressed={finger === f} className={cn(big, 'px-0 font-mono text-[16px]', finger === f && 'bg-accent-500/25 text-accent-200 ring-1 ring-accent-500/50')} onClick={run(() => sheetMark.finger(f))} data-testid={`sheet-act-finger-${f}`}>
+              {f}
+            </button>
+          ))}
+          <button type="button" role="menuitem" className={cn(big, 'px-0 text-[13px]')} disabled={!finger} onClick={run(() => sheetMark.finger(0))}>
+            Clear
+          </button>
+        </div>
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <button type="button" role="menuitem" className={cn(big, 'bg-bad/15 text-bad')} onClick={run(sheetEdit.remove)} data-testid="sheet-act-delete">
+            Delete
+          </button>
+          <button type="button" className={big} onClick={() => set({ menu: null })}>
+            Done
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

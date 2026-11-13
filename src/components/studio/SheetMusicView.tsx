@@ -4,7 +4,7 @@
  * React state), like PianoRollView, so playback causes no re-renders.
  */
 import { useEffect, useRef, useState } from 'react';
-import { Loader2, LocateFixed, Maximize, Minus, Plus } from 'lucide-react';
+import { Loader2, LocateFixed, Maximize, Minus, Plus, X } from 'lucide-react';
 import { currentArrangement, useStudio } from '../../state/studioStore';
 import { useSettings } from '../../state/settingsStore';
 import { getPlayer } from '../../state/playback';
@@ -14,7 +14,8 @@ import { loadOsmd, SheetRenderer } from '../../lib/sheet/render';
 import { Button, cn, IconButton } from '../ui';
 import { sheetCtx, sheetEditedRecently } from '../../state/sheetEdit';
 import { barMarkRefs, markSelOfHit } from '../../state/sheetMarks';
-import { useSheetUi } from '../../state/sheetUi';
+import { useSheetDockLayout, useSheetUi } from '../../state/sheetUi';
+import { SheetHelp } from './sheet/SheetHelp';
 import { SheetEditBar, DOCK_PAD } from './sheet/SheetEditBar';
 import { SheetEditOverlay } from './sheet/SheetEditOverlay';
 import { SheetContextMenu } from './sheet/SheetContextMenu';
@@ -44,8 +45,15 @@ export function SheetMusicView() {
   const markSel = useStudio((s) => s.markSel);
   const [drawTick, setDrawTick] = useState(0);
   const addMode = useSheetUi((s) => s.addMode);
+  const added = useSheetUi((s) => s.added);
+  const zoomHintClosed = useSheetUi((s) => s.zoomHintClosed);
+  const railCollapsed = useSheetUi((s) => s.collapsed);
+  const layout = useSheetDockLayout();
+  // a phone held sideways: the edit tools are a column beside the music (here, also in full screen)
+  const rail = editMode && layout === 'rail';
+  const railWidth = railCollapsed ? '60px' : 'min(44vw, 320px)';
   // in full screen the edit tools dock inside the stage (otherwise the Studio shows them)
-  const dock = editMode && fullscreen;
+  const dock = editMode && fullscreen && layout === 'dock';
   const scrollRef = useRef<HTMLDivElement>(null);
   const pageRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
@@ -330,6 +338,73 @@ export function SheetMusicView() {
     };
   }, [setSheet]);
 
+  // Edit mode on a touch screen: two fingers pinch the music bigger or smaller (the page itself
+  // doesn't zoom there: touch-action leaves only scrolling to the browser). Shown scaled while the
+  // fingers move, drawn at the new size when they lift. Outside Edit mode the browser zooms as before.
+  useEffect(() => {
+    const sc = scrollRef.current!;
+    let start: { d: number; z: number } | null = null;
+    const dist = (t: TouchList) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    const onStart = (e: TouchEvent) => {
+      if (!useStudio.getState().editMode || e.touches.length !== 2) return;
+      start = { d: Math.max(1, dist(e.touches)), z: useSettings.getState().sheet.zoom ?? defaultSheetZoom(sc.clientWidth) };
+    };
+    const onMove = (e: TouchEvent) => {
+      if (!start || e.touches.length !== 2) return;
+      e.preventDefault();
+      const next = clampZoom((start.z * dist(e.touches)) / start.d);
+      gestureZoom.current = next;
+      const layer = zoomLayerRef.current;
+      if (layer) {
+        layer.style.transformOrigin = 'top center';
+        layer.style.transform = next === start.z ? '' : `scale(${next / start.z})`;
+      }
+      setGestureLabel(next);
+    };
+    const onEnd = (e: TouchEvent) => {
+      if (!start || e.touches.length >= 2) return;
+      const from = start.z;
+      start = null;
+      const z = gestureZoom.current;
+      gestureZoom.current = null;
+      setGestureLabel(null);
+      if (z !== null && z !== from) setSheet({ zoom: z });
+      else if (zoomLayerRef.current) zoomLayerRef.current.style.transform = '';
+    };
+    sc.addEventListener('touchstart', onStart, { passive: true });
+    sc.addEventListener('touchmove', onMove, { passive: false });
+    sc.addEventListener('touchend', onEnd);
+    sc.addEventListener('touchcancel', onEnd);
+    return () => {
+      sc.removeEventListener('touchstart', onStart);
+      sc.removeEventListener('touchmove', onMove);
+      sc.removeEventListener('touchend', onEnd);
+      sc.removeEventListener('touchcancel', onEnd);
+    };
+  }, [setSheet]);
+
+  // after an edit the selected note stays in view (above the dock), scrolling only if it left it
+  useEffect(() => {
+    if (!editMode || !sheetEditedRecently(2500)) return;
+    const sc = scrollRef.current;
+    const el = sc?.querySelector('.sheet-sel');
+    if (!sc || !el) return;
+    const r = el.getBoundingClientRect();
+    const v = sc.getBoundingClientRect();
+    const top = v.top + 64;
+    const bottom = v.bottom - (dock ? DOCK_PAD : 0) - 16;
+    if (r.top >= top && r.bottom <= bottom) return;
+    userScrollAt.current = performance.now();
+    sc.scrollTop += r.top - top - Math.max(0, (bottom - top) * 0.3);
+  }, [drawTick]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // "Added G4 · quarter — Undo" fades after 4 s
+  useEffect(() => {
+    if (!added) return;
+    const t = window.setTimeout(() => useSheetUi.getState().added?.at === added.at && useSheetUi.getState().set({ added: null }), 4000);
+    return () => clearTimeout(t);
+  }, [added]);
+
   // tap / click a note or measure to jump there
   const down = useRef<{ x: number; y: number } | null>(null);
   const onPointerDown = (e: React.PointerEvent) => {
@@ -353,8 +428,18 @@ export function SheetMusicView() {
 
   const setZoom = (z: number) => setSheet({ zoom: clampZoom(z) });
 
+  const touchUi = layout !== 'row';
+  const zoomHint = editMode && touchUi && !zoomHintClosed && zoom < 0.9 && status === 'ready';
+  const banner = editMode && (added || zoomHint || (touchUi && addMode));
   return (
-    <div ref={scrollRef} tabIndex={-1} className="absolute inset-0 overflow-x-hidden overflow-y-auto bg-ink-950 outline-none" data-testid="sheet-scroll">
+    <>
+    <div
+      ref={scrollRef}
+      tabIndex={-1}
+      className="absolute inset-y-0 left-0 overflow-x-hidden overflow-y-auto bg-ink-950 outline-none"
+      style={{ right: rail ? railWidth : 0, touchAction: editMode ? 'pan-x pan-y' : undefined }}
+      data-testid="sheet-scroll"
+    >
       {/* in full screen (--fs-top) the toolbar starts below the stage's title / Exit row */}
       <div aria-hidden style={{ height: 'var(--fs-top, 0px)' }} />
       <div className="pointer-events-none sticky z-20 flex justify-end px-2 pt-2 sm:px-3" style={{ top: 'var(--fs-top, 0px)' }} data-testid="sheet-toolbar">
@@ -451,7 +536,54 @@ export function SheetMusicView() {
         </div>
       </div>
       {editMode && <SheetContextMenu />}
+      {editMode && <SheetHelp />}
       {dock && <SheetEditBar layout="dock" fixed />}
     </div>
+    {banner && (
+      <div className="pointer-events-none absolute left-2 z-30 flex flex-col items-start gap-1.5" style={{ top: 'calc(var(--fs-top, 0px) + 3.5rem)', right: rail ? `calc(${railWidth} + 0.5rem)` : '0.5rem' }}>
+        {added ? (
+          <div className="panel pointer-events-auto flex items-center gap-2 py-1 pr-1 pl-3 text-[13px] text-ink-50 shadow-lg" role="status" data-testid="sheet-added">
+            Added {added.label}
+            <Button
+              size="sm"
+              variant="secondary"
+              className="h-11"
+              onClick={() => {
+                const st = useStudio.getState();
+                if (st.past.length === added.past) st.undo();
+                useSheetUi.getState().set({ added: null });
+              }}
+              data-testid="sheet-added-undo"
+            >
+              Undo
+            </Button>
+          </div>
+        ) : touchUi && addMode ? (
+          <div className="pointer-events-auto flex items-center gap-2 rounded-xl bg-accent-500 py-1 pr-1 pl-3 text-[13px] font-medium text-white shadow-lg" data-testid="sheet-add-banner">
+            Tap the staff to place a note
+            <button type="button" className="focus-ring h-11 rounded-lg bg-white/15 px-3 text-[13px] hover:bg-white/25" onClick={() => useSheetUi.getState().set({ addMode: false })}>
+              Done
+            </button>
+          </div>
+        ) : null}
+        {zoomHint && !added && (
+          <div className="panel pointer-events-auto flex items-center gap-1 py-1 pr-1 pl-3 text-[12.5px] text-ink-100 shadow-lg" data-testid="sheet-zoom-hint">
+            Notes are easier to tap at 90% or bigger.
+            <Button size="sm" variant="secondary" className="h-11" onClick={() => setZoom(0.9)}>
+              Make bigger
+            </Button>
+            <IconButton label="Close the hint" className="h-11 w-11" onClick={() => useSheetUi.getState().set({ zoomHintClosed: true })}>
+              <X size={16} />
+            </IconButton>
+          </div>
+        )}
+      </div>
+    )}
+    {rail && (
+      <div className="absolute right-0 bottom-0 z-30" style={{ top: 'var(--fs-top, 0px)' }}>
+        <SheetEditBar layout="rail" />
+      </div>
+    )}
+    </>
   );
 }

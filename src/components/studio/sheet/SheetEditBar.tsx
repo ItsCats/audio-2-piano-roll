@@ -2,7 +2,7 @@
  * The sheet music's edit bar: a toolbar row under the Studio header on a computer, a dock at the
  * bottom of the screen on phones and tablets (and in full screen). One component, two layouts.
  */
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, ChevronsDown, ChevronsUp, Link2, Pencil, Plus, Redo2, Trash2, Undo2, Hand as HandIcon, Minus } from 'lucide-react';
 import { currentArrangement, useStudio } from '../../../state/studioStore';
 import { useCompactSheetUi, useSheetUi } from '../../../state/sheetUi';
@@ -13,7 +13,8 @@ import { keyAt } from '../../../lib/sheet/keys';
 import { sheetEdit, sheetMark } from './sheetActions';
 import { BarPicker, BarTools, DynPicker, MarkPanelButtons, MarksTools, TextPicker, describeMark } from './MarkPopovers';
 import { moveSelectedMark } from '../../../state/sheetMarks';
-import { Copy } from 'lucide-react';
+import { ChevronsLeft, ChevronsRight, CircleHelp, Copy, ListPlus, Maximize } from 'lucide-react';
+import { toggleStageFullscreen, useStageFullscreen } from '../../../state/fullscreenStore';
 import { cn } from '../../ui';
 import { Tool, Sep } from './SheetTool';
 
@@ -27,8 +28,10 @@ const LEN_CHIPS: [number, string, string][] = [
   [48, 'Whole', 'Whole note'],
 ];
 
-export function SheetEditBar({ layout, fixed = false }: { layout: 'row' | 'dock'; fixed?: boolean }) {
-  const dock = layout === 'dock';
+export function SheetEditBar({ layout, fixed = false }: { layout: 'row' | 'dock' | 'rail'; fixed?: boolean }) {
+  const dock = layout !== 'row';
+  const rail = layout === 'rail';
+  const fullscreen = useStageFullscreen((s) => s.mode !== 'off');
   const song = useStudio((s) => s.song)!;
   const difficulty = useStudio((s) => s.difficulty);
   const arr = useStudio(currentArrangement)!;
@@ -39,7 +42,6 @@ export function SheetEditBar({ layout, fixed = false }: { layout: 'row' | 'dock'
   const undo = useStudio((s) => s.undo);
   const redo = useStudio((s) => s.redo);
   const ui = useSheetUi();
-  const [collapsed, setCollapsed] = useState(false);
   const ctx: SheetCtx | null = useMemo(() => (arr.notes.length || song.sheet ? { song, level: difficulty, score: buildSheet(song, difficulty) } : null), [song, difficulty, arr]);
   const selected = useMemo(() => arr.notes.filter((n) => selection.has(n.id)), [arr, selection]);
   const has = selected.length > 0;
@@ -61,9 +63,11 @@ export function SheetEditBar({ layout, fixed = false }: { layout: 'row' | 'dock'
     : single
     ? `${pitchLabel(single.midi, key?.fifths ?? 0, key?.minorTonic)} · ${curLen ? lengthName(curLen) : ''} · bar ${bar} · ${single.hand === 'L' ? 'left' : 'right'} hand${single.finger ? ` · finger ${single.finger}` : ''}`
     : selected.length
-      ? `${selected.length} notes`
+      ? `${selected.length} notes${touch && ui.selectMore ? ' · tap to add or remove' : ''}`
       : ui.addMode
         ? `${touch ? 'Tap' : 'Click'} the staff to place a note`
+        : touch && ui.selectMore
+          ? 'Tap notes to add them to the selection'
         : `${touch ? 'Tap' : 'Click'} a note to edit it`;
   const chipLen = has ? curLen : ui.addLen;
   const setLen = (len: number) => (has ? sheetEdit.length({ len }) : ui.set({ addLen: len }));
@@ -191,6 +195,9 @@ export function SheetEditBar({ layout, fixed = false }: { layout: 'row' | 'dock'
         <Sep dock={false} />
         <MarkPanelButtons />
         {copyFixes}
+        <Tool dock={false} label="Help and shortcuts" title="Help and shortcuts (?)" onClick={() => ui.set({ help: true })} testId="sheet-help-open">
+          <CircleHelp size={16} />
+        </Tool>
         <span className="ml-auto flex min-w-0 items-center gap-2 pl-2 text-[11.5px] text-ink-300" aria-live="polite" data-testid="sheet-status">
           {chips}
           <span className="truncate">{status}</span>
@@ -198,11 +205,105 @@ export function SheetEditBar({ layout, fixed = false }: { layout: 'row' | 'dock'
       </div>
     );
 
+  const tabs = (
+    <div className={cn('flex items-center gap-2', rail ? 'px-2 pt-1' : 'px-2 pt-1.5')} role="tablist" aria-label="Tools">
+      {(['notes', 'marks', 'bar'] as const).map((tb) => (
+        <button
+          key={tb}
+          type="button"
+          role="tab"
+          aria-selected={ui.tab === tb}
+          onClick={() => ui.set({ tab: tb, picker: null })}
+          className={cn('focus-ring h-11 flex-1 rounded-lg text-[13.5px] font-medium capitalize', ui.tab === tb ? 'bg-ink-700 text-ink-50' : 'text-ink-300 hover:text-ink-100')}
+          data-testid={`sheet-tab-${tb}`}
+        >
+          {tb === 'bar' ? 'Bar' : tb === 'marks' ? 'Marks' : 'Notes'}
+        </button>
+      ))}
+    </div>
+  );
+  const picker = ui.picker && (
+    <div className={cn('overflow-y-auto border-b border-ink-800', rail ? 'max-h-[55%] shrink-0' : 'max-h-[40vh]')} data-testid="sheet-dock-picker">
+      {ui.picker === 'dyn' && <DynPicker dock />}
+      {ui.picker === 'text' && <TextPicker dock />}
+      {(ui.picker === 'key' || ui.picker === 'time' || ui.picker === 'tempo') && <BarPicker dock which={ui.picker} key={ui.picker} />}
+    </div>
+  );
+  const selectMore = (
+    <Tool dock wide label="Select more" title="Taps add notes to the selection (or take them out)" active={ui.selectMore} onClick={() => ui.set({ selectMore: !ui.selectMore })} testId="sheet-select-more">
+      <ListPlus size={18} />
+      {label('More')}
+    </Tool>
+  );
+  const help = (
+    <Tool dock label="Help and shortcuts" onClick={() => ui.set({ help: true })} testId="sheet-help-open">
+      <CircleHelp size={20} />
+    </Tool>
+  );
+  const toolRow = (
+    <>
+      {ui.tab === 'notes' ? tools : ui.tab === 'marks' ? <MarksTools dock /> : <BarTools dock />}
+      {ui.tab === 'marks' && copyFixes}
+    </>
+  );
+
+  if (rail) {
+    // a phone held sideways: a column beside the music
+    if (ui.collapsed)
+      return (
+        <div className="flex h-full w-[60px] flex-col items-center gap-1 border-l border-ink-700 bg-ink-900/97 py-1.5" data-testid="sheet-edit-dock" data-layout="rail" role="toolbar" aria-label="Edit the sheet music">
+          <Tool dock label="Show tools" onClick={() => ui.set({ collapsed: false })} testId="sheet-dock-expand">
+            <ChevronsLeft size={20} />
+          </Tool>
+          <Tool dock label="Undo" disabled={!past} onClick={undo} testId="sheet-undo">
+            <Undo2 size={20} />
+          </Tool>
+          <Tool dock label="Redo" disabled={!future} onClick={redo} testId="sheet-redo">
+            <Redo2 size={20} />
+          </Tool>
+        </div>
+      );
+    return (
+      <div className="flex h-full w-[min(44vw,320px)] flex-col border-l border-ink-700 bg-ink-900/97" data-testid="sheet-edit-dock" data-layout="rail" role="toolbar" aria-label="Edit the sheet music">
+        <div className="flex shrink-0 items-center gap-0.5 px-1.5 pt-1">
+          <span className="shrink-0 rounded-md bg-accent-500/15 px-1.5 py-1 text-[11px] font-semibold text-accent-300 capitalize">{difficulty}</span>
+          <span className="flex-1" />
+          <Tool dock label="Undo" disabled={!past} onClick={undo} testId="sheet-undo">
+            <Undo2 size={20} />
+          </Tool>
+          <Tool dock label="Redo" disabled={!future} onClick={redo} testId="sheet-redo">
+            <Redo2 size={20} />
+          </Tool>
+          {help}
+          <Tool dock label="Hide tools" onClick={() => ui.set({ collapsed: true })}>
+            <ChevronsRight size={20} />
+          </Tool>
+        </div>
+        <p className="line-clamp-2 shrink-0 px-2.5 pt-0.5 text-[12.5px] leading-snug text-ink-200" aria-live="polite" data-testid="sheet-status">
+          {status}
+        </p>
+        {chips && <div className="flex shrink-0 flex-wrap gap-1 px-2 pt-1">{chips}</div>}
+        {!fullscreen && (
+          <button type="button" onClick={toggleStageFullscreen} className="focus-ring mx-2 mt-1 flex h-11 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-ink-800 text-[12.5px] text-ink-100 hover:bg-ink-700" data-testid="sheet-rail-fullscreen">
+            <Maximize size={15} /> Full screen: more room for the music
+          </button>
+        )}
+        {tabs}
+        {picker}
+        <div className="flex min-h-0 flex-1 flex-wrap content-start items-center gap-1.5 overflow-y-auto overscroll-contain px-2 py-1.5 [&_.sheet-sep]:hidden">
+          {ui.tab !== 'bar' && selectMore}
+          {toolRow}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className={cn('border-t border-ink-700 bg-ink-900/97', fixed && 'fixed inset-x-0 bottom-0 z-40 shadow-[0_-8px_24px_-12px_rgba(0,0,0,0.6)] backdrop-blur')}
       style={fixed ? { paddingBottom: 'env(safe-area-inset-bottom)' } : undefined}
       data-testid="sheet-edit-dock"
+      data-layout="dock"
       role="toolbar"
       aria-label="Edit the sheet music"
     >
@@ -217,38 +318,19 @@ export function SheetEditBar({ layout, fixed = false }: { layout: 'row' | 'dock'
         <Tool dock label="Redo" disabled={!future} onClick={redo} testId="sheet-redo">
           <Redo2 size={20} />
         </Tool>
-        <Tool dock label={collapsed ? 'Show tools' : 'Hide tools'} onClick={() => setCollapsed((c) => !c)}>
-          <ChevronsDown size={20} className={cn('transition-transform', collapsed && 'rotate-180')} />
+        {help}
+        <Tool dock label={ui.collapsed ? 'Show tools' : 'Hide tools'} onClick={() => ui.set({ collapsed: !ui.collapsed })} testId="sheet-dock-collapse">
+          <ChevronsDown size={20} className={cn('transition-transform', ui.collapsed && 'rotate-180')} />
         </Tool>
       </div>
       {chips && <div className="flex gap-1 overflow-x-auto px-2 pt-1">{chips}</div>}
-      {!collapsed && (
+      {!ui.collapsed && (
         <>
-          {ui.picker && (
-            <div className="max-h-[40vh] overflow-y-auto border-b border-ink-800" data-testid="sheet-dock-picker">
-              {ui.picker === 'dyn' && <DynPicker dock />}
-              {ui.picker === 'text' && <TextPicker dock />}
-              {(ui.picker === 'key' || ui.picker === 'time' || ui.picker === 'tempo') && <BarPicker dock which={ui.picker} key={ui.picker} />}
-            </div>
-          )}
-          <div className="flex items-center gap-2 px-2 pt-1.5" role="tablist" aria-label="Tools">
-            {(['notes', 'marks', 'bar'] as const).map((tb) => (
-              <button
-                key={tb}
-                type="button"
-                role="tab"
-                aria-selected={ui.tab === tb}
-                onClick={() => ui.set({ tab: tb, picker: null })}
-                className={cn('focus-ring h-11 flex-1 rounded-lg text-[13.5px] font-medium capitalize', ui.tab === tb ? 'bg-ink-700 text-ink-50' : 'text-ink-300 hover:text-ink-100')}
-                data-testid={`sheet-tab-${tb}`}
-              >
-                {tb === 'bar' ? 'Bar' : tb === 'marks' ? 'Marks' : 'Notes'}
-              </button>
-            ))}
-          </div>
+          {picker}
+          {tabs}
           <div className="flex items-center gap-2 overflow-x-auto overscroll-x-contain px-2 py-1.5">
-            {ui.tab === 'notes' ? tools : ui.tab === 'marks' ? <MarksTools dock /> : <BarTools dock />}
-            {ui.tab === 'marks' && copyFixes}
+            {ui.tab !== 'bar' && selectMore}
+            {toolRow}
           </div>
         </>
       )}

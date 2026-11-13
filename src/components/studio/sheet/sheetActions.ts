@@ -167,7 +167,8 @@ export function performSheetAction(a: SheetAction): boolean {
       ui.set({ addMode: !ui.addMode });
       return true;
     case 'escape':
-      if (ui.picker || ui.panel) ui.set({ picker: null, panel: null });
+      if (ui.help) ui.set({ help: false });
+      else if (ui.picker || ui.panel) ui.set({ picker: null, panel: null });
       else if (ui.menu) ui.set({ menu: null });
       else if (ui.addMode) ui.set({ addMode: false });
       else st.clearSelection();
@@ -210,6 +211,9 @@ export function performSheetAction(a: SheetAction): boolean {
       return true;
     case 'pedal':
       sheetMark.pedal();
+      return true;
+    case 'help':
+      ui.set({ help: !ui.help, menu: null });
       return true;
     case 'picker': {
       const bar = a.picker === 'key' || a.picker === 'time' || a.picker === 'tempo';

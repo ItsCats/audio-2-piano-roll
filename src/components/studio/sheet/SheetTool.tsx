@@ -46,5 +46,5 @@ export function Tool({
   );
 }
 
-export const Sep = ({ dock }: { dock: boolean }) => <span aria-hidden className={cn('shrink-0 bg-ink-700', dock ? 'mx-0.5 h-8 w-px' : 'mx-1 h-5 w-px')} />;
+export const Sep = ({ dock }: { dock: boolean }) => <span aria-hidden className={cn('sheet-sep shrink-0 bg-ink-700', dock ? 'mx-0.5 h-8 w-px' : 'mx-1 h-5 w-px')} />;
 

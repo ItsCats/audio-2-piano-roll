@@ -67,7 +67,7 @@ interface Down {
   type: string;
   hit: NoteHit | null;
   moved: boolean;
-  mode: 'note' | 'marquee' | 'tap' | 'add' | 'markEnd';
+  mode: 'note' | 'marquee' | 'tap' | 'add' | 'markEnd' | 'done';
   /** markEnd: the end of the selected hairpin or pedal being dragged, and the y of its line. */
   end?: { which: 'start' | 'end'; y: number };
   additive: boolean;
@@ -80,14 +80,44 @@ export function useSheetPointer(opts: {
   onSeek: (t: number) => void;
 }) {
   const down = useRef<Down | null>(null);
+  /** Touch points on the sheet: a second finger (a pinch) cancels the tap. */
+  const touches = useRef(new Set<number>());
+  const pressTimer = useRef(0);
+  const pressedAt = useRef(0);
   const lastTap = useRef<{ x: number; y: number; at: number; i: number } | null>(null);
   const local = (e: { clientX: number; clientY: number }) => {
     const r = opts.layer()?.getBoundingClientRect();
     return r ? { x: e.clientX - r.left, y: e.clientY - r.top } : null;
   };
-  const addAt = (s: SheetSlot) => {
+  const addAt = (s: SheetSlot, touch = false) => {
     const len = useSheetUi.getState().addLen;
-    if (runSheetEdit((c) => addOp(c, { pos: s.pos, midi: s.midi, staff: s.staff, len }))) audition([s.midi]);
+    if (!runSheetEdit((c) => addOp(c, { pos: s.pos, midi: s.midi, staff: s.staff, len }))) return;
+    audition([s.midi]);
+    // a tap is easy to misplace: say what was added, with Undo right there
+    if (touch) {
+      const sc = opts.renderer()?.drawnScore;
+      const k = sc ? keyAt(sc, s.measure) : null;
+      useSheetUi.getState().set({ added: { label: `${pitchLabel(s.midi, k?.fifths ?? 0, k?.minorTonic)} · ${lengthName(len)}`, past: useStudio.getState().past.length, at: performance.now() } });
+    }
+  };
+  const clearPress = () => {
+    clearTimeout(pressTimer.current);
+    pressTimer.current = 0;
+  };
+  /** A long press on a note (touch): select it and open the action sheet. */
+  const longPress = (d: Down) => {
+    const r = opts.renderer();
+    if (down.current !== d || d.moved || !r || !d.hit) return;
+    const h = d.hit;
+    const all = r.noteHits();
+    const chordIds = [...new Set(all.filter((o) => o.measure === h.measure && o.pos === h.pos && o.staff === h.staff).flatMap((o) => o.ids))];
+    const barIds = [...new Set(all.filter((o) => o.measure === h.measure).flatMap((o) => o.ids))];
+    const st = useStudio.getState();
+    if (!h.ids.every((id) => st.selection.has(id))) st.select(h.ids);
+    d.mode = 'done';
+    pressedAt.current = performance.now();
+    navigator.vibrate?.(12);
+    useSheetUi.getState().set({ menu: { x: d.cx, y: d.cy, touch: true, chordIds, barIds }, chips: [] });
   };
   /** Chips for notes close together under the pointer (repeated taps cycle through them). */
   const pick = (hits: NoteHit[], p: { x: number; y: number }, touch: boolean): NoteHit | null => {
@@ -117,6 +147,16 @@ export function useSheetPointer(opts: {
     const touch = e.pointerType === 'touch';
     const ui = useSheetUi.getState();
     if (ui.menu) ui.set({ menu: null });
+    if (touch) {
+      touches.current.add(e.pointerId);
+      if (touches.current.size > 1) {
+        // two fingers: a pinch (SheetMusicView zooms), never a tap or a long press
+        clearPress();
+        down.current = null;
+        useSheetOverlay.getState().set({ ghost: null });
+        return;
+      }
+    }
     const base: Down = { x: p.x, y: p.y, cx: e.clientX, cy: e.clientY, t: performance.now(), type: e.pointerType, hit: null, moved: false, mode: 'tap', additive: e.shiftKey || e.ctrlKey || e.metaKey };
     if (ui.addMode) {
       down.current = { ...base, mode: 'add' };
@@ -142,8 +182,11 @@ export function useSheetPointer(opts: {
     }
     const hits = r.notesAt(p.x, p.y, e.pointerType);
     if (touch) {
-      // touch never drags notes: decide on release
-      down.current = { ...base, hit: hits[0] ?? null };
+      // touch never drags notes: decide on release (or after a long press)
+      const d: Down = { ...base, hit: hits[0] ?? null };
+      down.current = d;
+      clearPress();
+      if (d.hit) pressTimer.current = window.setTimeout(() => longPress(d), 500);
       return;
     }
     const hit = pick(hits, p, false);
@@ -203,7 +246,10 @@ export function useSheetPointer(opts: {
     }
     const dist = Math.hypot(e.clientX - d.cx, e.clientY - d.cy);
     if (d.type === 'touch') {
-      if (dist >= 8) d.moved = true;
+      if (dist >= 8) {
+        d.moved = true;
+        clearPress();
+      }
       return;
     }
     if (!d.moved && dist < 4) return;
@@ -226,9 +272,11 @@ export function useSheetPointer(opts: {
   };
 
   const onPointerUp = (e: React.PointerEvent) => {
+    if (e.pointerType === 'touch') touches.current.delete(e.pointerId);
+    clearPress();
     const d = down.current;
     down.current = null;
-    if (!opts.enabled || !d) return;
+    if (!opts.enabled || !d || d.mode === 'done') return;
     const p = local(e);
     const r = opts.renderer();
     const ov = useSheetOverlay.getState();
@@ -240,13 +288,19 @@ export function useSheetPointer(opts: {
       if (!tap) return;
       if (d.mode === 'add') {
         const s = r.slotAt(p.x, p.y);
-        if (s) addAt(s);
+        if (s) addAt(s, true);
         return;
       }
       const hit = pick(r.notesAt(p.x, p.y, 'touch'), p, true);
       const mark = hit ? null : markUnder(r, p.x, p.y, 'touch');
-      if (hit) st.select(hit.ids);
+      const more = useSheetUi.getState().selectMore;
+      if (hit && more) {
+        // "Select more": a tap adds the note, or takes a selected one out
+        if (hit.ids.every((id) => st.selection.has(id))) useStudio.setState({ selection: new Set([...st.selection].filter((id) => !hit.ids.includes(id))) });
+        else st.select(hit.ids, true);
+      } else if (hit) st.select(hit.ids);
       else if (mark) st.selectMark(mark);
+      else if (more) return;
       else {
         st.clearSelection();
         const t = r.timeAtPoint(p.x, p.y);
@@ -322,6 +376,9 @@ export function useSheetPointer(opts: {
   const onContextMenu = (e: React.MouseEvent) => {
     if (!opts.enabled) return;
     e.preventDefault();
+    // a long press on a touch screen: the action sheet is already open (or the press was on paper)
+    const pt = (e.nativeEvent as PointerEvent).pointerType;
+    if (pt === 'touch' || touches.current.size || performance.now() - pressedAt.current < 1000) return;
     const p = local(e);
     const r = opts.renderer();
     if (p && r) {
@@ -332,7 +389,9 @@ export function useSheetPointer(opts: {
     useSheetUi.getState().set({ menu: { x: e.clientX, y: e.clientY } });
   };
 
-  const onPointerCancel = () => {
+  const onPointerCancel = (e?: React.PointerEvent) => {
+    if (e?.pointerType === 'touch') touches.current.delete(e.pointerId);
+    clearPress();
     down.current = null;
     useSheetOverlay.getState().set({ ghost: null, marquee: null });
   };
