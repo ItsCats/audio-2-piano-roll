@@ -164,6 +164,6 @@ via the app's MusicXML import), mean over pieces:
 | new pieces, Verovio page images | 0.989 / 0.989 | 0.873 / 0.780 |
 | new pieces, simulated phone photos, corners set | 0.989 / 0.989 | 0.869 / 0.768 |
 
-15 of the 16 pieces came out perfect in both rows; the ledger-line piece (notes up to five ledger lines and
-an 8va passage) scored 0.843. 28–201 s per page (the slow ones while two other browser jobs shared the
+15 of the 16 pieces came out perfect in both rows; the ledger-line piece (notes from C1 to D7, five to six
+ledger lines away from the staves) scored 0.843. 28–201 s per page (the slow ones while two other browser jobs shared the
 4 cores; 28–41 s once the machine was quiet).
