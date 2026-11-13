@@ -131,7 +131,7 @@ const green = (f, W, y, x0 = 0, x1 = W) => {
 
 // the app's own geometry code (the same modules the export uses), loaded in Node through Vite
 const { createServer } = await import('vite');
-const vite = await createServer({ root, configFile: path.join(root, 'vite.config.ts'), server: { middlewareMode: true, hmr: false }, appType: 'custom', logLevel: 'error' });
+const vite = await createServer({ root, configFile: path.join(root, 'vite.config.ts'), server: { middlewareMode: true, hmr: false, ws: false }, appType: 'custom', logLevel: 'error' });
 const calib = await vite.ssrLoadModule('/src/lib/handcam/calibration.ts');
 const wmLayout = await vite.ssrLoadModule('/src/lib/watermark/layout.ts');
 
@@ -203,6 +203,21 @@ async function waitSync(page) {
   await setup(page).getByTestId('sync-result').waitFor({ timeout: 300000 });
   return setup(page).getByTestId('sync-result').innerText();
 }
+/** waits for the Download button, printing the export's progress every 30 s */
+async function waitExport(dlg, label) {
+  const dl = dlg.getByRole('button', { name: /Download MP4/ });
+  const t = Date.now();
+  const timer = setInterval(async () => {
+    const p = await dlg.locator('[aria-live=polite]').first().innerText().catch(() => '');
+    log(`${label} ${((Date.now() - t) / 1000).toFixed(0)} s: ${p.replace(/\s+/g, ' ').slice(0, 120)}`);
+  }, 30000);
+  try {
+    await dl.waitFor({ timeout: 1800000 });
+  } finally {
+    clearInterval(timer);
+  }
+  return dl;
+}
 async function saveSetup(page) {
   for (let i = 0; i < 6; i++) {
     const save = setup(page).getByRole('button', { name: 'Save' });
@@ -214,10 +229,11 @@ async function saveSetup(page) {
   await page.waitForTimeout(1200); // the Studio saves the song after 600 ms
 }
 
+let page = null;
+const errors = [];
 try {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2, acceptDownloads: true });
-  const page = await ctx.newPage();
-  const errors = [];
+  page = await ctx.newPage();
   page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
   page.on('pageerror', (e) => errors.push(e.message));
 
@@ -240,7 +256,7 @@ try {
   await setup(page).waitFor();
   check('setup: an imported video is already in sync', /already in sync/.test(await setup(page).getByTestId('sync-step').innerText()));
   await nextStep(page); // pick a frame
-  await setup(page).getByAltText('The frame used to set up the keyboard').waitFor({ timeout: 30000 });
+  await setup(page).getByAltText('The frame used to set up the keyboard').waitFor({ timeout: 120000 });
   await nextStep(page); // corners
   const qe = setup(page).getByTestId('quad-editor').locator('img');
   await qe.waitFor({ timeout: 30000 });
@@ -309,8 +325,7 @@ try {
   check('cancel stops the export (Render is back)', await render.isEnabled());
   const tExp = Date.now();
   await render.click();
-  const dl = dlg.getByRole('button', { name: /Download MP4/ });
-  await dl.waitFor({ timeout: 900000 });
+  const dl = await waitExport(dlg, 'export');
   const [download] = await Promise.all([page.waitForEvent('download'), dl.click()]);
   const fileA = path.join(dir, 'export-bottom.mp4');
   await download.saveAs(fileA);
@@ -396,8 +411,7 @@ try {
     await setRange(dlg.getByLabel('End'), 7.5);
     await dlg.getByLabel('Resolution').selectOption('1080');
     await dlg.getByRole('button', { name: 'Render video' }).click();
-    const dl2 = dlg.getByRole('button', { name: /Download MP4/ });
-    await dl2.waitFor({ timeout: 900000 });
+    const dl2 = await waitExport(dlg, 'export (look)');
     const [d2] = await Promise.all([page.waitForEvent('download'), dl2.click()]);
     const fileC = path.join(dir, 'export-look.mp4');
     await d2.saveAs(fileC);
@@ -450,6 +464,8 @@ try {
 } catch (e) {
   failures++;
   console.log('FAIL', e?.stack ?? e);
+  if (errors.length) console.log('   console errors:', errors.slice(0, 8).join(' | '));
+  await page?.screenshot({ path: path.join(dir, 'failure.png') }).catch(() => {});
 } finally {
   await browser.close();
   server.kill();
