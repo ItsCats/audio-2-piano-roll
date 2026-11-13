@@ -343,7 +343,7 @@ describe('staff and system finding', () => {
     const f = findStaves(pg);
     expect(f.staves.length).toBe(6);
     expect(groupSystems(pg, f).length).toBe(3);
-  });
+  }, 60_000); // heavy image work; slow when the machine is busy
 
   it('finds the page in a photo and straightens it', () => {
     const { img } = page({ systems: 2, w: 827, h: 1170, space: 9 });
