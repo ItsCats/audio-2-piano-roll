@@ -14,26 +14,6 @@ interface Shipped {
 export const VOCAB = {"bytes": 180872, "sha256": "b7febe066e23191332e24ed3867a9632c0d8e6d9a8353629f54177a74308ecf4", "path": "models/omr/vocab.json"} as const;
 
 export const SHIPPED: Record<string, Shipped> = {
-  "smt-grandstaff": {
-    "variant": "int8",
-    "encoder": {
-      "file": "encoder.int8.onnx",
-      "bytes": 6935638,
-      "sha256": "2f9e8c867fb7235f24473580fb3aae57842a1c2bd6c98715e526541f539ab5ce",
-      "parts": [
-        "models/omr/smt-grandstaff/encoder.int8.part1.bin"
-      ]
-    },
-    "decoder": {
-      "file": "decoder.int8.onnx",
-      "bytes": 16405516,
-      "sha256": "a70dfdd2faf50480ae0ec9df63d93e95213208ff3ba4a19996cb4d4b9dfd5afb",
-      "parts": [
-        "models/omr/smt-grandstaff/decoder.int8.part1.bin",
-        "models/omr/smt-grandstaff/decoder.int8.part2.bin"
-      ]
-    }
-  },
   "smt-camera-grandstaff": {
     "variant": "int8",
     "encoder": {

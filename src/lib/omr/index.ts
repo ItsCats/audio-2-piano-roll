@@ -10,9 +10,11 @@
  * replace it by shipping new files that take a system image and produce **kern (or by replacing the
  * worker with one that returns the same SystemResult list).
  *
- * Two models are shipped and only the one needed is downloaded, on first use: the Sheet Music
- * Transformer fine-tuned on GrandStaff (clean engraved pages: PDFs) and on Camera-GrandStaff
- * (photos). public/models/omr/README.md has the measurements behind the choices.
+ * One model is shipped for both PDFs and photos, downloaded on first use: the Sheet Music Transformer
+ * fine-tuned on Camera-GrandStaff, with 8-bit weights (23 MB). Measured in this pipeline it read clean
+ * pages as well as (synthetic pages: better than) the GrandStaff checkpoint made for clean pages, and
+ * photos better, so the second model is not shipped; MODEL_FOR keeps the choice per kind of input.
+ * public/models/omr/README.md has the measurements.
  */
 import { isMemoryConstrained, isPhoneOrTablet, pageDeviceInfo, type DeviceInfo } from '../transcription/backendChoice';
 import { wasmThreads } from '../isolation';
@@ -82,8 +84,8 @@ export interface ReadResult {
 /** Thrown with a message meant for the user (nothing found, unsupported browser). */
 export class SheetReadError extends Error {}
 
-/** Model per kind of input. */
-export const MODEL_FOR: Record<SheetKind, string> = { pdf: 'smt-grandstaff', photo: 'smt-camera-grandstaff' };
+/** Model per kind of input (one model serves both today). */
+export const MODEL_FOR: Record<SheetKind, string> = { pdf: 'smt-camera-grandstaff', photo: 'smt-camera-grandstaff' };
 
 /**
  * Extra tab memory while reading, MB (onnxruntime sessions, encoder output of one system, the pages
@@ -292,7 +294,8 @@ export function assemble(r: { systems: SystemResult[]; pages: PageResult[]; stat
   if (cut) warnings.push(`${cut === 1 ? 'One line' : `${cut} lines`} could not be read to the end; some notes may be missing there.`);
   const piece = parseKernSystems(r.systems.map((s) => s.kern));
   if (!soundingNotes(piece).length) throw new SheetReadError('No notes could be read. The reader works best on clear printed piano music.');
-  if (piece.overfullBars) warnings.push(`${piece.overfullBars === 1 ? 'One bar has' : `${piece.overfullBars} bars have`} more beats than the time signature; ${piece.overfullBars === 1 ? 'it was' : 'they were'} lengthened so no note is lost. Check the rhythm there.`);
+  // a few over-full bars are normal for this reader; say so only when it is a large share
+  if (piece.overfullBars >= Math.max(3, 0.25 * piece.measures.length)) warnings.push(`${piece.overfullBars === 1 ? 'One bar has' : `${piece.overfullBars} bars have`} more beats than the time signature; ${piece.overfullBars === 1 ? 'it was' : 'they were'} lengthened so no note is lost. Check the rhythm there.`);
   const musicXml = kernToMusicXml(piece, { title: opts.title });
   return { musicXml, warnings, pages: nPages, lines: r.systems.length, pageInfo: r.pages, piece, systems: r.systems, stats: { ...r.stats, ms } };
 }

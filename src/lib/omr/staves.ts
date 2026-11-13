@@ -187,12 +187,15 @@ export interface StaffFinding {
   ink: Uint8Array;
 }
 
+/** Ink threshold for staff finding (adaptive mean minus this; lower than the general 15 for faint photos). */
+const STAFF_C = 6;
+/** A pixel this much darker than the pixels a line-thickness above and below is part of a thin line. */
+const LINE_CONTRAST = 12;
+
 /** All five-line staves on a cleaned page, top to bottom. */
-export const STAFF_C = { v: 6 };
-export const LINE_CONTRAST = { v: 12 };
 export function findStaves(page: Gray): StaffFinding {
   const { w, h } = page;
-  const ink = binarize(page, 31, STAFF_C.v);
+  const ink = binarize(page, 31, STAFF_C);
   const { thickness, gap } = runLengths(ink, w, h);
   const space0 = gap + thickness;
   const minRun = Math.max(8, Math.round(2.5 * space0));
@@ -205,7 +208,7 @@ export function findStaves(page: Gray): StaffFinding {
     const o = y * w;
     for (let x = 0; x < w; x++) {
       const c = d[o + x];
-      lm[o + x] = ink[o + x] || (d[o + x - r * w] + d[o + x + r * w]) / 2 - c > LINE_CONTRAST.v ? 1 : 0;
+      lm[o + x] = ink[o + x] || (d[o + x - r * w] + d[o + x + r * w]) / 2 - c > LINE_CONTRAST ? 1 : 0;
     }
   }
   const runs = horizontalRuns(lm, w, h, minRun);

@@ -154,9 +154,15 @@ async function getModel(req: RunRequest, progress: (m: Omit<ProgressMessage, 'ty
   return { m: loaded, fromCache, reused: false, loadMs: t1 - t0, createMs: t2 - t1 };
 }
 
+/** Most spines a piano system plausibly needs (two staves, a few voices each). */
+const MAX_SPINES = 10;
+/** Consecutive lines with nothing but '.' after which the output is a runaway. */
+const MAX_EMPTY_LINES = 6;
+
 /**
- * Greedy decoding with the key/value cache. Stops at <eos>, at MAX_STEPS, or when the output has far
- * more bar lines than the image (a model stuck repeating itself).
+ * Greedy decoding with the key/value cache. Stops at <eos>, at MAX_STEPS, or when the model is
+ * evidently lost (seen on real pages): far more bar lines than the image has, a run of empty lines, or
+ * more spines than piano music uses. The output read so far is kept.
  */
 async function transcribe(m: Loaded, img: Gray, barlines: number): Promise<{ tokens: string[]; finished: boolean; encMs: number; decMs: number }> {
   const t0 = performance.now();
@@ -176,6 +182,10 @@ async function transcribe(m: Loaded, img: Gray, barlines: number): Promise<{ tok
   const tokens: string[] = [];
   const maxBars = barlines > 0 ? Math.max(10, 2 * barlines + 4) : Infinity;
   let bars = 0;
+  let lineFields = 1;
+  let lineHasNull = false;
+  let lineHasData = false;
+  let emptyLines = 0;
   let finished = false;
   for (let i = 0; i < MAX_STEPS; i++) {
     token[0] = BigInt(tok);
@@ -206,6 +216,16 @@ async function transcribe(m: Loaded, img: Gray, barlines: number): Promise<{ tok
     }
     const w = m.vocab[tok] ?? '';
     if (w.startsWith('=') && (tokens.length === 0 || tokens[tokens.length - 1] === '<b>') && ++bars > maxBars) break;
+    if (w === '<b>') {
+      // a line that holds nothing (only '.' fields) or far too many spines: the model is lost
+      if (lineFields > MAX_SPINES || (lineHasNull && !lineHasData && ++emptyLines >= MAX_EMPTY_LINES)) break;
+      if (lineHasData) emptyLines = 0;
+      lineFields = 1;
+      lineHasNull = false;
+      lineHasData = false;
+    } else if (w === '<t>') lineFields++;
+    else if (w === '.') lineHasNull = true;
+    else if (w !== '<s>') lineHasData = true;
     tokens.push(w);
   }
   pastK.dispose();
