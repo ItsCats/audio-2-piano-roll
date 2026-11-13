@@ -236,7 +236,7 @@ try {
     check(`${dev}: no "coming soon"`, !(await page.getByText(/coming soon/i).count()));
     const takePhoto = page.getByRole('button', { name: 'Take a photo of sheet music' });
     check(`${dev}: "Take a photo" ${phone ? 'shown' : 'hidden'}`, (await takePhoto.isVisible().catch(() => false)) === phone);
-    if (phone) check('iphone: phone advice (time and memory) shown', await page.getByText(/Reading sheet music on a phone is slow/).isVisible());
+    if (phone) check('iphone: phone advice (time and memory) shown', (await page.getByText(/about a minute per page on a phone/).first().isVisible()) && (await page.getByText(/Close other apps and tabs first/).isVisible()));
     check(`${dev}: import tab has no sideways scroll`, (await sideScroll(page)) <= 0);
 
     // ---- PDF: thumbnails, pick pages, read

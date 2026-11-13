@@ -611,7 +611,7 @@ function ReaderNote({
               key={o.id}
               data-testid={`reader-${o.id}`}
               className={cn(
-                'flex cursor-pointer gap-2.5 rounded-lg border px-3 py-2 transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-accent-400',
+                'flex cursor-pointer items-start gap-2.5 rounded-lg border px-3 py-2 transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-accent-400',
                 on ? 'border-accent-500 bg-accent-500/10' : 'border-ink-700 hover:border-ink-500',
                 !o.available && 'cursor-not-allowed opacity-50',
               )}
@@ -636,12 +636,13 @@ function ReaderNote({
         })}
       </fieldset>
       {chosen && !chosen.available && <p className="text-[12px] text-bad">{chosen.reason}</p>}
-      {reader === 'quick' && support?.available && !support.recommended && support.reason && (
+      {/* low-memory computers: the quick reader's own advice (on phones the lines above already give the time) */}
+      {reader === 'quick' && support?.available && !support.recommended && support.reason && !support.phone && (
         <p className="flex gap-1.5 text-[12px] text-ink-300">
           <Smartphone size={13} className="mt-0.5 shrink-0 text-accent-400" /> {support.reason}
         </p>
       )}
-      {reader === 'accurate' && heavy && (
+      {heavy && (
         <p className="flex gap-1.5 text-[12px] text-ink-300">
           <Smartphone size={13} className="mt-0.5 shrink-0 text-accent-400" /> Close other apps and tabs first. A computer is much faster.
         </p>
