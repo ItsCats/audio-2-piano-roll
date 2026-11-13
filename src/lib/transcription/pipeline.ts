@@ -555,9 +555,10 @@ export interface LeadContext {
  * 62 -> 112 notes) and lowered Easy's voicing-counted accuracy (vocal-1 0.518 -> 0.470). For a
  * separated instrumental it pays: band-instrumental-1 Medium lead-note recall 41 -> 54 % (the two
  * leave-one-source-out references 46 -> 59 %, 42 -> 55 %; pYIN on a separated stem, Medium RCA
- * 0.456 -> 0.506, Easy 0.456 -> 0.495). On the Slakh band set (synthesised, exact notes; first 9
- * tracks) it is small but not negative: lead recall with octaves forgiven Medium 31.2 -> 31.7 %,
- * Easy 26.3 -> 27.5 %, exact-pitch Easy 20.3 -> 20.8 %.
+ * 0.456 -> 0.506, Easy 0.456 -> 0.495). On the Slakh band set (19 synthesised tracks, exact notes)
+ * it is smaller and mixed on Easy: lead recall exact / octaves forgiven Medium 27.9 -> 28.8 % /
+ * 37.9 -> 39.5 %, Easy 21.8 -> 21.5 % / 30.6 -> 31.6 %; time the Medium top note is the lead
+ * 30.0 -> 29.1 %.
  */
 export function accompFromRaw(
   raw: RawNoteEvent[],
