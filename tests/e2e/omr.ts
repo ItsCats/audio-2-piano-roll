@@ -213,7 +213,6 @@ window.readAs = async (how) => {
   } else {
     const { canvas, quad } = photoOf(pageCanvas);
     const blob = await new Promise<Blob>((ok) => canvas.toBlob((b) => ok(b!), 'image/jpeg', 0.8));
-    (window as unknown as { lastPhoto: string }).lastPhoto = canvas.toDataURL('image/jpeg', 0.8);
     const photo = await loadPhoto(blob);
     const s = photo.image.w / canvas.width;
     // the corner screen's starting point, compared with the true corners
