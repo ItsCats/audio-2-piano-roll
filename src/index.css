@@ -198,3 +198,13 @@ input[type='color']::-moz-color-swatch {
 .fs-stage-on.fs-cursor-hidden * {
   cursor: none !important;
 }
+
+/* The import mini-games' full-screen layer (src/components/games/GameOverlay.tsx, a portal on
+   <body>): while it is open the app underneath is not drawn, so its spinners and progress bars don't
+   keep the screen redrawing next to the game. */
+html.p2v-games-open #root {
+  display: none;
+}
+
+/* a phone held sideways (short and wide): the games put their arrow pad beside the board */
+@custom-variant short-landscape (@media (orientation: landscape) and (max-height: 520px));

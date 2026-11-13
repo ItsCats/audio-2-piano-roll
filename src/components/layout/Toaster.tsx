@@ -5,10 +5,11 @@ import { Button, cn } from '../ui';
 const icons = { success: CheckCircle2, warn: AlertTriangle, error: XCircle, info: Info };
 const tones = { success: 'text-ok', warn: 'text-warn', error: 'text-bad', info: 'text-accent-400' };
 
-export function Toaster() {
+/** `className` places it (default: bottom right, above the phone tab bar) */
+export function Toaster({ className = 'right-4 bottom-20 md:bottom-4' }: { className?: string }) {
   const { toasts, dismiss } = useToasts();
   return (
-    <div className="pointer-events-none fixed right-4 bottom-20 z-[60] flex w-[min(380px,calc(100vw-2rem))] flex-col gap-2 md:bottom-4" aria-live="polite">
+    <div className={cn('pointer-events-none fixed z-[60] flex w-[min(380px,calc(100vw-2rem))] flex-col gap-2', className)} aria-live="polite">
       {toasts.map((t) => {
         const Icon = icons[t.kind];
         return (
