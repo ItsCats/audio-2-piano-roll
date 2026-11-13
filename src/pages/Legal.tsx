@@ -6,7 +6,7 @@
 import { useEffect, type ReactNode } from 'react';
 import { Link, NavLink, useLocation } from 'react-router-dom';
 import { cn } from '../components/ui';
-import { SOURCE_CODE_URL } from '../lib/credits';
+import { COPYRIGHT_LINE, LICENSE_WORDS, SOURCE_CODE_URL } from '../lib/credits';
 import { CONTACT_EMAIL, CONTACT_URL, COPYRIGHT_EMAIL, LEGAL_LAST_UPDATED, SITE_NAME, SITE_PROCESSING_HOST } from '../lib/site';
 
 export type LegalPageId = 'privacy' | 'terms' | 'copyright';
@@ -188,9 +188,10 @@ function Terms() {
           care about.
         </p>
         <p>
-          The source code is free software under the <Ext href="https://www.gnu.org/licenses/agpl-3.0.html">GNU Affero General Public License</Ext>,
-          version 3 or later, which also comes without warranty: <Ext href={SOURCE_CODE_URL}>source code</Ext>.
+          The source code is free software under the <Ext href="https://www.gnu.org/licenses/agpl-3.0.html">GNU Affero General Public License</Ext>{' '}
+          ({LICENSE_WORDS}), which also comes without warranty: <Ext href={SOURCE_CODE_URL}>source code</Ext>.
         </p>
+        <p className="text-[13px] text-ink-300">{COPYRIGHT_LINE}</p>
       </Part>
 
       <Part id="sharing" title="Your music, and what you share">

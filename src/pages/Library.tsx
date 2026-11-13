@@ -171,8 +171,8 @@ export default function LibraryPage() {
                   </Link>
                   {s.estimated && <Badge tone="warn">AI</Badge>}
                   {s.source.kind === 'score' && s.source.reader && (
-                    <Badge tone="warn" title={`${sourceLabel(s.source.kind, s.source.reader)} by the sheet-music reader (Beta) — check the notes`}>
-                      Beta
+                    <Badge tone="warn" title={`${sourceLabel(s.source.kind, s.source.reader)} by the ${s.source.sheetReader === 'accurate' ? 'Accurate sheet-music reader' : 'Quick sheet-music reader (Beta)'} — check the notes`}>
+                      {s.source.sheetReader === 'accurate' ? 'AI' : 'Beta'}
                     </Badge>
                   )}
                   <span className="hidden font-mono text-[12px] text-ink-300 sm:block">{formatTime(s.duration)}</span>

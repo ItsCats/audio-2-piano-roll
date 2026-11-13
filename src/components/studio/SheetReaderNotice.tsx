@@ -7,10 +7,13 @@ import { useSettings } from '../../state/settingsStore';
 import { Badge, Button, IconButton, Modal } from '../ui';
 import { isTouchDevice } from '../../lib/wakeLock';
 
-/** Songs read from a PDF or photo by the sheet-music reader (beta): the notes are its estimate. */
+/** Songs read from a PDF or photo by a sheet-music reader (the Quick one is Beta): the notes are its estimate. */
 export const readFromSheet = (song: Pick<Song, 'source'>): boolean => song.source.kind === 'score' && !!song.source.reader;
 
 export const readerWhat = (song: Pick<Song, 'source'>): string => (song.source.reader === 'photo' ? 'a photo' : 'a PDF');
+
+/** Read by the quick reader (Beta; also every song read before there was a choice), not the accurate one. */
+export const readByBeta = (song: Pick<Song, 'source'>): boolean => readFromSheet(song) && song.source.sheetReader !== 'accurate';
 
 /** songs whose notice was closed in this visit (it comes back next time the app is opened) */
 const dismissed = new Set<string>();
@@ -45,10 +48,17 @@ function TipsModal({ open, onClose, song }: { open: boolean; onClose: () => void
       }
     >
       <div className="flex flex-col gap-3 px-5 py-4 text-[13px] leading-relaxed text-ink-200">
-        <p>
-          These notes were read from {readerWhat(song)} by the sheet-music reader, which is still in <b className="text-warn">Beta</b>. Most notes are usually
-          right, but some mistakes are normal.
-        </p>
+        {readByBeta(song) ? (
+          <p>
+            These notes were read from {readerWhat(song)} by the Quick sheet-music reader, which is still in <b className="text-warn">Beta</b>. Most notes are
+            usually right, but some mistakes are normal.
+          </p>
+        ) : (
+          <p>
+            These notes were read from {readerWhat(song)} by the Accurate sheet-music reader. Nearly all notes are usually right, but a wrong rhythm, a
+            missing sharp or flat or a note in the wrong hand can still happen.
+          </p>
+        )}
         <div>
           <p className="font-medium text-ink-50">Compare with your page</p>
           <ul className="mt-1 list-disc pl-5">
@@ -76,7 +86,7 @@ function TipsModal({ open, onClose, song }: { open: boolean; onClose: () => void
           )}
         </div>
         <p className="text-[12.5px] text-ink-300">
-          A whole line wrong? Try a sharper, evenly lit photo with the corners set tightly, or the PDF if you have one.{' '}
+          A whole line wrong? Try a sharper, evenly lit photo with the corners set tightly, or the PDF if you have one{readByBeta(song) ? ', or read it again with the Accurate reader' : ''}.{' '}
           <Link to="/accuracy#sheet-reader" className="text-accent-400 hover:text-accent-300" onClick={onClose}>
             How accurate is it?
           </Link>
@@ -91,8 +101,15 @@ export function SheetReaderBadge({ song }: { song: Song }) {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)} className="focus-ring rounded-md" title={`Read from ${readerWhat(song)} by the sheet-music reader (Beta) — check the notes`}>
-        <Badge tone="warn">Sheet music · Beta</Badge>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="focus-ring rounded-md"
+        title={`Read from ${readerWhat(song)} by the ${readByBeta(song) ? 'Quick sheet-music reader (Beta)' : 'Accurate sheet-music reader'} — check the notes`}
+      >
+        <span className="whitespace-nowrap">
+          <Badge tone="warn">{readByBeta(song) ? 'Sheet music · Beta' : `Read from ${song.source.reader === 'photo' ? 'photo' : 'PDF'}`}</Badge>
+        </span>
       </button>
       <TipsModal open={open} onClose={() => setOpen(false)} song={song} />
     </>
@@ -108,7 +125,7 @@ export function SheetReaderNotice({ song }: { song: Song }) {
     <div className="flex items-center gap-2 border-b border-warn/25 bg-warn/10 px-3 py-1.5 text-[12.5px] text-ink-100 md:px-4" role="note" data-testid="sheet-reader-notice">
       <AlertTriangle size={15} className="shrink-0 text-warn" />
       <p className="min-w-0 flex-1">
-        <span className="font-medium text-warn">Read from sheet music (Beta)</span> — check the notes against your page.{' '}
+        <span className="font-medium text-warn">Read from sheet music{readByBeta(song) ? ' (Beta)' : ''}</span> — check the notes against your page.{' '}
         <button type="button" onClick={() => setOpen(true)} className="focus-ring rounded font-medium text-accent-300 underline-offset-2 hover:underline">
           How to fix notes
         </button>

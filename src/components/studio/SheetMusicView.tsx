@@ -336,7 +336,7 @@ export function SheetMusicView() {
             <p className="mt-1 text-[11.5px] text-neutral-500 capitalize">{difficulty}</p>
             {song.transcription.estimated && <p className="mt-1 text-[11.5px] text-neutral-500">Written out automatically — may contain mistakes.</p>}
             {song.source.kind === 'score' && song.source.reader && (
-              <p className="mt-1 text-[11.5px] text-neutral-500">Read from {song.source.reader === 'photo' ? 'a photo' : 'a PDF'} (Beta) — may contain mistakes.</p>
+              <p className="mt-1 text-[11.5px] text-neutral-500">Read from {song.source.reader === 'photo' ? 'a photo' : 'a PDF'}{song.source.sheetReader === 'accurate' ? '' : ' (Beta)'} — may contain mistakes.</p>
             )}
             {!song.transcription.estimated && song.tempo.source === 'midi' && score?.time.source === 'estimated' && (
               <p className="mt-1 text-[11.5px] text-neutral-500">The bar lines were guessed from how it was played.</p>

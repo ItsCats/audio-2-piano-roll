@@ -41,25 +41,24 @@ export function InterruptedImportNotice() {
       // (after the crash checks: a record whose high-accuracy run took the tab down is resumed with the fast model)
       const n = interruptedNotice(rec, resumeTranscriber(rec as PendingWithTranscriber));
       const actions: ToastAction[] = [];
-      if (n.canRetry) {
-        actions.push({
-          label: 'Try again',
-          variant: 'primary',
-          onClick: async () => {
-            if (importBusy(useImport.getState().job)) {
-              toast.info('Another import is running', 'Try again once it has finished.');
-              return false;
-            }
-            if (!(await stillInterrupted(rec.id))) {
-              toast.info('Already taken care of', 'This import was restarted or discarded in another tab.');
-              return;
-            }
-            if (importBusy(useImport.getState().job)) return false;
-            navigate(rec.kind === 'capture' ? '/import?tab=record' : rec.kind === 'score' ? '/import?tab=midi' : '/import');
-            void useImport.getState().resumePending(rec);
-          },
-        });
-      }
+      const resume =
+        (opts?: { reader: 'accurate' }): ToastAction['onClick'] =>
+        async () => {
+          if (importBusy(useImport.getState().job)) {
+            toast.info('Another import is running', 'Try again once it has finished.');
+            return false;
+          }
+          if (!(await stillInterrupted(rec.id))) {
+            toast.info('Already taken care of', 'This import was restarted or discarded in another tab.');
+            return;
+          }
+          if (importBusy(useImport.getState().job)) return false;
+          navigate(rec.kind === 'capture' ? '/import?tab=record' : rec.kind === 'score' ? '/import?tab=midi' : '/import');
+          void useImport.getState().resumePending(rec, opts);
+        };
+      if (n.canRetry) actions.push({ label: n.retryLabel ?? 'Try again', variant: 'primary', onClick: resume() });
+      // the accurate sheet-music reader on a computer: once more with it, in its low-memory mode
+      if (n.canRetry && n.retryAccurateLabel) actions.push({ label: n.retryAccurateLabel, onClick: resume({ reader: 'accurate' }) });
       if (n.canSave && rec.blob) {
         const blob = rec.blob;
         actions.push({ label: 'Save recording', onClick: () => (saveBlobAs(blob, rec.fileName), false) });
