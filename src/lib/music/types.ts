@@ -1,3 +1,4 @@
+import type { HandVideo } from '../handcam/types';
 export type Hand = 'L' | 'R';
 export type Difficulty = 'easy' | 'medium' | 'hard';
 export const DIFFICULTIES: Difficulty[] = ['easy', 'medium', 'hard'];
@@ -191,6 +192,11 @@ export interface Song {
    * until it is switched on in the Sound panel. Never set for MIDI files or sheet music.
    */
   autoPedal?: boolean;
+  /**
+   * A video of the player's hands for "hands video" exports (lib/handcam). Absent in older songs
+   * and when none was added; the file is in IndexedDB (see HandVideo.store).
+   */
+  handVideo?: HandVideo;
 }
 
 export type SongSummary = Pick<

@@ -7,6 +7,7 @@ import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 import type { Song, SongSource, SongSummary } from '../music/types';
 import type { StoredPosteriors } from '../transcription/posteriors';
 import { bumpNoteIds } from '../music/cleanup';
+import { sanitizeHandVideo } from '../handcam/calibration';
 
 export interface MediaItem {
   id: string;
@@ -61,13 +62,24 @@ interface PVSchema extends DBSchema {
   posteriors: { key: string; value: StoredPosteriors };
   media: { key: string; value: MediaItem };
   pending: { key: string; value: PendingImport };
+  /** hands videos added to a song after its import (Song.handVideo, store 'handcam'), keyed by song id */
+  handcam: { key: string; value: StoredHandVideo };
+}
+
+/** A hands video file (lib/handcam). */
+export interface StoredHandVideo {
+  blob: Blob;
+  name: string;
+  type: string;
+  size: number;
+  addedAt: number;
 }
 
 /** Name and version of the IndexedDB database (exported for the upgrade test). */
 // database name predates the Piano2Vision rename; changing it would orphan users' libraries
 export const DB_NAME = 'pianovision';
-/** 1: songs, summaries, audio, posteriors, media. 2: + pending (interrupted imports). */
-export const DB_VERSION = 2;
+/** 1: songs, summaries, audio, posteriors, media. 2: + pending (interrupted imports). 3: + handcam (hands videos). */
+export const DB_VERSION = 3;
 
 let dbp: Promise<IDBPDatabase<PVSchema>> | null = null;
 function db() {
@@ -85,6 +97,9 @@ function db() {
         }
         if (oldVersion < 2 && !d.objectStoreNames.contains('pending')) {
           d.createObjectStore('pending', { keyPath: 'id' });
+        }
+        if (oldVersion < 3 && !d.objectStoreNames.contains('handcam')) {
+          d.createObjectStore('handcam');
         }
       },
       // another tab still has the database open at the old version. A tab of this version closes it in
@@ -184,6 +199,13 @@ export async function getSong(id: string): Promise<Song | undefined> {
   if (song) {
     bumpNoteIds(song.base);
     for (const a of Object.values(song.arrangements)) bumpNoteIds(a.notes);
+    // a damaged hands video entry is repaired or dropped (it never breaks an export)
+    if ('handVideo' in song) {
+      const hv = sanitizeHandVideo(song.handVideo);
+      // the song's own recording as its video: only while the recording is kept
+      if (hv && (hv.store === 'handcam' || song.hasAudio)) song.handVideo = hv;
+      else delete song.handVideo;
+    }
   }
   return song;
 }
@@ -195,12 +217,13 @@ export async function listSummaries(): Promise<SongSummary[]> {
 
 export async function deleteSong(id: string): Promise<void> {
   const d = await db();
-  const tx = d.transaction(['songs', 'summaries', 'audio', 'posteriors'], 'readwrite');
+  const tx = d.transaction(['songs', 'summaries', 'audio', 'posteriors', 'handcam'], 'readwrite');
   await Promise.all([
     tx.objectStore('songs').delete(id),
     tx.objectStore('summaries').delete(id),
     tx.objectStore('audio').delete(id),
     tx.objectStore('posteriors').delete(id),
+    tx.objectStore('handcam').delete(id),
     tx.done,
   ]);
 }
@@ -214,6 +237,19 @@ export async function getAudio(id: string): Promise<Blob | undefined> {
 /** Whether the song's original recording is still stored (without reading it). */
 export async function hasStoredAudio(id: string): Promise<boolean> {
   return (await (await db()).getKey('audio', id)) !== undefined;
+}
+/** The song's hands video file: its original recording (imported from the video) or one added later. */
+export async function getHandVideoBlob(song: Pick<Song, 'id' | 'handVideo'>): Promise<Blob | undefined> {
+  const hv = song.handVideo;
+  if (!hv) return undefined;
+  if (hv.store === 'audio') return getAudio(song.id);
+  return (await (await db()).get('handcam', song.id))?.blob;
+}
+export async function saveHandVideoBlob(songId: string, blob: Blob, name: string): Promise<void> {
+  await (await db()).put('handcam', { blob, name, type: blob.type, size: blob.size, addedAt: Date.now() }, songId);
+}
+export async function deleteHandVideoBlob(songId: string): Promise<void> {
+  await (await db()).delete('handcam', songId);
 }
 export async function savePosteriors(id: string, p: StoredPosteriors): Promise<void> {
   await (await db()).put('posteriors', p, id);

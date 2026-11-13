@@ -6,6 +6,7 @@
  * morphological close/open, adaptive mean threshold, Otsu) closely enough for staff finding; they are not
  * bit-exact.
  */
+import { homography } from '../geom/homography';
 
 export interface Gray {
   w: number;
@@ -117,41 +118,8 @@ export function resize(img: Gray, nw: number, nh: number): Gray {
 
 // ------------------------------------------------------------------ geometry
 
-/** 3x3 homography (row-major) mapping the 4 `from` points onto the 4 `to` points. */
-export function homography(from: number[][], to: number[][]): number[] {
-  // solve A h = b for h0..h7 (h8 = 1)
-  const A: number[][] = [];
-  const b: number[] = [];
-  for (let i = 0; i < 4; i++) {
-    const [x, y] = from[i];
-    const [u, v] = to[i];
-    A.push([x, y, 1, 0, 0, 0, -u * x, -u * y]);
-    b.push(u);
-    A.push([0, 0, 0, x, y, 1, -v * x, -v * y]);
-    b.push(v);
-  }
-  const h = solve(A, b);
-  return [...h, 1];
-}
-
-/** Gaussian elimination with partial pivoting. */
-function solve(A: number[][], b: number[]): number[] {
-  const n = b.length;
-  const M = A.map((r, i) => [...r, b[i]]);
-  for (let c = 0; c < n; c++) {
-    let p = c;
-    for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
-    [M[c], M[p]] = [M[p], M[c]];
-    const piv = M[c][c] || 1e-12;
-    for (let r = 0; r < n; r++) {
-      if (r === c) continue;
-      const f = M[r][c] / piv;
-      if (!f) continue;
-      for (let k = c; k <= n; k++) M[r][k] -= f * M[c][k];
-    }
-  }
-  return M.map((r, i) => r[n] / (r[i] || 1e-12));
-}
+/** 3x3 homography (row-major): shared with the hands video (lib/geom/homography.ts). */
+export { homography };
 
 /** Bilinear sample with white outside the image. */
 function sample(img: Gray, x: number, y: number): number {

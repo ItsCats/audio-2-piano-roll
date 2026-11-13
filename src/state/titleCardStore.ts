@@ -42,9 +42,9 @@ const flush = () => {
   pending.clear();
 };
 if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') window.addEventListener('pagehide', flush);
-/** Writes pending title page settings now (tests; the page also flushes when it is hidden). */
+/** Writes pending title page (and watermark) settings now (tests; the page also flushes when it is hidden). */
 export const flushTitleCardStorage = flush;
-const debouncedStorage: StateStorage = {
+export const debouncedStorage: StateStorage = {
   getItem: (k) => {
     try {
       return pending.get(k) ?? localStorage.getItem(k);

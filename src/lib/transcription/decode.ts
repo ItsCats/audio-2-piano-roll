@@ -7,6 +7,18 @@ import { ALL_FORMATS, AudioBufferSink, BlobSource, Input } from 'mediabunny';
 
 export const MAX_FILE_BYTES = 300 * 1024 * 1024;
 export const MAX_DURATION_SECONDS = 20 * 60;
+/**
+ * Videos (a phone video of someone playing) may be much larger: above this size their sound is read
+ * straight from the file (mediabunny, streamed), without loading the whole file into memory.
+ */
+export const STREAM_DECODE_BYTES = 200 * 1024 * 1024;
+export const MAX_VIDEO_BYTES = 4 * 1024 * 1024 * 1024;
+
+const VIDEO_EXTENSIONS = ['mp4', 'mov', 'm4v', 'webm', 'mkv'];
+/** A video container (by type or extension). */
+export function isVideoFile(f: { name?: string; type: string }): boolean {
+  return f.type.startsWith('video/') || VIDEO_EXTENSIONS.includes(fileExtension(f.name ?? ''));
+}
 
 export const AUDIO_EXTENSIONS = ['mp3', 'wav', 'm4a', 'mp4', 'aac', 'ogg', 'oga', 'opus', 'flac', 'webm', 'mov', 'mkv', 'aif', 'aiff', 'wma'];
 export const MIDI_EXTENSIONS = ['mid', 'midi', 'kar'];
@@ -39,20 +51,27 @@ async function decodeWithMediabunny(blob: Blob, sampleRate: number): Promise<Aud
   const duration = await track.computeDuration();
   if (duration > MAX_DURATION_SECONDS) throw new Error(tooLong(duration));
   const sink = new AudioBufferSink(track);
-  const chunks: AudioBuffer[] = [];
-  for await (const { buffer } of sink.buffers()) chunks.push(buffer);
+  const chunks: { buffer: AudioBuffer; timestamp: number }[] = [];
+  for await (const { buffer, timestamp } of sink.buffers()) chunks.push({ buffer, timestamp });
   if (!chunks.length) throw new Error('The audio track is empty.');
-  const srcRate = chunks[0].sampleRate;
-  const total = chunks.reduce((s, b) => s + b.length, 0);
+  const srcRate = chunks[0].buffer.sampleRate;
+  // each block where its timestamp puts it: a gap in the file (an interrupted recording, an edited
+  // file) stays a silent gap, so everything after it keeps its place on the file's timeline
+  const at = placeByTimestamp(
+    chunks.map((c) => c.timestamp),
+    chunks.map((c) => c.buffer.length),
+    srcRate,
+  );
+  const total = chunks.reduce((m, c, i) => Math.max(m, at[i] + c.buffer.length), 0);
   const mono = new Float32Array(total);
-  let off = 0;
-  for (const b of chunks) {
+  chunks.forEach(({ buffer: b }, k) => {
+    const piece = new Float32Array(b.length);
     for (let c = 0; c < b.numberOfChannels; c++) {
       const d = b.getChannelData(c);
-      for (let i = 0; i < d.length; i++) mono[off + i] += d[i] / b.numberOfChannels;
+      for (let i = 0; i < d.length; i++) piece[i] += d[i] / b.numberOfChannels;
     }
-    off += b.length;
-  }
+    mono.set(piece, at[k]);
+  });
   // resample with the browser's high-quality resampler
   const outLen = Math.ceil((total * sampleRate) / srcRate);
   const ctx = new OfflineAudioContext(1, outLen, sampleRate);
@@ -65,13 +84,40 @@ async function decodeWithMediabunny(blob: Blob, sampleRate: number): Promise<Aud
   return await ctx.startRendering();
 }
 
+/**
+ * Where each decoded block goes (frames from the first block's start), from its timestamp. Blocks that
+ * follow on within a couple of frames are joined end to end (timestamps are rounded in the file), so
+ * only a real gap or overlap moves a block.
+ */
+export function placeByTimestamp(timestamps: number[], lengths: number[], rate: number): number[] {
+  const out: number[] = [];
+  if (!timestamps.length) return out;
+  const t0 = timestamps[0];
+  let next = 0;
+  for (let i = 0; i < timestamps.length; i++) {
+    const want = Math.round((timestamps[i] - t0) * rate);
+    const at = Math.abs(want - next) <= 2 ? next : Math.max(0, want);
+    out.push(at);
+    next = at + lengths[i];
+  }
+  return out;
+}
+
 const tooLong = (d: number) =>
   `This recording is ${Math.round(d / 60)} minutes long. The limit is ${MAX_DURATION_SECONDS / 60} minutes — trim it first.`;
 
 /** Decode to an AudioBuffer at `sampleRate` (the browser resamples during decoding). */
 export async function decodeToRate(blob: Blob, sampleRate: number): Promise<AudioBuffer> {
-  if (blob.size > MAX_FILE_BYTES) throw new Error(`File is too large (max ${MAX_FILE_BYTES / 1024 / 1024} MB).`);
   if (blob.size === 0) throw new Error('File is empty.');
+  if (decodeRoute(blob) === 'stream') {
+    try {
+      return checkDecoded(await decodeWithMediabunny(blob, sampleRate));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`Could not decode this file. ${msg}`, { cause: err });
+    }
+  }
+  if (blob.size > MAX_FILE_BYTES) throw new Error(`File is too large (max ${MAX_FILE_BYTES / 1024 / 1024} MB).`);
   let buffer: AudioBuffer;
   try {
     buffer = await decodeNative(await blob.arrayBuffer(), sampleRate);
@@ -83,9 +129,23 @@ export async function decodeToRate(blob: Blob, sampleRate: number): Promise<Audi
       throw new Error(`Could not decode this file. ${msg}`, { cause: nativeErr });
     }
   }
+  return checkDecoded(buffer);
+}
+
+function checkDecoded(buffer: AudioBuffer): AudioBuffer {
   if (buffer.duration > MAX_DURATION_SECONDS) throw new Error(tooLong(buffer.duration));
   if (buffer.duration < 0.5) throw new Error('The audio is shorter than half a second.');
   return buffer;
+}
+
+/**
+ * How decodeToRate reads a file: 'stream' (mediabunny, straight from the file: large videos) or
+ * 'native' (the browser's decoder on the whole file, mediabunny if that fails). Sample 0 of a streamed
+ * decode is the first audio sample in the file (its timestamp is the audio track's first timestamp).
+ */
+export function decodeRoute(blob: Blob): 'stream' | 'native' {
+  const file = blob as Blob & { name?: string };
+  return blob.size > STREAM_DECODE_BYTES && blob.size <= MAX_VIDEO_BYTES && isVideoFile({ name: file.name, type: blob.type }) ? 'stream' : 'native';
 }
 
 export function mixToMono(buffer: AudioBuffer): Float32Array {

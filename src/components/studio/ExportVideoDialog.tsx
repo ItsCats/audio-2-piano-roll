@@ -1,13 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Download, Film, Loader2, Save, Trash2, SquarePlay, Smartphone, Square, Zap, AlertTriangle } from 'lucide-react';
 import { Button, Modal, ProgressBar, Segmented, Select, Slider, Toggle, Badge, cn } from '../ui';
 import { useSettings } from '../../state/settingsStore';
 import { useStudio } from '../../state/studioStore';
 import { useTransport } from '../../state/transportStore';
 import { EXPORT_PRESETS, outputSize, type ExportSettings, type ExportSound } from '../../lib/export/types';
-import { exportRange, exportVideo, exportVisual, webCodecsAvailable, type ExportProgress, type ExportResult } from '../../lib/export/videoExport';
-import { effectiveRate, effectiveSound, exportTimeline, originalGain } from '../../lib/export/originalMix';
-import { PianoRollRenderer } from '../../lib/render/renderer';
+import { exportRange, exportVideo, jobHandsLayout, webCodecsAvailable, type ExportProgress, type ExportResult } from '../../lib/export/videoExport';
+import { effectiveRate, effectiveSound, exportTimeline, originalGain, soundWithoutPiano, usesHandsSound, usesOriginalRecording } from '../../lib/export/originalMix';
+import { useShallow } from 'zustand/react/shallow';
+import { useWatermark, watermarkSettings } from '../../state/watermarkStore';
+import { watermarkActive, type WatermarkSettings } from '../../lib/watermark/types';
+import type { HandsLayout } from '../../lib/handcam/types';
+import { PreviewPainter } from '../handcam/previewPainter';
+import { useHandFrames, useHeldFrame, useLogo, useVideoFrame } from '../handcam/hooks';
+import { HandsSection } from '../handcam/HandsSection';
+import { WatermarkSection } from '../handcam/WatermarkSection';
+import { HandsSetup } from '../handcam/HandsSetup';
 import { VISUAL_THEMES, applyTheme } from '../../lib/render/settings';
 import { downloadBlob, safeFileName } from '../../lib/export/downloads';
 import { showExportNoticeOnce } from '../../lib/exportNotice';
@@ -24,12 +33,14 @@ const presetIcons: Record<string, typeof SquarePlay> = { youtube: SquarePlay, sh
 const PHASE_LABEL: Record<ExportProgress['phase'], string> = {
   preparing: 'Preparing encoders',
   original: 'Loading the original song',
+  handsAudio: 'Reading your video’s sound',
   audio: 'Rendering the sound',
   video: 'Rendering frames',
+  handsVideo: 'Drawing frames (decoding your video)',
   finalizing: 'Finalizing file',
 };
 
-const SOUND_LABEL: Record<ExportSound, string> = { piano: 'piano', original: 'original song', both: 'piano + original song' };
+const SOUND_LABEL: Record<ExportSound, string> = { piano: 'piano', original: 'original song', both: 'piano + original song', hands: 'video sound', 'hands+piano': 'video sound + piano' };
 
 /** Whether the open song's original recording is still stored ('checking' while we look). */
 function useStoredOriginal(songId: string | undefined, hasAudio: boolean | undefined, open: boolean): 'checking' | 'yes' | 'no' {
@@ -49,7 +60,8 @@ function useStoredOriginal(songId: string | undefined, hasAudio: boolean | undef
   return state.has ? 'yes' : 'no';
 }
 
-function CompositionPreview({ settings, previewTime }: { settings: ExportSettings; previewTime: number }) {
+/** `active` false (the setup screen is open, an export runs): the hands video file is let go of and the last frame stays. */
+function CompositionPreview({ settings, previewTime, layout, watermark, active }: { settings: ExportSettings; previewTime: number; layout: HandsLayout; watermark: WatermarkSettings | null; active: boolean }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const song = useStudio((s) => s.song)!;
   const difficulty = useStudio((s) => s.difficulty);
@@ -85,18 +97,39 @@ function CompositionPreview({ settings, previewTime }: { settings: ExportSetting
   }, [visual.background]);
   const decalImg = useDecalImage(visual.decal);
   const restored = useCanvasRestored(ref);
+  const hv = layout !== 'off' ? (song.handVideo ?? null) : null;
+  const { frames } = useHandFrames(song, !!hv && active);
+  const frame = useHeldFrame(useVideoFrame(frames, hv ? previewTime + hv.offset : null, 60), hv ? `${song.id}|${hv.addedAt}|${previewTime + hv.offset}` : '');
+  const logo = useLogo(watermark?.logo?.mediaId);
+  const painter = useRef<PreviewPainter | null>(null);
+  useEffect(
+    () => () => {
+      painter.current?.dispose();
+      painter.current = null;
+    },
+    [],
+  );
   useEffect(() => {
     const c = ref.current;
     if (!c) return;
-    const scale = Math.min(1, 720 / Math.max(width, height));
-    const r = new PianoRollRenderer(c, exportVisual({ visual, settings }));
-    r.resize(width * scale, height * scale);
-    const arr = song.arrangements[difficulty];
-    r.setNotes(arr.notes, arr.pedal, song.tempo, song.key);
-    if (bgSource) r.setBackgroundMedia(bgSource, visual.background.kind === 'video' ? 'video' : 'image');
-    if (decalImg) r.setDecalImage(decalImg.source, decalImg.width, decalImg.height);
-    r.render({ time: previewTime });
-  }, [settings, visual, song, difficulty, previewTime, width, height, bgSource, decalImg, restored]);
+    painter.current ??= new PreviewPainter(720);
+    painter.current.paint(c, {
+      song,
+      difficulty,
+      visual,
+      settings,
+      time: previewTime,
+      layout,
+      hv,
+      frame: frame?.canvas ?? null,
+      frameW: frame?.w,
+      frameH: frame?.h,
+      watermark,
+      logo,
+      bg: bgSource ? { source: bgSource, kind: visual.background.kind === 'video' ? 'video' : 'image' } : null,
+      decal: decalImg ? { source: decalImg.source, width: decalImg.width, height: decalImg.height } : null,
+    });
+  }, [settings, visual, song, difficulty, previewTime, width, height, bgSource, decalImg, restored, layout, hv, frame, watermark, logo]);
   return (
     <div className="flex h-full min-h-[220px] items-center justify-center rounded-xl bg-[repeating-conic-gradient(#15151b_0_25%,#101014_0_50%)] bg-[length:20px_20px] p-3">
       <canvas
@@ -104,6 +137,7 @@ function CompositionPreview({ settings, previewTime }: { settings: ExportSetting
         className="max-h-[48vh] max-w-full rounded-md shadow-2xl ring-1 ring-white/10"
         style={{ aspectRatio: `${width} / ${height}` }}
         aria-label="Video composition preview"
+        data-testid="export-preview"
       />
     </div>
   );
@@ -140,21 +174,34 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
   const [stopping, setStopping] = useState(false);
   const running = useRef<Promise<void> | null>(null);
   const stored = useStoredOriginal(song?.id, song?.hasAudio, open);
+  const updateSong = useStudio((s) => s.updateSong);
+  const wmAll = useWatermark(useShallow(watermarkSettings));
+  const watermark = watermarkActive(wmAll) ? wmAll : null;
+  const [setup, setSetup] = useState<{ autoStart: boolean } | null>(null);
+  /** the setup screen's own close (it asks before throwing away unsaved changes) */
+  const setupClose = useRef<(() => void) | null>(null);
 
   useEffect(() => () => {
     if (resultUrl) URL.revokeObjectURL(resultUrl);
   }, [resultUrl]);
 
   const webCodecs = webCodecsAvailable();
-  const sound = effectiveSound(settings, { hasOriginal: stored === 'yes', webCodecs });
+  const hasHandsSound = song?.handVideo?.store === 'handcam';
+  const sound = effectiveSound(settings, { hasOriginal: stored === 'yes', webCodecs, hasHandsSound });
+  const handsLayout = song ? jobHandsLayout({ song, settings }) : 'off';
   const range = useMemo(() => (song ? exportRange({ song, settings, loop }, sound) : { start: 0, end: 0 }), [song, settings, loop, sound]);
   if (!song) return null;
   const { width, height } = outputSize(settings);
   const usesOriginal = sound !== 'piano';
-  const rate = effectiveRate(settings, sound);
+  /** the song was imported from a video of the user playing: its "original" is their own playing */
+  const ownVideo = song.handVideo?.store === 'audio';
+  const rate = effectiveRate(settings, sound, handsLayout !== 'off');
+  const soundOptions: { value: ExportSound; label: string }[] = [{ value: 'piano', label: 'Piano' }];
+  if (stored !== 'no') soundOptions.push({ value: 'original', label: ownVideo ? 'Your playing' : 'Original song' }, { value: 'both', label: ownVideo ? 'Your playing + piano' : 'Both' });
+  if (hasHandsSound) soundOptions.push({ value: 'hands', label: 'Video sound' }, { value: 'hands+piano', label: 'Video sound + piano' });
   const outDur = exportTimeline(settings, range, rate).duration;
   const origVolume = originalGain(settings, audio.originalVolume);
-  const waitingForCheck = stored === 'checking' && settings.sound !== 'piano';
+  const waitingForCheck = stored === 'checking' && usesOriginalRecording(settings.sound);
   const previewTime = range.start + previewFrac * (range.end - range.start);
   const rendering = progress !== null && !result && !error;
   const busy = rendering || stopping;
@@ -181,6 +228,7 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
           settings: { ...settings, sound },
           loop,
           signal: ac.signal,
+          watermark: watermark ?? undefined,
           onProgress: (p) => current() && setProgress(p),
           titleCard: gateWarnings(titleCardJob(song, visual), current),
         });
@@ -226,7 +274,9 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
   const fileName = `${safeFileName(song.title)} - ${difficulty} - ${width}x${height}.${result?.extension ?? settings.format}`;
 
   return (
-    <Modal open={open} onClose={close} title="Export video" wide>
+    // while the hands video setup covers the screen, the dialog under it is not drawn (a blurred backdrop
+    // redrawn under it slows everything else that needs the graphics process) and Escape closes the setup only
+    <Modal open={open} onClose={setup ? () => (setupClose.current ? setupClose.current() : setSetup(null)) : close} title="Export video" wide hidden={!!(setup && song.handVideo)}>
       <div className="grid gap-0 lg:grid-cols-[1fr_340px]">
         <div className="flex flex-col gap-3 border-b border-ink-700 p-4 lg:border-r lg:border-b-0">
           {result && resultUrl ? (
@@ -252,7 +302,7 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
             </div>
           ) : (
             <>
-              <CompositionPreview settings={settings} previewTime={previewTime} />
+              <CompositionPreview settings={settings} previewTime={previewTime} layout={handsLayout} watermark={watermark} active={!setup && !busy} />
               <div className="flex items-center gap-3">
                 <span className="w-10 font-mono text-[11.5px] text-ink-300">{formatTime(previewTime)}</span>
                 <input
@@ -401,32 +451,38 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
             {longExport && <p className="text-[12px] text-warn">Long export — rendering can take several minutes. Keep this tab open.</p>}
           </div>
 
+          <HandsSection song={song} settings={settings} setExport={setExport} updateSong={updateSong} onSetup={(autoStart) => setSetup({ autoStart })} webCodecs={webCodecs} paused={!!setup || busy} />
           <div className="flex flex-col gap-3 border-b border-ink-700 p-4">
             <span className="text-[11px] font-semibold tracking-[0.08em] text-ink-300 uppercase">Content</span>
             <div className="flex flex-col gap-2">
               <span className="text-[12.5px] text-ink-200">Sound</span>
               {!webCodecs ? (
                 <p className="text-[12px] text-ink-400">This browser can only add the piano sound.</p>
-              ) : stored === 'no' ? (
+              ) : soundOptions.length === 1 ? (
                 <p className="text-[12px] text-ink-400">This song has no saved recording, so the video uses the piano sound.</p>
-              ) : (
+              ) : soundOptions.length <= 3 ? (
                 <Segmented<ExportSound>
                   size="sm"
                   className="w-full"
                   ariaLabel="Sound"
                   value={stored === 'checking' ? settings.sound : sound}
                   onChange={(next) => setExport({ sound: next })}
-                  options={[
-                    { value: 'piano', label: 'Piano' },
-                    { value: 'original', label: 'Original song' },
-                    { value: 'both', label: 'Both' },
-                  ]}
+                  options={soundOptions}
                 />
+              ) : (
+                <Select<ExportSound> value={stored === 'checking' ? settings.sound : sound} onChange={(next) => setExport({ sound: next })} options={soundOptions} />
               )}
               {usesOriginal && (
                 <>
-                  <Slider label="Original song volume" min={0.05} max={1.5} value={origVolume} onChange={(originalVolume) => setExport({ originalVolume })} format={(x) => `${Math.round(x * 100)}%`} />
-                  <p className="text-[12px] text-warn">Includes the original recording — only share it if you have the rights.</p>
+                  <Slider
+                    label={usesHandsSound(sound) ? 'Video sound volume' : ownVideo ? 'Your playing volume' : 'Original song volume'}
+                    min={0.05}
+                    max={1.5}
+                    value={origVolume}
+                    onChange={(originalVolume) => setExport({ originalVolume })}
+                    format={(x) => `${Math.round(x * 100)}%`}
+                  />
+                  {usesOriginalRecording(sound) && !ownVideo && <p className="text-[12px] text-warn">Includes the original recording — only share it if you have the rights.</p>}
                 </>
               )}
             </div>
@@ -447,11 +503,15 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
               </div>
             )}
             <div className="flex flex-col gap-1">
-              <Slider label="Playback speed" min={0.5} max={1.5} step={0.05} value={rate} disabled={usesOriginal} onChange={(rate) => setExport({ rate })} format={(x) => `${x.toFixed(2)}×`} />
-              {usesOriginal && <p className="text-[11.5px] text-ink-400">Speed stays at 100% when the original song is included.</p>}
+              <Slider label="Playback speed" min={0.5} max={1.5} step={0.05} value={rate} disabled={usesOriginal || handsLayout !== 'off'} onChange={(rate) => setExport({ rate })} format={(x) => `${x.toFixed(2)}×`} />
+              {handsLayout !== 'off' ? (
+                <p className="text-[11.5px] text-ink-400">Speed stays at 100% with a hands video.</p>
+              ) : (
+                usesOriginal && <p className="text-[11.5px] text-ink-400">Speed stays at 100% when a recording is included.</p>
+              )}
             </div>
-            {sound !== 'original' && (
-              <Slider label={sound === 'both' ? 'Piano volume' : 'Volume'} min={0.2} max={1.5} value={settings.volume} onChange={(volume) => setExport({ volume })} format={(x) => `${Math.round(x * 100)}%`} />
+            {!soundWithoutPiano(sound) && (
+              <Slider label={sound === 'both' || sound === 'hands+piano' ? 'Piano volume' : 'Volume'} min={0.2} max={1.5} value={settings.volume} onChange={(volume) => setExport({ volume })} format={(x) => `${Math.round(x * 100)}%`} />
             )}
             <Slider label="Lead-in" min={0} max={6} step={0.5} value={settings.leadIn} onChange={(leadIn) => setExport({ leadIn })} format={(x) => `${x}s`} />
             <Slider label="Fade in" min={0} max={4} step={0.25} value={settings.fadeIn} onChange={(fadeIn) => setExport({ fadeIn })} format={(x) => `${x}s`} />
@@ -480,6 +540,7 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
             <Toggle label="Note labels" checked={visual.labels.style !== 'none'} onChange={(on) => setLabels({ style: on ? 'letter' : 'none' })} />
             <p className="text-[11.5px] leading-relaxed text-ink-400">Colors, effects, labels and backgrounds come from the Studio’s Look and Labels tabs.</p>
           </div>
+          <WatermarkSection />
           <TitleCardPanel song={song} exportSettings={settings} visual={visual} />
         </div>
       </div>
@@ -493,6 +554,15 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
           </Button>
         </footer>
       )}
+      {setup && song.handVideo && (
+        <HandsSetupHost song={song} difficulty={difficulty} visual={visual} settings={settings} watermark={watermark} autoStart={setup.autoStart} closeRef={setupClose} setLayout={(handsLayout) => setExport({ handsLayout })} onClose={() => setSetup(null)} onSave={(hv) => { updateSong({ handVideo: hv }); if (settings.handsLayout === 'off') setExport({ handsLayout: hv.calibration ? 'bottom' : 'pip' }); setSetup(null); }} />
+      )}
     </Modal>
   );
+}
+
+function HandsSetupHost(props: Omit<Parameters<typeof HandsSetup>[0], 'logo'>) {
+  const logo = useLogo(props.watermark?.logo?.mediaId);
+  // on the page itself: inside the dialog (which animates with a transform) "fixed" would not cover the screen
+  return createPortal(<HandsSetup {...props} logo={logo} />, document.body);
 }

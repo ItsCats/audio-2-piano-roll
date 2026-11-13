@@ -74,6 +74,8 @@ export interface PrepareOptions {
   guard?: StepGuard;
   /** told after each title page / end card frame */
   onFrame?: (done: number, total: number, part: 'title' | 'end') => void;
+  /** drawn over every title page / end card frame (e.g. the watermark) */
+  overlay?: (ctx: Ctx2D, part: 'title' | 'end') => void;
 }
 
 export interface TitleCardHooks {
@@ -154,6 +156,10 @@ async function prepare(tc: TitleCardJob | undefined, o: PrepareOptions): Promise
   // crossfade: the text fades into the title's own background first, then the roll comes in
   // under it (no double exposure of the letters and the keyboard)
   const drawIntro = (ctx: Ctx2D, t: number) => {
+    drawIntroCard(ctx, t);
+    o.overlay?.(ctx, 'title');
+  };
+  const drawIntroCard = (ctx: Ctx2D, t: number) => {
     const op = titleOpacity(t, tl.intro);
     if (op >= 1 || !rollFirst) {
       drawTitleCard(ctx, W, H, look, tc.text, card, t, cache!, { duration: tl.intro });
@@ -178,6 +184,7 @@ async function prepare(tc: TitleCardJob | undefined, o: PrepareOptions): Promise
 
   const drawOutro = (ctx: Ctx2D, t: number) => {
     drawTitleCard(ctx, W, H, look, endText, card, t, cache!, { duration: tl.outro, layout: END_LAYOUT });
+    o.overlay?.(ctx, 'end');
     const op = endOpacity(t, tl.outro);
     if (op < 1) {
       ctx.save();

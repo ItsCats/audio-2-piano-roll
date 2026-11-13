@@ -393,6 +393,16 @@ describe('sound and speed rules', () => {
     expect(effectiveRate({ rate: 1.25 }, 'both')).toBe(1);
   });
 
+  it('a hands video: its sound only when one was added to the song; speed locked to 100%', () => {
+    expect(effectiveSound({ sound: 'hands' }, { hasOriginal: false, webCodecs: true, hasHandsSound: true })).toBe('hands');
+    expect(effectiveSound({ sound: 'hands+piano' }, { hasOriginal: true, webCodecs: true, hasHandsSound: true })).toBe('hands+piano');
+    expect(effectiveSound({ sound: 'hands' }, { hasOriginal: true, webCodecs: true })).toBe('piano');
+    expect(effectiveSound({ sound: 'hands' }, { hasOriginal: true, webCodecs: false, hasHandsSound: true })).toBe('piano');
+    expect(effectiveRate({ rate: 0.75 }, 'piano', true)).toBe(1);
+    expect(effectiveRate({ rate: 0.75 }, 'hands+piano')).toBe(1);
+    expect(effectiveRate({ rate: 0.75 }, 'piano', false)).toBe(0.75);
+  });
+
   it('original volume follows the Studio when it is turned up', () => {
     expect(defaultOriginalVolume(0)).toBe(0.8);
     expect(defaultOriginalVolume(0.04)).toBe(0.8);

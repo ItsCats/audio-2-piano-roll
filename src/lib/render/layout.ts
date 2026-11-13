@@ -18,7 +18,7 @@ export interface KeyboardLayout {
 }
 
 // black-key offsets (fraction of black key width) relative to the boundary between white keys
-const BLACK_OFFSET: Record<number, number> = { 1: -0.12, 3: 0.12, 6: -0.15, 8: 0, 10: 0.15 };
+export const BLACK_OFFSET: Record<number, number> = { 1: -0.12, 3: 0.12, 6: -0.15, 8: 0, 10: 0.15 };
 
 const whiteBelowOrEqual = (m: number) => (isBlack(m) ? m - 1 : m);
 const whiteAboveOrEqual = (m: number) => (isBlack(m) ? m + 1 : m);
