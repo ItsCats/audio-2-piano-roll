@@ -8,7 +8,7 @@ import type { TranscriptionStage } from '../lib/transcription/workerProtocol';
 import { classifyFile } from '../lib/transcription/decode';
 import { parseMidi } from '../lib/music/midi';
 import { buildSong, demoSong, songFromMidi, songFromScore, titleFromFileName } from '../lib/songs';
-import { deletePending, newId, saveAudio, savePending, savePosteriors, saveSong, type PendingImport } from '../lib/storage/db';
+import { deletePending, newId, saveAudio, savePending, savePosteriors, saveSong, type PendingImport, type PendingSheet } from '../lib/storage/db';
 import { createScreenWakeLock } from '../lib/wakeLock';
 import { detectionParams, useSettings } from './settingsStore';
 import { useLibrary } from './libraryStore';
@@ -28,6 +28,7 @@ import { pianoSpecialistSupport } from '../lib/pianoSpecialist';
 import { isMemoryConstrained, pageDeviceInfo } from '../lib/transcription/backendChoice';
 import type { Song, SongSource } from '../lib/music/types';
 import type { ParsedScore, ScoreMeta } from '../lib/score';
+import type { Gray, Quad, ReadProgress } from '../lib/omr';
 import { toast } from './toastStore';
 
 export type ImportStage = TranscriptionStage | 'downloading' | 'uploading' | 'done' | 'error';
@@ -55,6 +56,8 @@ export interface ImportJob {
   separation?: SeparationEngine;
   /** transcription model of this import (absent: Basic Pitch) */
   transcriber?: TranscriptionEngine;
+  /** a PDF or photos read by the sheet-music reader (beta) */
+  sheet?: 'pdf' | 'photo';
   /**
    * Speed measurement for the current phase (same stage and same kind of detail message): where
    * progress was when the phase started, and the time remaining extrapolated from the measured
@@ -75,6 +78,21 @@ export interface FailedImport {
   retryFast?: () => Promise<string | null>;
   recording?: { blob: Blob; fileName: string };
 }
+
+/** One photo for the sheet-music reader: the file, its decoded image (when already loaded) and the page corners. */
+export interface SheetPhoto {
+  blob: Blob;
+  name: string;
+  /** decoded by lib/omr loadPhoto (absent: decoded again, e.g. after a crash) */
+  image?: Gray;
+  /** page corners in the decoded image's pixels (null: the whole photo) */
+  quad: Quad | null;
+}
+
+/** What the sheet-music reader (beta) reads: chosen pages of a PDF, or photos in page order (one page each). */
+export type SheetInput =
+  | { kind: 'pdf'; file: Blob; fileName: string; pages: number[]; title?: string }
+  | { kind: 'photo'; photos: SheetPhoto[]; fileName: string; title?: string };
 
 /** Options shared by the audio imports (a resumed import passes the ones it was started with). */
 export interface ImportRunOptions {
@@ -118,6 +136,8 @@ interface ImportState {
    * same as importing a .musicxml file. `source` defaults to a sheet-music file named `fileName`.
    */
   importMusicXml: (xml: string, meta?: ScoreMeta & { title?: string; source?: SongSource & { kind: 'score' } }) => Promise<string | null>;
+  /** Read printed piano music from a PDF or photos (beta, lib/omr) and import it like a sheet-music file. */
+  importSheet: (input: SheetInput, opts?: { pendingId?: string }) => Promise<string | null>;
   importAudioBlob: (
     blob: Blob,
     meta: { title: string; artist?: string; source: SongSource; separate?: boolean } & ImportRunOptions,
@@ -441,6 +461,8 @@ function persistPending(rec: PendingImport): () => Promise<void> {
 // ---------------------------------------------------------------- timeline plans
 
 const TRANSCRIBE: ImportStage[] = ['decoding', 'loading-model', 'analyzing', 'arranging', 'saving'];
+/** the sheet-music reader: preparing the pages, the reader (download once), reading, then as a score */
+export const SHEET_PLAN: ImportStage[] = ['validating', 'loading-model', 'analyzing', 'arranging', 'saving'];
 const BROWSER_SEP: ImportStage[] = ['decoding', 'separating', 'loading-model', 'analyzing', 'arranging', 'saving'];
 const SERVER_SEP: ImportStage[] = ['uploading', 'separating', 'downloading', ...TRANSCRIBE];
 
@@ -605,11 +627,13 @@ export const useImport = create<ImportState>((set, get) => {
   };
 
   /** A sheet-music import's Song (the file's warnings are shown on the import card too). */
-  const finishScore = async (ctx: Ctx, parsed: ParsedScore, source: SongSource & { kind: 'score' }, title?: string) => {
+  const finishScore = async (ctx: Ctx, parsed: ParsedScore, source: SongSource & { kind: 'score' }, title?: string, extra?: (song: Song) => void) => {
     if (ctx.signal.aborted) return null;
     const song = songFromScore(parsed, source);
     if (title) song.title = title;
-    if (parsed.warnings.length) ctx.update({ warnings: parsed.warnings });
+    extra?.(song);
+    const warnings = song.transcription.warnings;
+    if (warnings.length) ctx.update({ warnings });
     return await finish(ctx, song);
   };
 
@@ -837,7 +861,14 @@ export const useImport = create<ImportState>((set, get) => {
         const ctx = start(title, kind === 'midi' ? 'midi' : 'audio', planFor('midi', undefined));
         const { update } = ctx;
         try {
-          if (kind === 'unsupported') throw new Error(`"${file.name}" is not a supported audio, video, MIDI or sheet-music file.`);
+          if (kind === 'unsupported') {
+            const sheet = /\.(pdf|jpe?g|png|heic|heif|webp)$/i.test(file.name) || /^image\/|pdf/.test(file.type);
+            throw new Error(
+              sheet
+                ? `To read a PDF or photo of sheet music, use the “MIDI / Sheet music” tab.`
+                : `"${file.name}" is not a supported audio, video, MIDI or sheet-music file.`,
+            );
+          }
           update({ kind: 'midi', stage: 'arranging', detail: 'Reading MIDI file' });
           if (file.size > 20 * 1024 * 1024) throw new Error('MIDI file is unusually large (max 20 MB).');
           const parsed = parseMidi(await file.arrayBuffer());
@@ -893,6 +924,94 @@ export const useImport = create<ImportState>((set, get) => {
       }
     },
 
+    importSheet: async (input, opts = {}) => {
+      const fileName = input.fileName;
+      const title = input.title ?? titleFromFileName(fileName);
+      const ctx = start(title, 'score', SHEET_PLAN);
+      ctx.update({ sheet: input.kind, detail: input.kind === 'pdf' ? 'Opening the PDF' : 'Opening the photos' });
+      const { update, signal } = ctx;
+      const nPages = input.kind === 'pdf' ? input.pages.length : input.photos.length;
+      try {
+        // keep the PDF / photos until this import ends, so "Try again" works after a crash (persistPending)
+        const sheet: PendingSheet =
+          input.kind === 'pdf'
+            ? { kind: 'pdf', pages: [...input.pages] }
+            : { kind: 'photo', photos: input.photos.map((p) => ({ blob: p.blob, name: p.name, quad: p.quad ? p.quad.map((q) => [q[0], q[1]] as [number, number]) : null })) };
+        const first = input.kind === 'pdf' ? input.file : input.photos[0]?.blob;
+        const size = input.kind === 'pdf' ? input.file.size : input.photos.reduce((a, p) => a + p.blob.size, 0);
+        const source: SongSource & { kind: 'score' } = { kind: 'score', reader: input.kind, fileName, pages: nPages, ...(first?.type ? { mimeType: first.type } : {}), fileSize: size };
+        await pend(ctx, {
+          id: opts.pendingId,
+          title,
+          kind: 'score',
+          source,
+          blob: size <= PENDING_COPY_MAX_BYTES ? first : undefined,
+          mimeType: first?.type ?? '',
+          fileName,
+          separate: false,
+          ...(size <= PENDING_COPY_MAX_BYTES ? { sheet } : {}),
+        });
+        const omr = await import('../lib/omr');
+        if (signal.aborted) return null;
+        // 1. the page images
+        let pages: { image: Gray; quad?: Quad | null }[];
+        if (input.kind === 'pdf') {
+          update({ stage: 'validating', progress: 0, detail: nPages > 1 ? `Preparing page 1 of ${nPages}` : 'Preparing the page' });
+          const images = await omr.renderPdfPages(new Uint8Array(await input.file.arrayBuffer()), {
+            pages: input.pages,
+            signal,
+            onPage: (done, total) => update({ progress: done / total, detail: done < total ? `Preparing page ${done + 1} of ${total}` : 'Preparing the pages' }),
+          });
+          pages = images.map((image) => ({ image }));
+        } else {
+          pages = [];
+          for (let i = 0; i < input.photos.length; i++) {
+            if (signal.aborted) return null;
+            const p = input.photos[i];
+            update({ stage: 'validating', progress: i / nPages, detail: nPages > 1 ? `Preparing photo ${i + 1} of ${nPages}` : 'Preparing the photo' });
+            const image = p.image ?? (await omr.loadPhoto(p.blob)).image;
+            pages.push({ image, quad: p.quad });
+          }
+        }
+        if (signal.aborted) return null;
+        // 2. read them
+        const mb = omr.sheetReaderSupport(input.kind).downloadMB;
+        let last = '';
+        const onProgress = (p: ReadProgress) => {
+          if (p.stage === 'loading-model') {
+            const downloading = !!p.total && (p.loaded ?? 0) < p.total;
+            update({
+              stage: 'loading-model',
+              progress: p.total ? Math.min(1, (p.loaded ?? 0) / p.total) : null,
+              detail: downloading ? `Downloading the sheet-music reader (once, ${mb} MB)` : 'Starting the sheet-music reader',
+            });
+          } else if (p.stage === 'finding-lines') {
+            update({ stage: 'analyzing', progress: 0, detail: 'Finding the lines of music' });
+          } else {
+            if (p.page !== undefined && p.pageLine !== undefined) {
+              const pg = (p.pages ?? 1) > 1 ? `Reading page ${p.page + 1} of ${p.pages}, ` : 'Reading ';
+              last = `${pg}line ${p.pageLine} of ${p.pageLines}`;
+            }
+            update({ stage: 'analyzing', progress: Math.max(0, Math.min(1, (p.progress - 0.2) / 0.8)), detail: last || 'Reading the music' });
+          }
+        };
+        const result = await omr.readSheetImages(pages, { kind: input.kind, signal, title, onProgress });
+        pages.length = 0;
+        if (signal.aborted) return null;
+        // 3. the MusicXML goes through the normal score import
+        update({ stage: 'arranging', progress: null, detail: 'Building arrangements' });
+        const { importMusicXml } = await import('../lib/score');
+        const parsed = importMusicXml(result.musicXml, { fileName });
+        return await finishScore(ctx, parsed, source, input.title ?? title, (song) => {
+          // the reader's notes are an estimate: its own notes first, then the score import's
+          song.transcription.warnings = [...result.warnings, ...song.transcription.warnings];
+          song.transcription.processingMs = Math.round(result.stats.ms);
+        });
+      } catch (err) {
+        return fail(ctx, err, { retry: () => get().importSheet(input) });
+      }
+    },
+
     importAudioBlob: async (blob, meta) => {
       const ctx = start(meta.title, meta.source.kind, planFor(meta.source.kind, undefined), undefined, meta.presetId, meta.transcriber);
       const fileName = recordingName(meta.title, blob.type);
@@ -930,6 +1049,14 @@ export const useImport = create<ImportState>((set, get) => {
 
     resumePending: async (rec) => {
       if (!rec.blob) return null;
+      if (rec.kind === 'score') {
+        const sheet = rec.sheet;
+        if (!sheet) return null;
+        const fileName = rec.fileName || rec.source.fileName || 'Sheet music';
+        if (sheet.kind === 'pdf') return get().importSheet({ kind: 'pdf', file: rec.blob, fileName, pages: sheet.pages, title: rec.title }, { pendingId: rec.id });
+        const photos: SheetPhoto[] = sheet.photos.map((p) => ({ blob: p.blob, name: p.name, quad: p.quad && p.quad.length === 4 ? (p.quad as Quad) : null }));
+        return get().importSheet({ kind: 'photo', photos, fileName, title: rec.title }, { pendingId: rec.id });
+      }
       const presetId = (['piano', 'mix', 'sensitive', 'custom'] as PresetId[]).includes(rec.presetId as PresetId) ? (rec.presetId as PresetId) : undefined;
       // a separation that crashed the tab has already been switched off for this preset (checkCrashedSeparation)
       const separate = rec.separate && (presetId ? get().prefs.separate[presetId] !== false : true);
@@ -1106,6 +1233,18 @@ if (typeof window !== 'undefined') {
         .then(() => resolve());
     }, 0),
   );
+}
+
+/** Timeline labels for the sheet-music reader's stages (the rest as in STAGE_LABELS). */
+export const SHEET_STAGE_LABELS: Partial<Record<ImportStage, string>> = {
+  validating: 'Preparing the pages',
+  'loading-model': 'Loading the sheet-music reader',
+  analyzing: 'Reading the music',
+};
+
+/** A stage's label in the progress timeline of this job. */
+export function stageLabel(job: Pick<ImportJob, 'sheet'>, stage: ImportStage): string {
+  return (job.sheet && SHEET_STAGE_LABELS[stage]) || STAGE_LABELS[stage];
 }
 
 export const STAGE_LABELS: Record<ImportStage, string> = {

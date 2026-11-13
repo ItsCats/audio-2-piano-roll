@@ -59,12 +59,15 @@ export interface ProgressMessage {
   /** loading-model: bytes */
   loaded?: number;
   total?: number;
-  /** finding-lines: page index (0-based) / pages */
+  /** finding-lines: page index (0-based) / pages; reading: the page of the line being read (0-based) */
   page?: number;
   pages?: number;
   /** reading: lines done / total */
   line?: number;
   lines?: number;
+  /** reading: the line being read on its page (1-based) / lines on that page */
+  pageLine?: number;
+  pageLines?: number;
 }
 
 export interface SystemResult {

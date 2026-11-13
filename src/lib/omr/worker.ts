@@ -263,6 +263,9 @@ async function run(req: RunRequest): Promise<void> {
   progress({ stage: 'reading', progress: 0, line: 0, lines: jobs.length });
   for (let k = 0; k < jobs.length; k++) {
     const j = jobs[k];
+    // which line of which page is being read now (for "Reading page 1 of 3, line 2 of 5")
+    const first = jobs.findIndex((x) => x.page === j.page);
+    progress({ stage: 'reading', progress: k / jobs.length, line: k, lines: jobs.length, page: j.page, pages: nPages, pageLine: k - first + 1, pageLines: pages[j.page].systems });
     const t = performance.now();
     const r = await transcribe(m, j.img, j.barlines);
     encodeMs += r.encMs;

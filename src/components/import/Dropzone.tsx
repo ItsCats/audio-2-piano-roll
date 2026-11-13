@@ -6,9 +6,30 @@ export const ACCEPT = '.mp3,.wav,.m4a,.mp4,.aac,.ogg,.oga,.opus,.flac,.webm,.mov
 
 /**
  * `accept`: file-picker filter ('' = any file; phones grey out file types they don't know, such
- * as .mxl or .mscz, when a filter is set).
+ * as .mxl or .mscz, when a filter is set). `multiple`: several files at once, all passed to `onFiles`
+ * (without it, only the first file goes to `onFile`).
  */
-export function Dropzone({ onFile, compact, children, accept = ACCEPT }: { onFile: (f: File) => void; compact?: boolean; children?: ReactNode; accept?: string }) {
+export function Dropzone({
+  onFile,
+  onFiles,
+  multiple,
+  compact,
+  children,
+  accept = ACCEPT,
+}: {
+  onFile?: (f: File) => void;
+  onFiles?: (files: File[]) => void;
+  multiple?: boolean;
+  compact?: boolean;
+  children?: ReactNode;
+  accept?: string;
+}) {
+  const take = (list: FileList | null | undefined) => {
+    const files = [...(list ?? [])];
+    if (!files.length) return;
+    if (onFiles) onFiles(multiple ? files : files.slice(0, 1));
+    else onFile?.(files[0]);
+  };
   const [over, setOver] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   return (
@@ -25,8 +46,7 @@ export function Dropzone({ onFile, compact, children, accept = ACCEPT }: { onFil
       onDrop={(e) => {
         e.preventDefault();
         setOver(false);
-        const f = e.dataTransfer.files?.[0];
-        if (f) onFile(f);
+        take(e.dataTransfer.files);
       }}
       className={cn(
         'focus-ring group flex cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed text-center transition-colors',
@@ -47,10 +67,10 @@ export function Dropzone({ onFile, compact, children, accept = ACCEPT }: { onFil
         ref={input}
         type="file"
         accept={accept || undefined}
+        multiple={multiple}
         className="hidden"
         onChange={(e) => {
-          const f = e.target.files?.[0];
-          if (f) onFile(f);
+          take(e.target.files);
           e.target.value = '';
         }}
       />

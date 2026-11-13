@@ -47,6 +47,11 @@ export interface ReadProgress {
   /** reading: lines of music done / total */
   line?: number;
   lines?: number;
+  /** reading: the page being read (0-based) / pages, and the line being read on it (1-based) / its lines */
+  page?: number;
+  pages?: number;
+  pageLine?: number;
+  pageLines?: number;
 }
 
 export interface ReadOptions {
@@ -249,7 +254,7 @@ function runWorker(pages: SheetPage[], opts: ReadOptions): Promise<{ systems: Sy
       if (settled || m.jobId !== jobId) return;
       if (m.type === 'progress') {
         const at = m.stage === 'loading-model' ? 0.15 * m.progress : m.stage === 'finding-lines' ? 0.15 + 0.05 * m.progress : 0.2 + 0.8 * m.progress;
-        opts.onProgress?.({ stage: m.stage, progress: at, loaded: m.loaded, total: m.total, line: m.line, lines: m.lines });
+        opts.onProgress?.({ stage: m.stage, progress: at, loaded: m.loaded, total: m.total, line: m.line, lines: m.lines, page: m.page, pages: m.pages, pageLine: m.pageLine, pageLines: m.pageLines });
       } else if (m.type === 'error') {
         finish(false);
         reject(new SheetReadError(m.message));
