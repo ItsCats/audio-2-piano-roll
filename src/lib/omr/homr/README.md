@@ -81,6 +81,14 @@ Source of the original: https://github.com/liebharc/homr (PyPI package `homr` 0.
 
 ## Before the reader goes live (licence checklist for the merge)
 
+Status (wired in as the "Accurate reader", src/lib/omr/readers.ts): items 2–6 are done — `package.json`
+says `(AGPL-3.0-or-later AND AGPL-3.0-only)`, the README, Terms, Credits footer and
+`THIRD_PARTY_NOTICES.md` say "version 3 or later; the homr sheet-music reader is version 3 only" with a
+copyright line, the notices have rows for this port, the models, relieur, OpenCV and Pillow, the Import
+page names homr next to the reader choice, and the source link points at the deployed commit when
+Netlify's `COMMIT_REF` (or `VITE_COMMIT`) is set. Item 1 (a public repository, production deployed only
+from pushed commits) is the owner's step before deploying.
+
 The files here carry their own notices; these repository-level items are done on the integration
 branch, not here, and must ship together with the reader:
 
