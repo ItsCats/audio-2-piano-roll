@@ -7,7 +7,8 @@ to index.html still gets the /assets/* Cache-Control, so rules match the *reques
 different header names from several matching rules are merged):
   - existing files are served as-is (the [[redirects]] rules have no `force`: files shadow them);
   - anything else takes the first matching [[redirects]] rule: a rewrite to a file (the SPA rule
-    to /index.html, status 200), or to /.netlify/functions/not-found, which answers like
+    to /index.html, status 200), a 301/302 redirect (with `force`, before any file check), or to
+    /.netlify/functions/not-found, which answers like
     netlify/functions/not-found.ts (404, no-store) WITHOUT the [[headers]] rules (Netlify does not
     apply them to function responses); no matching rule is a plain 404;
   - every [[headers]] rule whose `for` matches the request path applies (`*` matches anything,
@@ -76,6 +77,14 @@ class H(http.server.SimpleHTTPRequestHandler):
         # headers match the requested path; only the served file is rewritten
         self.requested = self.path
         self.from_function = False
+        path0 = self.path.split('?', 1)[0].split('#', 1)[0]
+        moved = next((r for rx, r in redirects if rx.match(path0) and int(r.get('status', 301)) in (301, 302)), None)
+        if moved and (moved.get('force') or not os.path.isfile(self.translate_path(self.path))):
+            self.send_response(int(moved.get('status', 301)))
+            self.send_header('Location', moved['to'])
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+            return None
         if os.path.isfile(self.translate_path(self.path)):
             return super().send_head()
         path = self.path.split('?', 1)[0].split('#', 1)[0]

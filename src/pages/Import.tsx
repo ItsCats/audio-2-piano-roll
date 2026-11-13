@@ -1,48 +1,23 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { FileAudio, SquarePlay, FileMusic, Mic, Loader2, CheckCircle2, XCircle, Circle, ArrowRight, Square, Info, Server, RotateCcw, Download, Smartphone } from 'lucide-react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { FileAudio, FileMusic, Mic, Loader2, CheckCircle2, XCircle, Circle, ArrowRight, Square, Info, RotateCcw, Download, Smartphone, MonitorSpeaker } from 'lucide-react';
 import { Dropzone } from '../components/import/Dropzone';
 import { SeparationOption, useSeparationChoice } from '../components/import/SeparationOption';
 import { PianoModelOption, usePianoModelChoice } from '../components/import/PianoModelOption';
 import type { TranscriptionEngine } from '../lib/transcription/pipeline';
-import { Badge, Button, ProgressBar, Segmented, cn } from '../components/ui';
-import { STAGE_LABELS, rememberServerHealth, stageLabel, useImport, type ImportJob, type ImportStage } from '../state/importStore';
+import { Button, ProgressBar, Segmented, cn } from '../components/ui';
+import { STAGE_LABELS, stageLabel, useImport, type ImportJob, type ImportStage } from '../state/importStore';
 import { SheetMusicTab } from '../components/import/SheetMusicTab';
 import { useSettings } from '../state/settingsStore';
-import { configuredBackendUrl, health, type BackendHealth } from '../lib/backend/client';
-import { createPlayer, fetchVideoMeta, parseYouTubeId, startTabCapture, tabCaptureSupported, type TabCapture, type VideoMeta, type YTPlayer } from '../lib/youtube/youtube';
+import { NO_SOUND_SHARED, startTabAudioCapture, tabAudioSupport, type TabAudioCapture } from '../lib/audio/tabAudio';
 import { formatTime } from '../lib/music/theory';
 import { toast } from '../state/toastStore';
 import { createScreenWakeLock, isTouchDevice } from '../lib/wakeLock';
 import { saveBlobAs } from '../lib/saveBlob';
-import { YOUTUBE_IMPORT_PATH, documentIsolated, isYouTubeImportPath, switchDocument } from '../lib/isolation';
 import { audioSessionForRecording } from '../lib/audio/audioSession';
 import { holdReload } from '../lib/newVersion';
 
-type Tab = 'audio' | 'youtube' | 'midi' | 'record';
-
-function useBackend() {
-  const url = configuredBackendUrl(useSettings((s) => s.backendUrl));
-  const [state, setState] = useState<{ health: BackendHealth | null; checking: boolean }>({ health: null, checking: false });
-  useEffect(() => {
-    if (!url) return;
-    let alive = true;
-    setState({ health: null, checking: true });
-    health(url)
-      .then((h) => {
-        rememberServerHealth(url, h); // the separation option and the import use the same answer
-        if (alive) setState({ health: h, checking: false });
-      })
-      .catch(() => {
-        rememberServerHealth(url, null);
-        if (alive) setState({ health: null, checking: false });
-      });
-    return () => {
-      alive = false;
-    };
-  }, [url]);
-  return { url, ...state };
-}
+type Tab = 'audio' | 'computer' | 'midi' | 'record';
 
 function DetectionOptions() {
   const preset = useSettings((s) => s.detectionPreset);
@@ -249,216 +224,166 @@ function JobProgress() {
   );
 }
 
-function YouTubeTab({ busy, separate, transcriber }: { busy: boolean; separate: boolean; transcriber: TranscriptionEngine }) {
-  const [params] = useSearchParams();
-  const [url, setUrl] = useState(() => params.get('url') ?? '');
-  // Only reachable while an import was running when the tab was opened (App.tsx IsolationGate):
-  // this page is cross-origin isolated, which the YouTube player can't be embedded in.
-  const [isolated] = useState(documentIsolated);
-  const [meta, setMeta] = useState<VideoMeta | null>(null);
+/** A link to another tab of this page. */
+function TabLink({ tab, children }: { tab: Tab; children: string }) {
+  return (
+    <Link to={`/import?tab=${tab}`} className="font-medium text-accent-400 hover:text-accent-300">
+      {children}
+    </Link>
+  );
+}
+
+/**
+ * Record what is playing on this computer: the sound of another tab (or app) through the browser's
+ * screen-sharing dialog (src/lib/audio/tabAudio.ts). Phones can't share sound with a web page, so
+ * there this tab explains the other ways.
+ */
+function ComputerTab({ busy, separate, transcriber }: { busy: boolean; separate: boolean; transcriber: TranscriptionEngine }) {
+  const [support] = useState(tabAudioSupport);
+  const [name, setName] = useState('');
   const [rights, setRights] = useState(false);
-  const [capturing, setCapturing] = useState<{ t: number; d: number } | null>(null);
-  const [playerError, setPlayerError] = useState<string | null>(null);
-  const playerEl = useRef<HTMLDivElement>(null);
-  const player = useRef<YTPlayer | null>(null);
-  const capture = useRef<TabCapture | null>(null);
-  const importYT = useImport((s) => s.importYouTubeViaServer);
+  const [rec, setRec] = useState<{ start: number } | null>(null);
+  const capture = useRef<TabAudioCapture | null>(null);
+  const [, tick] = useState(0);
   const importBlob = useImport((s) => s.importAudioBlob);
-  const backend = useBackend();
-  const id = parseYouTubeId(url);
-  const serverReady = !!backend.health?.features.youtube;
-  // say why a button is disabled instead of leaving it silently grey
-  const commonBlock = !rights
-    ? 'Tick the box above to confirm you have the rights to this video.'
-    : busy
-      ? 'Another import is still running — wait for it to finish (progress is shown above).'
-      : null;
-  const recordBlock = !tabCaptureSupported()
-    ? 'Recording tab audio needs Chrome or Edge on a computer.'
-    : isolated
-      ? 'Load the video player above first.'
-      : playerError
-      ? 'This video can’t be played here, so it can’t be recorded.'
-      : commonBlock;
-  const serverBlock = !serverReady ? 'Set up a processing server in Settings to use this.' : commonBlock;
-
   useEffect(() => {
-    setMeta(null);
-    setPlayerError(null);
-    if (!id) return;
-    let alive = true;
-    void fetchVideoMeta(id).then((m) => alive && setMeta(m));
-    const host = playerEl.current;
-    if (host && !isolated) {
-      host.innerHTML = '<div></div>';
-      createPlayer(host.firstElementChild as HTMLElement, id, (state) => {
-        if (state === 0 && capture.current) void finishCapture();
-      })
-        .then((p) => {
-          if (alive) player.current = p;
-          else p.destroy();
-        })
-        .catch((e: Error) => alive && setPlayerError(e.message));
-    }
-    return () => {
-      alive = false;
-      player.current?.destroy();
-      player.current = null;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
-
-  useEffect(() => {
-    if (!capturing) return;
-    const t = setInterval(() => {
-      const p = player.current;
-      if (p) setCapturing({ t: p.getCurrentTime(), d: p.getDuration() });
-    }, 250);
+    if (!rec) return;
+    const t = setInterval(() => tick((x) => x + 1), 250);
     return () => clearInterval(t);
-  }, [capturing !== null]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [rec]);
+  // while recording, a new version going online must not reload the page (src/lib/newVersion.ts)
+  useEffect(() => (rec ? holdReload(() => 'Stop recording first, then reload.') : undefined), [rec]);
+  // leaving the tab mid-recording: stop sharing, nothing is imported
+  useEffect(
+    () => () => {
+      capture.current?.cancel();
+      capture.current = null;
+    },
+    [],
+  );
 
-  const finishCapture = async () => {
+  const finish = async () => {
     const c = capture.current;
     if (!c) return;
     capture.current = null;
-    player.current?.pauseVideo();
-    setCapturing(null);
+    setRec(null);
     const blob = await c.stop();
     if (blob.size < 2000) {
-      toast.error('Nothing was recorded', 'Make sure "Share tab audio" was enabled.');
+      toast.error('Nothing was recorded', 'Turn on “Share tab audio” and play the song while recording.');
       return;
     }
-    void importBlob(blob, {
-      title: meta?.title ?? 'YouTube capture',
-      artist: meta?.author,
-      source: { kind: 'youtube', youtubeId: id ?? undefined, url, mimeType: blob.type, fileSize: blob.size },
-      separate,
-      transcriber,
-    });
+    const title = name.trim() || `Recording ${new Date().toLocaleString()}`;
+    void importBlob(blob, { title, source: { kind: 'capture', mimeType: blob.type, fileSize: blob.size }, separate, transcriber });
   };
 
-  const startCapture = async () => {
-    const p = player.current;
-    if (!p) return;
+  const start = async () => {
     try {
-      const c = await startTabCapture();
+      const c = await startTabAudioCapture();
       capture.current = c;
-      c.stream.getTracks().forEach((t) => (t.onended = () => void finishCapture()));
-      p.seekTo(0, true);
-      p.unMute();
-      p.setVolume(100);
-      p.playVideo();
-      setCapturing({ t: 0, d: p.getDuration() });
+      c.onEnded(() => void finish()); // the browser's "Stop sharing" button
+      setRec({ start: Date.now() });
     } catch (e) {
-      const msg = (e as Error).message;
-      if (!/denied|NotAllowed/i.test(msg)) toast.error('Could not capture tab audio', msg);
+      const err = e as Error;
+      // closing the browser's dialog (Cancel) is not an error
+      if (err.message === NO_SOUND_SHARED || !/NotAllowed|Abort/i.test(err.name)) toast.error('Could not record the sound', err.message);
     }
   };
 
+  if (support !== 'ok') {
+    return (
+      <div className="flex flex-col gap-3 text-[13px] leading-relaxed text-ink-200">
+        {support === 'iphone' ? (
+          <>
+            <p className="font-medium text-ink-50">iPhone and iPad can’t share another app’s sound with a website.</p>
+            <p>Use a screen recording instead:</p>
+            <ol className="ml-5 list-decimal space-y-1">
+              <li>Open Control Center and tap Screen Recording.</li>
+              <li>Play the song in its app, then stop the recording.</li>
+              <li>
+                Come back here and upload the video from Photos under <TabLink tab="audio">Audio / Video</TabLink>. Only its sound is used.
+              </li>
+            </ol>
+            <p className="text-ink-300">Some apps mute their sound in screen recordings. Then play the song out loud and use <TabLink tab="record">Record</TabLink> with the microphone.</p>
+          </>
+        ) : support === 'phone' ? (
+          <>
+            <p className="font-medium text-ink-50">Phones can’t share another app’s sound with a website.</p>
+            <p>
+              Record the song with your phone’s screen recorder, then upload the video under <TabLink tab="audio">Audio / Video</TabLink>. Or play the song
+              out loud and use <TabLink tab="record">Record</TabLink> with the microphone.
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="font-medium text-ink-50">This needs Chrome or Edge on a computer.</p>
+            <p>
+              This browser can’t record another tab’s sound. Open this page in Chrome or Edge, or upload a sound or video file under{' '}
+              <TabLink tab="audio">Audio / Video</TabLink>.
+            </p>
+          </>
+        )}
+        <p className="text-[12px] text-ink-400">{TERMS_NOTE}</p>
+      </div>
+    );
+  }
+
+  const block = !rights
+    ? 'Tick the box above first.'
+    : busy
+      ? 'Another import is still running — wait for it to finish (progress is shown above).'
+      : null;
   return (
     <div className="flex flex-col gap-4">
+      <p className="text-[13px] leading-relaxed text-ink-200">
+        Record a song playing in another tab. Press <b>Start recording</b>, pick the tab with the music and turn on <b>Share tab audio</b>. Then play
+        the song from the beginning and press <b>Stop</b> when it ends. It records in real time.
+      </p>
       <div className="flex flex-col gap-2">
-        <label htmlFor="yt" className="text-[12.5px] font-medium text-ink-200">
-          YouTube URL
+        <label htmlFor="rec-name" className="text-[12.5px] font-medium text-ink-200">
+          Song name (optional)
         </label>
         <input
-          id="yt"
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          placeholder="https://www.youtube.com/watch?v=…"
+          id="rec-name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          maxLength={120}
+          placeholder="Recording"
           className="focus-ring h-11 rounded-xl border border-ink-600 bg-ink-900 px-3.5 text-[14px] text-ink-50 placeholder:text-ink-400"
         />
-        {url && !id && <p className="text-[12px] text-bad">That doesn’t look like a YouTube video link.</p>}
       </div>
-      <div className={cn('overflow-hidden rounded-xl border border-ink-700 bg-black', !id && 'hidden')}>
-        <div className={cn('aspect-video w-full', isolated && 'hidden')} ref={playerEl} />
-        {isolated && (
-          <div className="flex aspect-video w-full flex-col items-center justify-center gap-3 px-6 text-center">
-            <p className="max-w-sm text-[12.5px] leading-relaxed text-ink-200">
-              {busy
-                ? 'The video player needs a page reload, which would stop the import that is running. It can load as soon as that import finishes.'
-                : 'The video player needs a quick page reload.'}
-            </p>
-            <Button
-              size="sm"
-              disabled={busy}
-              onClick={() => switchDocument(`${YOUTUBE_IMPORT_PATH}${url ? `?url=${encodeURIComponent(url)}` : ''}`)}
-            >
-              Load the video player
-            </Button>
-          </div>
+      <label
+        className={cn(
+          'flex items-start gap-2 rounded-lg border p-2.5 text-[12.5px] transition-colors',
+          rights ? 'border-transparent text-ink-200' : 'border-accent-500/40 bg-accent-500/10 text-ink-100',
         )}
-      </div>
-      {playerError && <p className="text-[12.5px] text-bad">{playerError}</p>}
-      {id && (
-        <>
-          {meta && (
-            <p className="text-[13px] text-ink-200">
-              <span className="font-medium text-ink-50">{meta.title}</span> · {meta.author}
-            </p>
-          )}
-          <label
-            className={cn(
-              'flex items-start gap-2 rounded-lg border p-2.5 text-[12.5px] transition-colors',
-              rights ? 'border-transparent text-ink-200' : 'border-accent-500/40 bg-accent-500/10 text-ink-100',
-            )}
-          >
-            <input type="checkbox" checked={rights} onChange={(e) => setRights(e.target.checked)} className="mt-0.5 accent-[var(--color-accent-500)]" />
-            I own this content or have permission to use it, and I’ll respect YouTube’s Terms of Service and the creator’s copyright.
-          </label>
-          <div className="grid gap-3 md:grid-cols-2">
-            <div className="rounded-xl border border-ink-700 bg-ink-900/60 p-4">
-              <div className="flex items-center gap-2 text-[13.5px] font-medium text-ink-50">
-                <Server size={16} className="text-accent-400" /> Process on my server
-                {serverReady ? <Badge tone="ok">connected</Badge> : <Badge>not configured</Badge>}
-              </div>
-              <p className="mt-1.5 text-[12px] leading-relaxed text-ink-300">
-                Fastest and most reliable. Your self-hosted processing server fetches the audio. See the README to set one up.
-              </p>
-              <Button className="mt-3" variant="primary" size="sm" disabled={!!serverBlock} onClick={() => void importYT(url, id, separate, { title: meta?.title, artist: meta?.author, transcriber })}>
-                Fetch & transcribe
-              </Button>
-              {serverBlock && <p className="mt-1.5 text-[11.5px] text-ink-400">{serverBlock}</p>}
-            </div>
-            <div className="rounded-xl border border-ink-700 bg-ink-900/60 p-4">
-              <div className="flex items-center gap-2 text-[13.5px] font-medium text-ink-50">
-                <Mic size={16} className="text-accent-400" /> Record from this tab
-                {!tabCaptureSupported() && <Badge tone="warn">unsupported</Badge>}
-              </div>
-              <p className="mt-1.5 text-[12px] leading-relaxed text-ink-300">
-                Works in Chrome/Edge on desktop. Choose <b>This tab</b> and enable <b>Share tab audio</b>; the video plays once in real time while it records.
-              </p>
-              {capturing ? (
-                <div className="mt-3 flex flex-col gap-2">
-                  <ProgressBar value={capturing.d ? capturing.t / capturing.d : null} />
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono text-[11.5px] text-ink-300">
-                      Recording {formatTime(capturing.t)} / {formatTime(capturing.d)}
-                    </span>
-                    <Button size="sm" variant="danger" icon={<Square size={12} />} onClick={() => void finishCapture()}>
-                      Stop & transcribe
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <Button className="mt-3" size="sm" disabled={!!recordBlock} onClick={() => void startCapture()}>
-                    Start recording
-                  </Button>
-                  {recordBlock && <p className="mt-1.5 text-[11.5px] text-ink-400">{recordBlock}</p>}
-                </>
-              )}
-            </div>
-          </div>
-        </>
+      >
+        <input type="checkbox" checked={rights} onChange={(e) => setRights(e.target.checked)} className="mt-0.5 accent-[var(--color-accent-500)]" />
+        I own this music or have permission to use it.
+      </label>
+      <p className="text-[12px] leading-relaxed text-ink-300">{TERMS_NOTE}</p>
+      {rec ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-ink-700 bg-ink-900/60 p-4">
+          <span className="flex items-center gap-2 text-[14px] text-ink-50">
+            <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-bad" /> Recording {formatTime((Date.now() - rec.start) / 1000)}
+          </span>
+          <Button variant="danger" icon={<Square size={14} />} onClick={() => void finish()}>
+            Stop & transcribe
+          </Button>
+        </div>
+      ) : (
+        <div>
+          <Button variant="primary" disabled={!!block} onClick={() => void start()} icon={<MonitorSpeaker size={16} />}>
+            Start recording
+          </Button>
+          {block && <p className="mt-1.5 text-[11.5px] text-ink-400">{block}</p>}
+        </div>
       )}
-      <p className="text-[12px] leading-relaxed text-ink-400">
-        Piano2Vision never bypasses DRM or downloads YouTube videos inside the browser. If neither option suits you, download
-        the audio through a service you’re licensed for and upload the file instead.
-      </p>
     </div>
   );
 }
+
+/** Shown wherever the app records sound from other sites and apps. */
+const TERMS_NOTE = 'Check the terms and conditions of the site or app you record from (for example a social media app) before recording its audio.';
 
 function RecordTab({ busy }: { busy: boolean }) {
   const [rec, setRec] = useState<{ r: MediaRecorder; start: number; stream: MediaStream } | null>(null);
@@ -556,9 +481,7 @@ function RecordTab({ busy }: { busy: boolean }) {
 
 export default function ImportPage() {
   const [params] = useSearchParams();
-  const { pathname } = useLocation();
-  // the YouTube tab is its own route (no cross-origin isolation there: src/lib/isolation.ts)
-  const tab: Tab = isYouTubeImportPath(pathname) ? 'youtube' : ((params.get('tab') as Tab) || 'audio');
+  const tab: Tab = (params.get('tab') as Tab) || 'audio';
   const job = useImport((s) => s.job);
   const importFile = useImport((s) => s.importFile);
   const navigate = useNavigate();
@@ -589,7 +512,7 @@ export default function ImportPage() {
 
   const tabs = [
     { id: 'audio', label: 'Audio / Video', icon: FileAudio },
-    { id: 'youtube', label: 'YouTube', icon: SquarePlay },
+    { id: 'computer', label: 'Computer sound', icon: MonitorSpeaker },
     { id: 'midi', label: 'MIDI / Sheet music', icon: FileMusic },
     { id: 'record', label: 'Record', icon: Mic },
   ] as const;
@@ -629,7 +552,7 @@ export default function ImportPage() {
                 key={t.id}
                 role="tab"
                 aria-selected={tab === t.id}
-                onClick={() => navigate(t.id === 'youtube' ? YOUTUBE_IMPORT_PATH : `/import?tab=${t.id}`)}
+                onClick={() => navigate(`/import?tab=${t.id}`)}
                 className={cn(
                   'focus-ring flex h-12 shrink-0 items-center gap-2 border-b-2 px-3 text-[13.5px] font-medium whitespace-nowrap transition-colors sm:px-4',
                   tab === t.id ? 'border-accent-500 text-ink-50' : 'border-transparent text-ink-300 hover:text-ink-100',
@@ -648,11 +571,15 @@ export default function ImportPage() {
                 <p className="text-[12px] text-ink-400">Up to 20 minutes / 300 MB. Longer files: trim first. Video files use their audio track.</p>
               </div>
             )}
-            {tab === 'youtube' && (
+            {tab === 'computer' && (
               <div className="flex flex-col gap-5">
-                <YouTubeTab busy={busy} separate={separate} transcriber={model.transcriber} />
-                <DetectionOptions />
-                <SeparationOption unusedReason={pianoModel ? 'Not used with the high-accuracy piano model.' : undefined} />
+                <ComputerTab busy={busy} separate={separate} transcriber={model.transcriber} />
+                {tabAudioSupport() === 'ok' && (
+                  <>
+                    <DetectionOptions />
+                    <SeparationOption unusedReason={pianoModel ? 'Not used with the high-accuracy piano model.' : undefined} />
+                  </>
+                )}
               </div>
             )}
             {tab === 'midi' && (

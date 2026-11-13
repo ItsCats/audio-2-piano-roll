@@ -29,6 +29,13 @@
   to = "/.netlify/functions/not-found"
   status = 200
 
+# The YouTube import tab was replaced by "Computer sound" (src/lib/isolation.ts): old links land there
+[[redirects]]
+  from = "/import/youtube"
+  to = "/import?tab=computer"
+  status = 301
+  force = true
+
 # Single-page app routing
 [[redirects]]
   from = "/*"
@@ -84,8 +91,7 @@
 
 
 # Cross-origin isolation (SharedArrayBuffer → multi-threaded WASM separation) on the app routes,
-# see src/lib/isolation.ts. NOT on /import/youtube: the YouTube player iframe sends no COEP, so an
-# isolated page can't embed it (the app does a full page load when entering/leaving that route).
+# see src/lib/isolation.ts. Unknown paths get none (the app reloads once when moving on from one).
 # credentialless (not require-corp): cross-origin no-cors loads still work, just without cookies;
 # browsers without credentialless support (Safari) simply stay non-isolated and single-threaded.
 # Header rules match the requested path (also for the SPA rewrite to /index.html) and merge with
@@ -137,6 +143,21 @@
   [headers.values]
     Cross-Origin-Opener-Policy = "same-origin"
     Cross-Origin-Embedder-Policy = "credentialless"
+[[headers]]
+  for = "/privacy"
+  [headers.values]
+    Cross-Origin-Opener-Policy = "same-origin"
+    Cross-Origin-Embedder-Policy = "credentialless"
+[[headers]]
+  for = "/terms"
+  [headers.values]
+    Cross-Origin-Opener-Policy = "same-origin"
+    Cross-Origin-Embedder-Policy = "credentialless"
+[[headers]]
+  for = "/copyright"
+  [headers.values]
+    Cross-Origin-Opener-Policy = "same-origin"
+    Cross-Origin-Embedder-Policy = "credentialless"
 
 [[headers]]
   for = "/*"
@@ -145,4 +166,4 @@
     Referrer-Policy = "strict-origin-when-cross-origin"
     X-Frame-Options = "DENY"
     Permissions-Policy = "camera=(), geolocation=(), microphone=(self), midi=(self), display-capture=(self)"
-    Content-Security-Policy = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://www.youtube.com https://s.ytimg.com; worker-src 'self' blob:; connect-src 'self' https: http://localhost:* http://127.0.0.1:*; img-src 'self' data: blob: https://i.ytimg.com; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; frame-src https://www.youtube.com https://www.youtube-nocookie.com; object-src 'none'; base-uri 'self'; form-action 'self'"
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https: http://localhost:* http://127.0.0.1:*; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'"

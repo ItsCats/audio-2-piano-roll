@@ -30,10 +30,10 @@ Edit mode → select notes → press **L**/**R** (or **H** to swap). Then *Easy 
 ### MIDI keyboard not detected
 Use Chrome, Edge or Firefox (Safari has no Web MIDI). Click *Connect MIDI keyboard* and allow access; devices connected later appear automatically. The computer keyboard (A W S E D F T G Y H U J K, Z/X octave) works everywhere.
 
-### YouTube
-* "Record from this tab" needs Chrome/Edge on desktop: pick **This tab** and enable **Share tab audio**. It records in real time.
-* Some videos can't be embedded (owner setting) — the player shows an error.
-* Processing server: "YouTube refused the download from this server" means YouTube blocked the server's IP (common for cloud hosts). Run the server on a home connection.
+### Computer sound (recording another tab)
+* Needs Chrome or Edge on a computer: press **Start recording**, pick the tab that plays the music and turn on **Share tab audio**. It records in real time.
+* "Nothing was recorded": the **Share tab audio** switch was off, or the song was not playing.
+* iPhone / iPad and Android can't share another app's sound with a website. Use the phone's screen recorder, then upload the video under **Audio / Video** (only its sound is used), or play the song out loud and use **Record**.
 
 ### Storage full / songs disappeared
 Original audio is the largest item. Delete old songs in the Library. Browsers can clear site data in private windows or when the user clears browsing data — export project files for backups.

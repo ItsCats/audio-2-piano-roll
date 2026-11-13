@@ -5,7 +5,9 @@
  *  - missing files under /assets, /models, /samples and /pdfjs get a real 404 that is not cached
  *    (no long Cache-Control from the [[headers]] rules), while existing ones keep their cache;
  *  - a tab opened before a deploy: opening a page whose code is gone reloads once, with a note,
- *    and then works; a second failure soon after does not reload again but shows "Reload".
+ *    and then works; a second failure soon after does not reload again but shows "Reload";
+ *  - a recording that fails to import because its code is gone is never thrown away by an automatic
+ *    reload: the note offers "Reload" and "Download recording" still works.
  *
  *   npx vite build --outDir /tmp/p2v-v1
  *   npx vite build --outDir /tmp/p2v-v2 --config tests/e2e/deploy-safe.v2.config.ts   (same app, all file names changed)
@@ -148,6 +150,49 @@ try {
     await p2.getByRole('button', { name: 'Reload', exact: true }).waitFor({ timeout: 10000 }).catch(() => {});
     await p2.waitForTimeout(1500);
     check('network failure without a new version: no reload', loads2 === 0, `loads ${loads2}`);
+
+    // a recording whose import fails because the new version removed its code: no automatic
+    // reload (it would throw the recording away); the note offers Reload, the recording can be saved
+    deploy(v1);
+    const ctx3 = await browser.newContext({ viewport: { width: 1280, height: 860 }, acceptDownloads: true });
+    await ctx3.addInitScript(() => {
+      navigator.mediaDevices.getDisplayMedia = async () => {
+        const c = document.createElement('canvas');
+        c.getContext('2d').fillRect(0, 0, 8, 8);
+        const ac = new AudioContext();
+        const dest = ac.createMediaStreamDestination();
+        const o = ac.createOscillator();
+        o.frequency.value = 440;
+        o.connect(dest);
+        o.start();
+        return new MediaStream([...c.captureStream(5).getVideoTracks(), ...dest.stream.getAudioTracks()]);
+      };
+    });
+    const p3 = await ctx3.newPage();
+    await p3.goto(`${base}/import?tab=computer`, { waitUntil: 'networkidle' });
+    await p3.getByRole('checkbox', { name: /I own this music/ }).check();
+    await p3.getByRole('button', { name: 'Start recording' }).click();
+    await p3.waitForTimeout(3000);
+    let loads3 = 0;
+    p3.on('load', () => loads3++);
+    deploy(v2);
+    // the old version's transcription worker is gone (the second build here keeps the worker's file
+    // name, as its code is the same; a deploy that changes the worker removes the old file)
+    await p3.route('**/assets/*.worker-*.js', (r) => r.fulfill({ status: 404, body: 'Not found' }));
+    await p3.getByRole('button', { name: 'Stop & transcribe' }).click();
+    const held = p3.getByText('A new version is available. Download your recording first, then reload.');
+    const heldShown = await held.waitFor({ timeout: 30000 }).then(() => true, () => false);
+    await p3.waitForTimeout(2500);
+    check('recording import fails after a deploy: no automatic reload, the note asks to save the recording first', heldShown && loads3 === 0, `note ${heldShown}, loads ${loads3}`);
+    const dl = p3.waitForEvent('download', { timeout: 10000 }).catch(() => null);
+    await p3.getByRole('button', { name: 'Download recording' }).click().catch(() => undefined);
+    const file = await dl;
+    check('…and "Download recording" still saves it', !!file && /\.(webm|m4a|mp4|ogg)$/.test(file.suggestedFilename()), file?.suggestedFilename() ?? 'no download');
+    await p3.locator('#pv-update-note').getByRole('button', { name: 'Reload' }).click();
+    await p3.waitForLoadState('networkidle');
+    const v2Now = await p3.evaluate(() => document.querySelector('script[type="module"][src*="/assets/"]')?.getAttribute('src'));
+    check('…then "Reload" in the note opens the new version', /-v2-/.test(v2Now ?? ''), v2Now ?? '');
+    await ctx3.close();
   } finally {
     await browser.close();
   }

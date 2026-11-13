@@ -145,6 +145,11 @@ interface ImportState {
   ) => Promise<string | null>;
   /** run an import that a killed tab left behind (see lib/storage/db.ts PendingImport) again */
   resumePending: (rec: PendingImport) => Promise<string | null>;
+  /**
+   * A YouTube link fetched by the processing server. Nothing in the app calls this since the
+   * YouTube tab was replaced by "Computer sound" (2026-11), and the server has YouTube off by
+   * default (ENABLE_YOUTUBE=0); kept until the server's YouTube job is removed too.
+   */
   importYouTubeViaServer: (
     videoUrl: string,
     videoId: string,

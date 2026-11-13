@@ -3,8 +3,8 @@
  * sends no request to any host other than the site itself, and sets no cookies.
  * The allow-list for this path is empty. If this fails, either fix the request or update the
  * Privacy page (src/pages/Legal.tsx) first and then this test.
- * (The YouTube tab, and a processing server set in Settings, do contact other hosts by design;
- * the Privacy page says so. They are not on this path.)
+ * (A processing server set in Settings, or built in with VITE_PROCESSING_URL, does contact another
+ * host by design; the Privacy page says so. It is not on this path.)
  *
  *   npm run test:e2e:privacy             against the dev server
  *   npm run test:e2e:privacy -- --dist   against the production build in dist/ (run `npm run build` first;
@@ -83,6 +83,15 @@ try {
     if (heading) await page.getByRole('heading', { level: 1, name: heading }).waitFor({ timeout: 15000 });
     await page.waitForTimeout(800);
   }
+  // every tab of the Import page (with a processing server, opening Import checks it: not set here)
+  for (const tab of ['audio', 'computer', 'midi', 'record']) {
+    await page.goto(`${origin}/import?tab=${tab}`);
+    await page.getByRole('heading', { level: 1, name: 'Import music' }).waitFor({ timeout: 15000 });
+    await page.waitForTimeout(800);
+  }
+  // an old link to the removed YouTube tab loads nothing from YouTube
+  await page.goto(`${origin}/import/youtube`);
+  await page.waitForURL(/\/import\?tab=computer/, { timeout: 15000 });
   await page.waitForLoadState('networkidle').catch(() => {});
 
   check(requests > 0, `requests seen: ${requests}`);

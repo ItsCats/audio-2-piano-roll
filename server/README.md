@@ -16,7 +16,7 @@ transcribes the drum-less accompaniment for the rest. The browser can run the sa
 (the "Separate vocals & drums" import option); a server is simply faster — about 0.4–0.6× real time on
 2–4 CPU cores versus 2–3× real time single-threaded in the browser.
 
-> **Rights & terms**: only process content you own or are licensed to use. Fetching YouTube media may be restricted by YouTube's Terms of Service — enabling it is your decision (`ENABLE_YOUTUBE=0` disables it). YouTube blocks most datacenter IPs, so YouTube fetching is reliable mainly when this server runs on a home connection.
+> **Rights & terms**: only process content you own or are licensed to use. Fetching YouTube media may be restricted by YouTube's Terms of Service, so it is off by default (`ENABLE_YOUTUBE=1` turns it on; the web app no longer uses it). YouTube blocks most datacenter IPs, so YouTube fetching is reliable mainly when this server runs on a home connection.
 
 ## Separation model
 
@@ -74,7 +74,8 @@ docker run -p 8000:8000 -e SHARED_SECRET=change-me -e ALLOWED_ORIGINS=https://yo
 | `SHARED_SECRET` | – | HMAC secret; must equal `PROCESSING_SHARED_SECRET` on Netlify |
 | `ALLOW_ANONYMOUS` | `0` | accept requests without a token (local use only) |
 | `ALLOWED_ORIGINS` | `http://localhost:5173` | CORS allow-list (comma-separated) |
-| `ENABLE_YOUTUBE` / `ENABLE_SEPARATION` | `1` | feature switches |
+| `ENABLE_YOUTUBE` | `0` | YouTube downloads (`POST /api/jobs/youtube`). Off by default: the web app no longer offers YouTube links |
+| `ENABLE_SEPARATION` | `1` | separation jobs |
 | `SCNET_MODEL` | `DATA_DIR/models/scnet.int8.onnx` (Docker: `/srv/models/scnet.int8.onnx`) | model file |
 | `SCNET_AUTO_DOWNLOAD` | `1` | download (and verify) the model when the file is missing |
 | `SCNET_THREADS` | `0` (all cores) | onnxruntime intra-op threads per job |

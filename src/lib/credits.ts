@@ -270,7 +270,7 @@ export const CREDITS: CreditGroup[] = [
   {
     id: 'server',
     title: 'Optional processing server',
-    intro: 'Only used if you run the self-hosted server for YouTube fetching or faster separation.',
+    intro: 'Only used if you run the self-hosted server for faster separation (its YouTube downloads are off by default and not used by the site).',
     items: [
       { name: 'yt-dlp', use: 'Fetching audio from YouTube links you have the rights to.', author: 'yt-dlp contributors', license: 'Unlicense', licenseUrl: LIC.unlicense, url: 'https://github.com/yt-dlp/yt-dlp' },
       { name: 'FFmpeg', use: 'Decoding and converting audio.', author: 'FFmpeg developers', license: 'LGPL-2.1+ (GPL for some builds)', licenseUrl: LIC.lgpl, url: 'https://ffmpeg.org' },

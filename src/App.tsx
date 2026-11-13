@@ -7,7 +7,7 @@ import { HomePage } from './pages/Home';
 import { useLibrary } from './state/libraryStore';
 import { requestPersistence } from './lib/storage/db';
 import { useImport } from './state/importStore';
-import { YOUTUBE_IMPORT_PATH, needsDocumentSwitch, switchDocument } from './lib/isolation';
+import { COMPUTER_SOUND_IMPORT, isLegacyYouTubeImport, needsDocumentSwitch, switchDocument } from './lib/isolation';
 
 const ImportPage = lazy(() => import('./pages/Import'));
 const StudioPage = lazy(() => import('./pages/Studio'));
@@ -26,24 +26,21 @@ function PageFallback() {
 }
 
 /**
- * Keeps the document's cross-origin isolation right for the route (src/lib/isolation.ts): entering
- * or leaving the YouTube import route is a full page load, so the server's headers for that route
- * apply. While an import runs, a page load would cancel it, so the router navigates in place and
- * the document keeps its current isolation (single-threaded separation or a YouTube tab that waits,
- * see Import.tsx) until a later navigation.
+ * Keeps the document's cross-origin isolation right for the route (src/lib/isolation.ts): moving
+ * from a document loaded on an unknown path to an app route is a full page load, so the server's
+ * headers for that route apply. While an import runs, a page load would cancel it, so the router
+ * navigates in place and the document keeps its current isolation (single-threaded separation)
+ * until a later navigation.
  */
 function IsolationGate() {
   const location = useLocation();
-  // old links (/import?tab=youtube) → the YouTube route
-  const params = new URLSearchParams(location.search);
-  const legacyYouTube = location.pathname.replace(/\/+$/, '') === '/import' && params.get('tab') === 'youtube';
-  if (legacyYouTube) params.delete('tab');
-  const target = legacyYouTube ? `${YOUTUBE_IMPORT_PATH}${params.size ? `?${params}` : ''}${location.hash}` : null;
+  // old links to the removed YouTube tab (/import/youtube, /import?tab=youtube) → "Computer sound"
+  const target = isLegacyYouTubeImport(location.pathname, location.search) ? COMPUTER_SOUND_IMPORT : null;
   // decided once per navigation: an import finishing later never reloads the page by itself
   const switching = useMemo(() => {
     const job = useImport.getState().job;
     const busy = !!job && job.stage !== 'done' && job.stage !== 'error';
-    return !busy && needsDocumentSwitch(legacyYouTube ? YOUTUBE_IMPORT_PATH : location.pathname);
+    return !busy && needsDocumentSwitch(target ? '/import' : location.pathname);
   }, [location.key]); // eslint-disable-line react-hooks/exhaustive-deps
   useLayoutEffect(() => {
     if (switching) switchDocument(target ?? `${location.pathname}${location.search}${location.hash}`);
@@ -66,7 +63,7 @@ export function App() {
             <Route element={<IsolationGate />}>
             <Route index element={<HomePage />} />
             <Route path="import" element={<Suspense fallback={<PageFallback />}><ImportPage /></Suspense>} />
-            <Route path="import/youtube" element={<Suspense fallback={<PageFallback />}><ImportPage /></Suspense>} />
+            <Route path="import/youtube" element={<Navigate to={COMPUTER_SOUND_IMPORT} replace />} />
             <Route path="studio" element={<Suspense fallback={<PageFallback />}><StudioPage /></Suspense>} />
             <Route path="studio/:id" element={<Suspense fallback={<PageFallback />}><StudioPage /></Suspense>} />
             <Route path="library" element={<Suspense fallback={<PageFallback />}><LibraryPage /></Suspense>} />

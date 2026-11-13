@@ -88,8 +88,8 @@ export default function CreditsPage() {
             . The models, piano sounds, fonts and libraries above keep their own licences.
           </p>
           <p>
-            Piano2Vision is not affiliated with YouTube, Spotify, Google, ByteDance, Rousseau or any other project or person listed here. The YouTube player is
-            embedded under YouTube’s Terms of Service; you are responsible for having the rights to the music you import. See also{' '}
+            Piano2Vision is not affiliated with YouTube, Spotify, Google, ByteDance, Rousseau or any other project or person listed here. You are responsible for having
+            the rights to the music you import. See also{' '}
             <Link to="/accuracy" className="text-accent-400 hover:text-accent-300">
               how accurate is it?
             </Link>

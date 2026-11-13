@@ -97,23 +97,17 @@ function Privacy() {
             files are requested, and keep this in logs for a limited time to run and protect the service. See{' '}
             <Ext href="https://www.netlify.com/privacy/">Netlify’s privacy policy</Ext>. Your songs are not part of these requests.
           </li>
-          <li>
-            <b>The YouTube tab.</b> Only if you use <b>Import → YouTube</b>: when you paste a link, the page asks YouTube for the video’s title and
-            picture and loads YouTube’s player. YouTube (Google) then receives your IP address and may set its own cookies, under the{' '}
-            <Ext href="https://policies.google.com/privacy">Google Privacy Policy</Ext>. If you record the video’s sound, the recording is saved on your
-            device only.
-          </li>
           {SITE_PROCESSING_HOST ? (
             <li>
               <b>Our processing server.</b> This site uses a processing server at <b>{SITE_PROCESSING_HOST}</b> for some imports, unless you enter
               another address in <b>Settings → Processing server</b>. When you import audio, the page checks that the server is online, so it sees
-              your IP address. The audio you choose to separate (this can be a file or a recording), or the YouTube link you paste, is sent to that
-              server to be processed.
+              your IP address. The audio you choose to separate (this can be a file or a recording) is sent to that server to be
+              processed.
             </li>
           ) : (
             <li>
               <b>A processing server, only if one is set.</b> It is off unless a server address appears in <b>Settings → Processing server</b>. If
-              one is set, the audio you choose to separate, or the YouTube link you paste, is sent to that server. The person who runs that server
+              one is set, the audio you choose to separate is sent to that server. The person who runs that server
               can see it, and their rules apply.
             </li>
           )}
@@ -127,13 +121,13 @@ function Privacy() {
       <Part title="Cookies and tracking">
         <p>
           {SITE_NAME} sets no tracking cookies, has no analytics or ads, and has no accounts or sign-in. It uses your browser’s storage only to save
-          your songs and settings. (The YouTube player, if you use it, may set YouTube’s own cookies, as above.)
+          your songs and settings.
         </p>
       </Part>
 
-      <Part title="Microphone, MIDI keyboard and tab sound">
+      <Part title="Microphone, MIDI keyboard and computer sound">
         <p>
-          The microphone, a MIDI keyboard and recording a tab’s sound are only used when you press the button for them, and your browser asks for
+          The microphone, a MIDI keyboard and recording another tab’s sound (<b>Import → Computer sound</b>) are only used when you press the button for them, and your browser asks for
           permission first.{' '}
           {SITE_PROCESSING_HOST
             ? 'The keys you play stay on your device. A recording you import is handled like any other audio: on your device, unless you choose to separate it on the processing server (see above).'
@@ -159,8 +153,7 @@ function Privacy() {
 
       <Part title="Children">
         <p>
-          {SITE_NAME} doesn’t ask anyone for their name, e-mail address or other personal details, whatever their age. YouTube has its own age rules,
-          so if you are under 13, ask a parent or guardian before using the YouTube tab.
+          {SITE_NAME} doesn’t ask anyone for their name, e-mail address or other personal details, whatever their age.
         </p>
       </Part>
 
@@ -209,12 +202,11 @@ function Terms() {
         </List>
       </Part>
 
-      <Part title="YouTube">
+      <Part id="recording" title="Recording from other sites and apps">
         <p>
-          The YouTube tab uses YouTube’s own player. By using it you also agree to the{' '}
-          <Ext href="https://www.youtube.com/t/terms">YouTube Terms of Service</Ext>, and Google’s handling of your data is covered by the{' '}
-          <Ext href="https://policies.google.com/privacy">Google Privacy Policy</Ext>. {SITE_NAME} is not made by, affiliated with or endorsed by
-          YouTube or Google. Only use videos you have the rights to.
+          Check the terms and conditions of a site or app (for example a social media app) before you record audio from it, with{' '}
+          <b>Computer sound</b>, a screen recording or the microphone. Many of them don’t allow it. {SITE_NAME} is not made by, affiliated with or
+          endorsed by any of them.
         </p>
       </Part>
 

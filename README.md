@@ -1,8 +1,8 @@
 # Piano2Vision
 
-Turn songs, recordings, YouTube videos, MIDI files and sheet music into an interactive **falling-note piano roll** — with a real sampled grand piano, Easy / Medium / Hard arrangements, note editing, practice tools with MIDI-keyboard scoring, and **1080p60 video export**.
+Turn songs, recordings, videos, MIDI files and sheet music into an interactive **falling-note piano roll** — with a real sampled grand piano, Easy / Medium / Hard arrangements, note editing, practice tools with MIDI-keyboard scoring, and **1080p60 video export**.
 
-Everything runs in the browser. Audio is transcribed on the user's device by a neural network; songs are stored locally. An optional self-hosted processing server adds YouTube fetching and faster source separation (separation also runs in the browser).
+Everything runs in the browser. Audio is transcribed on the user's device by a neural network; songs are stored locally. An optional self-hosted processing server adds faster source separation (separation also runs in the browser).
 
 ---
 
@@ -10,7 +10,7 @@ Everything runs in the browser. Audio is transcribed on the user's device by a n
 
 | Area | What you get |
 | --- | --- |
-| **Import** | MP3, WAV, M4A/AAC, MP4/MOV/WebM/MKV (audio track), FLAC, OGG/Opus, MIDI; sheet music (MusicXML `.musicxml`/`.xml`/`.mxl`, MuseScore 3–5 `.mscz`/`.mscx`, repeats played out in order); **PDFs and photos of printed piano music (Beta)**: pick the PDF pages or take / choose photos (one per page, a corner screen to frame each page), read on the device by the Sheet Music Transformer (24 MB, downloaded once), labelled "Sheet music · Beta" in the Studio with tips for checking the notes; microphone recording; YouTube (via your processing server, or by recording the official embedded player's tab audio) |
+| **Import** | MP3, WAV, M4A/AAC, MP4/MOV/WebM/MKV (audio track), FLAC, OGG/Opus, MIDI; sheet music (MusicXML `.musicxml`/`.xml`/`.mxl`, MuseScore 3–5 `.mscz`/`.mscx`, repeats played out in order); **PDFs and photos of printed piano music (Beta)**: pick the PDF pages or take / choose photos (one per page, a corner screen to frame each page), read on the device by the Sheet Music Transformer (24 MB, downloaded once), labelled "Sheet music · Beta" in the Studio with tips for checking the notes; microphone recording; **Computer sound**: record a song playing in another tab (Chrome / Edge on a computer; on iPhone, a screen recording uploaded as a video does the same) |
 | **Transcription** | Spotify's Basic Pitch model (polyphonic) running in a Web Worker on WebGL/WASM, with a piano-tuned note-extraction pipeline (register curve for the top/bottom octaves, chopped-note join), beat tracking, key detection and hand assignment. **Separate vocals & drums** (SCNet, in the browser, on by default for "Full song") puts the singer's melody on the right hand and transcribes the accompaniment without drums. Re-tune detection afterwards without re-running the model. For solo piano, an optional second model, **Solo piano – high accuracy (slower)** (ByteDance's piano transcription model, ONNX in the browser): far more accurate notes, note lengths and velocities on piano recordings, but a ≈ 41 MB one-time download, about 5× slower (≈ 38 s per audio minute with 3 threads, ≈ 97 s single-threaded) and ≈ 0.7 GB more memory, and no help for songs with vocals or drums. Measured accuracy: in-app **Accuracy** page. |
 | **Arrangements** | Easy (the sung melody — or one smooth instrument tune — on 8th notes + sustained bass), Medium (tune + chord tones, simplified left hand, never more than an octave per hand), Hard (full transcription, hands rebalanced for reach) — switch instantly, edit each independently |
 | **Piano roll** | Smooth canvas renderer locked to the audio clock, 49–88 keys or fit-to-song, note speed/zoom, hand colours, glow, trails, sparks, guides, pedal lane, loop markers |
@@ -108,7 +108,6 @@ Never commit secrets — `.env*` files are git-ignored; `.env.example` documents
 
 The browser does all transcription. The server in [`server/`](server/README.md) adds:
 
-- **YouTube audio fetching** with yt-dlp (only for content you have rights to),
 - **Faster source separation** — the same SCNet model the browser runs for "Separate vocals & drums", on several CPU cores: it returns the vocal stem (the right-hand melody) and the accompaniment without drums or vocals. (Before 2.0 the server used Demucs, whose pretrained weights are research-only.)
 
 ```bash
@@ -144,7 +143,6 @@ src/
     omr/             sheet-music reading (beta): PDF pages / photos → page clean-up, staff finding → Sheet Music Transformer (ONNX worker) → **kern → MusicXML → score/
     midiInput/       Web MIDI input and practice scoring
     storage/         IndexedDB persistence
-    youtube/         URL parsing, oEmbed, IFrame player, tab-audio capture
     backend/         processing-server client
   state/             zustand stores (settings, studio, transport, import, playback)
   components/        UI kit, layout, studio panels, dialogs
@@ -172,7 +170,7 @@ The full list (models, sounds, fonts, libraries, server components and the data 
 - [ONNX Runtime](https://github.com/microsoft/onnxruntime) (onnxruntime-web in the browser, onnxruntime on the server) — MIT
 - TensorFlow.js (Apache-2.0), mediabunny (MPL-2.0), @tonejs/midi (MIT), React (MIT), OpenSheetMusicDisplay (BSD-3-Clause, with VexFlow MIT), jsPDF and svg2pdf.js (MIT); server only: yt-dlp (Unlicense), FastAPI (MIT), Uvicorn (BSD-3), python-multipart (Apache-2.0), NumPy (BSD-3), FFmpeg (LGPL)
 
-**Users are responsible for having the rights to the music they import, and for complying with YouTube's Terms of Service.** No copyrighted music is included in this repository; the songs used to measure accuracy were used privately and are not distributed.
+**Users are responsible for having the rights to the music they import, and for following the terms of the sites and apps they record from.** No copyrighted music is included in this repository; the songs used to measure accuracy were used privately and are not distributed.
 
 ## Licence
 

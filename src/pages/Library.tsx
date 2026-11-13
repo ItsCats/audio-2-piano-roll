@@ -23,6 +23,7 @@ export default function LibraryPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
 
+  const hasYouTube = useMemo(() => songs.some((s) => s.source.kind === 'youtube'), [songs]);
   const shown = useMemo(() => {
     const needle = q.trim().toLowerCase();
     let list = songs.filter((s) => !needle || s.title.toLowerCase().includes(needle) || s.artist?.toLowerCase().includes(needle) || s.keyName?.toLowerCase().includes(needle));
@@ -108,7 +109,8 @@ export default function LibraryPage() {
               { value: 'all', label: 'All' },
               { value: 'favorites', label: '★' },
               { value: 'audio', label: 'Audio' },
-              { value: 'youtube', label: 'YouTube' },
+              // songs imported with the old YouTube tab (removed 2026-11) keep their own filter
+              ...(hasYouTube || filter === 'youtube' ? [{ value: 'youtube' as const, label: 'YouTube' }] : []),
               { value: 'midi', label: 'MIDI' },
               { value: 'score', label: 'Sheet music' },
             ]}

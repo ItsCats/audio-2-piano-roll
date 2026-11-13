@@ -22,8 +22,8 @@ Cross-Origin-Opener-Policy: same-origin
 Cross-Origin-Embedder-Policy: credentialless
 ```
 
-* **Not** on `/import/youtube`: the YouTube player iframe sends no COEP header, so an isolated page cannot
-  embed it. The app reloads the page when entering or leaving that route (`src/lib/isolation.ts`).
+* Unknown paths get no isolation headers; the app reloads the page once when moving on from one
+  (`src/lib/isolation.ts`). The old `/import/youtube` address redirects to `/import?tab=computer`.
 * Each route must receive exactly one copy of each header (overlapping rules can send two, which browsers
   treat as invalid). `tests/e2e/isolation.mjs app` checks every route against `netlify.toml`.
 * The route list lives in `src/lib/isolation.ts` (`ISOLATED_ROUTES`) and in `netlify.toml`; keep them in sync.
@@ -33,7 +33,7 @@ falls back to one thread (about 2–3× slower).
 
 ## Optional processing server
 
-Needed only for YouTube fetching and for faster source separation. Transcription never needs it, and the
+Needed only for faster source separation. Transcription never needs it, and the
 "Separate vocals & drums" import option also runs in the browser (SCNet, about 2–3× real time single-threaded);
 a server runs the same SCNet model on several cores (about 0.4–0.6× real time) and returns the same two stems:
 the vocals and the accompaniment without drums.
@@ -48,7 +48,7 @@ the vocals and the accompaniment without drums.
 
 | Option | Good for | Approximate cost* |
 | --- | --- | --- |
-| **Your own computer** (`docker run …` or `uvicorn`) | Personal use. **The only option that reliably works for YouTube**, because YouTube blocks most cloud/datacenter IPs (verified: HTTP 403 from a cloud VM). | Free |
+| **Your own computer** (`docker run …` or `uvicorn`) | Personal use. | Free |
 | **Google Cloud Run** (CPU, scale to zero, 2–4 vCPU/4 GB, concurrency 1) | Occasional separation jobs | Pay per use; a 4-minute song ≈ 3–5 vCPU-minutes ≈ a few US cents. Free tier covers light use. |
 | **Fly.io / Railway / Render** (2–4 shared vCPU, 3–4 GB RAM) | Always-on small server | ~US$10–30 per month always-on; less with auto-stop |
 
