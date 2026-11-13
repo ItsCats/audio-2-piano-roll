@@ -35,6 +35,18 @@ describe('held tune line', () => {
     expect(r.find((n) => n.id === top.id)!.start + r.find((n) => n.id === top.id)!.dur).toBeLessThanOrEqual(0.5);
   });
 
+  it('keeps holding over a note struck below when the stem says it is backing', () => {
+    const top = note(79, 0, 0.3);
+    const below = note(74, 0.5, 0.2, 0.3);
+    const opts = { heldEnd: heldTo(new Map([[top, 1.2]])), onset: (n: Note) => (n === below ? 0.8 : 0.3) };
+    const end = (out: Note[]) => out.find((n) => n.id === top.id)!.start + out.find((n) => n.id === top.id)!.dur;
+    // the struck note is passed to the callback
+    const seen: Note[] = [];
+    expect(end(sustainTuneLine([...bass(), top, below], 8, { ...opts, continues: (_n, x) => (seen.push(x), true) }))).toBeCloseTo(1.2);
+    expect(seen).toContain(below);
+    expect(end(sustainTuneLine([...bass(), top, below], 8, { ...opts, continues: () => false }))).toBeLessThanOrEqual(0.5);
+  });
+
   it('folds same-pitch line notes without a new attack into one held note', () => {
     const a = note(79, 0, 0.5);
     const b = note(79, 0.51, 0.5);
@@ -141,5 +153,30 @@ describe('Full song pipeline', () => {
     expect(ctx.onsets).toBe(onsets);
     expect(ctx.frames).toBe(frames);
     expect(ctx.drums).toBe(drums);
+  });
+
+  it('closes a short gap to the next tune note unless the stem hears another pitch or goes quiet there', () => {
+    const a = note(76, 0, 0.3);
+    const b = note(79, 0.45, 0.3); // 0.15 s gap
+    const c = note(77, 1.5, 0.3); // after a rest
+    const notes = [note(40, 0, 4, 0.6, { hand: 'L' }), a, b, c];
+    const quiet = () => ({ voiced: 0, agree: 0, dropDb: 0 }); // no clear pitch in the gap
+    const run = (gapCue: (midi: number, t0: number, t1: number) => { voiced: number; agree: number; dropDb: number }, extra: Note[] = []) =>
+      sustainTuneLine([...notes, ...extra], 8, { heldEnd: (n) => n.start + n.dur, gapCue });
+    const out = run(quiet);
+    const end = (ns: Note[], id: number) => ns.find((n) => n.id === id)!.start + ns.find((n) => n.id === id)!.dur;
+    expect(end(out, a.id)).toBeCloseTo(0.45 - SUSTAIN.gap);
+    expect(end(out, b.id)).toBeCloseTo(0.75); // 0.75 s gap: longer than closeGap, left alone
+    // the stem's pitch track at the note's pitch class (an octave down counts) in the gap: closed
+    expect(end(run(() => ({ voiced: 10, agree: 8, dropDb: 2 })), a.id)).toBeCloseTo(0.45 - SUSTAIN.gap);
+    // ...at another pitch: the tune moved on or the backing fills a rest
+    expect(run(() => ({ voiced: 10, agree: 1, dropDb: 2 })).find((n) => n.id === a.id)).toBe(a);
+    // the stem falls silent in the gap: a real rest
+    expect(run(() => ({ voiced: 0, agree: 0, dropDb: 20 })).find((n) => n.id === a.id)).toBe(a);
+    // the same pitch struck again in the gap: not held over that new attack
+    const again = note(76, 0.36, 0.05, 0.2);
+    expect(end(run(quiet, [again]), a.id)).toBeLessThanOrEqual(0.36);
+    // without the stem's pitch track (no separation) nothing is closed
+    expect(sustainTuneLine(notes, 8, { heldEnd: (n) => n.start + n.dur }).find((n) => n.id === a.id)).toBe(a);
   });
 });

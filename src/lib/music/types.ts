@@ -17,6 +17,14 @@ export interface Note {
    * (music/leadRecovery.ts): they are shown on Hard only (Easy and Medium are built without them).
    */
   role?: 'melody' | 'lead';
+  /**
+   * Separated band songs: share (0..1) of the note's opening in which the pitch track of the
+   * lead-bearing stem (transcription/stemPitch.ts) is at this pitch. Absent where that stem had no
+   * clear pitch, and for everything else. The instruments' tune line (melody.ts instrumentLine)
+   * prefers notes that have it. Only set while the pipeline's STEM_PITCH.tag switch is on (off: it
+   * did not help on the Slakh band set).
+   */
+  tune?: number;
 }
 
 /** Sustain pedal held from `start` to `end` (seconds). */

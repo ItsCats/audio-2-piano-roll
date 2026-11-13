@@ -593,6 +593,13 @@ export interface TuneOptions {
   leapCost: number;
   /** move isolated octave errors back into the line (fixOctaveOutliers) */
   fixOctaves: boolean;
+  /**
+   * stem pitch cue (Note.tune, separated band songs): salience + cueBonus × (tune − cueCenter); a
+   * note the lead stem's pitch track confirms gains, one it contradicts loses. Notes without the
+   * cue are unchanged.
+   */
+  cueBonus: number;
+  cueCenter: number;
 }
 
 /**
@@ -612,6 +619,8 @@ export const DEFAULT_TUNE: TuneOptions = {
   octaveJumpCost: 0.1,
   leapCost: 0.01,
   fixOctaves: false,
+  cueBonus: 0.5,
+  cueCenter: 0.3,
 };
 
 /** A higher candidate starting at least this long (s) after a sounding note, at least TOP_ENTRY_VEL × its velocity, ends that note's time as the top voice. */
@@ -647,7 +656,8 @@ export function instrumentLine(candidates: Note[], opts: Partial<TuneOptions> = 
       if (m.midi > n.midi && m.start + m.dur > t + 0.03) above.add(m.midi);
       if (Math.abs(m.start - n.start) <= 0.04 && m.vel > n.vel) loudest = false;
     }
-    const sal = n.vel + (above.size ? -o.belowPenalty * Math.min(3, above.size) : o.topBonus + (loudest ? o.loudTopBonus : 0));
+    const cue = n.tune === undefined ? 0 : o.cueBonus * (n.tune - o.cueCenter);
+    const sal = n.vel + cue + (above.size ? -o.belowPenalty * Math.min(3, above.size) : o.topBonus + (loudest ? o.loudTopBonus : 0));
     // a note is only the top voice until a higher voice enters while it sounds: its credit ends
     // there (else a held pad / chord tone that is on top at its own onset outweighs the melody
     // entering above it, and the line holds it and skips the tune)

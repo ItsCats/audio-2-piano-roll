@@ -1,3 +1,5 @@
+import type { StoredPitch } from './stemPitch';
+
 /** Model posteriors are stored 8-bit quantised (4x smaller; ±0.002 error is irrelevant to thresholds). */
 export interface StoredPosteriors {
   nFrames: number;
@@ -10,6 +12,13 @@ export interface StoredPosteriors {
    * (music/cleanup.ts DRUM_HIT_RULE, currently off). ~6 KB per minute.
    */
   drums?: Uint8Array;
+  /**
+   * Separated in the browser with an audible bass stem: the bass stem's own posteriors (same frame
+   * grid), read as one bass line (transcription/bassLine.ts) on import and re-detection.
+   */
+  bass?: { nFrames: number; frames: Uint8Array; onsets: Uint8Array };
+  /** Separated in the browser: pitch track of the lead-bearing stem, the tune cue (transcription/stemPitch.ts). ~6 bytes per 10 ms. */
+  leadPitch?: StoredPitch;
   /**
    * @deprecated Older records (before the melody line was kept as notes) also stored the vocal
    * stem's posteriors here. Nothing reads them any more; re-detection keeps the song's

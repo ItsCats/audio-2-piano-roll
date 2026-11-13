@@ -48,6 +48,18 @@ export interface SustainRule {
    */
   joinRise: number;
   joinGap: number;
+  /**
+   * gap closing (separated songs, SustainOptions.gapCue): a tune-line note followed by the next line
+   * note within `closeGap` s is held up to it unless the lead-bearing stem's pitch track hears
+   * another pitch class in the gap (of its frames with a clear pitch, at least `closeMinVoiced`, less
+   * than `closeMinAgree` at the note's pitch class: the tune moved on or the gap is a rest the backing
+   * fills), the stem's level falls more than `closeDropDb` dB in the gap (silence), or the note's
+   * pitch is struck again in between. 0: off
+   */
+  closeGap: number;
+  closeMinAgree: number;
+  closeMinVoiced: number;
+  closeDropDb: number;
 }
 
 export const SUSTAIN: SustainRule = {
@@ -58,6 +70,10 @@ export const SUSTAIN: SustainRule = {
   gap: 0.01,
   joinRise: 0.1,
   joinGap: 0.03,
+  closeGap: 0.25,
+  closeMinAgree: 0.3,
+  closeMinVoiced: 2,
+  closeDropDb: 12,
 };
 
 export interface SustainOptions {
@@ -71,6 +87,17 @@ export interface SustainOptions {
   onset?: (n: Note) => number;
   /** frame-activation rise at a note's start (pipeline frameRise): the re-strike test; without it nothing is folded */
   rise?: (n: Note) => number;
+  /**
+   * The lead-bearing stem's pitch track over [t0, t1] (s) against pitch `midi` (transcription/
+   * stemPitch.ts gapCue): frames with a clear pitch, those at midi's pitch class, and how far (dB) its
+   * level falls from the 0.1 s before t0 to the quietest frame in the gap. Without it no gap is closed.
+   */
+  gapCue?: (midi: number, t0: number, t1: number) => { voiced: number; agree: number; dropDb: number };
+  /**
+   * Whether the lead-bearing stem's pitch track stays with held note n when note x is struck below
+   * it (x is then backing, not the tune stepping down): without it every such note ends the hold.
+   */
+  continues?: (n: Note, x: Note) => boolean;
 }
 
 /** `notes` with the tune line's notes held (see the module comment); other notes are the same objects. */
@@ -111,7 +138,8 @@ export function sustainTuneLine(notes: Note[], duration: number, opts: SustainOp
         for (let k = firstFrom(end - 0.03); k < strong.length; k++) {
           const x = strong[k];
           if (x.start >= limit) break;
-          if (x.midi < midi && x.midi >= midi - rule.stopBelow) {
+          // (not when the stem's pitch track stays at the held note's pitch class past it: backing)
+          if (x.midi < midi && x.midi >= midi - rule.stopBelow && !opts.continues?.(n, x)) {
             limit = x.start - rule.gap;
             break;
           }
@@ -122,7 +150,7 @@ export function sustainTuneLine(notes: Note[], duration: number, opts: SustainOp
       if (e > end + 0.005) ext.set(n.id, e);
     }
   }
-  if (!ext.size && !opts.rise) return notes;
+  if (!ext.size && !opts.rise && !(opts.gapCue && rule.closeGap > 0)) return notes;
   // the tune line through the held copy
   const copy = handed.map((n) => (ext.has(n.id) ? { ...n, dur: ext.get(n.id)! - n.start } : n));
   const line = instrumentLine(tuneCandidates(copy));
@@ -156,6 +184,24 @@ export function sustainTuneLine(notes: Note[], duration: number, opts: SustainOp
         continue;
       }
       a = b;
+    }
+  }
+  // short gaps inside a phrase: the note is held up to the next line note (see closeGap)
+  if (opts.gapCue && rule.closeGap > 0) {
+    const endOf = (n: Note) => newEnd.get(n.id) ?? n.start + n.dur;
+    const lineNotes = line.map((l) => byId.get(l.id)).filter((n): n is Note => !!n && !drop.has(n.id));
+    for (let i = 0; i + 1 < lineNotes.length; i++) {
+      const a = lineNotes[i];
+      const b = lineNotes[i + 1];
+      const end = endOf(a);
+      const gap = b.start - end;
+      if (gap <= rule.gap + 0.005 || gap > rule.closeGap || a.midi < rule.minMidi) continue;
+      const same = byPitch.get(a.midi) ?? [];
+      if (same.some((x) => x !== a && x.start > a.start && x.start < b.start)) continue;
+      const cue = opts.gapCue(a.midi, end, b.start);
+      if (cue.dropDb > rule.closeDropDb) continue;
+      if (cue.voiced >= rule.closeMinVoiced && cue.agree < rule.closeMinAgree * cue.voiced) continue;
+      newEnd.set(a.id, b.start - rule.gap);
     }
   }
   if (!newEnd.size && !drop.size) return notes;

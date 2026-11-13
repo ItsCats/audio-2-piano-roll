@@ -5,6 +5,7 @@ import { generateAllArrangements, withoutHardOnly } from '../../src/lib/music/di
 import { EXTRACTION_PRESETS, LEAD_PASS, accompFromRaw, heldEnd, leadPassParams, leadWorkerOptions, onsetPeak, sungRanges, withLeadPass } from '../../src/lib/transcription/pipeline';
 import { BP_N_PITCHES, frameToTime, timeToFrame } from '../../src/lib/transcription/constants';
 import type { RawNoteEvent } from '../../src/lib/transcription/noteExtraction';
+import { storedPitch } from '../../src/lib/transcription/stemPitch';
 import type { Note, TempoInfo } from '../../src/lib/music/types';
 
 let id = 1;
@@ -104,6 +105,23 @@ describe('lead recovery', () => {
     // no lead pass in the params, or no lead events: the main notes only
     expect(accompFromRaw(raw, leadRaw, rms, { ...EXTRACTION_PRESETS.mix, leadPass: false }, 5).notes).toHaveLength(4);
     expect(accompFromRaw(raw, undefined, rms, EXTRACTION_PRESETS.mix, 5).notes).toHaveLength(4);
+  });
+
+  it('separated in the browser without a singer (stem pitch track present): the recovered note is for every level', () => {
+    const rms = new Float32Array(500).fill(0.3);
+    const raw = [ev(48, timeToFrame(0), timeToFrame(4)), ev(72, timeToFrame(0), timeToFrame(0.4)), ev(74, timeToFrame(0.5), timeToFrame(0.9)), ev(77, timeToFrame(1.5), timeToFrame(1.9))];
+    const leadRaw = [...raw, ev(76, timeToFrame(1), timeToFrame(1.4))];
+    // a silent pitch track: no cue on any note, but it marks a browser-separated song
+    const n = 500;
+    const leadPitch = storedPitch({ f0: new Float32Array(n), periodicity: new Float32Array(n), rms: new Float32Array(n), hop: 0.01 });
+    const r = accompFromRaw(raw, leadRaw, rms, EXTRACTION_PRESETS.mix, 5, { leadPitch });
+    const added = r.notes.filter((x) => !r.main.includes(x));
+    expect(added.map((x) => x.midi)).toEqual([76]);
+    expect(added[0].role).toBeUndefined();
+    expect(withoutHardOnly(r.notes)).toHaveLength(5);
+    // with a sung line the recovered notes stay Hard-only
+    const sung = accompFromRaw(raw, leadRaw, rms, EXTRACTION_PRESETS.mix, 5, { leadPitch }, { melody: [note(64, 3, 0.6, 0.7, { role: 'melody' })] });
+    expect(sung.notes.filter((x) => x.midi === 76).map((x) => x.role)).toEqual(['lead']);
   });
 
   it('tests the evidence before choosing the line: a weak candidate on top does not hide the real one', () => {
