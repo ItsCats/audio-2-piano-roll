@@ -45,6 +45,17 @@
   for = "/models/piano-specialist/*"
   [headers.values]
     Cache-Control = "public, max-age=31536000, immutable"
+# Sheet-music reader models (beta, src/lib/omr; two models of ~23 MB in pieces under 10 MB, plus a shared
+# vocabulary). Requested with ?v=<sha256 prefix> and sha256-checked like the piano model, so a long cache is safe.
+[[headers]]
+  for = "/models/omr/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+# pdf.js image decoders (WebAssembly) for scanned PDFs; versioned with pdfjs-dist, so a month is plenty
+[[headers]]
+  for = "/pdfjs/*"
+  [headers.values]
+    Cache-Control = "public, max-age=2592000, stale-while-revalidate=86400"
 # CREPE tiny pitch model (2 MB, src/lib/pitch)
 [[headers]]
   for = "/models/crepe/*"

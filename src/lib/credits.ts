@@ -79,6 +79,22 @@ export const CREDITS: CreditGroup[] = [
         url: 'https://github.com/marl/crepe',
         note: 'Converted to ONNX by us from torchcrepe’s “tiny” weights (see public/models/crepe/README.md).',
       },
+      {
+        name: 'Sheet Music Transformer (SMT)',
+        use: 'Reads printed piano music from PDFs and photos (beta). Downloaded only when you first read a PDF or photo.',
+        author: 'Antonio Ríos-Vila, Jorge Calvo-Zaragoza, Thierry Paquet (“Sheet Music Transformer: End-To-End Optical Music Recognition Beyond Monophonic Transcription”, ICDAR 2024)',
+        license: 'MIT',
+        licenseUrl: LIC.mit,
+        url: 'https://github.com/antoniorv6/SMT',
+        note: 'Two of the authors’ published checkpoints: antoniorv6/smt-grandstaff for PDFs and antoniorv6/smt-camera-grandstaff for photos (huggingface.co). Changed: we converted each to two ONNX files (image encoder; text decoder with a key/value cache) with 8-bit weights, split into pieces for hosting, and wrote our own page clean-up, staff finding, **kern reading and MusicXML output in TypeScript (see public/models/omr/README.md).',
+      },
+      {
+        name: 'GrandStaff and Camera-GrandStaff datasets',
+        use: 'The printed piano music (and its camera-photo versions) the sheet-music reader was trained on by its authors. Not included in the app.',
+        author: 'Antonio Ríos-Vila, David Rizo, José M. Iñesta, Jorge Calvo-Zaragoza (“End-to-end optical music recognition for pianoform sheet music”, IJDAR 2023)',
+        license: 'Training data of the model above (not shipped)',
+        url: 'https://huggingface.co/datasets/antoniorv6/grandstaff',
+      },
     ],
   },
   {
@@ -167,7 +183,7 @@ export const CREDITS: CreditGroup[] = [
       { name: 'React Router', use: 'Pages and navigation.', author: 'Remix Software and contributors', license: 'MIT', licenseUrl: LIC.mit, url: 'https://reactrouter.com' },
       { name: 'Zustand', use: 'App state.', author: 'Poimandres', license: 'MIT', licenseUrl: LIC.mit, url: 'https://github.com/pmndrs/zustand' },
       { name: 'TensorFlow.js', use: 'Runs the Basic Pitch model (WebGL / WebAssembly).', author: 'Google and contributors', license: 'Apache-2.0', licenseUrl: LIC.apache, url: 'https://www.tensorflow.org/js' },
-      { name: 'ONNX Runtime Web', use: 'Runs the SCNet separation model and the high-accuracy piano model (WebAssembly).', author: 'Microsoft and contributors', license: 'MIT', licenseUrl: LIC.mit, url: 'https://onnxruntime.ai' },
+      { name: 'ONNX Runtime Web', use: 'Runs the SCNet separation model, the high-accuracy piano model and the sheet-music reader (WebAssembly).', author: 'Microsoft and contributors', license: 'MIT', licenseUrl: LIC.mit, url: 'https://onnxruntime.ai' },
       { name: 'Mediabunny', use: 'Video export (MP4 / WebM) and decoding unusual file types.', author: 'Vanilagy', license: 'MPL-2.0', licenseUrl: LIC.mpl, url: 'https://mediabunny.dev' },
       {
         name: 'Mediabunny AAC encoder (includes FFmpeg)',
@@ -206,6 +222,15 @@ export const CREDITS: CreditGroup[] = [
         licenseUrl: LIC.mit,
         url: 'https://github.com/yWorks/svg2pdf.js',
         note: 'With svgpath, cssesc, specificity and font-family-papandreou (MIT).',
+      },
+      {
+        name: 'PDF.js',
+        use: 'Opens PDF sheet music for the sheet-music reader (beta); loaded only when you read a PDF.',
+        author: 'Mozilla and contributors',
+        license: 'Apache-2.0',
+        licenseUrl: LIC.apache,
+        url: 'https://mozilla.github.io/pdf.js/',
+        note: 'pdfjs-dist 6.4.299. Includes image decoders compiled to WebAssembly: PDFium’s JBIG2 / CCITT decoder (BSD-3-Clause, The PDFium Authors), OpenJPEG (BSD-2-Clause) and qcms (MIT, Mozilla); their licence texts are served next to them in /pdfjs/wasm/.',
       },
       {
         name: 'fflate',
