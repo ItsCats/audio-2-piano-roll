@@ -67,16 +67,24 @@ function NoteLengthControl() {
     const edited = (['easy', 'medium', 'hard'] as Difficulty[]).filter((d) => s.arrangements[d].edited);
     if (edited.length && !confirm(`Changing the note length rebuilds every level from the detected notes: your note fixes to ${edited.join(', ')} will be replaced (fingering and markings are kept). Continue?`)) return;
     const next = withNoteLength(s, to);
-    // one undo step: the notes, the pedal, every level and the setting together
+    // one undo step: the notes, the pedal, every level, the setting and the library picture together
     useStudio.getState().editSong(() => ({
       base: next.base,
       basePedal: next.basePedal,
       autoPedal: next.autoPedal,
       noteLength: next.noteLength,
+      notesAsPlayed: next.notesAsPlayed,
+      thumbnail: next.thumbnail,
       arrangements: next.arrangements,
     }));
-    if (next.thumbnail !== s.thumbnail) useStudio.getState().updateSong({ thumbnail: next.thumbnail });
-    if (to === 'played') toast.success('Notes now end when the key is let go', 'The sustain pedal heard in the recording keeps them ringing.');
+    const autoOff = s.autoPedal === true && next.autoPedal !== true;
+    if (to === 'played')
+      toast.success(
+        'Notes now end when the key is let go',
+        autoOff
+          ? 'The automatic pedal is now off: Medium and Hard use the sustain pedal heard in the recording, which keeps the notes ringing.'
+          : 'The sustain pedal heard in the recording keeps them ringing.',
+      );
     else toast.success('Notes now last as long as they ring');
   };
   return (
@@ -98,7 +106,10 @@ function NoteLengthControl() {
         As played: a note ends when its key is let go, and the sustain pedal keeps it ringing. As heard: a note lasts as long as it rings.
       </p>
       {!song.noteLength && (
-        <p className="text-[11.5px] leading-snug text-ink-300">Made before notes were shortened. Choose As played to see how long each key is held.</p>
+        <p className="text-[11.5px] leading-snug text-ink-300">
+          Made before notes were shortened. Choose As played to see how long each key is held.
+          {song.autoPedal ? ' Medium and Hard then use the sustain pedal heard in the recording instead of the automatic pedal.' : ''}
+        </p>
       )}
     </div>
   );

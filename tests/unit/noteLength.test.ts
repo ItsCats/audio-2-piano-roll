@@ -64,14 +64,72 @@ describe('asPlayed: notes as long as the key is held, and the pedal heard in the
     expect(r.pedal).toEqual([]);
   });
 
-  it('a note ringing past a pedal-up was held through it: its key-up moves to that pedal-up', () => {
-    // pedal-up at 2 s (60 and 64 stop together); 55 (left hand) rings on to 3 s with 67 and 69
-    const notes = [n(55, 0, 3), n(60, 0, 2), n(64, 0.5, 2), n(43, 0.6, 1.5), n(67, 2.2, 3), n(69, 2.6, 3), n(45, 2.2, 2.5)];
+  it('a note ringing through a pedal change is held until the next pedal goes down (at most 1.5 s longer)', () => {
+    // pedal-up at 2 s (60 and 62 ring past their key-ups and stop together); 48 (left hand) rings on to 3 s
+    const notes = [n(60, 0, 2), n(62, 0.3, 2), n(64, 0.5, 2), n(48, 1, 3), n(41, 1.4, 3), n(67, 2.2, 3), n(69, 2.6, 3)];
     const r = asPlayed(notes);
+    expect(r.pedal).toEqual([{ start: 0, end: 2 }, { start: 2.08, end: 3 }]);
     const by = new Map(r.notes.map((x) => [x.midi, x]));
-    // 55's next left-hand onset is at 0.6 s, but it sounds past the pedal-up at 2 s: held until then
-    expect(end(by.get(55)!)).toBeGreaterThanOrEqual(2);
-    expect(r.pedal.some((p) => p.end === 2)).toBe(true);
+    // 48's next left-hand onset is at 1.4 s; it rings past the pedal-up at 2 s, so its key was down until the pedal went down again
+    expect(end(by.get(48)!)).toBeCloseTo(2.1, 3);
+    // played back, every note rings as the model heard it
+    expect(asHeard(r.notes, r.pedal).map(end)).toEqual(notes.map(end));
+    // further than 1.5 s: the note is drawn to its key-up (it is damped at the pedal change in playback)
+    const far = [n(60, 0, 4), n(62, 0.3, 4), n(64, 0.5, 4), n(48, 1, 6), n(41, 1.4, 6), n(67, 4.2, 6), n(69, 4.6, 6)];
+    const f = asPlayed(far);
+    expect(end(f.notes[3])).toBe(1.4);
+  });
+
+  it('a cadence: voices held by the fingers and let go together are not a pedal-up', () => {
+    // a two-voice cadence without pedal: the upper voice is held over a moving lower voice, then both are let go
+    const notes = [n(72, 0, 2), n(67, 0, 0.5), n(65, 0.5, 1), n(64, 1, 2), n(48, 0, 2), n(43, 2.2, 2.6)];
+    const r = asPlayed(notes);
+    expect(r.pedal).toEqual([]);
+    expect(r.notes).toEqual(notes);
+  });
+
+  it('notes the model closed at its 6 s limit are no pedal evidence, and are cut where a pedal carries them', () => {
+    // 50 and 53 never ended in the model (6.00 s); the hand plays on and a pedal-up at 5 s carries the rest
+    const notes = [n(50, 0, 6), n(53, 0, 6), n(45, 0.5, 5), n(47, 1, 5), n(60, 0, 5), n(64, 1, 5), n(67, 2, 5)];
+    const r = asPlayed(notes);
+    expect(r.pedal).toEqual([{ start: 0, end: 5 }]);
+    const by = new Map(r.notes.map((x) => [x.midi, x]));
+    expect(end(by.get(50)!)).toBe(0.5);
+    expect(end(by.get(53)!)).toBe(0.5);
+    // alone (no pedal anywhere), a capped note is kept: nothing says when its key went up
+    const alone = asPlayed([n(50, 0, 6), n(45, 0.5, 0.9), n(47, 1, 1.4)]);
+    expect(alone.pedal).toEqual([]);
+    expect(end(alone.notes[0])).toBe(6);
+  });
+
+  it('a melody note played louder than the notes under it is held to the next melody note', () => {
+    const loud = (x: Note): Note => ({ ...x, vel: 0.85 });
+    const soft = (x: Note): Note => ({ ...x, vel: 0.5 });
+    // under the pedal: melody 76 (loud) over a soft right-hand accompaniment, next melody note 77 at 1.5 s
+    const notes = [loud(n(76, 0, 3)), soft(n(64, 0.25, 3)), soft(n(67, 0.5, 3)), soft(n(64, 0.75, 3)), soft(n(67, 1, 3)), loud(n(77, 1.5, 3)), soft(n(65, 1.75, 3)), n(40, 0, 3), n(47, 1, 3)];
+    const r = asPlayed(notes);
+    expect(end(r.notes[0])).toBe(1.5);
+    // the accompaniment still ends at the next onset
+    expect(end(r.notes[1])).toBe(0.5);
+    // without the loudness difference the melody note ends at the next onset like the others
+    const flat = asPlayed(notes.map((x) => ({ ...x, vel: 0.6 })));
+    expect(end(flat.notes[0])).toBe(0.25);
+    // and so does a note that is not the top of the right hand
+    const under = asPlayed([...notes, soft(n(79, 0, 0.2))]);
+    expect(end(under.notes[0])).toBe(0.25);
+  });
+
+  it('the pedal goes down after keys the model heard stop, unless holding the carried keys longer costs more', () => {
+    // 62 (right) stops at 0.9 s, before the right hand's next onset: let go with the pedal up; the pedal goes down just after
+    const notes = [n(60, 0, 3), n(62, 0.5, 0.9), n(64, 1.0, 3), n(67, 1.5, 3), n(40, 0, 3), n(43, 0.4, 3)];
+    const r = asPlayed(notes);
+    expect(r.pedal).toEqual([{ start: 0.91, end: 3 }]);
+    // a legato key (stops at the next onset) weighs half: here holding 60 and 40 longer costs more, the pedal goes down at once
+    const legato = asPlayed(notes.map((x) => (x.midi === 62 ? { ...x, dur: 0.5 } : x)));
+    expect(legato.pedal).toEqual([{ start: 0, end: 3 }]);
+    // with holding made expensive, the pedal goes down at once and 62 rings (a smaller error than 60 and 40 held)
+    const r2 = asPlayed(notes, { holdCost: 10 });
+    expect(r2.pedal).toEqual([{ start: 0, end: 3 }]);
   });
 
   it('a key let go without pedal delays the pedal going down until it is released', () => {
@@ -239,6 +297,65 @@ describe('songs from the high-accuracy piano model: note length', () => {
     useStudio.getState().redo();
     expect(useStudio.getState().song!.noteLength).toBe('played');
     expect(useStudio.getState().song!.basePedal).toEqual(next.basePedal);
+  });
+
+  it('back and forth (As played, As heard, As played) gives the as-played notes and pedal back exactly, also after many switches', () => {
+    // (on real pieces, working the notes out again from the notes as heard changes some ends by ~10 ms)
+    const notes: Note[] = [];
+    for (let i = 0; i < 400; i++) {
+      const t = i * 0.23;
+      const up = Math.floor(i / 7) * 1.61 + 1.6;
+      notes.push({ ...n(60 + ((i * 5) % 14), t, up), vel: 0.4 + (i % 5) * 0.1 }, n(40 + ((i * 3) % 9), t + 0.01, Math.min(up, t + 0.5 + (i % 3) * 0.4)));
+    }
+    const r = asPlayed(notes.map((x, i) => ({ ...x, id: i + 1 })));
+    const s = buildSong({ title: 't', source: { kind: 'audio' }, notes: r.notes, pedal: r.pedal, tempo, duration: 100, transcription: SPECIALIST, hasAudio: true, hasPosteriors: false, autoPedal: false, noteLength: 'played' });
+    let x = s;
+    for (let k = 0; k < 4; k++) {
+      x = withNoteLength(x, 'heard');
+      expect(x.notesAsPlayed).toEqual({ base: s.base, pedal: s.basePedal });
+      x = withNoteLength(x, 'played');
+      expect(x.base).toEqual(s.base);
+      expect(x.basePedal).toEqual(s.basePedal);
+      expect('notesAsPlayed' in x).toBe(false);
+    }
+    // the kept notes are only used while they still match the notes as heard
+    const heard = withNoteLength(s, 'heard');
+    const moved: Song = { ...heard, base: heard.base.map((y, i) => (i === 3 ? { ...y, start: y.start + 0.05 } : y)) };
+    expect(withNoteLength(moved, 'played').base).toEqual(asPlayed(moved.base).notes);
+  });
+
+  it('the automatic pedal is kept when switching back to As played; only an older song turns it off', () => {
+    const s = withAutoPedal(freshImport(), true);
+    const back = withNoteLength(withNoteLength(s, 'heard'), 'played');
+    expect(back.autoPedal).toBe(true);
+    expect(back.arrangements.hard.pedal).toEqual(s.arrangements.hard.pedal);
+    // an older song (automatic pedal on by default then) gets the pedal heard in the recording
+    expect(withNoteLength(oldSong(), 'played').autoPedal).toBe(false);
+  });
+
+  it('Easy (no pedal) is built from the notes as they ring, as for every other song; Medium and Hard from the notes as played', () => {
+    const fresh = freshImport();
+    const old = oldSong();
+    const strip = (ns: Note[]) => ns.map(({ id: _id, ...x }) => (void _id, x));
+    expect(strip(fresh.arrangements.easy.notes)).toEqual(strip(old.arrangements.easy.notes));
+    expect(fresh.arrangements.easy.notes.map(end)).toEqual(old.arrangements.easy.notes.map(end));
+    expect(fresh.arrangements.hard.notes.map(end)).toEqual(fresh.base.map(end));
+    // As heard: the same Easy
+    expect(strip(withNoteLength(fresh, 'heard').arrangements.easy.notes)).toEqual(strip(old.arrangements.easy.notes));
+    const opts = { easyAsHeard: true };
+    expect(strip(generateAllArrangements(fresh.base, fresh.basePedal, tempo, 5, opts).easy.notes)).toEqual(strip(old.arrangements.easy.notes));
+  });
+
+  it('undo of a note-length switch also puts back the library picture', () => {
+    const s = freshImport();
+    const before: Song = { ...s, thumbnail: 'data:image/png;base64,AAAA' };
+    useStudio.getState().openSong(before);
+    useStudio.getState().editSong(() => ({ noteLength: 'heard', thumbnail: 'data:image/png;base64,BBBB' }));
+    expect(useStudio.getState().song!.thumbnail).toBe('data:image/png;base64,BBBB');
+    useStudio.getState().undo();
+    expect(useStudio.getState().song!.thumbnail).toBe('data:image/png;base64,AAAA');
+    useStudio.getState().redo();
+    expect(useStudio.getState().song!.thumbnail).toBe('data:image/png;base64,BBBB');
   });
 
   it('levels: Medium and Hard play the base pedal when the automatic pedal is off (no change to the arrangement code)', () => {

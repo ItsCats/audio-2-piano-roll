@@ -51,9 +51,13 @@ export function makeThumbnail(notes: Note[], duration: number, colors = { R: '#4
  * Arrangement options for a song (Hard keeps hands that come from the score; songs from audio
  * with the automatic pedal on get pedal on Medium and Hard).
  */
-export function arrangementOptions(song: { transcription: TranscriptionInfo; autoPedal?: boolean }): ArrangementOptions {
+export function arrangementOptions(song: { transcription: TranscriptionInfo; autoPedal?: boolean; noteLength?: NoteLength }): ArrangementOptions {
   const t = song.transcription;
-  return { handsFromScore: t.handsFromScore === true || t.method === 'demo', autoPedal: song.autoPedal === true && isAudioSong(song) };
+  return {
+    handsFromScore: t.handsFromScore === true || t.method === 'demo',
+    autoPedal: song.autoPedal === true && isAudioSong(song),
+    ...(song.noteLength === 'played' ? { easyAsHeard: true } : {}),
+  };
 }
 
 /**
@@ -151,9 +155,11 @@ export function noteLengthOf(song: Pick<Song, 'noteLength'>): NoteLength {
  * from the detected notes, like setting the tempo; the sheet's locked grid is kept, and each level's
  * fingering, markings and pedal edited on the sheet are carried over to the rebuilt notes (onsets do
  * not move), while note fixes are replaced (the caller asks first: levels marked `edited`).
- * - 'played': notes end when their key is let go (asPlayed); the pedal heard in the recording becomes
- *   `basePedal` and the automatic pedal goes off, so Medium and Hard play it. From an older song
- *   (notes as heard, no `noteLength`) this gives exactly what a fresh import gives.
+ * - 'played': notes end when their key is let go; the pedal heard in the recording is `basePedal`, so
+ *   Medium and Hard play it. Back from 'heard', the notes and pedal kept at that switch
+ *   (`notesAsPlayed`) come back exactly, and the automatic pedal stays as it is. From an older song
+ *   (notes as heard, never 'played') they are worked out (asPlayed), exactly what a fresh import gives,
+ *   and the automatic pedal goes off (it does not know where the pianist pedaled).
  * - 'heard': notes last as long as they ring under that pedal (asHeard); the pedal stays, so the
  *   sound does not change, only what is drawn, written and practiced.
  */
@@ -161,23 +167,46 @@ export function withNoteLength(song: Song, to: NoteLength): Song {
   let base: Note[];
   let basePedal = song.basePedal;
   let auto = song.autoPedal;
+  let kept: Song['notesAsPlayed'];
   if (to === 'played') {
-    const r = asPlayed(song.base);
-    base = r.notes;
-    basePedal = r.pedal;
-    auto = false;
+    const back = song.notesAsPlayed && sameNotesAsPlayed(song.notesAsPlayed, song.base, song.basePedal) ? song.notesAsPlayed : null;
+    if (back) {
+      base = back.base;
+      basePedal = back.pedal;
+    } else {
+      const r = asPlayed(song.base);
+      base = r.notes;
+      basePedal = r.pedal;
+      auto = false;
+    }
+  } else if (noteLengthOf(song) === 'heard') {
+    base = song.base;
   } else {
-    base = noteLengthOf(song) === 'heard' ? song.base : asHeard(song.base, song.basePedal);
+    base = asHeard(song.base, song.basePedal);
+    kept = { base: song.base, pedal: song.basePedal };
   }
   const thumbnail = makeThumbnail(base, song.duration) ?? song.thumbnail;
   const next: Song = { ...song, base, basePedal, noteLength: to, ...(thumbnail ? { thumbnail } : {}), updatedAt: Date.now() };
   if (auto === undefined) delete next.autoPedal;
   else next.autoPedal = auto;
+  if (kept) next.notesAsPlayed = kept;
+  else delete next.notesAsPlayed;
   const all = generateAllArrangements(base, basePedal, song.tempo, song.duration, arrangementOptions(next));
   const arrangements = {} as Record<Difficulty, Arrangement>;
   for (const d of DIFFICULTIES) arrangements[d] = keepMarkings(song.arrangements[d], all[d]);
   next.arrangements = arrangements;
   return next;
+}
+
+/** The kept as-played notes still belong to the notes as heard (same notes, and they ring as these do). */
+function sameNotesAsPlayed(kept: { base: Note[]; pedal: PedalRange[] }, heard: Note[], pedal: PedalRange[]): boolean {
+  if (kept.base.length !== heard.length || kept.pedal.length !== pedal.length) return false;
+  if (kept.pedal.some((p, i) => p.start !== pedal[i].start || p.end !== pedal[i].end)) return false;
+  const rung = asHeard(kept.base, kept.pedal);
+  return rung.every((x, i) => {
+    const y = heard[i];
+    return x.id === y.id && x.midi === y.midi && x.hand === y.hand && Math.abs(x.start - y.start) < 1e-6 && Math.abs(x.dur - y.dur) < 0.002;
+  });
 }
 
 /** A rebuilt level with the old one's fingering, markings and sheet pedal (carryMarks); still `edited` when any came along. */

@@ -281,6 +281,12 @@ export interface Song {
    */
   noteLength?: NoteLength;
   /**
+   * The notes and pedal as played, kept while `noteLength` is 'heard' after a switch from 'played',
+   * so that switching back gives them back exactly (As heard is not exactly reversible). Absent
+   * otherwise.
+   */
+  notesAsPlayed?: { base: Note[]; pedal: PedalRange[] };
+  /**
    * A video of the player's hands for "hands video" exports (lib/handcam). Absent in older songs
    * and when none was added; the file is in IndexedDB (see HandVideo.store).
    */
