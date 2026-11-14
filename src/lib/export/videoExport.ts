@@ -55,8 +55,9 @@ import { getAudio, getHandVideoBlob, getMedia } from '../storage/db';
 import { decodeToRate } from '../transcription/decode';
 import { isMemoryConstrained, pageDeviceInfo } from '../transcription/backendChoice';
 import { outputSize, type ExportSettings, type ExportSound } from './types';
-import { prepareTitleCards, type TitleCardJob } from '../render/titleCard/exportHooks';
-import { STEP_TIMEOUT_MS, abortError, finalizeTimeoutMs, guardStep } from './guard';
+import { prepareTitleCards, type TitleCardHooks, type TitleCardJob } from '../render/titleCard/exportHooks';
+import { STEP_TIMEOUT_MS, abortError, finalizeTimeoutMs, guardStep, settleWithin, untilAborted } from './guard';
+import { openExportFile } from './exportFiles';
 import {
   EXPORT_SAMPLE_RATE,
   createLimiter,
@@ -108,6 +109,10 @@ export interface ExportResult {
   method: 'webcodecs' | 'mediarecorder';
   /** what the sound track holds */
   sound: ExportSound;
+  /** where the file is: in the browser's private storage (OPFS) or in memory */
+  stored: 'disk' | 'memory';
+  /** removes the file from the browser's storage once the video is no longer wanted (nothing for one in memory) */
+  discard: () => Promise<void>;
 }
 
 export interface ExportJob {
@@ -152,29 +157,54 @@ export { STALL_MESSAGE } from './guard';
 export const NO_ORIGINAL_MESSAGE = 'The original recording for this song is no longer saved. Choose “Piano” to export without it.';
 export const ORIGINAL_DECODE_MESSAGE = 'Couldn’t load the original song on this device. Choose “Piano” to export without it.';
 /**
- * Best effort: stops a stuck audio encoder (the WASM AAC encoder runs in a worker that would keep
- * running until the tab closes). Uses mediabunny internals, so every step is optional.
+ * Best effort: stops the audio encoder by force (the WASM AAC encoder runs in a worker that would keep
+ * running until the tab closes). Uses mediabunny internals, so every step is optional. The worker is
+ * told it failed first: that rejects the commands it still holds, so a flush that was waiting on them
+ * ends (terminate() alone would leave it waiting forever, and output.cancel() with it).
  */
 function forceStopAudioEncoder(src: AudioSampleSource): void {
   try {
-    const enc = (src as unknown as { _encoder?: { customEncoder?: { worker?: { terminate?: () => void } | null } | null; encoder?: { state?: string; close?: () => void } | null } })._encoder;
-    enc?.customEncoder?.worker?.terminate?.();
+    const enc = (src as unknown as { _encoder?: { customEncoder?: { worker?: (Worker & { terminate?: () => void }) | null } | null; encoder?: { state?: string; close?: () => void } | null } })._encoder;
+    const worker = enc?.customEncoder?.worker;
+    if (worker) {
+      try {
+        if (typeof ErrorEvent !== 'undefined') worker.dispatchEvent?.(new ErrorEvent('error', { message: 'Export canceled' }));
+      } catch {
+        /* ignore */
+      }
+      worker.terminate?.();
+    }
     if (enc?.encoder && enc.encoder.state !== 'closed') enc.encoder.close?.();
   } catch {
     /* ignore */
   }
 }
 
-/** output.cancel() waits for encoders to flush; a stuck one never does, so don't wait long */
-async function cancelOutput(output: Output): Promise<boolean> {
-  return Promise.race([
-    output.cancel().then(
-      () => true,
-      () => true,
-    ),
-    new Promise<boolean>((r) => setTimeout(() => r(false), 3000)),
-  ]);
+/** how long a cancelled export may wait for the encoders to let go of their last blocks before they are stopped by force */
+export const CLEAN_CANCEL_MS = 300;
+/** the longest a cancelled export waits for its clean-up before it answers (the rest goes on in the background) */
+export const CANCEL_ANSWER_MS = 1500;
+
+/**
+ * Throws away an export that failed or was cancelled: the encoders are released and the file is
+ * closed and removed. On a cancel the encoders are healthy: they get a moment to finish the few
+ * blocks they hold (otherwise their copies are never closed) and are stopped by force after that;
+ * a failed (stalled) encoder is stopped by force at once. output.cancel() waits for the audio
+ * encoder's flush, which with the WASM AAC encoder can be the whole song, so it is never waited on
+ * for long: the file is closed by us, not by mediabunny.
+ */
+async function abandonOutput(output: Output, audioTrack: AudioSampleSource, discard: () => Promise<void>, canceled: boolean): Promise<void> {
+  // nothing to cancel while finalizing (mediabunny ignores it): the file is closed under it below
+  const cancel = output.state === 'finalizing' || output.state === 'finalized' ? Promise.resolve() : output.cancel().catch(() => {});
+  if (!canceled || !(await settleWithin(cancel, CLEAN_CANCEL_MS))) {
+    forceStopAudioEncoder(audioTrack);
+    await settleWithin(cancel, 1000);
+  }
+  await discard();
 }
+
+/** Heavy decodes (the whole original recording) one at a time, even when a cancelled export's is still running. */
+let heavyDecode: Promise<unknown> = Promise.resolve();
 
 /** Decodes the original recording at the export rate and keeps only the part this export can hear. */
 async function loadOriginalSource(job: ExportJob, range: { start: number; end: number }, tl: ExportTimeline): Promise<OriginalSource> {
@@ -186,10 +216,16 @@ async function loadOriginalSource(job: ExportJob, range: { start: number; end: n
   }
   if (!blob) throw new Error(NO_ORIGINAL_MESSAGE);
   if (job.signal?.aborted) throw abortError();
+  // decoding can't be stopped part-way: a cancel stops waiting for it (the decoded sound is then dropped),
+  // and the next export's decode waits until it has ended, so two never take up memory at once
+  await untilAborted(heavyDecode, job.signal);
+  const decoding = decodeToRate(blob, tl.sr);
+  heavyDecode = decoding.catch(() => {});
   let buffer: AudioBuffer | null;
   try {
-    buffer = await decodeToRate(blob, tl.sr);
+    buffer = await untilAborted(decoding, job.signal);
   } catch (e) {
+    if ((e as Error)?.name === 'AbortError') throw e;
     throw new Error(ORIGINAL_DECODE_MESSAGE, { cause: e });
   }
   blob = undefined;
@@ -219,6 +255,11 @@ interface HandsRuntime {
   frames: HandFrames;
   stream: FrameStream | null;
   hv: HandVideo;
+}
+
+function disposeHands(h: HandsRuntime | null): void {
+  h?.frames.dispose();
+  h?.compositor.dispose();
 }
 
 /** Opens the hands video and builds the compositor (before the output file exists, so a failure leaves nothing). */
@@ -347,53 +388,36 @@ async function pickCodecs(format: 'mp4' | 'webm', width: number, height: number,
   return { videoCodec, audioCodec };
 }
 
-async function makeTarget(ext: string): Promise<{ target: BufferTarget | StreamTarget; getBlob: (mime: string) => Promise<Blob>; cleanup: () => Promise<void> }> {
+interface ExportTarget {
+  target: BufferTarget | StreamTarget;
+  getBlob: (mime: string) => Promise<Blob>;
+  /** closes and removes the file (nothing for a video in memory) */
+  discard: () => Promise<void>;
+  stored: 'disk' | 'memory';
+}
+
+async function makeTarget(ext: string): Promise<ExportTarget> {
   // Stream to the Origin Private File System so large videos don't live in memory.
-  try {
-    const root = await navigator.storage?.getDirectory?.();
-    if (root) {
-      const name = `export-${Date.now()}.${ext}`;
-      const handle = await root.getFileHandle(name, { create: true });
-      const writable = await (handle as FileSystemFileHandle & { createWritable(): Promise<FileSystemWritableFileStream> }).createWritable();
-      const target = new StreamTarget(writable as unknown as WritableStream, { chunked: true });
-      return {
-        target,
-        getBlob: async (mime) => {
-          const f = await handle.getFile();
-          return new Blob([f], { type: mime });
-        },
-        cleanup: async () => {
-          try {
-            await root.removeEntry(name);
-          } catch {
-            /* ignore */
-          }
-        },
-      };
-    }
-  } catch {
-    /* OPFS unavailable → memory */
+  const file = await openExportFile(ext);
+  if (file) {
+    return {
+      target: new StreamTarget(file.writable, { chunked: true }),
+      getBlob: async (mime) => new Blob([await file.getFile()], { type: mime }),
+      discard: file.discard,
+      stored: 'disk',
+    };
   }
   const target = new BufferTarget();
   return {
     target,
     getBlob: async (mime) => new Blob([target.buffer!], { type: mime }),
-    cleanup: async () => {},
+    discard: async () => {},
+    stored: 'memory',
   };
 }
 
 /** Old OPFS export files are removed on startup (exports are downloaded, not kept). */
-export async function cleanupExportFiles(): Promise<void> {
-  try {
-    const root = await navigator.storage?.getDirectory?.();
-    if (!root) return;
-    for await (const name of (root as unknown as { keys(): AsyncIterable<string> }).keys()) {
-      if (name.startsWith('export-')) await root.removeEntry(name).catch(() => {});
-    }
-  } catch {
-    /* ignore */
-  }
-}
+export { cleanupExportFiles } from './exportFiles';
 
 interface BackgroundProvider {
   kind: 'image' | 'video' | null;
@@ -472,7 +496,7 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
   const totalFrames = Math.ceil(duration * fps);
   const bitrate = bitrateFor(width, height, fps, s.quality);
 
-  const { videoCodec, audioCodec } = await pickCodecs(s.format, width, height, bitrate);
+  const { videoCodec, audioCodec } = await untilAborted(pickCodecs(s.format, width, height, bitrate), signal);
   if (!videoCodec) throw new Error(`This browser cannot encode ${s.format.toUpperCase()} video at ${width}×${height}. Try WebM or a lower resolution.`);
   if (!audioCodec) throw new Error('This browser cannot encode audio for this format. Try WebM.');
 
@@ -484,7 +508,10 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
     if (signal?.aborted) throw abortError();
   } else if (usesHandsSound(sound) && song.handVideo) {
     progress({ phase: 'handsAudio', fraction: 0.005 });
-    orig = await loadHandsSound(job, song.handVideo, range, tl, (f) => progress({ phase: 'handsAudio', fraction: 0.005 + 0.02 * f }));
+    orig = await untilAborted(
+      loadHandsSound(job, song.handVideo, range, tl, (f) => progress({ phase: 'handsAudio', fraction: 0.005 + 0.02 * f })),
+      signal,
+    );
     if (signal?.aborted) throw abortError();
   }
   const origGain = originalGain(s, job.audio.originalVolume);
@@ -496,24 +523,34 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
   const drawnKeys = visual.showKeyboard ? Math.round(height * visual.keyboardHeight) : 0;
   let hands: HandsRuntime | null = null;
   try {
-    hands = await prepareHands(job, handsLayout, width, height, {
-      wmBand,
-      pipBottom: drawnKeys + (wm && wm.position[0] === 'b' ? Math.round(2.6 * 26 * (Math.min(width, height) / 1080) * wm.size) : 0),
-      hitLine: visual.hitLine,
-    });
+    hands = await untilAborted(
+      prepareHands(job, handsLayout, width, height, {
+        wmBand,
+        pipBottom: drawnKeys + (wm && wm.position[0] === 'b' ? Math.round(2.6 * 26 * (Math.min(width, height) / 1080) * wm.size) : 0),
+        hitLine: visual.hitLine,
+      }),
+      signal,
+      disposeHands,
+    );
   } catch (e) {
     orig = null;
     throw e;
   }
   if (signal?.aborted) {
-    hands?.compositor.dispose();
-    hands?.frames.dispose();
+    disposeHands(hands);
     throw abortError();
   }
 
   const ext = s.format;
   const mime = s.format === 'mp4' ? 'video/mp4' : 'video/webm';
-  const { target, getBlob, cleanup } = await makeTarget(ext);
+  let file: ExportTarget;
+  try {
+    file = await untilAborted(makeTarget(ext), signal, (t) => void t.discard());
+  } catch (e) {
+    disposeHands(hands);
+    throw e;
+  }
+  const { target, getBlob, discard, stored } = file;
   const output = new Output({
     format: s.format === 'mp4' ? new Mp4OutputFormat({ fastStart: target instanceof BufferTarget ? 'in-memory' : false }) : new WebMOutputFormat(),
     target,
@@ -526,7 +563,16 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
   renderer.setNotes(arr.notes, arr.pedal, song.tempo, song.key);
   if (hands) renderer.setStage(hands.compositor.stage());
   const ctx2d = canvas.getContext('2d')!;
-  const mark = await prepareWatermark(job, width, height, ctx2d, { band: wmBand, avoidBottom: handsLayout === 'bottom' ? 0 : drawnKeys, pipCorner: handsLayout === 'pip' ? (s.pipCorner ?? 'br') : null });
+  let mark: Awaited<ReturnType<typeof prepareWatermark>> = null;
+  let cards: TitleCardHooks | null = null;
+  // a cancel while the fonts, the logo or the title page load: nothing has been encoded yet
+  const releaseEarly = async () => {
+    mark?.logo?.close();
+    cards?.dispose();
+    renderer.setStage(null);
+    disposeHands(hands);
+    await abandonOutput(output, audioTrack, discard, true);
+  };
 
   const videoTrack = new CanvasSource(canvas, {
     codec: videoCodec,
@@ -537,31 +583,50 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
   output.addVideoTrack(videoTrack, { frameRate: fps });
   const audioTrack = new AudioSampleSource({ codec: audioCodec, bitrate: 192e3 });
   output.addAudioTrack(audioTrack);
+  try {
+    mark = await untilAborted(
+      prepareWatermark(job, width, height, ctx2d, { band: wmBand, avoidBottom: handsLayout === 'bottom' ? 0 : drawnKeys, pipCorner: handsLayout === 'pip' ? (s.pipCorner ?? 'br') : null }),
+      signal,
+      (m) => m?.logo?.close(),
+    );
+  } catch (e) {
+    await releaseEarly();
+    throw e;
+  }
   // ---- title page / end card: wrap the tracks (null when off, then nothing changes) ----
   const cardMark = mark && wm?.onCards ? mark : null;
-  const cards = await prepareTitleCards(job.titleCard, {
-    width,
-    height,
-    fps,
-    visual,
-    canvas,
-    renderer,
-    rollFrames: totalFrames,
-    signal,
-    guard: (step) => guardStep(step, signal, STEP_TIMEOUT_MS),
-    sampleRate: 48000,
-    onFrame: (done, total, part) => progress({ phase: 'video', fraction: part === 'end' ? 0.98 : 0.18, framesDone: done, framesTotal: total }),
-    overlay: cardMark ? (c) => cardMark.painter.draw(c) : undefined,
-  });
+  try {
+    cards = await untilAborted(
+      prepareTitleCards(job.titleCard, {
+        width,
+        height,
+        fps,
+        visual,
+        canvas,
+        renderer,
+        rollFrames: totalFrames,
+        signal,
+        guard: (step) => guardStep(step, signal, STEP_TIMEOUT_MS),
+        sampleRate: 48000,
+        onFrame: (done, total, part) => progress({ phase: 'video', fraction: part === 'end' ? 0.98 : 0.18, framesDone: done, framesTotal: total }),
+        overlay: cardMark ? (c) => cardMark.painter.draw(c) : undefined,
+      }),
+      signal,
+      (c) => c?.dispose(),
+    );
+    await untilAborted(output.start(), signal);
+  } catch (e) {
+    await releaseEarly();
+    throw e;
+  }
   const videoSource = cards ? cards.video(videoTrack) : videoTrack;
   const audioSource = cards ? cards.audio(audioTrack) : audioTrack;
   const picFadeIn = cards?.timeline.intro ? 0 : s.fadeIn; // the title page crossfades into the roll instead
-  await output.start();
 
   let bg: BackgroundProvider | null = null;
   let decal: ImageBitmap | null = null;
   try {
-    decal = await loadDecalBitmap(visual);
+    decal = await untilAborted(loadDecalBitmap(visual), signal, (b) => b?.close());
     applyDecal(renderer, decal);
     // ---------- audio ----------
     const audioWeight = 0.18;
@@ -627,9 +692,13 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
 
     // ---------- video ----------
     const songTimeAt = (o: number) => range.start + (o - lead) * rate;
-    bg = await backgroundProvider(visual, function* () {
-      for (let i = 0; i < totalFrames; i++) yield i / fps;
-    });
+    bg = await untilAborted(
+      backgroundProvider(visual, function* () {
+        for (let i = 0; i < totalFrames; i++) yield i / fps;
+      }),
+      signal,
+      (b) => b.dispose(),
+    );
     const videoPhase = hands ? 'handsVideo' : 'video';
     let handsDraw: ((o: number) => Promise<void>) | null = null;
     if (hands) {
@@ -673,7 +742,7 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
     for (let i = 0; i < totalFrames; i++) {
       if (signal?.aborted) throw abortError();
       const o = i / fps;
-      if (bg.kind) renderer.setBackgroundMedia(await bg.frameAt(o), bg.kind);
+      if (bg.kind) renderer.setBackgroundMedia(await guardStep(bg.frameAt(o), signal, STEP_TIMEOUT_MS), bg.kind);
       if (handsDraw) await handsDraw(o);
       renderer.render({ time: songTimeAt(o) });
       if (handsLayout === 'pip') hands?.compositor.drawPip(ctx2d);
@@ -700,24 +769,20 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
         });
       }
     }
-    await cards?.finish(); // end card frames (each encoder step guarded inside)
+    if (cards) await untilAborted(cards.finish(), signal); // end card frames (each encoder step guarded inside)
     videoSource.close();
     progress({ phase: 'finalizing', fraction: 0.99 });
     await guardStep(output.finalize(), signal, finalizeTimeoutMs(cards ? cards.total : duration));
     const blob = await getBlob(mime);
     progress({ phase: 'finalizing', fraction: 1 });
-    return { blob, mime, extension: ext, videoCodec, audioCodec, width, height, duration: cards ? cards.total : duration, method: 'webcodecs', sound };
+    return { blob, mime, extension: ext, videoCodec, audioCodec, width, height, duration: cards ? cards.total : duration, method: 'webcodecs', sound, stored, discard };
   } catch (err) {
-    // the real track, not the title-card wrapper (which has no encoder of its own). On a cancel the
-    // encoder is healthy: let it finish the few blocks it holds (otherwise their copies are never
-    // closed), and stop it by force only if that doesn't end in time. A stalled encoder is stopped first.
-    if (job.signal?.aborted && (err as Error)?.name === 'AbortError' && (await cancelOutput(output))) {
-      /* canceled cleanly */
-    } else {
-      forceStopAudioEncoder(audioTrack);
-      await cancelOutput(output);
-    }
-    await cleanup();
+    // the real track, not the title-card wrapper (which has no encoder of its own)
+    const canceled = !!signal?.aborted && (err as Error)?.name === 'AbortError';
+    const abandoned = abandonOutput(output, audioTrack, discard, canceled);
+    // a cancel is answered at once: what is left of the clean-up goes on in the background
+    if (canceled) await settleWithin(abandoned, CANCEL_ANSWER_MS);
+    else await abandoned;
     throw err;
   } finally {
     orig = null;
@@ -726,10 +791,14 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
     renderer.setStage(null);
     decal?.close();
     cards?.dispose();
-    await hands?.stream?.close().catch(() => {});
-    hands?.frames.dispose();
-    hands?.compositor.dispose();
     mark?.logo?.close();
+    // the hands video's decoder can take a moment to let go (2 s at most): not waited for on a cancel
+    const closing = hands?.stream?.close().catch(() => {});
+    if (signal?.aborted) void Promise.resolve(closing).then(() => disposeHands(hands));
+    else {
+      await closing;
+      disposeHands(hands);
+    }
   }
 }
 
@@ -752,44 +821,49 @@ async function exportWithMediaRecorder(job: ExportJob): Promise<ExportResult> {
   renderer.resize(width, height);
   const arr = song.arrangements[job.difficulty];
   renderer.setNotes(arr.notes, arr.pedal, song.tempo, song.key);
-  const bg = await backgroundProvider(visual, function* () {
-    for (;;) yield 0;
-  });
-  if (bg.kind === 'image') renderer.setBackgroundMedia(await bg.frameAt(0), 'image');
-  const decal = await loadDecalBitmap(visual);
-  applyDecal(renderer, decal);
-  const c2 = canvas.getContext('2d')!;
-  const mark = await prepareWatermark(job, width, height, c2, { band: 0, avoidBottom: visual.showKeyboard ? Math.round(height * visual.keyboardHeight) : 0 });
-  const cards = await prepareTitleCards(job.titleCard, { width, height, fps: s.fps, visual, canvas, renderer, rollFrames: Math.ceil(duration * s.fps), signal });
-  const intro = cards?.timeline.intro ?? 0;
-  const rollEnd = intro + duration;
-  const total = rollEnd + (cards?.timeline.outro ?? 0);
-  const disposeVisuals = () => {
-    bg.dispose();
-    renderer.setDecalImage(null);
-    decal?.close();
-    cards?.dispose();
-    mark?.logo?.close();
-  };
-
+  let bg: BackgroundProvider | null = null;
+  let decal: ImageBitmap | null = null;
+  let mark: Awaited<ReturnType<typeof prepareWatermark>> = null;
+  let cards: TitleCardHooks | null = null;
   // audio graph + capture stream: released in `finally` so a cancelled or failed export doesn't leak a running AudioContext
-  let ctx: AudioContext | null = null;
   let engine: PianoEngine | null = null;
   let stream: MediaStream | null = null;
+  let rec: MediaRecorder | null = null;
+  // made before the first await, while the tap that started the export still counts (everything up to
+  // here runs in that tap): on iPhone an audio context made later can stay suspended, and its clock never moves
+  const ac = new AudioContext({ sampleRate: 48000 });
+  void ac.resume().catch(() => {});
   try {
-    const ac = new AudioContext({ sampleRate: 48000 });
-    ctx = ac;
+    bg = await untilAborted(
+      backgroundProvider(visual, function* () {
+        for (;;) yield 0;
+      }),
+      signal,
+      (b) => b.dispose(),
+    );
+    if (bg.kind === 'image') renderer.setBackgroundMedia(await untilAborted(bg.frameAt(0), signal), 'image');
+    decal = await untilAborted(loadDecalBitmap(visual), signal, (b) => b?.close());
+    applyDecal(renderer, decal);
+    const c2 = canvas.getContext('2d')!;
+    mark = await untilAborted(prepareWatermark(job, width, height, c2, { band: 0, avoidBottom: visual.showKeyboard ? Math.round(height * visual.keyboardHeight) : 0 }), signal, (m) => m?.logo?.close());
+    cards = await untilAborted(prepareTitleCards(job.titleCard, { width, height, fps: s.fps, visual, canvas, renderer, rollFrames: Math.ceil(duration * s.fps), signal }), signal, (c) => c?.dispose());
+    const intro = cards?.timeline.intro ?? 0;
+    const rollEnd = intro + duration;
+    const total = rollEnd + (cards?.timeline.outro ?? 0);
+
     const dest = ac.createMediaStreamDestination();
     const gain = ac.createGain();
     gain.gain.value = s.volume;
     gain.connect(dest);
     engine = new PianoEngine(ac, gain);
-    await engine.applySettings(job.audio, undefined, true);
+    await untilAborted(engine.applySettings(job.audio, undefined, true), signal);
     stream = new MediaStream([...canvas.captureStream(s.fps).getVideoTracks(), ...dest.stream.getAudioTracks()]);
     const mime = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'].find((m) => MediaRecorder.isTypeSupported(m)) ?? '';
-    const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: bitrateFor(width, height, s.fps, s.quality) });
+    const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: bitrateFor(width, height, s.fps, s.quality) });
+    rec = recorder;
     const chunks: Blob[] = [];
-    rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+    recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+    if (ac.state === 'suspended') await untilAborted(ac.resume().catch(() => {}), signal);
 
     const startCtx = ac.currentTime + 0.3;
     for (const e of buildEvents(arr.notes, arr.pedal, { L: true, R: true })) {
@@ -808,32 +882,36 @@ async function exportWithMediaRecorder(job: ExportJob): Promise<ExportResult> {
       gain.gain.setValueAtTime(s.volume, startCtx + rollEnd - 0.05);
       gain.gain.linearRampToValueAtTime(0, startCtx + rollEnd);
     }
-    rec.start(1000);
+    const hooks = cards;
+    recorder.start(1000);
     await new Promise<void>((resolve, reject) => {
+      // a cancel ends it at once, also while the tab is in the background (no animation frames then)
+      const onAbort = () => reject(abortError());
+      if (signal?.aborted) return onAbort();
+      signal?.addEventListener('abort', onAbort, { once: true });
       const frame = () => {
-        if (signal?.aborted) {
-          rec.stop();
-          reject(new DOMException('Export canceled', 'AbortError'));
-          return;
-        }
+        if (signal?.aborted) return;
         const o = ac.currentTime - startCtx;
         const c2d = canvas.getContext('2d')!;
-        if (cards && o < intro) cards.drawIntro(c2d, Math.max(0, o));
-        else if (cards && o >= rollEnd) cards.drawOutro(c2d, o - rollEnd);
+        if (hooks && o < intro) hooks.drawIntro(c2d, Math.max(0, o));
+        else if (hooks && o >= rollEnd) hooks.drawOutro(c2d, o - rollEnd);
         else {
           renderer.render({ time: range.start + (o - intro - lead) * rate });
           mark?.painter.draw(c2d);
         }
         job.onProgress?.({ phase: 'video', fraction: Math.max(0, Math.min(1, o / total)) });
-        if (o >= total) resolve();
-        else requestAnimationFrame(frame);
+        if (o >= total) {
+          signal?.removeEventListener('abort', onAbort);
+          resolve();
+        } else requestAnimationFrame(frame);
       };
       requestAnimationFrame(frame);
     });
     const blob = await new Promise<Blob>((resolve) => {
-      rec.onstop = () => resolve(new Blob(chunks, { type: rec.mimeType || 'video/webm' }));
-      rec.stop();
+      recorder.onstop = () => resolve(new Blob(chunks, { type: recorder.mimeType || 'video/webm' }));
+      recorder.stop();
     });
+    rec = null;
     const isMp4 = blob.type.includes('mp4');
     return {
       blob,
@@ -846,11 +924,22 @@ async function exportWithMediaRecorder(job: ExportJob): Promise<ExportResult> {
       duration: total,
       method: 'mediarecorder',
       sound: 'piano',
+      stored: 'memory',
+      discard: async () => {},
     };
   } finally {
+    try {
+      if (rec && rec.state !== 'inactive') rec.stop();
+    } catch {
+      /* ignore */
+    }
     stream?.getTracks().forEach((t) => t.stop());
     engine?.dispose();
-    if (ctx && ctx.state !== 'closed') void ctx.close().catch(() => {});
-    disposeVisuals();
+    if (ac.state !== 'closed') void ac.close().catch(() => {});
+    bg?.dispose();
+    renderer.setDecalImage(null);
+    decal?.close();
+    cards?.dispose();
+    mark?.logo?.close();
   }
 }

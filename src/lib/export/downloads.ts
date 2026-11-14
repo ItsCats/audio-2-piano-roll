@@ -11,6 +11,12 @@ export function safeFileName(s: string): string {
   return s.replace(/[\\/:*?"<>|]+/g, '').replace(/\s+/g, ' ').trim().slice(0, 80) || 'piano2vision';
 }
 
+/**
+ * How long a download's link stays valid. Safari on iPhone first asks "Do you want to download…?" and
+ * reads the file only after the tap: a link revoked before that gives a failed or empty download.
+ */
+export const DOWNLOAD_URL_LIFETIME_MS = 10 * 60_000;
+
 export function downloadBlob(blob: Blob, name: string): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -19,7 +25,7 @@ export function downloadBlob(blob: Blob, name: string): void {
   document.body.appendChild(a);
   a.click();
   a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  setTimeout(() => URL.revokeObjectURL(url), DOWNLOAD_URL_LIFETIME_MS);
 }
 
 export async function downloadMidi(song: Song, difficulty: Difficulty): Promise<void> {
