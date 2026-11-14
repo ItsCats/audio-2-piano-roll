@@ -7,6 +7,7 @@ import { useStudio } from '../../state/studioStore';
 import { useTransport } from '../../state/transportStore';
 import { EXPORT_PRESETS, outputSize, type ExportSettings, type ExportSound } from '../../lib/export/types';
 import { exportRange, exportVideo, jobHandsLayout, webCodecsAvailable, type ExportProgress, type ExportResult } from '../../lib/export/videoExport';
+import { ExportRunner } from '../../lib/export/exportRunner';
 import { effectiveRate, effectiveSound, exportTimeline, originalGain, soundWithoutPiano, usesHandsSound, usesOriginalRecording } from '../../lib/export/originalMix';
 import { useShallow } from 'zustand/react/shallow';
 import { useWatermark, watermarkSettings } from '../../state/watermarkStore';
@@ -27,6 +28,8 @@ import { useDecalImage } from './useDecalImage';
 import { useCanvasRestored } from './useCanvasRestored';
 import { TitleCardPanel, titleCardJob, useTitleCardSeconds } from './TitleCardPanel';
 import type { TitleCardJob } from '../../lib/render/titleCard/exportHooks';
+import type { Difficulty } from '../../lib/music/types';
+import { isMemoryConstrained, pageDeviceInfo } from '../../lib/transcription/backendChoice';
 
 const presetIcons: Record<string, typeof SquarePlay> = { youtube: SquarePlay, shorts: Smartphone, square: Square, quick: Zap };
 
@@ -143,6 +146,41 @@ function CompositionPreview({ settings, previewTime, layout, watermark, active }
   );
 }
 
+interface LastVideo {
+  result: ExportResult;
+  /** for the preview player */
+  url: string;
+  songId: string;
+  /** the song's title and the difficulty it was rendered at (its file is named after them, whatever the Studio shows now) */
+  title: string;
+  difficulty: Difficulty;
+}
+
+const MB = 1024 * 1024;
+
+/**
+ * Whether a finished video can stay while a new export runs (so cancelling that one still leaves it to
+ * download). One on disk always can; one in memory (the real-time recorder, or a browser that can't
+ * write files) only while two at once still fit: 128 MB on a phone or a small-memory device, 1 GB elsewhere.
+ */
+function keepsDuringExport(v: LastVideo): boolean {
+  if (v.result.stored === 'disk') return true;
+  const device = pageDeviceInfo();
+  return v.result.blob.size <= (device && isMemoryConstrained(device) ? 128 : 1024) * MB;
+}
+
+/** "Writing the file" may take a few seconds; after this long Cancel is offered there too (a stalled encoder) */
+const FINALIZE_CANCEL_AFTER_MS = 10_000;
+
+/** how long a video's file stays after it was let go of (a download of it may still be reading it) */
+const RELEASE_DELAY_MS = 120_000;
+
+/** Lets go of a finished video: its preview link now, its file in the browser's storage a little later. */
+function releaseVideo(v: LastVideo): void {
+  URL.revokeObjectURL(v.url);
+  setTimeout(() => void v.result.discard().catch(() => {}), RELEASE_DELAY_MS);
+}
+
 /** A title page warning from a run that was cancelled or replaced must not show for the new one. */
 function gateWarnings(tc: TitleCardJob | undefined, current: () => boolean): TitleCardJob | undefined {
   if (!tc?.onWarning) return tc;
@@ -163,16 +201,30 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
   const setLabels = useSettings((s) => s.setLabels);
   const audio = useSettings((s) => s.audio);
   const titleSeconds = useTitleCardSeconds(song, settings.fps); // title page + end card
+  /** set while the current export runs */
   const [progress, setProgress] = useState<ExportProgress | null>(null);
-  const [result, setResult] = useState<ExportResult | null>(null);
-  const [resultUrl, setResultUrl] = useState<string | null>(null);
+  /**
+   * the last finished video: kept when the dialog is closed and opened again, after "Back to settings",
+   * and (when it is on disk, not in memory) while a new export runs, until that one has finished
+   */
+  const [last, setLastState] = useState<LastVideo | null>(null);
+  const lastRef = useRef<LastVideo | null>(null);
+  const setLast = (v: LastVideo | null) => {
+    lastRef.current = v;
+    setLastState(v);
+  };
+  const [showResult, setShowResult] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** the last export was cancelled */
+  const [canceled, setCanceled] = useState(false);
+  /** writing the file has taken longer than FINALIZE_CANCEL_AFTER_MS: Cancel is offered again */
+  const [slowFinalize, setSlowFinalize] = useState(false);
   const [previewFrac, setPreviewFrac] = useState(0.15);
-  const abort = useRef<AbortController | null>(null);
-  // a cancelled export can still be finishing (decoding the original can't be stopped part-way);
-  // Render stays off until it has, so two exports never run at once
+  const runnerRef = useRef<ExportRunner | null>(null);
+  runnerRef.current ??= new ExportRunner();
+  const runner = runnerRef.current;
+  // a cancelled export is given a moment (2 s at most) to let go of the encoders; Render comes back after that
   const [stopping, setStopping] = useState(false);
-  const running = useRef<Promise<void> | null>(null);
   const stored = useStoredOriginal(song?.id, song?.hasAudio, open);
   const updateSong = useStudio((s) => s.updateSong);
   const wmAll = useWatermark(useShallow(watermarkSettings));
@@ -181,9 +233,15 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
   /** the setup screen's own close (it asks before throwing away unsaved changes) */
   const setupClose = useRef<(() => void) | null>(null);
 
-  useEffect(() => () => {
-    if (resultUrl) URL.revokeObjectURL(resultUrl);
-  }, [resultUrl]);
+  // leaving the Studio: an export that is still running is stopped, the last video is let go of
+  useEffect(
+    () => () => {
+      void runner.stop();
+      if (lastRef.current) releaseVideo(lastRef.current);
+      lastRef.current = null;
+    },
+    [runner],
+  );
 
   const webCodecs = webCodecsAvailable();
   const hasHandsSound = song?.handVideo?.store === 'handcam';
@@ -203,22 +261,32 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
   const origVolume = originalGain(settings, audio.originalVolume);
   const waitingForCheck = stored === 'checking' && usesOriginalRecording(settings.sound);
   const previewTime = range.start + previewFrac * (range.end - range.start);
-  const rendering = progress !== null && !result && !error;
+  const rendering = progress !== null;
   const busy = rendering || stopping;
   const longExport = outDur + titleSeconds > 600;
+  // a video of another song (the Studio opened a different one) is not offered
+  const kept = last && last.songId === song.id ? last : null;
+  const result = kept && showResult ? kept.result : null;
 
-  const start = async () => {
-    if (running.current) return;
+  // not async before exportVideo is called: the fallback recorder's audio needs the tap that started it
+  const start = () => {
+    if (runner.running || runner.stopping) return;
     setError(null);
-    setResult(null);
-    if (resultUrl) URL.revokeObjectURL(resultUrl);
-    setResultUrl(null);
-    const ac = new AbortController();
-    abort.current = ac;
-    // only the current run may update the dialog
-    const current = () => abort.current === ac && !ac.signal.aborted;
+    setCanceled(false);
+    setShowResult(false);
+    setSlowFinalize(false);
+    // the last video stays until the new one is done (so a cancel keeps it), unless it is a big one in
+    // memory that couldn't be held next to the new one (the sheet said so before Render was tapped)
+    const prev = lastRef.current;
+    if (prev && (prev.songId !== song.id || !keepsDuringExport(prev))) {
+      releaseVideo(prev);
+      setLast(null);
+    }
     setProgress({ phase: 'preparing', fraction: 0 });
-    const run = (async () => {
+    const songId = song.id;
+    const named = { title: song.title, difficulty };
+    runner.start(async (signal, current) => {
+      let finalizeTimer: ReturnType<typeof setTimeout> | undefined;
       try {
         const r = await exportVideo({
           song,
@@ -227,51 +295,61 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
           audio,
           settings: { ...settings, sound },
           loop,
-          signal: ac.signal,
+          signal,
           watermark: watermark ?? undefined,
-          onProgress: (p) => current() && setProgress(p),
+          onProgress: (p) => {
+            if (!current()) return;
+            setProgress(p);
+            if (p.phase === 'finalizing' && finalizeTimer === undefined) finalizeTimer = setTimeout(() => current() && setSlowFinalize(true), FINALIZE_CANCEL_AFTER_MS);
+          },
           titleCard: gateWarnings(titleCardJob(song, visual), current),
         });
-        if (!current()) return;
-        setResult(r);
-        setResultUrl(URL.createObjectURL(r.blob));
-      } catch (e) {
-        if (!current()) return;
-        if ((e as Error).name === 'AbortError') {
-          setProgress(null);
+        if (!current()) {
+          void r.discard(); // finished just as it was cancelled
           return;
         }
-        setError((e as Error).message);
+        if (lastRef.current) releaseVideo(lastRef.current);
+        setLast({ result: r, url: URL.createObjectURL(r.blob), songId, ...named });
+        setShowResult(true);
+        setProgress(null);
+      } catch (e) {
+        if (!current()) return;
+        setProgress(null);
+        if ((e as Error).name !== 'AbortError') setError((e as Error).message);
+      } finally {
+        clearTimeout(finalizeTimer);
       }
-    })();
-    running.current = run;
-    await run;
-    running.current = null;
-    setStopping(false);
+    });
   };
 
-  /** stops the current export; Render comes back once it has really stopped */
+  /** stops the current export; Render comes back once it has stopped (2 s at most) */
   const stop = () => {
-    abort.current?.abort();
-    abort.current = null;
-    if (running.current) setStopping(true);
+    if (!runner.running) return;
+    setProgress(null);
+    setCanceled(true);
+    setSlowFinalize(false);
+    setStopping(true);
+    void runner.stop().then(() => setStopping(runner.stopping));
   };
 
-  const cancel = () => {
-    stop();
-    setProgress(null);
-  };
+  /** Cancel isn't offered while the file is written (the video is all but done), unless that takes unusually long */
+  const cancelable = rendering && (progress.phase !== 'finalizing' || slowFinalize);
 
   const close = () => {
-    if (rendering && !confirm('Stop the export in progress?')) return;
-    stop();
-    setProgress(null);
-    setResult(null);
+    if (rendering) {
+      // while the file is being written the export is left to finish: its video is here when the dialog opens again
+      if (cancelable) {
+        if (!confirm('Stop the export in progress?')) return;
+        stop();
+      }
+    }
     setError(null);
     onClose();
   };
 
-  const fileName = `${safeFileName(song.title)} - ${difficulty} - ${width}x${height}.${result?.extension ?? settings.format}`;
+  const fileName = result && kept ? `${safeFileName(kept.title)} - ${kept.difficulty} - ${result.width}x${result.height}.${result.extension}` : '';
+  /** the kept video goes when Render is tapped (a big one in memory: there is no room for two) */
+  const replacedOnRender = !!kept && !keepsDuringExport(kept);
 
   return (
     // while the hands video setup covers the screen, the dialog under it is not drawn (a blurred backdrop
@@ -279,23 +357,23 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
     <Modal open={open} onClose={setup ? () => (setupClose.current ? setupClose.current() : setSetup(null)) : close} title="Export video" wide hidden={!!(setup && song.handVideo)} noBlur>
       <div className="grid gap-0 lg:grid-cols-[1fr_340px]">
         <div className="flex flex-col gap-3 border-b border-ink-700 p-4 lg:border-r lg:border-b-0">
-          {result && resultUrl ? (
+          {result && kept ? (
             <div className="flex flex-col gap-3">
-              <video src={resultUrl} controls className="max-h-[52vh] w-full rounded-xl bg-black" aria-label="Rendered video preview" />
+              <video src={kept.url} controls className="max-h-[52vh] w-full rounded-xl bg-black" aria-label="Rendered video preview" />
               <div className="flex flex-wrap items-center gap-2 text-[12px] text-ink-300">
                 <Badge tone="ok">Done</Badge>
                 <span>
                   {result.width}×{result.height} · {formatTime(result.duration)} · {(result.blob.size / 1024 / 1024).toFixed(1)} MB · {result.videoCodec.toUpperCase()} + {result.audioCodec.toUpperCase()} · {SOUND_LABEL[result.sound]}
                 </span>
               </div>
-              {result.extension === 'mp4' && result.videoCodec !== 'avc' && (
+              {result.method === 'webcodecs' && result.extension === 'mp4' && result.videoCodec !== 'avc' && (
                 <p className="text-[12px] text-warn">This browser couldn’t encode H.264, so the MP4 uses {result.videoCodec.toUpperCase()}. It plays in modern browsers, VLC and YouTube, but some older players may not support it.</p>
               )}
               <div className="flex gap-2">
                 <Button variant="primary" icon={<Download size={16} />} onClick={() => { downloadBlob(result.blob, fileName); showExportNoticeOnce(); }}>
                   Download {result.extension.toUpperCase()}
                 </Button>
-                <Button variant="ghost" onClick={() => { setResult(null); setProgress(null); }}>
+                <Button variant="ghost" onClick={() => setShowResult(false)}>
                   Back to settings
                 </Button>
               </div>
@@ -332,9 +410,31 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
                       {progress.renderFps !== undefined && ` · ${progress.renderFps.toFixed(0)} fps · ~${formatTime(progress.etaSeconds ?? 0)} left`}
                     </p>
                   )}
-                  <Button size="sm" variant="ghost" onClick={cancel} className="self-start">
-                    Cancel
-                  </Button>
+                  {slowFinalize && progress.phase === 'finalizing' && <p className="text-[12px] text-ink-300">Writing the file is taking longer than usual. You can wait, or cancel.</p>}
+                  {/* the frames are done: the file is only being written now */}
+                  {cancelable && (
+                    <Button size="sm" variant="ghost" onClick={stop} className="self-start">
+                      Cancel
+                    </Button>
+                  )}
+                </div>
+              )}
+              {!rendering && (canceled || kept) && (
+                <div className="flex flex-wrap items-center gap-2 rounded-lg border border-ink-700 bg-ink-900 px-3 py-2 text-[12.5px] text-ink-200" aria-live="polite" data-testid="export-notice">
+                  <span className="flex-1">
+                    {canceled && (stopping ? 'Stopping the export… ' : 'Export canceled. ')}
+                    {kept
+                      ? `Your last video is still here${kept.difficulty !== difficulty ? ` (rendered at ${kept.difficulty[0].toUpperCase()}${kept.difficulty.slice(1)})` : ''}.`
+                      : canceled && !stopping
+                        ? 'Render the video again whenever you’re ready.'
+                        : ''}
+                    {replacedOnRender && ' Rendering again replaces it (this device can’t hold two videos at once), so download it first if you want to keep it.'}
+                  </span>
+                  {kept && (
+                    <Button size="sm" variant="ghost" icon={<Download size={14} />} onClick={() => setShowResult(true)}>
+                      Show video
+                    </Button>
+                  )}
                 </div>
               )}
               {error && (
@@ -447,7 +547,7 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
             <p className="font-mono text-[11px] text-ink-400">
               {width}×{height} · {formatTime(outDur + titleSeconds)} · {(Math.ceil(outDur * settings.fps) + Math.round(titleSeconds * settings.fps)).toLocaleString()} frames
             </p>
-            {!webCodecs && <p className="text-[12px] text-warn">WebCodecs isn’t available in this browser: the video will be recorded in real time as WebM.</p>}
+            {!webCodecs && <p className="text-[12px] text-warn">WebCodecs isn’t available in this browser: the video will be recorded in real time, so it takes as long as the song.</p>}
             {longExport && <p className="text-[12px] text-warn">Long export — rendering can take several minutes. Keep this tab open.</p>}
           </div>
 
@@ -547,7 +647,7 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
           <TitleCardPanel song={song} exportSettings={settings} visual={visual} />
         </div>
       </div>
-      {!result && (
+      {!(result && kept) && (
         <footer className="flex items-center justify-between gap-2 border-t border-ink-700 px-5 py-3">
           <span className="text-[12px] text-ink-300">
             {song.title} · <span className="capitalize">{difficulty}</span>

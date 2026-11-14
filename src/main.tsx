@@ -7,6 +7,10 @@ import { installNewVersionReload } from './lib/newVersion';
 // an open tab from before a deploy reloads once when a part of the app it needs is gone
 installNewVersionReload();
 
+// finished or cancelled video exports left in the browser's private storage by an earlier visit
+// (videos are downloaded, not kept there); files another open tab still uses are left alone
+setTimeout(() => void import('./lib/export/exportFiles').then((m) => m.cleanupExportFiles()).catch(() => {}), 5000);
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <App />
