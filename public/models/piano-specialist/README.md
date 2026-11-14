@@ -18,7 +18,8 @@ It was trained on solo piano recordings (MAESTRO) only, so it does not help with
 
 ## What was changed
 
-- Only the **note model** of the checkpoint is exported; the sustain-pedal model is left out.
+- Only the **note model** of the checkpoint is exported; the sustain-pedal model is left out. The app infers the pedal from where the
+  note model's notes stop sounding instead (`src/lib/music/noteLength.ts`, docs/TRANSCRIPTION.md section 3d).
 - **Float16 storage**: every float initializer with 1024 or more values (20.4 M values) is stored as float16 and
   cast back to float32 by a `Cast` node inside the graph (onnxruntime folds the casts when the session is created),
   so the WASM backend runs ordinary float32 kernels. The 18,148 values in small initializers (biases, batch-norm

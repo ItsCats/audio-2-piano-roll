@@ -39,6 +39,22 @@ from acclib import NoteArr, load_notes, midi_notes, midi_to_hz  # noqa: E402
 from metrics import _iv, matched_pairs, note_prf  # noqa: E402
 
 
+def as_heard(est: NoteArr, pedal: list[dict]) -> NoteArr:
+    """music/noteLength.ts asHeard: a key let go while the pedal is down sounds until the pedal comes up, or
+    until the same key is struck again."""
+    off = est.offset.copy()
+    for i, up in enumerate(est.offset):
+        for p in pedal:
+            if p["start"] <= up < p["end"]:
+                off[i] = p["end"]
+                break
+    order = np.lexsort((est.onset, est.pitch))
+    for a, b in zip(order[:-1], order[1:]):
+        if est.pitch[a] == est.pitch[b] and off[a] > est.onset[b]:
+            off[a] = max(est.offset[a], min(off[a], est.onset[b]))
+    return NoteArr(est.onset, off, est.pitch, est.vel, est.hand)
+
+
 def velocity_prf(ref: NoteArr, est: NoteArr, offsets: bool) -> dict:
     """mir_eval onset(+offset)+velocity note F1 (velocity_tolerance 0.1)."""
     from mir_eval import transcription_velocity as tv
@@ -150,6 +166,10 @@ def main() -> None:
                 continue
             tr = json.load(open(f))
             est = NoteArr.from_list(tr["base"])
+            if tr.get("pedal"):
+                # the specialist's notes are "as played" with the pedal heard in the recording (music/noteLength.ts,
+                # since 2026-11-14): score them as heard, the pedal-extended convention the model and the references use
+                est = as_heard(est, tr["pedal"])
             r = {"nNotes": len(est), **run_info(tr)}
             if exact is not None:
                 r["vsExact"] = suite(exact, est)

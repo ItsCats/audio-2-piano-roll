@@ -1,4 +1,4 @@
-import { DIFFICULTIES, type Difficulty, type Note, type PedalRange, type Song, type SongSource, type TempoInfo, type TranscriptionInfo, type KeyInfo } from './music/types';
+import { DIFFICULTIES, type Arrangement, type Difficulty, type Note, type NoteLength, type PedalRange, type Song, type SongSource, type TempoInfo, type TranscriptionInfo, type KeyInfo } from './music/types';
 import { generateAllArrangements, generateArrangement, type ArrangementOptions } from './music/difficulty';
 import { autoPedal, isAudioSong } from './music/autoPedal';
 import { detectKey } from './music/theory';
@@ -8,6 +8,7 @@ import type { ParsedMidi } from './music/midi';
 import type { ParsedScore } from './score';
 import { bachPreludeDemo } from './music/demo';
 import { carryMarks } from './sheet/carry';
+import { asHeard, asPlayed } from './music/noteLength';
 
 /** A compact piano-roll overview image used as the song's thumbnail. */
 export function makeThumbnail(notes: Note[], duration: number, colors = { R: '#4f9dff', L: '#f5a524' }): string | undefined {
@@ -106,6 +107,8 @@ interface BuildInput {
   hasPosteriors: boolean;
   /** songs from audio: sustain pedal derived from the notes on Medium and Hard (Song.autoPedal) */
   autoPedal?: boolean;
+  /** the high-accuracy piano model's notes: their note length (Song.noteLength) */
+  noteLength?: NoteLength;
 }
 
 export function buildSong(input: BuildInput): Song {
@@ -129,7 +132,59 @@ export function buildSong(input: BuildInput): Song {
     hasAudio: input.hasAudio,
     hasPosteriors: input.hasPosteriors,
     ...(input.autoPedal !== undefined && isAudioSong(input) ? { autoPedal: input.autoPedal } : {}),
+    ...(input.noteLength && hasNoteLength(input) ? { noteLength: input.noteLength } : {}),
   };
+}
+
+/** Songs whose note length can be switched: the high-accuracy piano model's (music/noteLength.ts). */
+export function hasNoteLength(song: { transcription: TranscriptionInfo }): boolean {
+  return song.transcription.method === 'piano-specialist';
+}
+
+/** The song's note length; songs made before it existed have the notes as heard. */
+export function noteLengthOf(song: Pick<Song, 'noteLength'>): NoteLength {
+  return song.noteLength ?? 'heard';
+}
+
+/**
+ * Switches a high-accuracy piano model song's note length (Song.noteLength). Every level is rebuilt
+ * from the detected notes, like setting the tempo; the sheet's locked grid is kept, and each level's
+ * fingering, markings and pedal edited on the sheet are carried over to the rebuilt notes (onsets do
+ * not move), while note fixes are replaced (the caller asks first: levels marked `edited`).
+ * - 'played': notes end when their key is let go (asPlayed); the pedal heard in the recording becomes
+ *   `basePedal` and the automatic pedal goes off, so Medium and Hard play it. From an older song
+ *   (notes as heard, no `noteLength`) this gives exactly what a fresh import gives.
+ * - 'heard': notes last as long as they ring under that pedal (asHeard); the pedal stays, so the
+ *   sound does not change, only what is drawn, written and practiced.
+ */
+export function withNoteLength(song: Song, to: NoteLength): Song {
+  let base: Note[];
+  let basePedal = song.basePedal;
+  let auto = song.autoPedal;
+  if (to === 'played') {
+    const r = asPlayed(song.base);
+    base = r.notes;
+    basePedal = r.pedal;
+    auto = false;
+  } else {
+    base = noteLengthOf(song) === 'heard' ? song.base : asHeard(song.base, song.basePedal);
+  }
+  const thumbnail = makeThumbnail(base, song.duration) ?? song.thumbnail;
+  const next: Song = { ...song, base, basePedal, noteLength: to, ...(thumbnail ? { thumbnail } : {}), updatedAt: Date.now() };
+  if (auto === undefined) delete next.autoPedal;
+  else next.autoPedal = auto;
+  const all = generateAllArrangements(base, basePedal, song.tempo, song.duration, arrangementOptions(next));
+  const arrangements = {} as Record<Difficulty, Arrangement>;
+  for (const d of DIFFICULTIES) arrangements[d] = keepMarkings(song.arrangements[d], all[d]);
+  next.arrangements = arrangements;
+  return next;
+}
+
+/** A rebuilt level with the old one's fingering, markings and sheet pedal (carryMarks); still `edited` when any came along. */
+function keepMarkings(old: Arrangement, rebuilt: Arrangement): Arrangement {
+  const out = carryMarks(old, rebuilt);
+  const carried = !!out.marks?.length || !!out.pedalEdited || out.notes.some((n) => n.finger || n.art?.length);
+  return carried && old.edited ? { ...out, edited: true } : out;
 }
 
 export function songFromMidi(parsed: ParsedMidi, fileName: string, fileSize: number): Song {

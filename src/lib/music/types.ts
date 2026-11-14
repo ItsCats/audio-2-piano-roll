@@ -68,6 +68,9 @@ export interface NotePin {
   d: number;
 }
 
+/** How long notes from the high-accuracy piano model are (Song.noteLength). */
+export type NoteLength = 'played' | 'heard';
+
 /** Sustain pedal held from `start` to `end` (seconds). */
 export interface PedalRange {
   start: number;
@@ -270,6 +273,13 @@ export interface Song {
    * until it is switched on in the Sound panel. Never set for MIDI files or sheet music.
    */
   autoPedal?: boolean;
+  /**
+   * Note length of a song from the high-accuracy piano model (music/noteLength.ts): 'played' = a
+   * note ends when its key is let go and `basePedal` is the pedal heard in the recording (imports
+   * since 2026-11); 'heard' = a note lasts as long as it rings (switched in the Arrangement panel).
+   * Absent: the notes as detected (every older song, and every song not from that model).
+   */
+  noteLength?: NoteLength;
   /**
    * A video of the player's hands for "hands video" exports (lib/handcam). Absent in older songs
    * and when none was added; the file is in IndexedDB (see HandVideo.store).

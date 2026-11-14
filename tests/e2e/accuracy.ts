@@ -55,7 +55,8 @@ async function transcribeUrl(url: string, preset: Preset, withPosteriors = false
   const transcribeMs = performance.now() - t1;
   if (lastStage) stageTimes[lastStage] = (stageTimes[lastStage] ?? 0) + performance.now() - last;
   const t2 = performance.now();
-  const arr = generateAllArrangements(res.notes, [], res.tempo, res.duration);
+  // (as the import builds them: the specialist's pedal heard in the recording on Medium and Hard)
+  const arr = generateAllArrangements(res.notes, res.pedal ?? [], res.tempo, res.duration);
   const arrangeMs = performance.now() - t2;
   return {
     preset,
@@ -74,6 +75,8 @@ async function transcribeUrl(url: string, preset: Preset, withPosteriors = false
       stagesMs: Object.fromEntries(Object.entries(stageTimes).map(([k, v]) => [k, Math.round(v)])),
     },
     base: slim(res.notes),
+    // the specialist only: the pedal heard in the recording (its notes are as played, music/noteLength.ts)
+    pedal: res.pedal,
     easy: slim(arr.easy.notes),
     medium: slim(arr.medium.notes),
     hard: slim(arr.hard.notes),

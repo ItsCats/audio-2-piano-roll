@@ -19,13 +19,14 @@
  * (pianoSpecialist/postprocess.ts) → hands → tempo/beats → key. No separation and none of the
  * Basic Pitch cleanup (see specialistNotes).
  */
-import type { ExtractionParams, KeyInfo, Note, PianoBlendInfo, TempoInfo, TranscriptionInfo } from '../music/types';
+import type { ExtractionParams, KeyInfo, Note, PedalRange, PianoBlendInfo, TempoInfo, TranscriptionInfo } from '../music/types';
 import { BP_FPS, BP_MIDI_OFFSET, BP_N_PITCHES, BP_SAMPLE_RATE, frameToTime, timeToFrame } from './constants';
 import type { NoteExtractionOptions, RawNoteEvent } from './noteExtraction';
 import type { TranscriptionStage, WorkerRequest, WorkerResponse } from './workerProtocol';
 import { analyzeLevel, decodeToRate, mixToMono, resampleToAsync } from './decode';
 import { BASS_FOLD, DRUM_HIT_RULE, RESTRIKE, TAIL_GATE, mergeContinuations, mergeFragments, newNoteId, removeShortQuiet, removeTailGhosts, sortNotes, suppressDrumHits, suppressHarmonics, foldBassRestrikes } from '../music/cleanup';
 import { assignHands } from '../music/hands';
+import { asPlayed } from '../music/noteLength';
 import { estimateTempo } from '../music/beats';
 import { detectKey } from '../music/theory';
 import { addExtraLead, recoverLead, type LeadRecoveryOptions } from '../music/leadRecovery';
@@ -201,6 +202,12 @@ export interface TranscriptionResult {
    * (its outputs are not Basic Pitch posteriors, so they cannot be re-detected from).
    */
   posteriors?: StoredPosteriors;
+  /**
+   * The sustain pedal heard in the recording, set by the piano specialist only: its notes are
+   * "as played" (music/noteLength.ts asPlayed: a note ends when its key is let go) and this pedal
+   * carries the rest of their sound. Absent for Basic Pitch results.
+   */
+  pedal?: PedalRange[];
   info: TranscriptionInfo;
   /**
    * Set when separation was asked for but did not run: 'memory' (it ran out of memory, or the
@@ -1305,8 +1312,12 @@ async function transcribeWithSpecialist(
   if (notes.length === 0) warnings.push('No notes were detected. Is this a piano recording? Try again with the normal model.');
   const tempo = transcriptionTempo(notes, notes, duration);
   if (tempo.confidence < 0.15) warnings.push('Tempo could not be detected reliably; the beat grid and quantisation may be off.');
+  // the model's notes end where the sound stops (pedal included): drawn, written and practiced as
+  // played, with the pedal heard in the recording carrying the sound (docs/TRANSCRIPTION.md "Note length")
+  const played = asPlayed(notes);
   return {
-    notes,
+    notes: played.notes,
+    pedal: played.pedal,
     duration,
     tempo,
     key: detectKey(notes),

@@ -18,9 +18,9 @@ const HISTORY_LIMIT = 200;
  * The song fields an edit can touch; undo entries are references to them (edits make new
  * objects), so one stack covers piano-roll edits, sheet edits and song-level changes together.
  */
-export type HistorySnap = Pick<Song, 'arrangements' | 'base' | 'basePedal' | 'tempo' | 'duration' | 'key' | 'sheet' | 'autoPedal'>;
+export type HistorySnap = Pick<Song, 'arrangements' | 'base' | 'basePedal' | 'tempo' | 'duration' | 'key' | 'sheet' | 'autoPedal' | 'noteLength'>;
 
-const SNAP_KEYS: (keyof HistorySnap)[] = ['arrangements', 'base', 'basePedal', 'tempo', 'duration', 'key', 'sheet', 'autoPedal'];
+const SNAP_KEYS: (keyof HistorySnap)[] = ['arrangements', 'base', 'basePedal', 'tempo', 'duration', 'key', 'sheet', 'autoPedal', 'noteLength'];
 
 const snapOf = (s: Song): HistorySnap => ({
   arrangements: s.arrangements,
@@ -31,6 +31,7 @@ const snapOf = (s: Song): HistorySnap => ({
   key: s.key,
   sheet: s.sheet,
   autoPedal: s.autoPedal,
+  noteLength: s.noteLength,
 });
 
 /** The song with its sheet start moved earlier when a note now starts before it (lib/sheet/rebase.ts). */
@@ -44,6 +45,7 @@ function withSnap(song: Song, snap: HistorySnap): Song {
   const out: Song = { ...song, ...snap, updatedAt: Date.now() };
   if (!snap.sheet) delete out.sheet;
   if (snap.autoPedal === undefined) delete out.autoPedal;
+  if (snap.noteLength === undefined) delete out.noteLength;
   return out;
 }
 
