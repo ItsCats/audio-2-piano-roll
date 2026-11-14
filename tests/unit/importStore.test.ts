@@ -374,6 +374,27 @@ describe('high-accuracy piano model (piano specialist)', () => {
     expect(transcriberChoice({ separate: {}, pianoModel: true }, 'piano', false)).toBe('basic-pitch');
   });
 
+  it('saves the specialist’s notes as played, with the pedal heard in the recording on Medium and Hard (automatic pedal off)', async () => {
+    useImport.getState().setPianoModelPref(true);
+    const pedal = [{ start: 0.2, end: 1.4 }];
+    vi.mocked(pipeline.transcribeAudio).mockResolvedValue({ ...specialistResult(), pedal });
+    await useImport.getState().importFile(file());
+    const song = vi.mocked(db.saveSong).mock.calls[0][0];
+    expect(song).toMatchObject({ noteLength: 'played', autoPedal: false, basePedal: pedal });
+    expect(song.arrangements.hard.pedal).toEqual(pedal);
+    expect(song.arrangements.medium.pedal).toEqual(pedal);
+    expect(song.arrangements.easy.pedal).toEqual([]);
+    // Basic Pitch results (no pedal): automatic pedal on, no note length, as before
+    vi.mocked(db.saveSong).mockClear();
+    useImport.getState().setPianoModelPref(false);
+    vi.mocked(pipeline.transcribeAudio).mockResolvedValue(result());
+    await useImport.getState().importFile(file());
+    const bp = vi.mocked(db.saveSong).mock.calls[0][0];
+    expect(bp.autoPedal).toBe(true);
+    expect(bp.basePedal).toEqual([]);
+    expect('noteLength' in bp).toBe(false);
+  });
+
   it('the choice is kept in the import prefs; older prefs (without it) still load', () => {
     useImport.getState().setPianoModelPref(true);
     expect(useImport.getState().prefs.pianoModel).toBe(true);

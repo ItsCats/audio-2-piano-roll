@@ -10,10 +10,10 @@ import { blendAddedNotes, redetectNotes, redetectedBlendInfo, withLeadPass, EXTR
 import { regularBeats } from '../../../lib/music/beats';
 import { detectKey } from '../../../lib/music/theory';
 import { generateAllArrangements } from '../../../lib/music/difficulty';
-import type { Difficulty, ExtractionParams } from '../../../lib/music/types';
-import { Badge, Button, Section, Slider, Toggle } from '../../ui';
+import type { Difficulty, ExtractionParams, NoteLength } from '../../../lib/music/types';
+import { Badge, Button, Section, Segmented, Slider, Toggle } from '../../ui';
 import { toast } from '../../../state/toastStore';
-import { arrangementOptions, easyMediumFromHard, makeThumbnail } from '../../../lib/songs';
+import { arrangementOptions, easyMediumFromHard, hasNoteLength, makeThumbnail, noteLengthOf, withNoteLength } from '../../../lib/songs';
 
 function LevelStats() {
   const song = useStudio((s) => s.song)!;
@@ -51,6 +51,67 @@ function LevelStats() {
         ))}
       </tbody>
     </table>
+  );
+}
+
+/**
+ * Note length of a high-accuracy piano model song (Song.noteLength): as played (a note ends when its
+ * key is let go, the pedal carries the sound) or as heard (a note lasts as long as it rings).
+ */
+function NoteLengthControl() {
+  const song = useStudio((s) => s.song)!;
+  const value = noteLengthOf(song);
+  const change = (to: NoteLength) => {
+    const s = useStudio.getState().song;
+    if (!s || to === noteLengthOf(s)) return;
+    const edited = (['easy', 'medium', 'hard'] as Difficulty[]).filter((d) => s.arrangements[d].edited);
+    if (edited.length && !confirm(`Changing the note length rebuilds every level from the detected notes: your note fixes to ${edited.join(', ')} will be replaced (fingering and markings are kept). Continue?`)) return;
+    const next = withNoteLength(s, to);
+    // one undo step: the notes, the pedal, every level, the setting and the library picture together
+    useStudio.getState().editSong(() => ({
+      base: next.base,
+      basePedal: next.basePedal,
+      autoPedal: next.autoPedal,
+      noteLength: next.noteLength,
+      notesAsPlayed: next.notesAsPlayed,
+      thumbnail: next.thumbnail,
+      arrangements: next.arrangements,
+    }));
+    const autoOff = s.autoPedal === true && next.autoPedal !== true;
+    if (to === 'played')
+      toast.success(
+        'Notes now end when the key is let go',
+        autoOff
+          ? 'The automatic pedal is now off: Medium and Hard use the sustain pedal heard in the recording, which keeps the notes ringing.'
+          : 'The sustain pedal heard in the recording keeps them ringing.',
+      );
+    else toast.success('Notes now last as long as they ring');
+  };
+  return (
+    <div className="flex flex-col gap-1.5" data-testid="note-length">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[12.5px] text-ink-200">Note length</span>
+        <Segmented<NoteLength>
+          size="sm"
+          ariaLabel="Note length"
+          value={value}
+          onChange={change}
+          options={[
+            { value: 'played', label: 'As played' },
+            { value: 'heard', label: 'As heard' },
+          ]}
+        />
+      </div>
+      <p className="text-[11.5px] leading-snug text-ink-400">
+        As played: a note ends when its key is let go, and the sustain pedal keeps it ringing. As heard: a note lasts as long as it rings.
+      </p>
+      {!song.noteLength && (
+        <p className="text-[11.5px] leading-snug text-ink-300">
+          Made before notes were shortened. Choose As played to see how long each key is held.
+          {song.autoPedal ? ' Medium and Hard then use the sustain pedal heard in the recording instead of the automatic pedal.' : ''}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -160,6 +221,7 @@ export function ArrangementPanel() {
             </p>
           </div>
         )}
+        {hasNoteLength(song) && <NoteLengthControl />}
         <dl className="grid grid-cols-2 gap-y-1 text-[12.5px]">
           <dt className="text-ink-300">Tempo</dt>
           <dd className="text-right text-ink-100">

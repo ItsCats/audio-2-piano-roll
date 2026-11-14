@@ -186,6 +186,31 @@ describe('transcribeAudio with the piano specialist', () => {
     expect(vi.mocked(spec.runPianoSpecialist).mock.calls[0][3]).toMatchObject({ release: true, transfer: true });
   });
 
+  it('notes come out as played, with the pedal heard in the recording (music/noteLength.ts); onsets unchanged', async () => {
+    const decode = await import('../../src/lib/transcription/decode');
+    const spec = await import('../../src/lib/pianoSpecialist');
+    const { transcribeAudio, EXTRACTION_PRESETS, specialistNotes } = await import('../../src/lib/transcription/pipeline');
+    const sr = 16000;
+    const samples = new Float32Array(sr * 4).map((_, i) => 0.3 * Math.sin((2 * Math.PI * 440 * i) / sr));
+    vi.mocked(decode.decodeToRate).mockResolvedValue({ duration: 4, length: samples.length, sampleRate: sr, numberOfChannels: 1, getChannelData: () => samples } as unknown as AudioBuffer);
+    // a pedalled broken chord over a held bass: the model hears every note ring to the pedal-up at 3.5 s
+    const out = blank(400);
+    note(out, 45, 50, 350, 0.5);
+    note(out, 60, 50, 350, 0.6);
+    note(out, 64, 100, 350, 0.6);
+    note(out, 67, 150, 350, 0.6);
+    note(out, 72, 200, 350, 0.6);
+    vi.mocked(spec.runPianoSpecialist).mockResolvedValue({ ...out, ms: 1000, threads: 4 } as never);
+    const res = await transcribeAudio(new Blob([new Uint8Array(8)]), EXTRACTION_PRESETS.piano, () => {}, undefined, { engine: 'piano-specialist' });
+    const heard = specialistNotes(out, 4);
+    expect(res.notes.map((n) => [n.midi, n.start])).toEqual(heard.map((n) => [n.midi, n.start]));
+    const ends = Object.fromEntries(res.notes.map((n) => [n.midi, +(n.start + n.dur).toFixed(2)]));
+    expect(ends).toEqual({ 45: 3.5, 60: 1, 64: 1.5, 67: 2, 72: 3.5 });
+    expect(res.pedal).toHaveLength(1);
+    expect(res.pedal![0].start).toBeCloseTo(0.5, 2);
+    expect(res.pedal![0].end).toBeCloseTo(3.5, 2);
+  });
+
   /** a 16 kHz mono AudioBuffer stand-in of `seconds` */
   const fakeBuffer = (seconds: number) => {
     const sr = 16000;

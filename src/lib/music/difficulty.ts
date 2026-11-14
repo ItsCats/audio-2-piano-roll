@@ -47,6 +47,7 @@
  */
 import type { Arrangement, Difficulty, Note, PedalRange, TempoInfo } from './types';
 import { autoPedal } from './autoPedal';
+import { asHeard } from './noteLength';
 import { clusterOnsets } from './hands';
 import { beatPeriodAt, beatToTime, timeToBeat } from './beats';
 import { quantizeNotes } from './quantize';
@@ -143,6 +144,13 @@ export interface ArrangementOptions {
    * sustain pedal derived from their notes (music/autoPedal.ts) instead of `basePedal`.
    */
   autoPedal?: boolean;
+  /**
+   * The base is "as played", with `basePedal` carrying the sound (Song.noteLength 'played', the
+   * high-accuracy piano model): Easy has no pedal, so it is built from the notes as they ring under
+   * that pedal (music/noteLength.ts asHeard), the way it is for every other song. Its tune line and
+   * bass then hold their notes instead of re-striking them.
+   */
+  easyAsHeard?: boolean;
 }
 
 export function generateHard(base: Note[], opts: ArrangementOptions = {}): Note[] {
@@ -643,7 +651,11 @@ export function generateArrangement(
   opts: ArrangementOptions = {},
 ): Arrangement {
   const generated =
-    difficulty === 'hard' ? generateHard(base, opts) : difficulty === 'medium' ? generateMedium(base, tempo) : generateEasy(base, tempo, duration);
+    difficulty === 'hard'
+      ? generateHard(base, opts)
+      : difficulty === 'medium'
+        ? generateMedium(base, tempo)
+        : generateEasy(opts.easyAsHeard ? asHeard(base, basePedal) : base, tempo, duration);
   // no note sounds past the end of the audio (Easy's bass slots and minimum lengths could reach past it)
   const notes = duration > 0 ? clampToDuration(generated, duration) : generated;
   return {

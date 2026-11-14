@@ -933,7 +933,7 @@ export const useImport = create<ImportState>((set, get) => {
       artist: meta.artist,
       source: meta.source,
       notes: result.notes,
-      pedal: [],
+      pedal: result.pedal ?? [],
       tempo: result.tempo,
       duration: result.duration,
       key: result.key,
@@ -941,7 +941,8 @@ export const useImport = create<ImportState>((set, get) => {
       hasAudio: true,
       hasPosteriors: true,
       // Medium and Hard: sustain pedal derived from the notes (switch in the Sound panel)
-      autoPedal: true,
+      autoPedal: !result.pedal,
+      ...(result.pedal ? { noteLength: 'played' as const } : {}),
     });
     update({ warnings: result.info.warnings, stage: 'saving', progress: null, detail: 'Saving to your library' });
     // the piano specialist's outputs are not stored: re-detection works on Basic Pitch posteriors only
