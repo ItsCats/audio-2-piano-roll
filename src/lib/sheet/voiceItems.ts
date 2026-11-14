@@ -18,13 +18,68 @@ export interface Item {
   acc?: (string | null)[];
 }
 
-/** Chords of each (staff, voice) bucketed per measure. */
+/** Whether a chord tone is tied to the chord before (stop) or after (start) at this item. */
+export function toneTie(it: Item, j: number): { start: boolean; stop: boolean } {
+  const c = it.chord;
+  const midi = c?.midis[j];
+  return {
+    stop: !!it.tieStop || (!!it.firstOfChord && midi !== undefined && !!c?.tieIn?.includes(midi)),
+    start: !!it.tieStart || (!!it.lastOfChord && midi !== undefined && !!c?.tieOut?.includes(midi)),
+  };
+}
+
+const segMemo = new WeakMap<Chord, Chord[]>();
+/**
+ * A chord whose pinned tones end at different times (Chord.ends) as the chords it is written as:
+ * all tones up to the first end, then the tones still sounding, tied on, up to the next end, …
+ */
+export function segments(c: Chord): Chord[] {
+  if (!c.ends || c.ends.every((e) => e >= c.off)) return [c];
+  let out = segMemo.get(c);
+  if (out) return out;
+  const ends = c.ends.map((e) => Math.max(c.on + 1, Math.min(e, c.off)));
+  const cuts = [...new Set([...ends, c.off])].filter((e) => e > c.on).sort((a, b) => a - b);
+  out = [];
+  let from = c.on;
+  for (const e of cuts) {
+    const keep = c.midis.map((_, i) => i).filter((i) => ends[i] >= e);
+    if (!keep.length) break;
+    const seg: Chord = { on: from, off: e, midis: keep.map((i) => c.midis[i]) };
+    if (c.srcByMidi) seg.srcByMidi = keep.map((i) => c.srcByMidi![i]);
+    if (c.pinned) seg.pinned = true;
+    const prev = out[out.length - 1];
+    if (prev) {
+      const tied = seg.midis.filter((m) => prev.midis.includes(m));
+      if (tied.length) {
+        seg.tieIn = tied;
+        seg.prev = prev;
+        prev.tieOut = tied;
+      }
+    } else {
+      if (c.ottavaStart) seg.ottavaStart = c.ottavaStart;
+      if (c.tieIn) {
+        seg.tieIn = c.tieIn.filter((m) => seg.midis.includes(m));
+        seg.prev = c.prev;
+      }
+    }
+    out.push(seg);
+    from = e;
+  }
+  if (!out.length) out = [{ ...c, ends: undefined }];
+  const lastSeg = out[out.length - 1];
+  if (c.ottavaStop) lastSeg.ottavaStop = true;
+  if (c.tieOut) lastSeg.tieOut = [...new Set([...(lastSeg.tieOut ?? []), ...c.tieOut.filter((m) => lastSeg.midis.includes(m))])];
+  segMemo.set(c, out);
+  return out;
+}
+
+/** Chords of each (staff, voice) bucketed per measure (a chord with tones ending apart as its segments). */
 function bucket(score: Score): Chord[][][][] {
   const t = score.time;
   return score.staves.map((sv) =>
     sv.voices.map((voice) => {
       const per: Chord[][] = Array.from({ length: score.measureCount }, () => []);
-      for (const c of voice) {
+      for (const c of voice.flatMap(segments)) {
         const m0 = t.measureOf(c.on);
         const m1 = Math.min(score.measureCount - 1, t.measureOf(c.off - 1));
         for (let m = m0; m <= m1; m++) per[m].push(c);

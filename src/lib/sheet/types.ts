@@ -57,6 +57,18 @@ export interface Chord {
   srcByMidi?: number[][];
   /** Holds a pinned note: never cut, filled or lengthened. */
   pinned?: boolean;
+  /**
+   * Written end of each of `midis` when pinned chord tones end at different times (absent when they
+   * all end at `off`). The writer turns such a chord into a run of chords with the longer tones tied
+   * on (voiceItems.ts `segments`); `off` is the longest end.
+   */
+  ends?: number[];
+  /** Tones tied over from the chord before (a segment of a chord with `ends`). */
+  tieIn?: number[];
+  /** Tones tied over into the next chord (a segment of a chord with `ends`). */
+  tieOut?: number[];
+  /** The chord the `tieIn` tones come from (they keep its spelling). */
+  prev?: Chord;
   /** An octave mark starts right before this chord (8 = 8va, -8 = 8vb). */
   ottavaStart?: 8 | -8;
   /** The octave mark ends right after this chord. */

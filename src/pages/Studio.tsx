@@ -181,19 +181,30 @@ function ExportMenu({ onVideo, onSheetPdf }: { onVideo: () => void; onSheetPdf: 
   );
 }
 
+/**
+ * A modal dialog (Help, Export video, PDF …) or a menu is open: the page's shortcuts stay off, so
+ * keys meant for it never edit or play the song behind it (a dialog handles its own keys).
+ */
+function overlayOpen(): boolean {
+  for (const el of document.querySelectorAll<HTMLElement>('[aria-modal="true"], [role="menu"]')) {
+    if (el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden') return true;
+  }
+  return false;
+}
+
 function useStudioKeyboard(computerKeys: boolean) {
   const octave = useRef(0);
   useEffect(() => {
     const down = new Set<string>();
     const onKey = (e: KeyboardEvent) => {
-      if (!shouldHandleGlobalKey(e)) return;
+      if (!shouldHandleGlobalKey(e) || overlayOpen()) return;
       const st = useStudio.getState();
       const player = getPlayer();
       const mod = e.ctrlKey || e.metaKey;
       // the sheet in Edit mode has its own keys (state/sheetKeys.ts); Space, F, E and Home stay
       const sheetHandler = sheetActionHandler();
       if (st.editMode && sheetHandler && useSettings.getState().sheet.view === 'sheet') {
-        const a = sheetKeyAction(e, st.selection.size > 0 || !!st.markSel);
+        const a = sheetKeyAction(e, st.selection.size > 0 || !!st.markSel, !!(document.activeElement as HTMLElement | null)?.closest?.('[data-testid="sheet-scroll"]'));
         if (a) {
           e.preventDefault();
           sheetHandler(a);
@@ -470,8 +481,18 @@ export default function StudioPage() {
             }))}
           />
           <ViewSwitch className="hidden md:inline-flex" />
-          <Button size="sm" variant={editMode ? 'primary' : 'subtle'} icon={<PencilRuler size={15} />} onClick={() => setEditMode(!editMode)} title="Edit notes (E)">
-            <span className="hidden sm:inline">{editMode ? 'Editing' : 'Edit'}</span>
+          {/* on: an outlined look of its own (Export Video next to it is solid blue); 44 px on phones */}
+          <Button
+            size="sm"
+            variant="subtle"
+            icon={<PencilRuler size={15} />}
+            onClick={() => setEditMode(!editMode)}
+            title={editMode ? 'Stop editing (E)' : 'Edit notes (E)'}
+            aria-pressed={editMode}
+            className={cn('max-sm:h-11 max-sm:min-w-11', editMode && 'bg-accent-500/15 text-accent-200 ring-2 ring-accent-400 hover:bg-accent-500/25')}
+            data-testid="studio-edit"
+          >
+            <span>{editMode ? 'Editing' : 'Edit'}</span>
           </Button>
           <Button size="sm" variant="primary" icon={<Film size={15} />} onClick={() => setExportOpen(true)}>
             <span className="hidden lg:inline">Export Video</span>

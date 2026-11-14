@@ -1,8 +1,10 @@
 /**
  * Key, time-signature and tempo changes placed on the sheet (Song.sheet), as MIDI meta events in
  * song seconds for exportMidi: key signatures (FF 59), time signatures (FF 58) and, for tempo marks
- * that re-timed the music, tempo events (FF 51), so a DAW shows the same bars and keys. Songs
- * without sheet data get no extra events (their MIDI file is unchanged).
+ * that re-timed the music, tempo events (FF 51). A time signature is written only where it falls on
+ * a bar line of the MIDI file's own bars (exportMidi): a played-in song, or one with a pickup, has
+ * its sheet bars elsewhere, and its file keeps the opening signature. Songs without sheet data get
+ * no extra events (their MIDI file is unchanged).
  */
 import type { Difficulty, Song } from '../music/types';
 import type { MidiMeta } from '../music/midi';

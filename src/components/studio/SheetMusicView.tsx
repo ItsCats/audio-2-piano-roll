@@ -41,6 +41,7 @@ export function SheetMusicView() {
   const canFullscreen = useStageFullscreen((s) => s.controls !== null && s.mode === 'off');
   const fullscreen = useStageFullscreen((s) => s.mode !== 'off');
   const editMode = useStudio((s) => s.editMode);
+  const hasSel = useStudio((s) => s.selection.size > 0 || !!s.markSel);
   const selection = useStudio((s) => s.selection);
   const markSel = useStudio((s) => s.markSel);
   const [drawTick, setDrawTick] = useState(0);
@@ -51,7 +52,7 @@ export function SheetMusicView() {
   const layout = useSheetDockLayout();
   // a phone held sideways: the edit tools are a column beside the music (here, also in full screen)
   const rail = editMode && layout === 'rail';
-  const railWidth = railCollapsed ? '60px' : 'min(44vw, 320px)';
+  const railWidth = !fullscreen ? 'min(44vw, 300px)' : railCollapsed ? '60px' : 'min(44vw, 320px)';
   // in full screen the edit tools dock inside the stage (otherwise the Studio shows them)
   const dock = editMode && fullscreen && layout === 'dock';
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -81,6 +82,7 @@ export function SheetMusicView() {
   const [attempt, setAttempt] = useState(0);
   const [gestureLabel, setGestureLabel] = useState<number | null>(null);
   followRef.current = sheet.follow;
+  const followPaused = sheet.follow && editMode && hasSel;
   const zoom = sheet.zoom ?? defaultSheetZoom(width || window.innerWidth);
   const empty = arr.notes.length === 0;
 
@@ -190,6 +192,12 @@ export function SheetMusicView() {
   useEffect(() => {
     rendererRef.current?.highlight(editMode ? selection : new Set());
   }, [selection, editMode, score]);
+  // and get a ring (redrawn lines move them: measured again after every redraw)
+  useEffect(() => {
+    const r = rendererRef.current;
+    const layer = zoomLayerRef.current;
+    useSheetOverlay.getState().set({ sel: editMode && r && layer && selection.size ? r.selectedBoxes(layer) : [] });
+  }, [selection, editMode, score, drawTick, status, zoom, width]);
 
   useEffect(() => {
     if (!editMode) useSheetUi.getState().set({ addMode: false, menu: null, chips: [], panel: null, picker: null });
@@ -264,6 +272,9 @@ export function SheetMusicView() {
       const jumped = Math.abs(t - lastT) > 0.6 && now - tappedAt.current > 800;
       lastT = t;
       if (!followRef.current || (!player.isPlaying && !jumped) || now - userScrollAt.current < 4000 || now < smoothUntil) return;
+      // editing: the view stays on the selected note (or marking) instead of following the music away
+      const st = useStudio.getState();
+      if (st.editMode && (st.selection.size > 0 || st.markSel)) return;
       const vh = sc.clientHeight;
       const base = wrapperTop() - sc.scrollTop;
       const yTop = base + c.top;
@@ -354,6 +365,9 @@ export function SheetMusicView() {
   // doesn't zoom there: touch-action leaves only scrolling to the browser). Shown scaled while the
   // fingers move, drawn at the new size when they lift. Outside Edit mode the browser zooms as before.
   useEffect(() => {
+    // only in Edit mode: a non-passive touchmove makes the browser wait for the page before it
+    // scrolls, and the view-only sheet must scroll freely while lines are still being drawn
+    if (!editMode) return;
     const sc = scrollRef.current!;
     let start: { d: number; z: number } | null = null;
     const dist = (t: TouchList) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
@@ -393,7 +407,7 @@ export function SheetMusicView() {
       sc.removeEventListener('touchend', onEnd);
       sc.removeEventListener('touchcancel', onEnd);
     };
-  }, [setSheet]);
+  }, [setSheet, editMode]);
 
   // after an edit the selected note stays in view (above the dock), scrolling only if it left it
   useEffect(() => {
@@ -447,8 +461,11 @@ export function SheetMusicView() {
     <>
     <div
       ref={scrollRef}
-      tabIndex={-1}
-      className="absolute inset-y-0 left-0 overflow-x-hidden overflow-y-auto bg-ink-950 outline-none"
+      // Edit mode: the music takes the keyboard focus with Tab (Alt+→ then selects the first note)
+      tabIndex={editMode ? 0 : -1}
+      role={editMode ? 'region' : undefined}
+      aria-label={editMode ? 'Sheet music. Alt+Right arrow selects a note; ? lists the keys.' : undefined}
+      className="absolute inset-y-0 left-0 overflow-x-hidden overflow-y-auto bg-ink-950 outline-none focus-visible:ring-2 focus-visible:ring-accent-400 focus-visible:ring-inset"
       style={{ right: rail ? railWidth : 0, touchAction: editMode ? 'pan-x pan-y' : undefined }}
       data-testid="sheet-scroll"
     >
@@ -476,10 +493,11 @@ export function SheetMusicView() {
             variant={sheet.follow ? 'primary' : 'ghost'}
             icon={<LocateFixed size={14} />}
             aria-pressed={sheet.follow}
-            title="Keep the music that is playing in view"
+            title={followPaused ? 'Following waits while a note is selected (Esc clears the selection)' : 'Keep the music that is playing in view'}
             onClick={() => setSheet({ follow: !sheet.follow })}
+            data-testid="sheet-follow"
           >
-            Follow
+            {followPaused ? 'Paused' : 'Follow'}
           </Button>
           {canFullscreen && (
             <>
@@ -578,7 +596,7 @@ export function SheetMusicView() {
             </button>
           </div>
         ) : null}
-        {zoomHint && !added && (
+        {zoomHint && !added && !rail && (
           <div className="panel pointer-events-auto flex items-center gap-1 py-1 pr-1 pl-3 text-[12.5px] text-ink-100 shadow-lg" data-testid="sheet-zoom-hint">
             Notes are easier to tap at 90% or bigger.
             <Button size="sm" variant="secondary" className="h-11" onClick={() => setZoom(0.9)}>
@@ -592,7 +610,7 @@ export function SheetMusicView() {
       </div>
     )}
     {rail && (
-      <div className="absolute right-0 bottom-0 z-30" style={{ top: 'var(--fs-top, 0px)' }}>
+      <div className="absolute right-0 bottom-0 z-30 overflow-hidden" style={{ top: 'var(--fs-top, 0px)' }}>
         <SheetEditBar layout="rail" />
       </div>
     )}

@@ -38,7 +38,12 @@ export function trimLegato(notes: QNote[], maxOverhang: number): QNote[] {
 export function chordOf(on: number, off: number, ns: QNote[]): Chord {
   const s = [...ns].sort((a, b) => a.midi - b.midi);
   const c: Chord = { on, off, midis: s.map((n) => n.midi), srcByMidi: s.map((n) => n.src ?? []) };
-  if (s.some((n) => n.pinned)) c.pinned = true;
+  if (s.some((n) => n.pinned)) {
+    c.pinned = true;
+    // tones that end earlier than the pinned chord keep their own written end (tied segments)
+    const ends = s.map((n) => (n.off > on ? Math.min(n.off, off) : off));
+    if (ends.some((e) => e !== off)) c.ends = ends;
+  }
   return c;
 }
 
@@ -51,12 +56,56 @@ const pinnedEnd = (ns: QNote[]) => {
 
 /** Joins chord tones (union by pitch, ids merged). */
 function joinInto(m: Chord, c: Chord): void {
+  if (m.ends || c.ends) {
+    const end = (x: Chord, i: number) => x.ends?.[i] ?? x.off;
+    const ends = new Map<number, number>();
+    m.midis.forEach((x, i) => ends.set(x, end(m, i)));
+    c.midis.forEach((x, i) => ends.set(x, Math.max(ends.get(x) ?? 0, end(c, i))));
+    const midis = [...ends.keys()].sort((a, b) => a - b);
+    m.ends = midis.map((x) => ends.get(x)!);
+  }
   const ids = new Map<number, number[]>();
   m.midis.forEach((x, i) => ids.set(x, [...(m.srcByMidi?.[i] ?? [])]));
   c.midis.forEach((x, i) => ids.set(x, [...(ids.get(x) ?? []), ...(c.srcByMidi?.[i] ?? [])]));
   m.midis = [...ids.keys()].sort((a, b) => a - b);
   m.srcByMidi = m.midis.map((x) => ids.get(x)!);
   if (c.pinned) m.pinned = true;
+}
+
+const endOf = (c: Chord, i: number) => c.ends?.[i] ?? c.off;
+
+/** Whether chord c can join held chord p at t (p started before t, no shared pitch still sounding). */
+function canJoin(p: Chord, t: number, c: Chord): boolean {
+  if (!(p.on < t)) return false;
+  return !p.midis.some((m, i) => endOf(p, i) > t && c.midis.includes(m));
+}
+
+/**
+ * Ends held chord p at t and returns the chord from t: p's tones still sounding (tied over) with the
+ * tones of c, each keeping its written end.
+ */
+function joinHeld(p: Chord, t: number, c: Chord): Chord {
+  const tones: { midi: number; src: number[]; end: number }[] = [];
+  const tied: number[] = [];
+  p.midis.forEach((m, i) => {
+    const e = endOf(p, i);
+    if (e > t) {
+      tones.push({ midi: m, src: p.srcByMidi?.[i] ?? [], end: e });
+      tied.push(m);
+    }
+  });
+  c.midis.forEach((m, i) => tones.push({ midi: m, src: c.srcByMidi?.[i] ?? [], end: Math.max(t + 1, endOf(c, i)) }));
+  tones.sort((a, b) => a.midi - b.midi);
+  const off = Math.max(...tones.map((x) => x.end));
+  const q: Chord = { on: t, off, midis: tones.map((x) => x.midi), srcByMidi: tones.map((x) => x.src), pinned: true, tieIn: tied, prev: p };
+  if (tones.some((x) => x.end !== off)) q.ends = tones.map((x) => x.end);
+  p.off = t;
+  p.tieOut = tied;
+  if (p.ends) {
+    p.ends = p.ends.map((e) => Math.min(e, t));
+    if (p.ends.every((e) => e === t)) delete p.ends;
+  }
+  return q;
 }
 
 const top = (c: Chord) => c.midis[c.midis.length - 1];
@@ -149,6 +198,20 @@ export function assignVoices(notesIn: QNote[], _staff: Staff, rules: SheetLevelR
         swap = false;
       }
     }
+    // a pinned chord still sounding is never cut: the new chord joins it at t, its tones tied over
+    // (on Medium and Hard both voices hold pins here; Easy has one voice)
+    const held = cuts.filter((i) => last(i)?.pinned && busy(i) > t);
+    if (held.length) {
+      const k = held.length === 1 ? held[0] : bottom(c) > top(last(1)!) ? 0 : 1;
+      if (canJoin(last(k)!, t, c)) {
+        const rest = cuts.filter((i) => i !== k && !held.includes(i));
+        const loss = rest.reduce((x, i) => x + cutLoss(i, t), 0);
+        if (!apply) return loss;
+        for (const i of rest) cut(i, t);
+        v[k].push(joinHeld(last(k)!, t, c));
+        return loss;
+      }
+    }
     const loss = cuts.reduce((x, i) => x + cutLoss(i, t), 0);
     if (!apply) return loss;
     for (const i of cuts) cut(i, t);
@@ -165,10 +228,8 @@ export function assignVoices(notesIn: QNote[], _staff: Staff, rules: SheetLevelR
       const [up, lo] = parts;
       // Medium: two voices only for a note held at least a beat longer than the others
       const ok = mode === 'always' || (mode === 'limited' && Math.abs(up.off - lo.off) >= beatLen);
-      const mergedOff = up.pinned !== lo.pinned ? (up.pinned ? up.off : lo.off) : Math.min(up.off, lo.off);
-      const merged: Chord = { on: t, off: mergedOff, midis: [...lo.midis, ...up.midis] };
-      if (up.srcByMidi && lo.srcByMidi) merged.srcByMidi = [...lo.srcByMidi, ...up.srcByMidi];
-      if (up.pinned || lo.pinned) merged.pinned = true;
+      // one chord: pinned tones keep their ends (the longest is the chord's), else the shorter part's
+      const merged = chordOf(t, pinnedEnd(g) ?? Math.min(up.off, lo.off), g);
       if (!ok || pinBusy(0, t) || pinBusy(1, t)) parts = [merged];
       else if (busy(0) > t || busy(1) > t) {
         // two parts would stop both held voices: writing the group as one chord (the longer part
@@ -222,7 +283,7 @@ export function assignVoices(notesIn: QNote[], _staff: Staff, rules: SheetLevelR
   const byRhythm = new Map(v[0].map((c) => [c.on * 1e6 + c.off, c]));
   v[1] = v[1].filter((c) => {
     const m = byRhythm.get(c.on * 1e6 + c.off);
-    if (!m) return true;
+    if (!m || m.tieIn || m.tieOut || m.ends || c.tieIn || c.tieOut || c.ends) return true;
     joinInto(m, c);
     return false;
   });

@@ -14,12 +14,12 @@ const TOUCH: [string, string][] = [
 ];
 
 const TIPS = [
-  'Edits change the level shown (“Editing: Hard”). On Hard, “Copy to Easy & Medium” rebuilds the easier levels with your fixes and markings.',
+  'Edits change the level shown (“Editing: Hard”). On Hard, “Copy fixes to Easy & Medium” rebuilds the easier levels with your fixes and markings.',
   'The piano roll, playback, MIDI, audio and video exports all use the edited notes.',
   'Staccato, accents, dynamics and hairpins change how the notes play. Slurs, words and fingering only change the page.',
   'A tempo mark changes the playback speed only in songs without a recording or hand video.',
   'Repeats are written out: edit each time through.',
-  'Undo (Ctrl+Z, or the arrow in the tools) takes back any edit, including loudness changes.',
+  'Undo (Ctrl/⌘+Z, or the arrow in the tools) takes back any edit, including loudness changes.',
 ];
 
 export function SheetHelp() {

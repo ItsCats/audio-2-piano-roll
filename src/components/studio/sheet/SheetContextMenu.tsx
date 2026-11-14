@@ -26,8 +26,30 @@ export function SheetContextMenu() {
       window.removeEventListener('scroll', close, true);
     };
   }, [menu, set]);
+  useEffect(() => {
+    // the menu takes the focus (its first action) so the arrow keys move through it, not the note
+    if (!menu || menu.touch) return;
+    const prev = document.activeElement as HTMLElement | null;
+    ref.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
+    return () => {
+      if (prev && document.contains(prev)) prev.focus?.({ preventScroll: true });
+    };
+  }, [menu]);
   if (!menu) return null;
   if (menu.touch) return <TouchActions />;
+  const onKey = (e: React.KeyboardEvent) => {
+    const btns = [...(ref.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [])];
+    const i = btns.indexOf(document.activeElement as HTMLButtonElement);
+    const go = (j: number) => btns[(j + btns.length) % btns.length]?.focus();
+    if (e.key === 'ArrowDown') go(i + 1);
+    else if (e.key === 'ArrowUp') go(i < 0 ? btns.length - 1 : i - 1);
+    else if (e.key === 'Home') go(0);
+    else if (e.key === 'End') go(btns.length - 1);
+    else if (e.key === 'Escape' || e.key === 'Tab') set({ menu: null });
+    else return;
+    e.preventDefault();
+    e.stopPropagation();
+  };
   const items: [string, string, () => unknown, boolean][] = [
     ['Up a step', '↑', () => sheetEdit.pitch('step', 1), has],
     ['Down a step', '↓', () => sheetEdit.pitch('step', -1), has],
@@ -49,7 +71,7 @@ export function SheetContextMenu() {
   const x = Math.min(menu.x, window.innerWidth - 220);
   const y = Math.min(menu.y, window.innerHeight - items.length * 34 - 16);
   return (
-    <div ref={ref} role="menu" className="panel fixed z-50 w-52 p-1.5 shadow-2xl" style={{ left: x, top: y }} data-testid="sheet-menu">
+    <div ref={ref} role="menu" aria-label="Note actions" onKeyDown={onKey} className="panel fixed z-50 w-52 p-1.5 shadow-2xl" style={{ left: x, top: y }} data-testid="sheet-menu">
       {items.map(([label, key, fn, ok]) => (
         <button
           key={label}
@@ -60,7 +82,7 @@ export function SheetContextMenu() {
             set({ menu: null });
             fn();
           }}
-          className="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-[13px] text-ink-100 hover:bg-ink-700 disabled:opacity-40"
+          className="focus-ring flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-[13px] text-ink-100 hover:bg-ink-700 focus:bg-ink-700 disabled:opacity-40"
         >
           {label}
           <span className="font-mono text-[11px] text-ink-400">{key}</span>

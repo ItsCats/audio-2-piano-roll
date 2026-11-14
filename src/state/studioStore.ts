@@ -10,6 +10,7 @@ import { useSettings } from './settingsStore';
 import { regenerate } from '../lib/songs';
 import { newNoteId, sortNotes } from '../lib/music/cleanup';
 import { quantizeNotes } from '../lib/music/quantize';
+import { rebaseSheet } from '../lib/sheet/rebase';
 
 const HISTORY_LIMIT = 200;
 
@@ -17,7 +18,9 @@ const HISTORY_LIMIT = 200;
  * The song fields an edit can touch; undo entries are references to them (edits make new
  * objects), so one stack covers piano-roll edits, sheet edits and song-level changes together.
  */
-export type HistorySnap = Pick<Song, 'arrangements' | 'base' | 'basePedal' | 'tempo' | 'duration' | 'key' | 'sheet'>;
+export type HistorySnap = Pick<Song, 'arrangements' | 'base' | 'basePedal' | 'tempo' | 'duration' | 'key' | 'sheet' | 'autoPedal'>;
+
+const SNAP_KEYS: (keyof HistorySnap)[] = ['arrangements', 'base', 'basePedal', 'tempo', 'duration', 'key', 'sheet', 'autoPedal'];
 
 const snapOf = (s: Song): HistorySnap => ({
   arrangements: s.arrangements,
@@ -27,12 +30,20 @@ const snapOf = (s: Song): HistorySnap => ({
   duration: s.duration,
   key: s.key,
   sheet: s.sheet,
+  autoPedal: s.autoPedal,
 });
+
+/** The song with its sheet start moved earlier when a note now starts before it (lib/sheet/rebase.ts). */
+function rebased(song: Song): Song {
+  const r = song.sheet ? rebaseSheet(song) : null;
+  return r ? { ...song, ...r } : song;
+}
 
 /** A song with a history entry put back (an absent sheet is removed, not set to undefined). */
 function withSnap(song: Song, snap: HistorySnap): Song {
   const out: Song = { ...song, ...snap, updatedAt: Date.now() };
   if (!snap.sheet) delete out.sheet;
+  if (snap.autoPedal === undefined) delete out.autoPedal;
   return out;
 }
 
@@ -134,7 +145,7 @@ export const useStudio = create<StudioState>((set, get) => {
     const coalesce = coalesceKey && lastCoalesce?.key === coalesceKey && now - lastCoalesce.at < 800;
     lastCoalesce = coalesceKey ? { key: coalesceKey, at: now } : null;
     set({
-      song: { ...s.song, ...patch, updatedAt: now },
+      song: rebased({ ...s.song, ...patch, updatedAt: now }),
       past: coalesce ? s.past : [...s.past, snapOf(s.song)].slice(-HISTORY_LIMIT),
       future: [],
     });
@@ -167,12 +178,12 @@ export const useStudio = create<StudioState>((set, get) => {
         if (!song) throw new Error('Song not found. It may have been deleted.');
         song.lastPlayedAt = Date.now();
         void saveSong(song);
-        set({ song, loading: false, past: [], future: [], selection: new Set(), markSel: null, editMode: false });
+        set({ song: rebased(song), loading: false, past: [], future: [], selection: new Set(), markSel: null, editMode: false });
       } catch (err) {
         set({ loading: false, error: err instanceof Error ? err.message : String(err) });
       }
     },
-    openSong: (song) => set({ song, past: [], future: [], selection: new Set(), markSel: null, editMode: false, error: null }),
+    openSong: (song) => set({ song: rebased(song), past: [], future: [], selection: new Set(), markSel: null, editMode: false, error: null }),
     close: () => set({ song: null, past: [], future: [], selection: new Set(), markSel: null }),
     setDifficulty: (d) => set({ difficulty: d, past: [], future: [], selection: new Set(), markSel: null }),
     setEditMode: (on) => set({ editMode: on, selection: on ? get().selection : new Set(), markSel: on ? get().markSel : null }),
@@ -262,18 +273,21 @@ export const useStudio = create<StudioState>((set, get) => {
     regenerateLevels: (levels) => {
       const s = get();
       if (!s.song) return;
-      const song = regenerate(s.song, levels);
+      const song = rebased(regenerate(s.song, levels));
       set({ song, past: [], future: [], selection: new Set() });
       scheduleSave();
     },
     updateSong: (patch) => {
       const s = get();
       if (!s.song) return;
-      set({ song: { ...s.song, ...patch, updatedAt: Date.now() } });
+      // a change to what undo restores, made outside the history: older entries would undo it
+      // too (on every level), so they go (undoable changes use edit / editArr / editSong)
+      const history = SNAP_KEYS.some((k) => k in patch) ? { past: [], future: [] } : {};
+      set({ song: rebased({ ...s.song, ...patch, updatedAt: Date.now() }), ...history });
       scheduleSave();
     },
     replaceSong: (song) => {
-      set({ song, past: [], future: [], selection: new Set() });
+      set({ song: rebased(song), past: [], future: [], selection: new Set() });
       scheduleSave();
     },
   };

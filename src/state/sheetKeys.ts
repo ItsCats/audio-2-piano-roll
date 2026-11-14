@@ -38,8 +38,12 @@ export interface SheetKeyLike {
   metaKey: boolean;
 }
 
-/** The action of a key press on the sheet in Edit mode, or null (not a sheet key). */
-export function sheetKeyAction(e: SheetKeyLike, hasSelection: boolean): SheetAction | null {
+/**
+ * The action of a key press on the sheet in Edit mode, or null (not a sheet key). `sheetFocused`:
+ * the music itself has the keyboard focus (Alt+← / → then pick notes even with none selected;
+ * otherwise they stay the browser's Back / Forward).
+ */
+export function sheetKeyAction(e: SheetKeyLike, hasSelection: boolean, sheetFocused = false): SheetAction | null {
   const mod = e.ctrlKey || e.metaKey;
   if (mod) {
     if (e.code === 'KeyZ') return e.shiftKey ? { type: 'redo' } : { type: 'undo' };
@@ -79,7 +83,7 @@ export function sheetKeyAction(e: SheetKeyLike, hasSelection: boolean): SheetAct
     case 'ArrowLeft':
     case 'ArrowRight': {
       const dir = e.code === 'ArrowRight' ? 1 : -1;
-      if (e.altKey) return { type: 'selectNext', dir };
+      if (e.altKey) return hasSelection || sheetFocused ? { type: 'selectNext', dir } : null;
       if (!hasSelection) return { type: 'seek', dir, small: e.shiftKey };
       return { type: 'move', dir, beat: e.shiftKey };
     }
@@ -141,8 +145,8 @@ export const SHEET_SHORTCUTS: [string, string][] = [
   ['W', 'Words (text)'],
   ['K / M / Shift+T', 'Key / time signature / tempo from this bar'],
   ['Click a marking', 'Select it: Del removes it, ← / → move it (Shift: its end)'],
-  ['Ctrl+Z / Ctrl+Shift+Z', 'Undo / redo'],
-  ['Ctrl+A', 'Select all'],
+  ['Ctrl/⌘+Z / Ctrl/⌘+Shift+Z', 'Undo / redo'],
+  ['Ctrl/⌘+A', 'Select all'],
   ['?', 'Help and shortcuts'],
 ];
 

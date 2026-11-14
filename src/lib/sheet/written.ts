@@ -3,7 +3,7 @@
  * keyed by `${measure}|${xmlVoice}|${pos}|${midi}`, with the Song note ids it stands for. Rendering
  * matches OSMD's drawn noteheads to these keys, so a click on the sheet maps exactly to Song notes.
  */
-import { buckets, voiceItems } from './voiceItems';
+import { buckets, toneTie, voiceItems } from './voiceItems';
 import type { Score, Staff } from './types';
 
 export interface WrittenNote {
@@ -18,7 +18,7 @@ export interface WrittenNote {
   /** This piece (a tied note is written as several pieces). */
   pieceOn: number;
   pieceOff: number;
-  /** The whole written note. */
+  /** The written chord this piece belongs to (a tone tied on into the next chord ends with that one). */
   chordOn: number;
   chordOff: number;
   first: boolean;
@@ -54,6 +54,7 @@ export function writtenIndex(score: Score): WrittenIndex {
           const c = it.chord;
           c.midis.forEach((midi, j) => {
             const key = writtenKey(m, voiceNo, it.piece.pos, midi);
+            const tie = toneTie(it, j);
             const w: WrittenNote = {
               key,
               ids: c.srcByMidi?.[j] ?? [],
@@ -65,8 +66,8 @@ export function writtenIndex(score: Score): WrittenIndex {
               pieceOff: it.piece.pos + it.piece.dur,
               chordOn: c.on,
               chordOff: c.off,
-              first: !it.tieStop,
-              last: !it.tieStart,
+              first: !tie.stop,
+              last: !tie.start,
               inChord: c.midis.length > 1,
             };
             byKey.set(key, w);
@@ -89,5 +90,6 @@ export function writtenIndex(score: Score): WrittenIndex {
 export function writtenSpan(score: Score, id: number): { on: number; off: number; staff: Staff; voice: number } | null {
   const ps = writtenIndex(score).byId.get(id);
   if (!ps?.length) return null;
-  return { on: ps[0].chordOn, off: ps[0].chordOff, staff: ps[0].staff, voice: ps[0].voice };
+  // a tone tied over from one chord into the next ends with the last of them
+  return { on: ps[0].chordOn, off: ps[ps.length - 1].chordOff, staff: ps[0].staff, voice: ps[0].voice };
 }

@@ -86,7 +86,8 @@ export function SoundPanel() {
               // pedal edited on the sheet is kept unless the user says to replace it
               const replaceEdited = pedalEditedLevels(song).length > 0 && confirm('Replace the pedal you edited on the sheet?');
               const next = withAutoPedal(song, on, { replaceEdited });
-              useStudio.getState().updateSong({ autoPedal: next.autoPedal, arrangements: next.arrangements });
+              // one undo step: Ctrl+Z puts back the pedal on every level and the switch together
+              useStudio.getState().editSong(() => ({ autoPedal: next.autoPedal, arrangements: next.arrangements }));
             }}
           />
         )}

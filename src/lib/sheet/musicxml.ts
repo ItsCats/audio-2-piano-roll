@@ -5,7 +5,7 @@
  */
 import { AccidentalTracker, spellChord, type Spelled } from './spelling';
 import { DIV, type Chord, type Score, type Staff } from './types';
-import { buckets, voiceItems, type Item } from './voiceItems';
+import { buckets, segments, toneTie, voiceItems, type Item } from './voiceItems';
 import { keyAt } from './keys';
 import { writtenIndex } from './written';
 import type { DynamicValue, SheetMark } from '../music/types';
@@ -43,6 +43,16 @@ export function spelled(score: Score, c: Chord): Spelled[] {
   if (!sp) {
     const k = score.keys.length > 1 ? keyAt(score, score.time.measureOf(c.on)) : null;
     spelledMemo.set(c, (sp = k ? spellChord(c.midis, k.fifths, k.minorTonic) : spellChord(c.midis, score.fifths, score.minorTonic)));
+    // tones tied over from the chord before keep its spelling
+    if (c.prev && c.tieIn?.length) {
+      const ps = segments(c.prev);
+      const prev = ps[ps.length - 1];
+      const psp = spelled(score, prev);
+      c.midis.forEach((m, i) => {
+        const j = prev.midis.indexOf(m);
+        if (j >= 0 && c.tieIn!.includes(m)) sp![i] = psp[j];
+      });
+    }
   }
   return sp;
 }
@@ -63,6 +73,7 @@ const fmtNote = (
   stem: string,
   acc: string | null,
   extra = '',
+  tie: { start: boolean; stop: boolean } = { start: !!it.tieStart, stop: !!it.tieStop },
 ) => {
   const pc = it.piece;
   let s = '<note>';
@@ -72,8 +83,8 @@ const fmtNote = (
     s += `<pitch><step>${sp.step}</step>${sp.alter ? `<alter>${sp.alter}</alter>` : ''}<octave>${sp.octave}</octave></pitch>`;
   }
   s += `<duration>${pc.dur}</duration>`;
-  if (sp !== null && it.tieStop) s += '<tie type="stop"/>';
-  if (sp !== null && it.tieStart) s += '<tie type="start"/>';
+  if (sp !== null && tie.stop) s += '<tie type="stop"/>';
+  if (sp !== null && tie.start) s += '<tie type="start"/>';
   s += `<voice>${voiceNo}</voice>`;
   if (it.kind !== 'mrest') s += `<type>${pc.type}</type>${pc.dots ? '<dot/>' : ''}`;
   if (acc) s += `<accidental>${acc}</accidental>`;
@@ -82,8 +93,8 @@ const fmtNote = (
   s += `<staff>${staff}</staff>`;
   if (!chordTone && it.beams?.length) for (const [n, v] of it.beams) s += `<beam number="${n}">${v}</beam>`;
   const nots: string[] = [];
-  if (sp !== null && it.tieStop) nots.push('<tied type="stop"/>');
-  if (sp !== null && it.tieStart) nots.push('<tied type="start"/>');
+  if (sp !== null && tie.stop) nots.push('<tied type="stop"/>');
+  if (sp !== null && tie.start) nots.push('<tied type="start"/>');
   if (!chordTone && it.tuplet) nots.push(`<tuplet type="${it.tuplet}"${it.tuplet === 'start' ? ' bracket="no"' : ''}/>`);
   if (extra) nots.push(extra);
   if (nots.length) s += `<notations>${nots.join('')}</notations>`;
@@ -330,7 +341,7 @@ export function toMusicXml(score: Score, opts: MusicXmlOptions): string {
         .filter((st) => st.staff === s)
         .flatMap((st) => st.items.filter((it) => it.kind === 'note'))
         .sort((p, q) => p.piece.pos - q.piece.pos);
-      for (const it of notes) it.acc = spelled(score, it.chord!).map((sp) => tracker.need(sp, !!it.tieStop));
+      for (const it of notes) it.acc = spelled(score, it.chord!).map((sp, j) => tracker.need(sp, toneTie(it, j).stop));
     }
     // each direction goes into a voice with an item starting right at it (its own staff first), so it
     // is drawn exactly there; otherwise before the voice-1 item it falls in
@@ -370,9 +381,10 @@ export function toMusicXml(score: Score, opts: MusicXmlOptions): string {
         const done = new Set<string>();
         spelled(score, c).forEach((sp, j) => {
           let extra = '';
+          const tie = toneTie(it, j);
           if (plan) {
             for (const id of c.srcByMidi?.[j] ?? []) {
-              const tags = [...(!it.tieStop ? (plan.first.get(id) ?? []) : []), ...(!it.tieStart ? (plan.last.get(id) ?? []) : [])];
+              const tags = [...(!tie.stop ? (plan.first.get(id) ?? []) : []), ...(!tie.start ? (plan.last.get(id) ?? []) : [])];
               for (const tag of tags) {
                 if (tag.startsWith('<articulations>')) {
                   if (done.has(tag)) continue;
@@ -384,7 +396,7 @@ export function toMusicXml(score: Score, opts: MusicXmlOptions): string {
           }
           if (!firstNote.has(st.staff)) firstNote.set(st.staff, x.length);
           lastNote.set(st.staff, x.length);
-          fmtNote(x, it, sp, j > 0, voiceNo, st.staff, st.stem, it.acc?.[j] ?? null, extra);
+          fmtNote(x, it, sp, j > 0, voiceNo, st.staff, st.stem, it.acc?.[j] ?? null, extra, tie);
         });
         if (it.lastOfChord && c.ottavaStop) x.push(octaveShift('stop', st.staff));
       }

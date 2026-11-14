@@ -9,6 +9,7 @@ import type { SheetCtx, SheetEditResult } from '../lib/sheet/edit';
 import { fixSlurs } from '../lib/sheet/marks';
 import { getPlayer } from './playback';
 import { useStudio } from './studioStore';
+import { toast } from './toastStore';
 
 /** When the last sheet edit was made (the sheet view redraws it on the next frame, not after 400 ms). */
 let lastSheetEditAt = 0;
@@ -23,12 +24,25 @@ export function sheetCtx(): SheetCtx | null {
   return { song: st.song, level: st.difficulty, score: buildSheet(st.song, st.difficulty) };
 }
 
-/** Applies a sheet operation; returns whether anything changed. */
-export function runSheetEdit(op: (ctx: SheetCtx) => SheetEditResult | null, opts?: { coalesceKey?: string }): boolean {
+/** How many other notes the last sheet edit replaced (same-pitch notes it covered). */
+let lastReplaced = 0;
+export const replacedByLastEdit = () => lastReplaced;
+
+/**
+ * Applies a sheet operation; returns whether anything changed. Notes it replaced (a same-pitch note
+ * the edited one now covers) are reported in a message, unless `quiet` (the caller says it).
+ */
+export function runSheetEdit(op: (ctx: SheetCtx) => SheetEditResult | null, opts?: { coalesceKey?: string; quiet?: boolean }): boolean {
   const ctx = sheetCtx();
   if (!ctx) return false;
   const res = op(ctx);
   if (!res) return false;
+  {
+    const before = ctx.song.arrangements[ctx.level].notes;
+    const after = new Set(res.notes.map((n) => n.id));
+    const sel = useStudio.getState().selection;
+    lastReplaced = before.filter((n) => !after.has(n.id) && !sel.has(n.id) && !res.repoint?.has(n.id)).length;
+  }
   const st = useStudio.getState();
   const level = ctx.level;
   lastSheetEditAt = performance.now();
@@ -49,8 +63,11 @@ export function runSheetEdit(op: (ctx: SheetCtx) => SheetEditResult | null, opts
     };
   }, opts);
   if (res.select) useStudio.setState({ selection: new Set(res.select) });
+  if (lastReplaced && !opts?.quiet) toast.info(replacedText(lastReplaced), 'Notes of the same pitch in one hand can’t overlap. Undo brings them back.');
   return true;
 }
+
+export const replacedText = (n: number) => `Replaced ${n} note${n === 1 ? '' : 's'} it covered`;
 
 /** Plays a note once (added notes, pitch changes), unless the music is playing. */
 export function audition(midis: number[]): void {

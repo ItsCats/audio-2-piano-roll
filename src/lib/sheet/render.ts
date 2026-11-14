@@ -422,6 +422,19 @@ export class SheetRenderer {
           }
   }
 
+  /** Boxes of the selected noteheads relative to an element (for the selection rings), up to `max`. */
+  selectedBoxes(rel: HTMLElement, max = 240): { x: number; y: number; w: number; h: number }[] {
+    if (!this.lit.length || this.lit.length > max) return [];
+    const o = rel.getBoundingClientRect();
+    const out: { x: number; y: number; w: number; h: number }[] = [];
+    for (const el of this.lit) {
+      if (!el.isConnected) continue;
+      const b = el.getBoundingClientRect();
+      if (b.width || b.height) out.push({ x: b.left - o.left, y: b.top - o.top, w: b.width, h: b.height });
+    }
+    return out;
+  }
+
   private staging: HTMLElement | null = null;
 
   private copyBoxes(boxes: (MeasureBox | undefined)[], c: Chunk): void {

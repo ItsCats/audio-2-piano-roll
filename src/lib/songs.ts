@@ -7,7 +7,7 @@ import { newId } from './storage/db';
 import type { ParsedMidi } from './music/midi';
 import type { ParsedScore } from './score';
 import { bachPreludeDemo } from './music/demo';
-import { carryMarks } from './sheet/marks';
+import { carryMarks } from './sheet/carry';
 
 /** A compact piano-roll overview image used as the song's thumbnail. */
 export function makeThumbnail(notes: Note[], duration: number, colors = { R: '#4f9dff', L: '#f5a524' }): string | undefined {

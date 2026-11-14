@@ -47,7 +47,20 @@ export const LENGTH_NAMES: Record<number, string> = {
   48: 'whole',
   72: 'dotted whole',
 };
-export const lengthName = (len: number) => LENGTH_NAMES[len] ?? `${len / DIV} beats`;
+/** The name of a written length: a note value, a double-dotted one, or the values it is tied from. */
+export function lengthName(len: number): string {
+  if (LENGTH_NAMES[len]) return LENGTH_NAMES[len];
+  for (const b of [48, 24, 12, 6]) if (len === b * 1.75) return `double-dotted ${LENGTH_NAMES[b]}`;
+  const parts: string[] = [];
+  let rest = len;
+  for (const v of [72, 48, 36, 24, 18, 12, 9, 6, 4, 3, 2]) {
+    while (rest >= v && parts.length < 4) {
+      parts.push(v === 2 ? 'triplet 16th' : LENGTH_NAMES[v]);
+      rest -= v;
+    }
+  }
+  return rest > 0 || !parts.length ? `${Math.round((len / DIV) * 100) / 100} quarters` : parts.join(' + ');
+}
 
 /** Grid step of the level at a position: Easy 8ths; Medium and Hard 16ths, or triplet 8ths in a triplet quarter. */
 export function gridStep(score: Score, pos: number): number {
@@ -64,11 +77,14 @@ export function snapPos(score: Score, pos: number, mode: 'round' | 'floor' | 'ce
   return Math.max(0, q * DIV + Math.min(DIV, k * step));
 }
 
+/** No triplets at a position: its meter groups beats in threes (6/8 …), or the piece starts in such a meter (its rhythm rules have no triplets). */
+export const compoundAt = (score: Score, pos: number): boolean => score.time.compound || (score.time.changes && score.time.meterAt(score.time.measureOf(pos)).compound);
+
 /** Lengths offered at a position on this level (Easy: no 16ths or triplets). */
 export function lengthsAt(score: Score, on: number, triplet = false): number[] {
   const base = score.level === 'easy' ? LENGTHS.filter((l) => l % 6 === 0) : LENGTHS;
   const inTriplet = score.tripletQuarters.has(Math.floor(on / DIV));
-  if (score.level !== 'easy' && !score.time.compound && (inTriplet || (triplet && on % DIV === 0))) return [4, 8, ...base].sort((a, b) => a - b);
+  if (score.level !== 'easy' && !compoundAt(score, on) && (inTriplet || (triplet && on % DIV === 0))) return [4, 8, ...base].sort((a, b) => a - b);
   return base;
 }
 
@@ -84,8 +100,36 @@ export function spanOf(ctx: SheetCtx, n: Note): { on: number; off: number } {
 
 const writtenStaff = (n: Note): Staff => (n.hand === 'L' ? 2 : 1);
 
-/** The note placed at written positions: seconds from the grid, pinned there. */
-export function placeAt(ctx: SheetCtx, n: Note, on: number, off: number): Note {
+/**
+ * Whether quarter q can be written as triplets: no other note of the level is pinned on a 16th
+ * inside it (a quarter is either triplets or 16ths; `except`: the note being placed).
+ */
+function tripletFree(ctx: SheetCtx, q: number, except?: Set<number>): boolean {
+  const a = q * DIV;
+  for (const n of ctx.song.arrangements[ctx.level].notes) {
+    if (except?.has(n.id) || !pinValid(n)) continue;
+    for (const p of [n.pin!.on, n.pin!.off]) if (p > a && p < a + DIV && (p - a) % 4 !== 0) return false;
+  }
+  return true;
+}
+
+/**
+ * A written end the sheet can write: on the level grid of the beat it lands in (a triplet 8th
+ * after a 16th, or a 16th inside a triplet quarter, has no note value), and after the start.
+ */
+export function fitEnd(ctx: SheetCtx, on: number, off: number, except?: Set<number>): number {
+  const score = ctx.score;
+  // a triplet on a beat inside one quarter (the Triplet button) is written as one: its pin makes
+  // that quarter triplets, unless another pinned note is on a 16th there
+  const q = Math.floor(off / DIV);
+  if (on % DIV === 0 && (off - on === 4 || off - on === 8) && Math.floor(on / DIV) === q && score.level !== 'easy' && !compoundAt(score, on) && tripletFree(ctx, q, except)) return off;
+  const snapped = snapPos(score, off);
+  return snapped > on ? snapped : snapPos(score, on + gridStep(score, on), 'ceil');
+}
+
+/** The note placed at written positions: seconds from the grid, pinned there (the end fitted to the grid). */
+export function placeAt(ctx: SheetCtx, n: Note, on: number, offIn: number, moving?: Set<number>): Note {
+  const off = fitEnd(ctx, on, offIn, moving ?? new Set([n.id]));
   const t = ctx.score.time;
   const start = t.posToTime(on);
   const dur = Math.max(0.01, t.posToTime(off) - start);
@@ -105,8 +149,9 @@ function pinHere(ctx: SheetCtx, n: Note): Note {
 }
 
 /** The note cut to end at a written position (its start kept). */
-function cutAt(ctx: SheetCtx, n: Note, span: { on: number }, off: number): Note {
-  const end = ctx.score.time.posToTime(off);
+function cutAt(ctx: SheetCtx, n: Note, span: { on: number }, off: number, before = Infinity): Note {
+  // `before`: the start of a same-pitch note it must stop for (a played note can start a little early)
+  const end = Math.min(ctx.score.time.posToTime(off), before);
   const dur = Math.max(0.01, end - n.start);
   return { ...n, dur, pin: { on: span.on, off, t: n.start, d: dur } };
 }
@@ -143,18 +188,26 @@ export function resolveOverlaps(ctx: SheetCtx, notes: Note[], touched: Set<numbe
       if (!samePitch && os.on === ts.on) continue; // chord tones
       if (os.on < ts.on && os.off > ts.on) {
         // O sounds into T's start: cut O there
-        out[i] = cutAt(ctx, O, os, ts.on);
+        out[i] = cutAt(ctx, O, os, ts.on, samePitch ? T.start : Infinity);
         span.set(O.id, { on: os.on, off: ts.on });
         touched.add(O.id);
       } else if (os.on >= ts.on && os.on < ts.off) {
         if (samePitch && (os.on === ts.on || os.off <= ts.off)) {
           removed.add(O.id);
         } else if (os.on > ts.on) {
-          T = cutAt(ctx, T, ts, os.on);
+          T = cutAt(ctx, T, ts, os.on, samePitch ? O.start : Infinity);
           out[ti] = T;
           ts.off = os.on;
           span.set(T.id, { ...ts });
         }
+      } else if (samePitch && O.start < T.start && O.start + O.dur > T.start + 1e-6) {
+        // written apart but still sounding into it (a played legato): it stops where T starts
+        const dur = Math.max(0.01, T.start - O.start);
+        out[i] = { ...O, dur, ...(pinValid(O) ? { pin: { ...O.pin!, d: dur } } : {}) };
+      } else if (samePitch && T.start < O.start && T.start + T.dur > O.start + 1e-6) {
+        const dur = Math.max(0.01, O.start - T.start);
+        T = { ...T, dur, ...(pinValid(T) ? { pin: { ...T.pin!, d: dur } } : {}) };
+        out[ti] = T;
       }
     }
   }
@@ -217,7 +270,7 @@ export function moveOp(ctx: SheetCtx, ids: Set<number>, dir: 1 | -1, beat = fals
     const len = s.off - s.on;
     let off = on + len;
     if (snapPos(ctx.score, off) !== off) off = Math.max(on + gridStep(ctx.score, on), snapPos(ctx.score, off));
-    return placeAt(ctx, n, on, off);
+    return placeAt(ctx, n, on, off, ids);
   });
   return finish(ctx, notes, touched, [...ids]);
 }
@@ -238,12 +291,29 @@ export function newLength(ctx: SheetCtx, on: number, len: number, ch: LengthChan
     if (!Number.isInteger(v) || (ctx.level === 'easy' && v % 6 !== 0) || v > 72) return null;
     return v;
   }
-  if (ctx.level === 'easy' || ctx.score.time.compound) return null;
+  if (ctx.level === 'easy' || compoundAt(ctx.score, on)) return null;
   const tri: Record<number, number> = { 12: 8, 6: 4, 8: 12, 4: 6 };
   const v = tri[len];
   if (!v) return null;
   if ((v === 4 || v === 8) && on % DIV !== 0 && !ctx.score.tripletQuarters.has(Math.floor(on / DIV))) return null;
   return v;
+}
+
+/**
+ * The written end after a length change, fitted to the grid of the beat it lands in. Shorter /
+ * Longer go to the next end that differs once fitted (a triplet 8th made longer can't end a 16th
+ * into the next beat: it ends on the next 16th there).
+ */
+export function newEnd(ctx: SheetCtx, s: { on: number; off: number }, ch: LengthChange, moving?: Set<number>): number | null {
+  const len = s.off - s.on;
+  if (!('step' in ch)) {
+    const v = newLength(ctx, s.on, len, ch);
+    return v ? fitEnd(ctx, s.on, s.on + v, moving) : null;
+  }
+  const list = [...new Set([...lengthsAt(ctx.score, s.on), ...(ctx.score.tripletQuarters.has(Math.floor(s.on / DIV)) && ctx.level !== 'easy' ? [4, 8] : [])])];
+  const ends = [...new Set(list.map((l) => fitEnd(ctx, s.on, s.on + l, moving)))].sort((a, b) => a - b);
+  if (ch.step > 0) return ends.find((e) => e > s.off) ?? null;
+  return [...ends].reverse().find((e) => e < s.off) ?? null;
 }
 
 /** Length: a palette value, shorter / longer through the palette, dot on or off, triplet on or off. Following notes don't move. */
@@ -252,10 +322,10 @@ export function lengthOp(ctx: SheetCtx, ids: Set<number>, ch: LengthChange): She
   const notes = arrNotes(ctx).map((n) => {
     if (!ids.has(n.id)) return n;
     const s = spanOf(ctx, n);
-    const len = newLength(ctx, s.on, s.off - s.on, ch);
-    if (!len || len === s.off - s.on) return n;
+    const off = newEnd(ctx, s, ch, ids);
+    if (off === null || off === s.off) return n;
     touched.add(n.id);
-    return placeAt(ctx, n, s.on, s.on + len);
+    return placeAt(ctx, n, s.on, off, ids);
   });
   if (!touched.size) return null;
   return finish(ctx, notes, touched, [...ids]);
@@ -281,7 +351,8 @@ function velocityNear(ctx: SheetCtx, start: number, hand: Hand, pos?: number): n
 
 /** Adds a note at a written position (a chord tone when the staff already has a note starting there). */
 export function addOp(ctx: SheetCtx, at: { pos: number; midi: number; staff: Staff; len: number }): SheetEditResult | null {
-  const on = Math.max(0, at.pos);
+  // on the level grid of its quarter (16ths, or triplet 8ths in a triplet quarter)
+  const on = snapPos(ctx.score, Math.max(0, at.pos));
   const off = on + Math.max(1, at.len);
   const hand: Hand = at.staff === 1 ? 'R' : 'L';
   const id = newNoteId();

@@ -11,7 +11,7 @@ import type { SheetRenderer, SheetSlot, NoteHit } from '../../../lib/sheet/rende
 import { addOp, lengthName, shiftOp } from '../../../lib/sheet/edit';
 import { pitchLabel, stepInKey } from '../../../lib/sheet/pitch';
 import { keyAt } from '../../../lib/sheet/keys';
-import { audition, runSheetEdit, sheetCtx } from '../../../state/sheetEdit';
+import { audition, replacedByLastEdit, runSheetEdit, sheetCtx } from '../../../state/sheetEdit';
 import { barMarkRefs, markSelOfHit, runMarkEdit } from '../../../state/sheetMarks';
 import { resizeMarkOp } from '../../../lib/sheet/marks';
 import { useSheetUi } from '../../../state/sheetUi';
@@ -34,10 +34,12 @@ interface OverlayState {
   /** The selected marking's box. */
   ring: { x0: number; y0: number; x1: number; y1: number } | null;
   marquee: { x0: number; y0: number; x1: number; y1: number } | null;
+  /** Boxes of the selected noteheads: each gets a ring, drawn above the playback cursor. */
+  sel: { x: number; y: number; w: number; h: number }[];
   set: (p: Partial<Omit<OverlayState, 'set'>>) => void;
 }
 
-export const useSheetOverlay = create<OverlayState>((set) => ({ ghost: null, ring: null, marquee: null, set: (p) => set(p) }));
+export const useSheetOverlay = create<OverlayState>((set) => ({ ghost: null, ring: null, marquee: null, sel: [], set: (p) => set(p) }));
 
 /** The marking under a point, as a selection id (lib/sheet/marks.ts resolveMark), or null. */
 export function markUnder(r: SheetRenderer, x: number, y: number, pointerType: string): string | null {
@@ -91,13 +93,14 @@ export function useSheetPointer(opts: {
   };
   const addAt = (s: SheetSlot, touch = false) => {
     const len = useSheetUi.getState().addLen;
-    if (!runSheetEdit((c) => addOp(c, { pos: s.pos, midi: s.midi, staff: s.staff, len }))) return;
+    if (!runSheetEdit((c) => addOp(c, { pos: s.pos, midi: s.midi, staff: s.staff, len }), { quiet: touch })) return;
+    const replaced = replacedByLastEdit();
     audition([s.midi]);
     // a tap is easy to misplace: say what was added, with Undo right there
     if (touch) {
       const sc = opts.renderer()?.drawnScore;
       const k = sc ? keyAt(sc, s.measure) : null;
-      useSheetUi.getState().set({ added: { label: `${pitchLabel(s.midi, k?.fifths ?? 0, k?.minorTonic)} · ${lengthName(len)}`, past: useStudio.getState().past.length, at: performance.now() } });
+      useSheetUi.getState().set({ added: { label: `${pitchLabel(s.midi, k?.fifths ?? 0, k?.minorTonic)} · ${lengthName(len)}${replaced ? ` · replaced ${replaced} note${replaced === 1 ? '' : 's'}` : ''}`, past: useStudio.getState().past.length, at: performance.now() } });
     }
   };
   const clearPress = () => {

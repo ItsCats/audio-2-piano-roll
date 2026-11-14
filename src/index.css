@@ -209,11 +209,17 @@ html.p2v-games-open #root {
 /* a phone held sideways (short and wide): the games put their arrow pad beside the board */
 @custom-variant short-landscape (@media (orientation: landscape) and (max-height: 520px));
 
-/* sheet music in Edit mode: selected noteheads (every tied piece), drawn by OSMD with fill attributes */
+/* sheet music in Edit mode: selected noteheads (every tied piece), drawn by OSMD with fill attributes;
+   a color of its own (not the cursor's or a hand's blue / amber), with a ring drawn above the cursor */
 .sheet-sel,
 .sheet-sel path {
-  fill: #3d5bf5 !important;
-  stroke: #3d5bf5 !important;
+  fill: #d0245e !important;
+  stroke: #d0245e !important;
+}
+.sheet-sel-ring {
+  fill: rgb(208 36 94 / 0.12);
+  stroke: #d0245e;
+  stroke-width: 2px;
 }
 .sheet-editing {
   -webkit-user-select: none;

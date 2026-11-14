@@ -7,6 +7,12 @@ import { ARTICULATIONS, DYNAMIC_VALUES, type Articulation, type Note, type Sheet
 
 const isInt = (x: unknown, min = 0, max = Number.MAX_SAFE_INTEGER): x is number => typeof x === 'number' && Number.isInteger(x) && x >= min && x <= max;
 const isNum = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x);
+/**
+ * The lock's bpm is in its own beat unit and only extends the grid past the last beat: a 6/8 song
+ * counted in 8ths at a dotted quarter of 144 has 432 beats a minute, so the range is wide.
+ */
+const GRID_BPM_MIN = 1;
+const GRID_BPM_MAX = 2000;
 
 /** The sheet data when it is valid, else null. */
 export function validSheet(sheet: unknown): SongSheet | null {
@@ -17,7 +23,7 @@ export function validSheet(sheet: unknown): SongSheet | null {
   const beats = g.beats;
   if (!Array.isArray(beats) || beats.length < 2 || beats.length > 200000) return null;
   for (let i = 0; i < beats.length; i++) if (!isNum(beats[i]) || (i > 0 && !(beats[i] > beats[i - 1]))) return null;
-  if (!isInt(g.db, 0, beats.length - 1) || !isInt(g.pickup, 0, 10000) || !isNum(g.originQ) || !isNum(g.bpm) || g.bpm < 20 || g.bpm > 400) return null;
+  if (!isInt(g.db, 0, beats.length - 1) || !isInt(g.pickup, 0, 10000) || !isNum(g.originQ) || !isNum(g.bpm) || g.bpm < GRID_BPM_MIN || g.bpm > GRID_BPM_MAX) return null;
   if (!isInt(g.beatsPerBar, 1, 16) || (g.beatUnit !== 2 && g.beatUnit !== 4 && g.beatUnit !== 8)) return null;
   const out: SongSheet = {
     v: 1,

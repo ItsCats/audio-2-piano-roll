@@ -8,7 +8,8 @@ export function SheetEditOverlay() {
   const ghost = useSheetOverlay((s) => s.ghost);
   const marquee = useSheetOverlay((s) => s.marquee);
   const ring = useSheetOverlay((s) => s.ring);
-  if (!ghost && !marquee && !ring) return null;
+  const sel = useSheetOverlay((s) => s.sel);
+  if (!ghost && !marquee && !ring && !sel.length) return null;
   const ledgers: number[] = [];
   if (ghost && ghost.gap) {
     // steps above the top line (2 per line) or below the bottom line (-8)
@@ -18,6 +19,14 @@ export function SheetEditOverlay() {
   const g = ghost?.gap || 10;
   return (
     <svg className="pointer-events-none absolute inset-0 z-10 h-full w-full overflow-visible" aria-hidden data-testid="sheet-overlay">
+      {sel.length > 0 && (
+        <g data-testid="sheet-sel-rings">
+          {sel.map((b, i) => {
+            const pad = Math.max(3, b.h * 0.35);
+            return <rect key={i} x={b.x - pad} y={b.y - pad} width={b.w + 2 * pad} height={b.h + 2 * pad} rx={(b.h + 2 * pad) / 2} className="sheet-sel-ring" />;
+          })}
+        </g>
+      )}
       {ghost && (
         <g data-testid="sheet-ghost">
           {ledgers.map((y) => (

@@ -130,10 +130,19 @@ export function exportMidi(notes: Note[], pedal: PedalRange[], tempo: TempoInfo,
       h.tempos.sort((a, b) => a.ticks - b.ticks);
       h.update();
     }
-    for (const m of meta.meters) {
-      const ticks = h.secondsToTicks(m.time);
+    // a time signature only where it lands on a bar line of the file's own bars (a played-in song
+    // or one with a pickup has its sheet bars elsewhere: an event mid-bar would be moved or ignored)
+    let prev = h.timeSignatures[0];
+    for (const m of [...meta.meters].sort((a, b) => a.time - b.time)) {
+      if (!Number.isFinite(m.time)) continue;
+      const bar = (prev.timeSignature[0] * h.ppq * 4) / prev.timeSignature[1];
+      const k = (h.secondsToTicks(m.time) - prev.ticks) / bar;
+      if (Math.abs(k - Math.round(k)) * bar > h.ppq / 8) continue;
+      const ticks = Math.round(prev.ticks + Math.round(k) * bar);
+      if (ticks < prev.ticks) continue;
       h.timeSignatures = h.timeSignatures.filter((x) => x.ticks !== ticks);
-      h.timeSignatures.push({ ticks, timeSignature: [m.beatsPerBar, m.beatUnit] });
+      prev = { ticks, timeSignature: [m.beatsPerBar, m.beatUnit] };
+      h.timeSignatures.push(prev);
     }
     h.timeSignatures.sort((a, b) => a.ticks - b.ticks);
     for (const k of meta.keys) {
