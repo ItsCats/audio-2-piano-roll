@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   Film,
   Download,
@@ -34,6 +34,7 @@ import { Transport } from '../components/studio/Transport';
 import { EditToolbar } from '../components/studio/EditToolbar';
 import { SheetReaderBadge, SheetReaderNotice, readFromSheet } from '../components/studio/SheetReaderNotice';
 import { ExportVideoDialog } from '../components/studio/ExportVideoDialog';
+import { AnalyzeAgainDialog } from '../components/studio/AnalyzeAgainDialog';
 import { SheetPdfDialog } from '../components/studio/SheetPdfDialog';
 import { FullscreenStage } from '../components/studio/FullscreenStage';
 import { isFullscreenKey, isStageFullscreen, toggleStageFullscreen } from '../state/fullscreenStore';
@@ -388,6 +389,24 @@ export default function StudioPage() {
     else if (song) navigate(`/studio/${song.id}`, { replace: true });
   }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // /studio/:id?analyze=1 (the toast after a crash during "Analyze again"): the Notes tab with the
+  // dialog open, once the song is loaded; the parameter goes (a reload doesn't open it again)
+  const [search] = useSearchParams();
+  const wantsAnalyze = search.get('analyze') === '1';
+  const loadedId = !loading && song?.id === id ? id : undefined;
+  useEffect(() => {
+    if (!wantsAnalyze || !loadedId) return;
+    setTab('arrangement');
+    setPanelOpen(true);
+    useStudio.getState().setAnalyzeOpen(true);
+    navigate(`/studio/${encodeURIComponent(loadedId)}`, { replace: true });
+  }, [wantsAnalyze, loadedId]); // eslint-disable-line react-hooks/exhaustive-deps
+  // "Analyze again" opened from elsewhere (the Reset toast): show the Notes tab under it
+  const analyzeOpen = useStudio((s) => s.analyzeOpen);
+  useEffect(() => {
+    if (analyzeOpen) setTab('arrangement');
+  }, [analyzeOpen]);
+
   usePlayerSync();
   useStudioKeyboard(computerKeys);
 
@@ -587,6 +606,7 @@ export default function StudioPage() {
         </aside>
       )}
       <ExportVideoDialog open={exportOpen} onClose={() => setExportOpen(false)} />
+      <AnalyzeAgainDialog />
       <SheetPdfDialog open={pdfOpen} onClose={() => setPdfOpen(false)} />
     </div>
   );

@@ -59,3 +59,38 @@ describe('separation option text', () => {
     expect(low.warning).toBe('May run out of memory on this device. X.');
   });
 });
+
+describe('"Analyze again" knows the song’s length', () => {
+  it('the piano model’s phone warning says when this song is too long; the Import page keeps its wording', async () => {
+    const { pianoModelWarning } = await import('../../src/components/import/PianoModelOption');
+    const phone = { phone: true, warnAboveSeconds: 360 };
+    expect(pianoModelWarning(phone, 8 * 60)).toBe('May be slow on phones. This song is 8 minutes long, so it might not work on this phone.');
+    expect(pianoModelWarning({ phone: false, warnAboveSeconds: 360 }, 8 * 60)).toBe('May be slow on this device. This song is 8 minutes long, so it might not work here.');
+    // short enough, or not known (the Import page): as before
+    expect(pianoModelWarning(phone, 3 * 60)).toBe('May be slow on phones. Songs over 6 minutes might not work on phones with little memory.');
+    expect(pianoModelWarning(phone)).toBe('May be slow on phones. Songs over 6 minutes might not work on phones with little memory.');
+    expect(pianoModelWarning({ phone: false })).toBe('May be slow on this device. Songs over 6 minutes might not work.');
+  });
+
+  it('a recording too long to separate here is not recommended, with the reason the option shows', async () => {
+    const { separationSupport, longReason } = await import('../../src/lib/separation');
+    const { separationAvailability } = await import('../../src/state/importStore');
+    vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (X11; Linux x86_64) Chrome/140', maxTouchPoints: 0 });
+    vi.stubGlobal('Worker', class {});
+    try {
+      const short = separationSupport(120);
+      const long = separationSupport(15 * 60);
+      if (short.ok && short.recommended) {
+        expect(long.recommended).toBe(false);
+        expect(long.reason).toBe(longReason(15 * 60));
+        const a = separationAvailability(false, long);
+        expect(a.reason).toBe(longReason(15 * 60));
+        const t = separationOptionText({ piano: true, engine: a.engine, est: long.estSecondsPerMinute, maxSeconds: long.maxSeconds, lowMemory: true, reason: a.reason });
+        expect(t.warning).toBe(`May run out of memory on this device. ${longReason(15 * 60)}`);
+      }
+      expect(longReason(15 * 60)).toMatch(/^A 15-minute recording needs about [\d.]+ GB of memory to separate in this browser\.$/);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});

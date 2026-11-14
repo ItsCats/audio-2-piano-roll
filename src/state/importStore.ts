@@ -7,8 +7,23 @@ import { transcribeAudio, type ProgressEvent, type TranscribeOptions, type Trans
 import type { TranscriptionStage } from '../lib/transcription/workerProtocol';
 import { classifyFile } from '../lib/transcription/decode';
 import { parseMidi } from '../lib/music/midi';
-import { buildSong, demoSong, songFromMidi, songFromScore, titleFromFileName } from '../lib/songs';
-import { deletePending, newId, saveAudio, savePending, savePosteriors, saveSong, type PendingImport, type PendingSheet } from '../lib/storage/db';
+import { buildSong, demoSong, songFromMidi, songFromReanalysis, songFromScore, songInputFromResult, titleFromFileName } from '../lib/songs';
+import {
+  commitReanalysis,
+  deletePending,
+  getAudioRecord,
+  getSong,
+  newId,
+  saveAudio,
+  savePending,
+  savePosteriors,
+  saveSong,
+  type PendingImport,
+  type PendingSheet,
+} from '../lib/storage/db';
+import { settleStudioSave, useStudio } from './studioStore';
+import { appNavigate } from '../lib/appNavigate';
+import { analysisLabel } from '../lib/transcription/analysisSummary';
 import { createScreenWakeLock } from '../lib/wakeLock';
 import { detectionParams, useSettings } from './settingsStore';
 import { useLibrary } from './libraryStore';
@@ -70,6 +85,42 @@ export interface ImportJob {
    * rate at the last update. Only set once there is real progress to extrapolate from.
    */
   rate?: { key: string; t0: number; p0: number; etaSec?: number; at?: number };
+  /**
+   * "Analyze again" (the Studio): this job analyzes a stored song's recording once more and replaces its
+   * notes (the song keeps its id). `failure`: why it failed, when that needs its own words.
+   */
+  reanalyze?: { songId: string; failure?: ReanalyzeFailure };
+  /** a finished "Analyze again": the new notes compared with the old ones */
+  reanalyzeResult?: ReanalyzeResult;
+  /** a failure with a heading of its own (above `error`) */
+  errorTitle?: string;
+}
+
+/**
+ * Why an "Analyze again" failed, when that needs its own words: the song was deleted while it ran, the
+ * storage was too full to keep the old notes (the card offers saving without them), still too full
+ * without them, or the recording is no longer stored.
+ */
+export type ReanalyzeFailure = 'deleted' | 'quota' | 'quota-again' | 'missing';
+
+export interface ReanalyzeResult {
+  /** the new analysis ("Piano solo · high-accuracy piano model") */
+  label: string;
+  /** Hard's notes now and before */
+  notes: number;
+  was: number;
+  /** a tempo set by hand was kept (its BPM) */
+  keptTempo?: number;
+  /** the old notes were kept as the song's other version */
+  keptOther: boolean;
+}
+
+/** What "Analyze again" runs with (built as the Import page builds an import's options). */
+export interface ReanalyzeOptions {
+  presetId: PresetId;
+  separate: boolean;
+  transcriber: TranscriptionEngine;
+  pianoBlend: boolean;
 }
 
 /**
@@ -85,6 +136,8 @@ export interface FailedImport {
   /** a failed read with the accurate sheet-music reader: the same pages with the quick reader (and that choice selected) */
   retryQuick?: () => Promise<string | null>;
   recording?: { blob: Blob; fileName: string };
+  /** "Analyze again" with too little storage to keep the old notes: save the new ones without them */
+  saveWithoutOld?: () => Promise<string | null>;
 }
 
 /** One photo for the sheet-music reader: the file, its decoded image (when already loaded) and the page corners. */
@@ -191,6 +244,13 @@ interface ImportState {
     meta?: { title?: string; artist?: string; transcriber?: TranscriptionEngine },
   ) => Promise<string | null>;
   importDemo: () => Promise<string>;
+  /**
+   * "Analyze again": the stored song's recording analyzed once more with these options, its notes
+   * replaced (every level rebuilt) and the old notes kept as its other version. Nothing is written
+   * before the new notes exist, so a cancel, a failure or a killed tab leaves the song as it was.
+   * Returns the song id once saved (null: refused because another import runs, cancelled or failed).
+   */
+  reanalyze: (songId: string, opts: ReanalyzeOptions) => Promise<string | null>;
   cancel: () => void;
   clear: () => void;
 }
@@ -449,12 +509,44 @@ async function takeCrashMarker(key: string, lock: string): Promise<Record<string
   return m;
 }
 
-function markSeparating(preset: PresetId): () => void {
-  return setCrashMarker(SEPARATING_KEY, SEPARATING_LOCK, { preset });
+/** The song an "Analyze again" run is for, in its crash markers (the toast after a crash says so and opens it). */
+export interface ReanalyzeMark {
+  reanalyze: string;
+  title: string;
 }
 
-/** The toast after a tab died while separating (the option is now off for that preset). */
-export function separationCrashNotice(preset: PresetId): [title: string, body: string] {
+const reMark = (re?: { songId: string; title: string }): ReanalyzeMark | Record<string, never> => (re ? { reanalyze: re.songId, title: re.title } : {});
+
+/** The "Analyze again" a marker was left by (absent: an import, or a marker of an older version). */
+function reanalyzeOf(m: Record<string, unknown>): ReanalyzeMark | null {
+  return typeof m.reanalyze === 'string' ? { reanalyze: m.reanalyze, title: typeof m.title === 'string' ? m.title : 'your song' } : null;
+}
+
+/** The crash toast's button for an "Analyze again": the song, with the dialog open (the option is unticked by now). */
+function openSongAction(re: ReanalyzeMark) {
+  return { actions: [{ label: 'Open the song', variant: 'primary' as const, onClick: () => appNavigate(`/studio/${encodeURIComponent(re.reanalyze)}?analyze=1`) }], ttl: 0 };
+}
+
+function markSeparating(preset: PresetId, re?: { songId: string; title: string }): () => void {
+  return setCrashMarker(SEPARATING_KEY, SEPARATING_LOCK, { preset, ...reMark(re) });
+}
+
+/**
+ * The toast after a tab died while separating (the option is now off for that preset). `reanalyze`:
+ * it was an "Analyze again" of a song (which was not changed).
+ */
+export function separationCrashNotice(preset: PresetId, reanalyze = false): [title: string, body: string] {
+  if (reanalyze) {
+    return preset === 'piano'
+      ? [
+          'Analyze again stopped while removing the singing and drums',
+          'The page most likely ran out of memory. Your song wasn’t changed. “Remove singing and drums” is now off for Piano solo. Close other tabs and tick it again in Analyze again to retry.',
+        ]
+      : [
+          'Analyze again stopped while separating vocals & drums',
+          'The page most likely ran out of memory. Your song wasn’t changed. "Separate vocals & drums" is now off for this detection preset. Close other tabs and tick it again in Analyze again to retry.',
+        ];
+  }
   if (preset === 'piano') {
     return [
       'The last import stopped while removing the singing and drums',
@@ -472,19 +564,21 @@ async function checkCrashedSeparation(turnOff: (preset: PresetId) => void): Prom
   const preset = m?.preset as PresetId | undefined;
   if (!preset || !['piano', 'mix', 'sensitive', 'custom'].includes(preset)) return;
   turnOff(preset);
-  toast.warn(...separationCrashNotice(preset));
+  const re = reanalyzeOf(m!);
+  if (re) toast.warn(...separationCrashNotice(preset, true), openSongAction(re));
+  else toast.warn(...separationCrashNotice(preset));
 }
 
-function markSpecialist(pendingId: string | undefined): () => void {
-  return setCrashMarker(SPECIALIST_RUNNING_KEY, SPECIALIST_RUNNING_LOCK, pendingId ? { pendingId } : {});
+function markSpecialist(pendingId: string | undefined, re?: { songId: string; title: string }): () => void {
+  return setCrashMarker(SPECIALIST_RUNNING_KEY, SPECIALIST_RUNNING_LOCK, { ...(pendingId ? { pendingId } : {}), ...reMark(re) });
 }
 
 /** the piano-model blend's marker: { pendingId?, at } (set when the import moves from separation to the blend) */
 export const BLEND_RUNNING_KEY = 'piano2vision-piano-blend-running';
 const BLEND_RUNNING_LOCK = 'piano2vision-piano-blend-running';
 
-function markBlend(pendingId: string | undefined): () => void {
-  return setCrashMarker(BLEND_RUNNING_KEY, BLEND_RUNNING_LOCK, pendingId ? { pendingId } : {});
+function markBlend(pendingId: string | undefined, re?: { songId: string; title: string }): () => void {
+  return setCrashMarker(BLEND_RUNNING_KEY, BLEND_RUNNING_LOCK, { ...(pendingId ? { pendingId } : {}), ...reMark(re) });
 }
 
 /** interrupted-import records whose piano-model blend took the tab down (resumed without it) */
@@ -492,6 +586,16 @@ const crashedBlendRecords = new Set<string>();
 
 /** The notice after a tab died during the blend's piano model. */
 export const BLEND_CRASH_NOTICE = 'The piano model was turned off after the last import closed unexpectedly. You can turn it back on with “Add the high-accuracy piano model” under Full song on the Import page.';
+
+/** The same notice after the blend took down an "Analyze again" of `title`. */
+export function blendReanalyzeCrashNotice(title: string): string {
+  return `The page most likely ran out of memory while analyzing “${title}” again. Your song wasn’t changed. “Add the high-accuracy piano model” is now off; you can tick it again under Full song in Analyze again.`;
+}
+
+/** The notice after the high-accuracy piano model took down an "Analyze again" of `title`. */
+export function specialistReanalyzeCrashNotice(title: string): string {
+  return `The page most likely ran out of memory while analyzing “${title}” again. Your song wasn’t changed, and the normal model is selected again. Close other tabs and tick “High-accuracy piano model” again to retry it.`;
+}
 
 /**
  * A tab that died while the blend's piano model ran: the blend is turned off (the pref), the record it
@@ -502,7 +606,9 @@ export async function checkCrashedBlend(turnOff: () => void): Promise<boolean> {
   if (!m) return false;
   if (typeof m.pendingId === 'string') crashedBlendRecords.add(m.pendingId);
   turnOff();
-  toast.warn('The piano model stopped the page', BLEND_CRASH_NOTICE);
+  const re = reanalyzeOf(m);
+  if (re) toast.warn('The piano model stopped the page', blendReanalyzeCrashNotice(re.title), openSongAction(re));
+  else toast.warn('The piano model stopped the page', BLEND_CRASH_NOTICE);
   return true;
 }
 
@@ -523,10 +629,13 @@ export async function checkCrashedSpecialist(turnOff: () => void): Promise<boole
   if (!m) return false;
   if (typeof m.pendingId === 'string') crashedSpecialistRecords.add(m.pendingId);
   turnOff();
-  toast.warn(
-    'The high-accuracy piano model stopped the page',
-    'The page most likely ran out of memory while the high-accuracy piano model was running, so the normal model is selected again. Close other tabs and tick “High-accuracy piano model” again to retry it.',
-  );
+  const re = reanalyzeOf(m);
+  if (re) toast.warn('The high-accuracy piano model stopped the page', specialistReanalyzeCrashNotice(re.title), openSongAction(re));
+  else
+    toast.warn(
+      'The high-accuracy piano model stopped the page',
+      'The page most likely ran out of memory while the high-accuracy piano model was running, so the normal model is selected again. Close other tabs and tick “High-accuracy piano model” again to retry it.',
+    );
   return true;
 }
 
@@ -659,6 +768,8 @@ interface Ctx {
   unpend?: () => Promise<void>;
   /** that record's id (saveSong deletes it in the transaction that saves the song) */
   pendingId?: string;
+  /** "Analyze again" of this song (its crash markers say so) */
+  reanalyze?: { songId: string; title: string };
 }
 
 export const useImport = create<ImportState>((set, get) => {
@@ -695,6 +806,7 @@ export const useImport = create<ImportState>((set, get) => {
     preset?: PresetId,
     transcriber?: TranscriptionEngine,
     blendAsked?: boolean,
+    extra?: { reanalyze?: { songId: string } },
   ): Ctx => {
     get().controller?.abort();
     void current?.unpend?.();
@@ -718,6 +830,7 @@ export const useImport = create<ImportState>((set, get) => {
         plan,
         separation,
         ...(model === 'piano-specialist' ? { transcriber: model } : {}),
+        ...(extra?.reanalyze ? { reanalyze: { songId: extra.reanalyze.songId } } : {}),
       },
     });
     const update = (patch: Partial<ImportJob>) => {
@@ -737,6 +850,7 @@ export const useImport = create<ImportState>((set, get) => {
       signal: controller.signal,
       update,
       onProgress: (e) => update({ stage: e.stage, progress: e.progress, detail: e.detail }),
+      ...(extra?.reanalyze ? { reanalyze: { songId: extra.reanalyze.songId, title } } : {}),
     };
     current = ctx;
     return ctx;
@@ -879,20 +993,22 @@ export const useImport = create<ImportState>((set, get) => {
   };
 
   /**
-   * Transcribe (optionally separating first) and save. `engine` decides where separation runs;
-   * a failing server falls back to separating in this browser, so the user still gets what they ticked.
+   * Transcribe (optionally separating first). `engine` decides where separation runs; a failing
+   * server falls back to separating in this browser, so the user still gets what they ticked. Shared
+   * by imports (transcribeAndSave) and "Analyze again" (reanalyze), with the same crash markers.
    */
-  const transcribeAndSave = async (
+  const analyze = async (
     ctx: Ctx,
     original: Blob,
-    meta: { title: string; artist?: string; source: SongSource; fileName: string; keepVideo?: boolean },
+    fileName: string,
     engine: SeparationEngine | undefined,
     /** stems the server already produced (a separated YouTube job): used as they are */
     prefetched?: { vocals: Blob; accomp: Blob; other?: Blob; serverMs?: number },
     /** warnings from earlier steps of this import */
     earlier: string[] = [],
-  ) => {
+  ): Promise<{ result: Awaited<ReturnType<typeof transcribeAudio>> }> => {
     const { update, onProgress, signal } = ctx;
+    const re = ctx.reanalyze;
     const params = detectionParams(ctx.preset);
     const extraWarnings: string[] = [...ctx.early, ...earlier];
     // the timeline says "Removing singing and drums" from the start (also while a server separates)
@@ -901,7 +1017,7 @@ export const useImport = create<ImportState>((set, get) => {
     let progress = onProgress;
     if (engine === 'server') {
       try {
-        opts = { stems: prefetched ?? (await serverStems(ctx, original, meta.fileName)) };
+        opts = { stems: prefetched ?? (await serverStems(ctx, original, fileName)) };
         // the pipeline's "separating" step for ready-made stems is only decoding them
         progress = (e) => onProgress(e.stage === 'separating' ? { ...e, stage: 'decoding', progress: null } : e);
       } catch (err) {
@@ -936,9 +1052,9 @@ export const useImport = create<ImportState>((set, get) => {
     const specialistAfterSeparation = opts.engine === 'piano-specialist' && pianoPart && !!opts.separate;
     let unmark =
       opts.engine === 'piano-specialist' && !specialistAfterSeparation
-        ? markSpecialist(ctx.pendingId)
+        ? markSpecialist(ctx.pendingId, re)
         : opts.separate
-          ? markSeparating(ctx.preset)
+          ? markSeparating(ctx.preset, re)
           : () => {};
     if (specialistAfterSeparation) {
       opts = {
@@ -946,7 +1062,7 @@ export const useImport = create<ImportState>((set, get) => {
         onPhase: (phase) => {
           if (phase !== 'piano-model') return;
           unmark();
-          unmark = markSpecialist(ctx.pendingId);
+          unmark = markSpecialist(ctx.pendingId, re);
         },
       };
     }
@@ -963,7 +1079,7 @@ export const useImport = create<ImportState>((set, get) => {
             return;
           }
           unmark();
-          unmark = markBlend(ctx.pendingId);
+          unmark = markBlend(ctx.pendingId, re);
         },
       };
     }
@@ -983,25 +1099,20 @@ export const useImport = create<ImportState>((set, get) => {
       );
     }
     result.info.warnings = [...extraWarnings, ...result.info.warnings];
-    const song = buildSong({
-      title: meta.title,
-      artist: meta.artist,
-      source: meta.source,
-      notes: result.notes,
-      pedal: result.pedal ?? [],
-      tempo: result.tempo,
-      duration: result.duration,
-      key: result.key,
-      transcription: result.info,
-      hasAudio: true,
-      hasPosteriors: true,
-      // Medium and Hard: sustain pedal derived from the notes (switch in the Sound panel)
-      autoPedal: !result.pedal,
-      ...(result.pedal ? { noteLength: 'played' as const } : {}),
-    });
+    return { result };
+  };
+
+  /** A new song from an import's transcription: stored with its recording (and posteriors), then saved (finish). */
+  const saveImported = async (
+    ctx: Ctx,
+    result: Awaited<ReturnType<typeof transcribeAudio>>,
+    original: Blob,
+    meta: { title: string; artist?: string; source: SongSource; fileName: string; keepVideo?: boolean },
+  ) => {
+    const { update, signal } = ctx;
+    // (the piano specialist's outputs are not stored: re-detection works on Basic Pitch posteriors only)
+    const song = buildSong(songInputFromResult(result, meta));
     update({ warnings: result.info.warnings, stage: 'saving', progress: null, detail: 'Saving to your library' });
-    // the piano specialist's outputs are not stored: re-detection works on Basic Pitch posteriors only
-    song.hasPosteriors = !!result.posteriors;
     const posteriors = result.posteriors;
     const storeOriginal = async () => {
       await saveAudio(song.id, original, meta.source.fileName ?? meta.title);
@@ -1040,6 +1151,27 @@ export const useImport = create<ImportState>((set, get) => {
       }
     }
     return finish(ctx, song);
+  };
+
+  /** Transcribe (optionally separating first) and save as a new song. */
+  const transcribeAndSave = async (
+    ctx: Ctx,
+    original: Blob,
+    meta: { title: string; artist?: string; source: SongSource; fileName: string; keepVideo?: boolean },
+    engine: SeparationEngine | undefined,
+    prefetched?: { vocals: Blob; accomp: Blob; other?: Blob; serverMs?: number },
+    earlier: string[] = [],
+  ) => {
+    const { result } = await analyze(ctx, original, meta.fileName, engine, prefetched, earlier);
+    return saveImported(ctx, result, original, meta);
+  };
+
+  /** A failed "Analyze again" whose reason needs its own words. */
+  const reanalyzeFailure = (failure: ReanalyzeFailure, message: string, title?: string) =>
+    Object.assign(new Error(message), { reanalyzeFailure: failure, reanalyzeTitle: title });
+  const failureOf = (err: unknown): { failure: ReanalyzeFailure; title?: string } | null => {
+    const f = (err as { reanalyzeFailure?: ReanalyzeFailure } | null)?.reanalyzeFailure;
+    return f ? { failure: f, title: (err as { reanalyzeTitle?: string }).reanalyzeTitle } : null;
   };
 
   return {
@@ -1466,6 +1598,106 @@ export const useImport = create<ImportState>((set, get) => {
       const ctx = start('Bach — Prelude in C major', 'demo', planFor('demo', undefined));
       const song = demoSong();
       return (await finish(ctx, song))!;
+    },
+
+    reanalyze: async (songId, opts) => {
+      // never takes over another import
+      if (importBusy(get().job)) return null;
+      // a scheduled Studio save lands first (the song read below is the one on screen)
+      await settleStudioSave();
+      if (importBusy(get().job)) return null;
+      const [song, rec] = await Promise.all([getSong(songId), getAudioRecord(songId).catch(() => undefined)]);
+      const title = song?.title ?? useStudio.getState().song?.title ?? 'This song';
+      const kind: SongSource['kind'] = song?.source.kind ?? 'audio';
+      const ctx = start(title, kind, planFor(kind, undefined), undefined, opts.presetId, opts.transcriber, opts.pianoBlend, { reanalyze: { songId } });
+      ctx.update({ songId });
+      let separate = !!opts.separate;
+      /** the new notes, once analyzed (a storage-full card saves them without the old notes) */
+      let pending: { next: Song; was: Song; posteriors: Awaited<ReturnType<typeof transcribeAudio>>['posteriors']; label: string } | null = null;
+      const again = (transcriber: TranscriptionEngine) => () => get().reanalyze(songId, { ...opts, transcriber, pianoBlend: ctx.blend });
+      const commit = async (keepOther: boolean): Promise<string | null> => {
+        const p = pending!;
+        const outcome = await commitReanalysis(p.next, p.posteriors, { keepOther });
+        if (outcome === 'deleted') throw reanalyzeFailure('deleted', `“${title}” was deleted while it was being analyzed again, so the new notes weren’t saved.`);
+        if (outcome === 'quota') {
+          if (keepOther) throw reanalyzeFailure('quota', 'This browser’s storage is full. You can save the new notes without keeping the old ones (you won’t be able to go back), or cancel and keep your song as it is.', 'Not enough storage to keep the old notes');
+          throw reanalyzeFailure('quota-again', 'Couldn’t save the new notes because this browser’s storage is full. Your song wasn’t changed.');
+        }
+        // the Studio shows the new notes if it has this song open (also after leaving the page: the store keeps it)
+        const saved = (await getSong(songId)) ?? p.next;
+        useStudio.getState().applyReanalysis(saved);
+        void useLibrary.getState().refresh();
+        const hard = (s: Song) => s.arrangements.hard.notes.length;
+        ctx.update({
+          stage: 'done',
+          progress: 1,
+          songId,
+          finishedAt: Date.now(),
+          detail: undefined,
+          reanalyzeResult: {
+            label: p.label,
+            notes: hard(saved),
+            was: hard(p.was),
+            ...(p.was.tempo.source === 'manual' ? { keptTempo: p.was.tempo.bpm } : {}),
+            keptOther: keepOther,
+          },
+        });
+        const st = useStudio.getState();
+        if (!(st.analyzeOpen && st.song?.id === songId)) {
+          toast.success('New notes are ready', `“${title}” was analyzed again.`, {
+            actions: [{ label: 'Open', variant: 'primary', onClick: () => appNavigate(`/studio/${encodeURIComponent(songId)}`) }],
+            ttl: 0,
+          });
+        }
+        return songId;
+      };
+      const failed = (err: unknown): null => {
+        const f = failureOf(err);
+        if (f) ctx.update({ reanalyze: { songId, failure: f.failure }, ...(f.title ? { errorTitle: f.title } : {}) });
+        if (f?.failure === 'deleted' || f?.failure === 'missing' || f?.failure === 'quota-again') return fail(ctx, err);
+        if (f?.failure === 'quota') {
+          return fail(ctx, err, {
+            retry: () => again(retryModel(ctx))(),
+            saveWithoutOld: async (): Promise<string | null> => {
+              set({ failed: null });
+              ctx.update({ stage: 'saving', progress: null, detail: 'Replacing the notes', error: undefined, errorTitle: undefined, finishedAt: undefined, reanalyze: { songId } });
+              try {
+                return await commit(false);
+              } catch (e) {
+                return failed(e);
+              }
+            },
+          });
+        }
+        return fail(ctx, err, { retry: () => again(retryModel(ctx))(), retryFast: withFast(ctx, again('basic-pitch')) });
+      };
+      try {
+        if (!song || !rec) throw reanalyzeFailure('missing', 'This browser no longer has this song’s recording (its stored data may have been cleared).');
+        // the piano specialist outside Piano solo: no separation (the pipeline would ignore it)
+        if (separationUnused(ctx, separate)) {
+          skipSeparation(ctx);
+          separate = false;
+        }
+        const engine = await pickEngine(separate);
+        if (ctx.signal.aborted) return null;
+        ctx.update({ plan: planFor(kind, engine, false, ctx.blend), separation: engine });
+        // the stored recording itself (not a copy), with its name and type: a large video is then decoded as a stream
+        const name = rec.name || song.source.fileName || `${title}.${extFor(rec.type || rec.blob.type)}`;
+        const original = new File([rec.blob], name, { type: rec.type || rec.blob.type });
+        const { result } = await analyze(ctx, original, name, engine);
+        if (ctx.signal.aborted) return null;
+        ctx.update({ warnings: result.info.warnings, stage: 'saving', progress: null, detail: 'Replacing the notes' });
+        // the song as it is now (edited in the Studio meanwhile, or deleted)
+        await settleStudioSave();
+        const cur = await getSong(songId);
+        if (!cur) throw reanalyzeFailure('deleted', `“${title}” was deleted while it was being analyzed again, so the new notes weren’t saved.`);
+        const next = songFromReanalysis(cur, result, Date.now());
+        pending = { next, was: cur, posteriors: result.posteriors, label: analysisLabel(next.transcription, useSettings.getState().customDetection) };
+        if (ctx.signal.aborted) return null;
+        return await commit(true);
+      } catch (err) {
+        return failed(err);
+      }
     },
 
     cancel: () => {

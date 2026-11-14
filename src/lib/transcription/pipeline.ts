@@ -568,13 +568,15 @@ export function leadWorkerOptions(p: ExtractionParams): NoteExtractionOptions | 
   return lp ? toWorkerOptions(lp) : undefined;
 }
 
-const canonical = (v: unknown): unknown =>
+/** `v` with object keys sorted (for comparing stored detection parameters). */
+export const canonical = (v: unknown): unknown =>
   Array.isArray(v)
     ? v.map(canonical)
     : v && typeof v === 'object'
       ? Object.fromEntries(Object.keys(v as object).sort().map((k) => [k, canonical((v as Record<string, unknown>)[k])]))
       : v;
-const sameParams = (a: object, b: object) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
+/** Two sets of detection parameters are the same (key order ignored). */
+export const sameParams = (a: object, b: object) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
 
 /**
  * Stored detection parameters as re-detection should use them: songs imported with the "Full song"

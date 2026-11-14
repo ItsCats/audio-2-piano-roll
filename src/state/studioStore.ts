@@ -7,7 +7,7 @@ import { create } from 'zustand';
 import type { Arrangement, Difficulty, Hand, Note, Song } from '../lib/music/types';
 import { getSong, saveSong } from '../lib/storage/db';
 import { useSettings } from './settingsStore';
-import { regenerate } from '../lib/songs';
+import { resetLevel as resetLevelOf, type ResetResult } from '../lib/songs';
 import { newNoteId, sortNotes } from '../lib/music/cleanup';
 import { quantizeNotes } from '../lib/music/quantize';
 import { rebaseSheet } from '../lib/sheet/rebase';
@@ -87,9 +87,22 @@ interface StudioState {
   quantizeSelected: (subdivision: number) => void;
   transposeSelected: (semitones: number) => void;
   addNote: (n: Omit<Note, 'id'>) => number;
-  regenerateLevels: (levels: Difficulty[]) => void;
+  /**
+   * "Reset {Level} to detected notes": the level built again from the detected notes, as one undo step
+   * (nothing happens when it already is). `token`: that undo entry (null: nothing changed), so the
+   * toast's Undo can tell whether it is still the last step.
+   */
+  resetLevel: (d: Difficulty) => (ResetResult & { token: HistorySnap | null }) | null;
   updateSong: (patch: Partial<Song>) => void;
   replaceSong: (song: Song) => void;
+  /**
+   * The song after "Analyze again" (already saved): shown at once if it is the open song (also when
+   * the Studio page was left: the store keeps the song), with the history cleared and no save.
+   */
+  applyReanalysis: (song: Song) => void;
+  /** the "Analyze again" dialog is open (the Notes tab, a toast or ?analyze=1 opens it) */
+  analyzeOpen: boolean;
+  setAnalyzeOpen: (open: boolean) => void;
 }
 
 let saveTimer: number | null = null;
@@ -97,10 +110,26 @@ let saveTimer: number | null = null;
 let pendingSave: Song | null = null;
 let lastCoalesce: { key: string; at: number } | null = null;
 let saveNow: () => void = () => {};
+/** the saves being written (settleStudioSave waits for them) */
+const inflight = new Set<Promise<void>>();
 
 /** Saves a scheduled edit right away (the page is being hidden or closed, or another song opens). */
 export function flushSave(): void {
   saveNow();
+}
+
+/** Saves a scheduled edit now and waits until every save of the Studio has been written. */
+export async function settleStudioSave(): Promise<void> {
+  saveNow();
+  while (inflight.size) await Promise.all([...inflight]);
+}
+
+/** Drops a scheduled save of song `id` (its stored version was just replaced). */
+function dropPendingSave(id: string) {
+  if (pendingSave?.id !== id) return;
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = null;
+  pendingSave = null;
 }
 
 if (typeof window !== 'undefined' && typeof document !== 'undefined' && typeof window.addEventListener === 'function') {
@@ -115,16 +144,21 @@ function arrangement(s: StudioState): Arrangement | null {
 }
 
 export const useStudio = create<StudioState>((set, get) => {
-  const write = async (song: Song) => {
-    set({ saving: true });
-    try {
-      await saveSong(song);
-      set({ lastSavedAt: Date.now() });
-    } catch (err) {
-      set({ error: `Could not save: ${err instanceof Error ? err.message : String(err)}` });
-    } finally {
-      set({ saving: false });
-    }
+  const write = (song: Song) => {
+    const p = (async () => {
+      set({ saving: true });
+      try {
+        await saveSong(song);
+        set({ lastSavedAt: Date.now() });
+      } catch (err) {
+        set({ error: `Could not save: ${err instanceof Error ? err.message : String(err)}` });
+      } finally {
+        set({ saving: false });
+      }
+    })();
+    inflight.add(p);
+    void p.finally(() => inflight.delete(p));
+    return p;
   };
   saveNow = () => {
     if (saveTimer) clearTimeout(saveTimer);
@@ -175,10 +209,12 @@ export const useStudio = create<StudioState>((set, get) => {
     future: [],
     saving: false,
     lastSavedAt: null,
+    analyzeOpen: false,
+    setAnalyzeOpen: (open) => set({ analyzeOpen: open }),
     open: async (id) => {
       if (get().song?.id === id) return;
       flushSave();
-      set({ loading: true, error: null });
+      set({ loading: true, error: null, analyzeOpen: false });
       try {
         const song = await getSong(id);
         if (!song) throw new Error('Song not found. It may have been deleted.');
@@ -190,7 +226,7 @@ export const useStudio = create<StudioState>((set, get) => {
       }
     },
     openSong: (song) => set({ song: rebased(song), past: [], future: [], selection: new Set(), markSel: null, editMode: false, error: null }),
-    close: () => set({ song: null, past: [], future: [], selection: new Set(), markSel: null }),
+    close: () => set({ song: null, past: [], future: [], selection: new Set(), markSel: null, analyzeOpen: false }),
     setDifficulty: (d) => set({ difficulty: d, past: [], future: [], selection: new Set(), markSel: null }),
     setEditMode: (on) => set({ editMode: on, selection: on ? get().selection : new Set(), markSel: on ? get().markSel : null }),
     select: (ids, additive) => {
@@ -276,12 +312,15 @@ export const useStudio = create<StudioState>((set, get) => {
       set({ selection: new Set([id]) });
       return id;
     },
-    regenerateLevels: (levels) => {
+    resetLevel: (d) => {
       const s = get();
-      if (!s.song) return;
-      const song = rebased(regenerate(s.song, levels));
-      set({ song, past: [], future: [], selection: new Set() });
-      scheduleSave();
+      if (!s.song) return null;
+      const r = resetLevelOf(s.song, d);
+      if (!r.changed) return { ...r, token: null };
+      commitSong({ arrangements: r.song.arrangements });
+      const after = get();
+      if (d === after.difficulty) set({ selection: new Set(), markSel: null });
+      return { ...r, token: after.past[after.past.length - 1] ?? null };
     },
     updateSong: (patch) => {
       const s = get();
@@ -293,8 +332,15 @@ export const useStudio = create<StudioState>((set, get) => {
       scheduleSave();
     },
     replaceSong: (song) => {
-      set({ song: rebased(song), past: [], future: [], selection: new Set() });
+      set({ song: rebased(song), past: [], future: [], selection: new Set(), markSel: null });
       scheduleSave();
+    },
+    applyReanalysis: (song) => {
+      if (get().song?.id !== song.id) return;
+      // an edit scheduled before the re-analysis saved would write the old notes over it
+      dropPendingSave(song.id);
+      lastCoalesce = null;
+      set({ song: rebased(song), past: [], future: [], selection: new Set(), markSel: null, editMode: false });
     },
   };
 });

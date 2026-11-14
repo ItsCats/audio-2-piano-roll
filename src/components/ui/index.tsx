@@ -302,6 +302,7 @@ export function Modal({
   footer,
   hidden,
   noBlur,
+  closable = true,
 }: {
   open: boolean;
   onClose: () => void;
@@ -317,6 +318,8 @@ export function Modal({
    * up other GPU work for seconds: the video export's frame reads stalled behind it.
    */
   noBlur?: boolean;
+  /** false: no Close button, and Escape or a tap outside do nothing (a job that must be cancelled first runs) */
+  closable?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -326,7 +329,7 @@ export function Modal({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
-        onClose();
+        if (closable) onClose();
       }
     };
     window.addEventListener('keydown', onKey, true);
@@ -334,10 +337,10 @@ export function Modal({
       window.removeEventListener('keydown', onKey, true);
       prev?.focus?.();
     };
-  }, [open, onClose]);
+  }, [open, onClose, closable]);
   if (!open) return null;
   return (
-    <div className={cn('fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-6', noBlur ? 'bg-black/75' : 'bg-black/60 backdrop-blur-sm', hidden && 'invisible')} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className={cn('fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-6', noBlur ? 'bg-black/75' : 'bg-black/60 backdrop-blur-sm', hidden && 'invisible')} onMouseDown={(e) => closable && e.target === e.currentTarget && onClose()}>
       <div
         ref={ref}
         tabIndex={-1}
@@ -351,9 +354,11 @@ export function Modal({
       >
         <header className="flex items-center justify-between border-b border-ink-700 px-5 py-3.5">
           <h2 className="text-[15px] font-semibold text-ink-50">{title}</h2>
-          <IconButton label="Close" onClick={onClose} size="sm">
-            <X size={16} />
-          </IconButton>
+          {closable && (
+            <IconButton label="Close" onClick={onClose} size="sm">
+              <X size={16} />
+            </IconButton>
+          )}
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
         {footer && <footer className="flex items-center justify-end gap-2 border-t border-ink-700 px-5 py-3">{footer}</footer>}

@@ -120,3 +120,61 @@ describe('review fixes in the store', () => {
     expect(st().future.length).toBe(0);
   });
 });
+
+describe('Reset {Level} to detected notes', () => {
+  it('is one undo step (and saved); a level already as detected adds no step and no save', async () => {
+    const st = useStudio.getState;
+    // (a save scheduled by an earlier test lands first)
+    await (await import('../../src/state/studioStore')).settleStudioSave();
+    vi.mocked(db.saveSong).mockClear();
+    const unchanged = st().resetLevel('medium')!;
+    expect(unchanged.changed).toBe(false);
+    expect(unchanged.token).toBeNull();
+    expect(st().past).toHaveLength(0);
+    await new Promise((r) => setTimeout(r, 650));
+    expect(db.saveSong).not.toHaveBeenCalled();
+
+    const before = st().song!.arrangements.medium;
+    st().edit((ns) => ns.slice(2));
+    st().edit((ns) => ns.map((n, i) => (i === 0 ? { ...n, midi: n.midi + 1 } : n)));
+    const edited = st().song!.arrangements.medium;
+    const r = st().resetLevel('medium')!;
+    expect(r.changed).toBe(true);
+    expect(r.noteChanges).toBe(3);
+    expect(st().past).toHaveLength(3);
+    expect(st().past.at(-1)).toBe(r.token);
+    expect(st().song!.arrangements.medium.edited).toBe(false);
+    expect(st().song!.arrangements.medium.notes.length).toBe(before.notes.length);
+    await new Promise((r) => setTimeout(r, 650));
+    expect(db.saveSong).toHaveBeenCalledTimes(1);
+    // Undo brings the fixes back
+    st().undo();
+    expect(st().song!.arrangements.medium).toBe(edited);
+  });
+
+  it('its undo entry is gone after a level switch (the toast can tell)', () => {
+    const st = useStudio.getState;
+    st().edit((ns) => ns.slice(1));
+    const r = st().resetLevel('medium')!;
+    expect(st().past.includes(r.token!)).toBe(true);
+    st().setDifficulty('hard');
+    expect(st().past.includes(r.token!)).toBe(false);
+  });
+
+  it('the song after "Analyze again" replaces the open one with no history, selection or marking selected', () => {
+    const st = useStudio.getState;
+    const s = st().song!;
+    st().edit((ns) => ns.slice(1));
+    useStudio.setState({ selection: new Set([1]), markSel: 'm1', editMode: true });
+    const next = { ...s, title: 'Same song', arrangements: { ...s.arrangements } };
+    st().applyReanalysis({ ...next, id: 'someone-else' });
+    expect(st().past).toHaveLength(1);
+    st().applyReanalysis(next);
+    expect(st().song!.title).toBe('Same song');
+    expect(st().past).toHaveLength(0);
+    expect(st().future).toHaveLength(0);
+    expect(st().selection.size).toBe(0);
+    expect(st().markSel).toBeNull();
+    expect(st().editMode).toBe(false);
+  });
+});

@@ -10,9 +10,11 @@ import { pianoSpecialistSupport } from '../../lib/pianoSpecialist';
 /**
  * Where "Separate vocals & drums" would run and whether it is ticked for the current detection
  * preset (the user's last choice for that preset, else on for "Full song" when recommended).
- * `presetOverride`: for that preset instead (the Record tab has no preset picker: "piano").
+ * `presetOverride`: for that preset instead (the Record tab has no preset picker: "piano"; "Analyze
+ * again" has its own). `seconds`: the recording's length, when known (a long one is not recommended
+ * for this browser, separationSupport).
  */
-export function useSeparationChoice(presetOverride?: PresetId): {
+export function useSeparationChoice(presetOverride?: PresetId, seconds?: number): {
   avail: SeparationAvailability;
   checked: boolean;
   setChecked: (v: boolean) => void;
@@ -34,7 +36,7 @@ export function useSeparationChoice(presetOverride?: PresetId): {
     };
   }, [url]);
   const serverStems = !!url && server?.url === url && server.stems;
-  const browser = useMemo(() => separationSupport(), []);
+  const browser = useMemo(() => separationSupport(seconds), [seconds]);
   const avail = useMemo(() => separationAvailability(serverStems, browser), [serverStems, browser]);
   return {
     avail,
@@ -95,8 +97,21 @@ export function separationOptionText(o: { piano: boolean; engine: 'server' | 'br
  * Under "Piano solo" (or `preset` "piano": the Record tab) it is "Remove singing and drums": only the
  * piano part is transcribed, with either model (`pianoModel`: the high-accuracy piano model is ticked).
  */
-export function SeparationOption({ className, unusedReason, preset: presetOverride, pianoModel = false }: { className?: string; unusedReason?: string; preset?: PresetId; pianoModel?: boolean }) {
-  const { avail, checked: chosen, setChecked, preset } = useSeparationChoice(presetOverride);
+export function SeparationOption({
+  className,
+  unusedReason,
+  preset: presetOverride,
+  pianoModel = false,
+  seconds,
+}: {
+  className?: string;
+  unusedReason?: string;
+  preset?: PresetId;
+  pianoModel?: boolean;
+  /** the recording's length, when known ("Analyze again") */
+  seconds?: number;
+}) {
+  const { avail, checked: chosen, setChecked, preset } = useSeparationChoice(presetOverride, seconds);
   const piano = preset === 'piano';
   const modelEst = useMemo(() => (pianoModel ? pianoSpecialistSupport().estSecondsPerMinute : 0), [pianoModel]);
   const disabled = !avail.available || !!unusedReason;

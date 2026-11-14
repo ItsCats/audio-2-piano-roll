@@ -11,7 +11,7 @@ import type { TranscriptionEngine } from '../../lib/transcription/pipeline';
  * lib/pianoSpecialist; unticked = Basic Pitch, the default). Off unless the user ticks it; the choice is
  * remembered in the import prefs (importStore `pianoModel`).
  */
-export function usePianoModelChoice(alwaysOffered = false): {
+export function usePianoModelChoice(alwaysOffered = false, opts: { preset?: PresetId } = {}): {
   /** the choice is shown (preset "Piano solo") */
   offered: boolean;
   checked: boolean;
@@ -20,7 +20,8 @@ export function usePianoModelChoice(alwaysOffered = false): {
   transcriber: TranscriptionEngine;
   support: PianoSpecialistSupport;
 } {
-  const preset = useSettings((s) => s.detectionPreset) as PresetId;
+  const global = useSettings((s) => s.detectionPreset) as PresetId;
+  const preset = opts.preset ?? global;
   const prefs = useImport((s) => s.prefs);
   const setPref = useImport((s) => s.setPianoModelPref);
   const support = useMemo(() => pianoSpecialistSupport(), []);
@@ -41,7 +42,7 @@ export function usePianoModelChoice(alwaysOffered = false): {
  * not offered as runnable on memory-constrained devices; remembered in the import prefs
  * (importStore `pianoBlend`, default PIANO_BLEND_DEFAULT).
  */
-export function usePianoBlendChoice(): {
+export function usePianoBlendChoice(opts: { preset?: PresetId; seconds?: number } = {}): {
   offered: boolean;
   checked: boolean;
   setChecked: (v: boolean) => void;
@@ -50,10 +51,11 @@ export function usePianoBlendChoice(): {
   /** the solo piano model's speed estimate here (pianoSpecialistSupport, from the WASM threads) */
   estSecondsPerMinute: number;
 } {
-  const preset = useSettings((s) => s.detectionPreset) as PresetId;
+  const global = useSettings((s) => s.detectionPreset) as PresetId;
+  const preset = opts.preset ?? global;
   const prefs = useImport((s) => s.prefs);
   const setPref = useImport((s) => s.setPianoBlendPref);
-  const sep = useSeparationChoice();
+  const sep = useSeparationChoice(opts.preset, opts.seconds);
   const support = useMemo(() => pianoSpecialistSupport(), []);
   const browserSeparation = sep.checked && sep.avail.engine === 'browser';
   const avail = useMemo(() => pianoBlendAvailability({ ...pageBlendEnv(browserSeparation), specialist: support.available }), [browserSeparation, support.available]);
@@ -78,8 +80,8 @@ export function blendTimeText(estSecondsPerMinute: number): string {
   return `about ${Math.floor(halves / 2)}${halves % 2 ? '½' : ''} minutes`;
 }
 
-function PianoBlendOption({ className }: { className?: string }) {
-  const { checked, setChecked, avail, downloadMB, estSecondsPerMinute } = usePianoBlendChoice();
+export function PianoBlendOption({ className, preset, seconds }: { className?: string; preset?: PresetId; seconds?: number }) {
+  const { checked, setChecked, avail, downloadMB, estSecondsPerMinute } = usePianoBlendChoice({ preset, seconds });
   const unavailable = !avail.available;
   return (
     <label
@@ -111,15 +113,31 @@ function PianoBlendOption({ className }: { className?: string }) {
   );
 }
 
-/** `alwaysOffered`: the solo option, shown whatever the detection preset (the Record tab, which has no preset picker). */
-export function PianoModelOption({ className, alwaysOffered = false }: { className?: string; alwaysOffered?: boolean }) {
-  const preset = useSettings((s) => s.detectionPreset) as PresetId;
-  if (preset === 'mix' && !alwaysOffered) return <PianoBlendOption className={className} />;
-  return <SoloPianoModelOption className={className} alwaysOffered={alwaysOffered} />;
+/**
+ * `alwaysOffered`: the solo option, shown whatever the detection preset (the Record tab, which has no
+ * preset picker). `preset`: for this preset instead of the current one ("Analyze again" has its own).
+ * `seconds`: the recording's length, when known (the phone warning then says whether it is too long).
+ */
+export function PianoModelOption({ className, alwaysOffered = false, preset: presetOverride, seconds }: { className?: string; alwaysOffered?: boolean; preset?: PresetId; seconds?: number }) {
+  const global = useSettings((s) => s.detectionPreset) as PresetId;
+  const preset = presetOverride ?? global;
+  if (preset === 'mix' && !alwaysOffered) return <PianoBlendOption className={className} preset={presetOverride} seconds={seconds} />;
+  return <SoloPianoModelOption className={className} alwaysOffered={alwaysOffered} preset={presetOverride} seconds={seconds} />;
 }
 
-function SoloPianoModelOption({ className, alwaysOffered = false }: { className?: string; alwaysOffered?: boolean }) {
-  const { offered, checked, setChecked, support } = usePianoModelChoice(alwaysOffered);
+/** The warning under "High-accuracy piano model" where it is not recommended (`seconds`: the recording's length, when known). */
+export function pianoModelWarning(support: Pick<PianoSpecialistSupport, 'phone' | 'warnAboveSeconds'>, seconds?: number): string {
+  if (seconds !== undefined && support.warnAboveSeconds !== undefined && seconds > support.warnAboveSeconds) {
+    const min = Math.round(seconds / 60);
+    return support.phone
+      ? `May be slow on phones. This song is ${min} minutes long, so it might not work on this phone.`
+      : `May be slow on this device. This song is ${min} minutes long, so it might not work here.`;
+  }
+  return support.phone ? 'May be slow on phones. Songs over 6 minutes might not work on phones with little memory.' : 'May be slow on this device. Songs over 6 minutes might not work.';
+}
+
+export function SoloPianoModelOption({ className, alwaysOffered = false, preset, seconds }: { className?: string; alwaysOffered?: boolean; preset?: PresetId; seconds?: number }) {
+  const { offered, checked, setChecked, support } = usePianoModelChoice(alwaysOffered, { preset });
   if (!offered) return null;
   const unavailable = !support.available;
   return (
@@ -145,11 +163,7 @@ function SoloPianoModelOption({ className, alwaysOffered = false }: { className?
           <span>{`For solo piano. Takes longer and downloads a ${support.downloadMB} MB model once.`}</span>
           {unavailable && <span className="text-ink-400">Not available in this browser.</span>}
           {!unavailable && !support.recommended && (
-            <span className="text-warn">
-              {support.phone
-                ? 'May be slow on phones. Songs over 6 minutes might not work on phones with little memory.'
-                : 'May be slow on this device. Songs over 6 minutes might not work.'}
-            </span>
+            <span className="text-warn">{pianoModelWarning(support, seconds)}</span>
           )}
         </span>
       </span>
