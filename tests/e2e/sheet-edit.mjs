@@ -4,7 +4,7 @@
  * and synthetic MIDI made here; no other music.
  *
  *   npx vite build --outDir /tmp/p2v-dist
- *   node tests/e2e/sheet-edit.mjs --dist /tmp/p2v-dist [--port 5740] [--shots DIR] [--only desktop,video,phone,landscape,perf]
+ *   node tests/e2e/sheet-edit.mjs --dist /tmp/p2v-dist [--port 5740] [--shots DIR] [--only desktop,video,handcam,phone,landscape,perf]
  *
  * desktop (1280×800): crossOriginIsolated; without Edit the sheet is as before (no tools, a click on a
  *   note jumps there and changes nothing); E → edit bar; ? opens Help with the shortcut list; keys
@@ -14,6 +14,9 @@
  * video: a synthetic two-hand song exported as a video (WebM), then every note moved to the left hand on
  *   the sheet and exported again with a title page: the decoded frames (ffmpeg) show only left-hand
  *   colors.
+ * handcam: a synthetic hands video (tests/e2e/handcam-video.mjs, needs ffmpeg) added to a MIDI song;
+ *   every note moved to the left hand and a tempo mark set on the sheet (a label only: notes and video
+ *   keep their timing); exported with the hands in a corner and a title page: only left-hand colors.
  * phone (iPhone 14, 390×664, touch): the dock with Notes / Marks / Bar, every button ≥ 44 px, no
  *   sideways scroll; a swipe scrolls and edits nothing; a pinch zooms (and edits nothing); a tap
  *   selects and ▲ changes the pitch; a long press opens the action sheet (finger 2); Add + a tap places
@@ -42,7 +45,7 @@ const opt = (name, def) => {
 const dist = opt('dist');
 const port = Number(opt('port', '5740'));
 const shots = opt('shots', fs.mkdtempSync(path.join(os.tmpdir(), 'p2v-sheet-edit-')));
-const only = new Set((opt('only', 'desktop,video,phone,landscape,perf') ?? '').split(','));
+const only = new Set((opt('only', 'desktop,video,handcam,phone,landscape,perf') ?? '').split(','));
 if (!dist || !fs.existsSync(path.join(dist, 'index.html'))) {
   console.error('usage: node tests/e2e/sheet-edit.mjs --dist BUILD_DIR [--port N] [--shots DIR] [--only parts]');
   process.exit(2);
@@ -264,10 +267,11 @@ function handPixels(file, t, W, H) {
 const probe = (file) => JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration:stream=codec_name,width,height', '-of', 'json', file]).toString());
 
 /** Renders the open song's video in the Export dialog (720p, 30 FPS, WebM) and saves it. */
-async function exportVideo(page, name, titlePage) {
+async function exportVideo(page, name, titlePage, prep) {
   await page.locator('button:has(svg.lucide-film)').first().click();
   const dlg = page.getByRole('dialog', { name: 'Export video' });
   await dlg.waitFor();
+  if (prep) await prep(dlg);
   await dlg.getByLabel('Resolution').selectOption({ label: '720p' });
   await dlg.getByLabel('Frame rate').selectOption({ label: '30 FPS' });
   await dlg.getByLabel('Container').selectOption({ label: 'WebM' });
@@ -464,6 +468,98 @@ try {
       { before, after, d1, d2, codec: p2.streams[0].codec_name },
     );
     await clean(page, errors, 'video');
+    await page.context().close();
+  }
+
+  // ---------------------------------------------------------------- a song with a video of the hands
+  if (only.has('handcam')) {
+    const { page, errors } = await newPage({ viewport: { width: 1400, height: 900 } });
+    const { makeHandsVideo, makeNotes } = await import('./handcam-video.mjs');
+    const SECONDS = 8;
+    const notes = makeNotes(SECONDS);
+    const video = path.join(work, 'hands.mp4');
+    await makeHandsVideo({ out: video, notes, seconds: SECONDS });
+    // the same notes as a MIDI file (two hands split at middle C)
+    const midi = new Midi();
+    midi.header.setTempo(120);
+    midi.header.update();
+    const rh = midi.addTrack();
+    rh.name = 'Right Hand';
+    const lh = midi.addTrack();
+    lh.name = 'Left Hand';
+    for (const n of notes) (n.midi >= 60 ? rh : lh).addNote({ midi: n.midi, time: n.start, duration: n.dur, velocity: n.vel });
+    const file = path.join(work, 'hands-notes.mid');
+    fs.writeFileSync(file, Buffer.from(midi.toArray()));
+    await page.goto(base + '/import?tab=midi');
+    await page.setInputFiles('input[type=file]', file);
+    await page.waitForURL(/\/studio\/.+/, { timeout: 60000 });
+    const id = songId(page);
+    await page.waitForTimeout(800);
+    // add the hands video (synced against the notes) and keep its setup as it is
+    await page.locator('button:has(svg.lucide-film)').first().click();
+    let dlg = page.getByRole('dialog', { name: 'Export video' });
+    await dlg.waitFor();
+    const hsec = dlg.getByTestId('hands-section');
+    await hsec.scrollIntoViewIfNeeded();
+    await hsec.getByTestId('hands-video-file').setInputFiles(video);
+    const setup = page.getByTestId('hands-setup');
+    await setup.waitFor({ timeout: 60000 });
+    await setup.getByTestId('sync-result').waitFor({ timeout: 300000 });
+    for (let i = 0; i < 6 && !(await setup.getByTestId('hands-save').isVisible().catch(() => false)); i++) {
+      await setup.getByRole('button', { name: 'Next' }).click();
+      await page.waitForTimeout(300);
+    }
+    await setup.getByTestId('hands-save').click();
+    await setup.waitFor({ state: 'detached' });
+    await page.waitForTimeout(1200);
+    for (const b of await page.getByRole('button', { name: 'Dismiss' }).all()) await b.click({ timeout: 2000 }).catch(() => {});
+    await dlg.getByRole('button', { name: 'Close' }).first().click();
+    let s = await savedWhen(page, id, (x) => !!x.handVideo);
+    const offset = s.handVideo?.offset;
+    const times = (x) => x.arrangements.hard.notes.map((n) => `${n.id}:${n.start}:${n.dur}`).join(',');
+    const t0 = times(s);
+    check('hands video: added to the MIDI song', !!s.handVideo, { offset });
+
+    // on the sheet: every note to the left hand, then a tempo mark (only a label: the video keeps its timing)
+    await page.getByRole('radio', { name: /Sheet music/ }).click();
+    await sheetReady(page);
+    await page.waitForTimeout(600);
+    await page.keyboard.press('e');
+    await page.waitForTimeout(300);
+    await page.keyboard.press('Control+a');
+    await edit(page, () => page.keyboard.press('l'));
+    const hs = await heads(page);
+    await page.mouse.click(hs[Math.floor(hs.length / 2)].x, hs[Math.floor(hs.length / 2)].y);
+    await page.waitForTimeout(250);
+    await page.keyboard.press('Shift+T');
+    await page.waitForSelector('[data-testid="sheet-tempo-picker"]');
+    const labelOnly = await page.getByTestId('sheet-tempo-label-only').innerText().catch(() => '');
+    const speedOff = !(await page.getByTestId('sheet-tempo-change').isChecked()) && (await page.getByTestId('sheet-tempo-change').isDisabled());
+    await page.getByTestId('sheet-tempo-bpm').fill('80');
+    await edit(page, () => page.getByTestId('sheet-tempo-apply').click());
+    s = await savedWhen(page, id, (x) => !!x.sheet?.tempos?.length && x.arrangements.hard.notes.every((n) => n.hand === 'L'));
+    const timesKept = times(s) === t0;
+    check(
+      'hands video: Ctrl+A, L moves every note to the left hand; a tempo mark is only a label (no note or the video moves)',
+      s.arrangements.hard.notes.every((n) => n.hand === 'L') && !!s.sheet?.tempos?.length && !s.sheet.tempos[0].retimed && timesKept && s.handVideo?.offset === offset && /video of your hands/.test(labelOnly) && speedOff,
+      { labelOnly, speedOff, timesKept, tempos: s.sheet?.tempos },
+    );
+    await page.keyboard.press('e');
+    await page.waitForTimeout(300);
+    // the video with the hands in a corner and a title page: only the left-hand color falls
+    const v = await exportVideo(page, 'hands.webm', true, async (d) => {
+      const h = d.getByTestId('hands-section');
+      await h.scrollIntoViewIfNeeded();
+      await h.getByRole('radio', { name: 'Corner' }).click();
+    });
+    const p = probe(v);
+    const d = Number(p.format.duration);
+    const { width: W, height: H } = p.streams[0];
+    const px = [2, 3.5, 5].map((x) => handPixels(v, d - x, W, H));
+    execFileSync('ffmpeg', ['-v', 'error', '-y', '-ss', String(d - 3.5), '-i', v, '-frames:v', '1', path.join(shots, 'm3-video-hands.png')]);
+    const sum = (k) => px.reduce((n, q) => n + q[k], 0);
+    check('hands video export (corner, title page): the edited notes, all left hand', sum('orange') > 2000 && sum('blue') < sum('orange') * 0.05 && d > SECONDS, { px, d });
+    await clean(page, errors, 'hands video');
     await page.context().close();
   }
 

@@ -487,7 +487,11 @@ function TempoForm({ ctx, m, dock, done }: { ctx: SheetCtx; m: number; dock: boo
         <input type="checkbox" checked={change && can} disabled={!can} onChange={(e) => setChange(e.target.checked)} className="h-4 w-4 accent-[var(--color-accent-500)]" data-testid="sheet-tempo-change" />
         Change playback speed from here
       </label>
-      {!can && <span className="w-full text-[11.5px] text-ink-300">This song plays a recording, so the tempo mark is shown but the playback speed stays the same.</span>}
+      {!can && (
+        <span className="w-full text-[11.5px] text-ink-300" data-testid="sheet-tempo-label-only">
+          {ctx.song.hasAudio ? 'This song plays a recording' : 'This song has a video of your hands'}, so the tempo mark is shown but the playback speed stays the same.
+        </span>
+      )}
       <button
         type="button"
         disabled={!ok}
