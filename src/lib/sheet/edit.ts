@@ -30,6 +30,8 @@ export interface SheetEditResult {
   select?: number[];
   /** Slurs on these notes now end on others (a tie merged b into a). */
   repoint?: Map<number, number>;
+  /** Removing notes is what the edit is for (Delete): none of them were "replaced". */
+  deletes?: true;
 }
 
 /** Note lengths of the palette (divisions): 16th, 8th, dotted 8th, quarter, dotted quarter, half, dotted half, whole. */
@@ -336,7 +338,7 @@ export function deleteOp(ctx: SheetCtx, ids: Set<number>): SheetEditResult | nul
   const all = arrNotes(ctx);
   const notes = all.filter((n) => !ids.has(n.id));
   if (notes.length === all.length) return null;
-  return { notes, select: [] };
+  return { notes, select: [], deletes: true };
 }
 
 /** The velocity a new note gets (no dynamics yet in this version: the level of the notes around it). */

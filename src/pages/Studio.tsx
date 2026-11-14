@@ -490,9 +490,11 @@ export default function StudioPage() {
             title={editMode ? 'Stop editing (E)' : 'Edit notes (E)'}
             aria-pressed={editMode}
             className={cn('max-sm:h-11 max-sm:min-w-11', editMode && 'bg-accent-500/15 text-accent-200 ring-2 ring-accent-400 hover:bg-accent-500/25')}
+            aria-label={editMode ? 'Editing' : 'Edit'}
             data-testid="studio-edit"
           >
-            <span>{editMode ? 'Editing' : 'Edit'}</span>
+            {/* the word from 420 px (a phone's header has no room for it): the outline marks it on */}
+            <span className="hidden min-[420px]:inline">{editMode ? 'Editing' : 'Edit'}</span>
           </Button>
           <Button size="sm" variant="primary" icon={<Film size={15} />} onClick={() => setExportOpen(true)}>
             <span className="hidden lg:inline">Export Video</span>

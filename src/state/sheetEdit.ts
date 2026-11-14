@@ -40,8 +40,7 @@ export function runSheetEdit(op: (ctx: SheetCtx) => SheetEditResult | null, opts
   {
     const before = ctx.song.arrangements[ctx.level].notes;
     const after = new Set(res.notes.map((n) => n.id));
-    const sel = useStudio.getState().selection;
-    lastReplaced = before.filter((n) => !after.has(n.id) && !sel.has(n.id) && !res.repoint?.has(n.id)).length;
+    lastReplaced = res.deletes ? 0 : before.filter((n) => !after.has(n.id) && !res.repoint?.has(n.id)).length;
   }
   const st = useStudio.getState();
   const level = ctx.level;

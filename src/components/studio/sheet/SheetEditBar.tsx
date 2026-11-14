@@ -188,7 +188,7 @@ export function SheetEditBar({ layout, fixed = false }: { layout: 'row' | 'dock'
 
   if (!dock)
     return (
-      <div className="flex flex-wrap items-center gap-0.5 border-b border-ink-800 bg-ink-900/95 px-3 py-1" data-testid="sheet-edit-bar" role="toolbar" aria-label="Edit the sheet music">
+      <div className="relative z-30 flex flex-wrap items-center gap-0.5 border-b border-ink-800 bg-ink-900/95 px-3 py-1" data-testid="sheet-edit-bar" role="toolbar" aria-label="Edit the sheet music">
         <span className="mr-1 rounded-md bg-accent-500/15 px-2 py-1 text-[11.5px] font-semibold text-accent-300 capitalize">Editing: {difficulty}</span>
         <Tool dock={false} label="Undo" title="Undo (Ctrl/⌘+Z)" disabled={!past} why="Nothing to undo." onClick={undo} testId="sheet-undo">
           <Undo2 size={16} />
@@ -204,7 +204,8 @@ export function SheetEditBar({ layout, fixed = false }: { layout: 'row' | 'dock'
         <Tool dock={false} label="Help and shortcuts" title="Help and shortcuts (?)" onClick={() => ui.set({ help: true })} testId="sheet-help-open">
           <CircleHelp size={16} />
         </Tool>
-        <span className="ml-auto flex min-w-[10rem] flex-1 items-center justify-end gap-2 pl-2 text-[11.5px] text-ink-300" aria-live="polite" data-testid="sheet-status">
+        {/* the status hangs just under the bar, over the sheet's corner: it never takes a row of its own */}
+        <span className="pointer-events-none absolute top-full left-3 mt-1.5 flex max-w-[calc(100%-1.5rem)] items-center gap-2 rounded-lg bg-ink-900/90 px-2.5 py-1 text-[12px] text-ink-100 shadow-lg [&_button]:pointer-events-auto" aria-live="polite" data-testid="sheet-status">
           {chips}
           <span className="truncate">{status}</span>
         </span>
@@ -290,7 +291,7 @@ export function SheetEditBar({ layout, fixed = false }: { layout: 'row' | 'dock'
               <Redo2 size={20} />
             </Tool>
           </div>
-          <p className="line-clamp-2 min-h-0 text-[12px] leading-snug text-ink-300">Held sideways, the music needs the whole screen to edit. Or turn the phone upright.</p>
+          <p className="line-clamp-2 min-h-0 text-[12px] leading-snug text-ink-300">Or turn the phone upright to edit here.</p>
         </div>
       );
     // in full screen: a column beside the music
@@ -410,23 +411,24 @@ function ScrollRow({ children }: { children: ReactNode }) {
     };
   }, []);
   const go = (dir: 1 | -1) => ref.current?.scrollBy({ left: dir * ref.current.clientWidth * 0.7, behavior: 'smooth' });
-  const arrow = 'focus-ring absolute top-1/2 z-10 flex h-12 w-11 -translate-y-1/2 items-center justify-center rounded-lg bg-ink-800/95 text-ink-100 shadow-lg';
+  // a chevron in the fade (a tap scrolls; not a separate stop for the keyboard, which reaches every tool by Tab)
+  const arrow = 'absolute inset-y-0 z-10 flex w-8 items-center justify-center text-ink-100';
   return (
     <div className="relative min-w-0 flex-1">
       <div ref={ref} className="overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" data-testid="sheet-dock-tools">
         <div className="flex w-max items-center gap-2 px-2 pt-0.5">{children}</div>
       </div>
-      {edges.l && <div aria-hidden className="pointer-events-none absolute inset-y-0 left-0 w-10 bg-gradient-to-r from-ink-900 to-transparent" />}
-      {edges.r && <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-ink-900 to-transparent" />}
+      {edges.l && <div aria-hidden className="pointer-events-none absolute inset-y-0 left-0 w-12 bg-gradient-to-r from-ink-900 from-40% to-transparent" />}
+      {edges.r && <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 w-12 bg-gradient-to-l from-ink-900 from-40% to-transparent" />}
       {edges.l && (
-        <button type="button" aria-label="Earlier tools" className={cn(arrow, 'left-0')} onClick={() => go(-1)} data-testid="sheet-dock-scroll-left">
-          <ChevronLeft size={18} />
-        </button>
+        <div aria-hidden className={cn(arrow, 'left-0')} onClick={() => go(-1)} data-testid="sheet-dock-scroll-left">
+          <ChevronLeft size={20} />
+        </div>
       )}
       {edges.r && (
-        <button type="button" aria-label="More tools" className={cn(arrow, 'right-0')} onClick={() => go(1)} data-testid="sheet-dock-scroll-right">
-          <ChevronRight size={18} />
-        </button>
+        <div aria-hidden className={cn(arrow, 'right-0')} onClick={() => go(1)} data-testid="sheet-dock-scroll-right">
+          <ChevronRight size={20} />
+        </div>
       )}
     </div>
   );
