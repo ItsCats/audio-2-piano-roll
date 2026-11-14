@@ -206,7 +206,7 @@ export function SheetEditBar({ layout, fixed = false }: { layout: 'row' | 'dock'
     );
 
   const tabs = (
-    <div className={cn('flex items-center gap-2', rail ? 'px-2 pt-1' : 'px-2 pt-1.5')} role="tablist" aria-label="Tools">
+    <div className={cn('flex items-center', rail ? 'gap-2 px-2 pt-1' : 'gap-1 py-0.5 pl-2')} role="tablist" aria-label="Tools">
       {(['notes', 'marks', 'bar'] as const).map((tb) => (
         <button
           key={tb}
@@ -214,7 +214,7 @@ export function SheetEditBar({ layout, fixed = false }: { layout: 'row' | 'dock'
           role="tab"
           aria-selected={ui.tab === tb}
           onClick={() => ui.set({ tab: tb, picker: null })}
-          className={cn('focus-ring h-11 flex-1 rounded-lg text-[13.5px] font-medium capitalize', ui.tab === tb ? 'bg-ink-700 text-ink-50' : 'text-ink-300 hover:text-ink-100')}
+          className={cn('focus-ring h-11 min-w-11 flex-1 rounded-lg text-[13.5px] font-medium capitalize', ui.tab === tb ? 'bg-ink-700 text-ink-50' : 'text-ink-300 hover:text-ink-100')}
           data-testid={`sheet-tab-${tb}`}
         >
           {tb === 'bar' ? 'Bar' : tb === 'marks' ? 'Marks' : 'Notes'}
@@ -307,11 +307,15 @@ export function SheetEditBar({ layout, fixed = false }: { layout: 'row' | 'dock'
       role="toolbar"
       aria-label="Edit the sheet music"
     >
-      <div className="flex items-center gap-1 px-2 pt-1.5">
-        <span className="shrink-0 rounded-md bg-accent-500/15 px-2 py-1 text-[11px] font-semibold text-accent-300 capitalize">{difficulty}</span>
+      {/* status line, then tabs with Undo / Redo / Help / fold on one row, then the tools */}
+      <div className="flex items-center gap-1.5 px-3 pt-1">
+        <span className="shrink-0 text-[11px] font-semibold text-accent-300 capitalize">{difficulty}</span>
         <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink-200" aria-live="polite" data-testid="sheet-status">
           {status}
         </span>
+      </div>
+      <div className="flex items-center gap-1 pr-1">
+        <div className="min-w-0 flex-1">{!ui.collapsed && tabs}</div>
         <Tool dock label="Undo" disabled={!past} onClick={undo} testId="sheet-undo">
           <Undo2 size={20} />
         </Tool>
@@ -327,8 +331,7 @@ export function SheetEditBar({ layout, fixed = false }: { layout: 'row' | 'dock'
       {!ui.collapsed && (
         <>
           {picker}
-          {tabs}
-          <div className="flex items-center gap-2 overflow-x-auto overscroll-x-contain px-2 py-1.5">
+          <div className="flex items-center gap-2 overflow-x-auto overscroll-x-contain px-2 pt-0.5 pb-1.5">
             {ui.tab !== 'bar' && selectMore}
             {toolRow}
           </div>

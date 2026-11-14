@@ -516,7 +516,7 @@ export default function StudioPage() {
             <SheetEditBar layout="dock" />
           </Suspense>
         )}
-        <Transport />
+        <Transport compact={editMode && view === 'sheet' && sheetTools !== 'row'} />
       </div>
 
       {panelOpen && (

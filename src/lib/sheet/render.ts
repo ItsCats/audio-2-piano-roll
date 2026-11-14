@@ -430,6 +430,19 @@ export class SheetRenderer {
 
   /** Reads measure boxes and note x positions of a freshly drawn chunk. */
   private indexChunk(osmd: InstanceType<OsmdModule['OpenSheetMusicDisplay']>, c: Chunk, score: Score, boxes: (MeasureBox | undefined)[], layer: HTMLElement): void {
+    // a pinch preview scales the music with a CSS transform: measure it unscaled (no paint happens
+    // in between, so nothing flickers)
+    const zoomLayer = layer.closest('[data-testid="sheet-music"]') as HTMLElement | null;
+    const tf = zoomLayer?.style.transform ?? '';
+    if (zoomLayer && tf) zoomLayer.style.transform = '';
+    try {
+      this.indexChunkNow(osmd, c, score, boxes, layer);
+    } finally {
+      if (zoomLayer && tf) zoomLayer.style.transform = tf;
+    }
+  }
+
+  private indexChunkNow(osmd: InstanceType<OsmdModule['OpenSheetMusicDisplay']>, c: Chunk, score: Score, boxes: (MeasureBox | undefined)[], layer: HTMLElement): void {
     const t = score.time;
     const svg = c.el.querySelector('svg');
     if (!svg) return;

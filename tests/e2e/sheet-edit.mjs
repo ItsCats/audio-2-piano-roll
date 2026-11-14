@@ -502,7 +502,7 @@ try {
     const zoomText = () => page.locator('[data-testid="sheet-toolbar"] button[title="Reset size"]').innerText();
     const z0 = await zoomText();
     let n = await drawnCount(page);
-    await pinch(page, cdp, sc.x + sc.width / 2, sc.y + sc.height * 0.6, 80, 200);
+    await pinch(page, cdp, sc.x + sc.width / 2, sc.y + sc.height * 0.6, 80, 125);
     await redrawn(page, n).catch(() => {});
     await page.waitForTimeout(600);
     const z1 = await zoomText();
@@ -551,13 +551,15 @@ try {
       },
       { y: ref.y, x: ref.x },
     );
+    const tTap = Date.now();
     await edit(page, () => page.touchscreen.tap(spot, ref.y));
-    s = await savedWhen(page, id, (x) => x.arrangements.hard.notes.length > c1);
     const addedShown = (await page.locator('[data-testid="sheet-added"]').count()) === 1;
     const addedText = addedShown ? await page.getByTestId('sheet-added').innerText() : '';
+    console.log(`   added message after ${Date.now() - tTap} ms: ${addedShown}`);
     await page.screenshot({ path: path.join(shots, 'm3-phone-added.png') });
+    s = await savedWhen(page, id, (x) => x.arrangements.hard.notes.length > c1);
     const c2 = s.arrangements.hard.notes.length;
-    await edit(page, () => page.getByTestId('sheet-added-undo').tap());
+    if (addedShown) await edit(page, () => page.getByTestId('sheet-added-undo').tap());
     s = await savedWhen(page, id, (x) => x.arrangements.hard.notes.length === c1);
     check('phone: Add + a tap places one note ("Added …"); its Undo takes it back', banner && addedShown && c2 === c1 + 1 && s.arrangements.hard.notes.length === c1, { banner, addedText, c1, c2, after: s.arrangements.hard.notes.length });
     await page.getByTestId('sheet-add').tap();

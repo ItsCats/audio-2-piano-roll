@@ -154,17 +154,22 @@ export function SheetMusicView() {
       // an edit (on the sheet or undo while editing): keep the lines, redraw only what changed
       edit: keepOld && useStudio.getState().editMode,
       onChunk: () => {
+        // the pinch preview (a scaled copy of the old drawing) ends when the new drawing shows
+        if (zoomLayerRef.current && gestureZoom.current === null) zoomLayerRef.current.style.transform = '';
         if (shown) return;
         shown = true;
-        // the pinch preview (a scaled copy of the old drawing) ends when the new drawing shows
-        if (zoomLayerRef.current) zoomLayerRef.current.style.transform = '';
         setStatus('ready');
         const top = r.lineTopOf(r.measureAt(t));
         const sc = scrollRef.current;
         if (sc && top !== null && t > 0.5) sc.scrollTop = Math.max(0, wrapperTop() + top - sc.clientHeight * 0.2);
       },
     })
-      .then((done) => done && setDrawTick((n) => n + 1))
+      .then((done) => {
+        if (!done) return;
+        // (an Edit-mode redraw may swap only some lines: the preview ends here at the latest)
+        if (zoomLayerRef.current && gestureZoom.current === null) zoomLayerRef.current.style.transform = '';
+        setDrawTick((n) => n + 1);
+      })
       .catch((e) => {
         console.error(e);
         setStatus('error');
@@ -398,10 +403,10 @@ export function SheetMusicView() {
     sc.scrollTop += r.top - top - Math.max(0, (bottom - top) * 0.3);
   }, [drawTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // "Added G4 · quarter — Undo" fades after 4 s
+  // "Added G4 · quarter — Undo" goes after 6 s
   useEffect(() => {
     if (!added) return;
-    const t = window.setTimeout(() => useSheetUi.getState().added?.at === added.at && useSheetUi.getState().set({ added: null }), 4000);
+    const t = window.setTimeout(() => useSheetUi.getState().added?.at === added.at && useSheetUi.getState().set({ added: null }), 6000);
     return () => clearTimeout(t);
   }, [added]);
 
