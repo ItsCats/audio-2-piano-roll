@@ -415,6 +415,11 @@ function RecordTab({ busy }: { busy: boolean }) {
   const chunks = useRef<Blob[]>([]);
   const [, tick] = useState(0);
   const importBlob = useImport((s) => s.importAudioBlob);
+  // "Remove singing and drums" for the recording (Piano solo's remembered choice; read at stop time)
+  const sep = useSeparationChoice('piano');
+  const model = usePianoModelChoice(true);
+  const separateRef = useRef(sep.checked);
+  separateRef.current = sep.checked;
   const [touch] = useState(isTouchDevice);
   // a phone that auto-locks mid-recording suspends the page (and the microphone): keep the screen on
   // while recording; the import holds its own lock from "Stop & transcribe" on (importStore.ts)
@@ -464,15 +469,18 @@ function RecordTab({ busy }: { busy: boolean }) {
         const blob = new Blob(chunks.current, { type: r.mimeType || 'audio/webm' });
         // the Blob holds the data now: don't keep a second reference to every chunk
         chunks.current = [];
-        // the current preset with Basic Pitch, or (ticked below) the high-accuracy piano model with the
-        // "Piano solo" preset; read at stop time so a tick during the recording counts
+        // the current preset with Basic Pitch, or (ticked below) the high-accuracy piano model and / or
+        // "Remove singing and drums" with the "Piano solo" preset; read at stop time so a tick during
+        // the recording counts
         const transcriber = transcriberChoice(useImport.getState().prefs, 'piano');
-        const piano = transcriber === 'piano-specialist';
+        const separate = separateRef.current;
+        const piano = transcriber === 'piano-specialist' || separate;
         void importBlob(blob, {
           title: `Recording ${new Date().toLocaleString()}`,
           source: { kind: 'capture', mimeType: blob.type, fileSize: blob.size },
           transcriber,
           ...(piano ? { presetId: 'piano' as const } : {}),
+          ...(separate ? { separate: true } : {}),
         });
         // the import has asked for its own lock by now (importStore.ts)
         void wake.hold(false);
@@ -490,6 +498,7 @@ function RecordTab({ busy }: { busy: boolean }) {
     <div className="flex flex-col items-center gap-4 py-8 text-center">
       <p className="max-w-md text-[13px] text-ink-300">Play piano (or anything) into your microphone. A quiet room and a close mic give the best transcription.</p>
       <PianoModelOption alwaysOffered className="w-full max-w-md" />
+      <SeparationOption preset="piano" pianoModel={model.transcriber === 'piano-specialist'} className="w-full max-w-md text-left" />
       {rec ? (
         <>
           <div className="flex items-center gap-2 text-[14px] text-ink-50">
@@ -522,9 +531,9 @@ export default function ImportPage() {
   const sep = useSeparationChoice();
   const model = usePianoModelChoice();
   const blend = usePianoBlendChoice();
-  // the piano model is for solo piano: separation is not used with it
+  // (the piano model is only offered with Piano solo, where separation is "Remove singing and drums": both work together)
   const pianoModel = model.transcriber === 'piano-specialist';
-  const separate = sep.checked && !pianoModel;
+  const separate = sep.checked;
   const busy = !!job && job.stage !== 'done' && job.stage !== 'error';
 
   // "Play a game while you wait": the import it was opened for
@@ -635,7 +644,7 @@ export default function ImportPage() {
                 <Dropzone onFile={onFile} />
                 <HandsVideoImport busy={busy} pianoModelOn={pianoModel} onVideo={onHandsVideo} />
                 <DetectionOptions />
-                <SeparationOption unusedReason={pianoModel ? 'Not used with the high-accuracy piano model.' : undefined} />
+                <SeparationOption pianoModel={pianoModel} />
                 <p className="text-[12px] text-ink-400">Up to 20 minutes / 300 MB (videos of you playing: up to 4 GB). Longer files: trim first. Video files use their audio track.</p>
               </div>
             )}
@@ -645,7 +654,7 @@ export default function ImportPage() {
                 {tabAudioSupport() === 'ok' && (
                   <>
                     <DetectionOptions />
-                    <SeparationOption unusedReason={pianoModel ? 'Not used with the high-accuracy piano model.' : undefined} />
+                    <SeparationOption pianoModel={pianoModel} />
                   </>
                 )}
               </div>

@@ -1,4 +1,4 @@
-"""API: health, upload -> two stems, YouTube-free paths, error cases. SCNet is mocked (no model needed)."""
+"""API: health, upload -> three stems, YouTube-free paths, error cases. SCNet is mocked (no model needed)."""
 import io
 import json
 import subprocess
@@ -37,7 +37,7 @@ def client(monkeypatch):
         for k in range(1, 4):
             on_progress and on_progress(k, 3)
         mono = audio.mean(0)
-        return {"vocals": (0.25 * mono).astype(np.float32), "accomp": (0.75 * mono).astype(np.float32)}
+        return {"vocals": (0.25 * mono).astype(np.float32), "accomp": (0.75 * mono).astype(np.float32), "other": (0.5 * mono).astype(np.float32)}
 
     monkeypatch.setattr(separation, "available", lambda: True)
     monkeypatch.setattr(separation, "separate", fake_separate)
@@ -68,6 +68,8 @@ def test_health_reports_stems(client):
     h = client.get("/api/health").json()
     assert h["ok"] and h["version"].startswith("2.")
     assert h["features"]["separation"] is True and h["features"]["stems"] is True
+    # the "other" stem alone (no bass), for the app's "Remove singing and drums"
+    assert h["features"]["otherStem"] is True
 
 
 def test_root_links_to_source(client):
@@ -77,14 +79,14 @@ def test_root_links_to_source(client):
     assert client.get("/api/health").json()["source"] == r["source"]
 
 
-def test_separation_job_returns_two_aligned_stems(client, tmp_path):
+def test_separation_job_returns_three_aligned_stems(client, tmp_path):
     r = client.post("/api/jobs/separate", files={"file": ("tone.wav", _wav(5.0), "audio/wav")})
     assert r.status_code == 200, r.text
     j = _wait(client, r.json()["id"])
     assert j["status"] == "done", j
-    assert j["stems"] == ["accomp", "vocals"] and j["progress"] == 1.0
+    assert j["stems"] == ["accomp", "other", "vocals"] and j["progress"] == 1.0
     assert client.calls == [(2, 5 * SR)]
-    for stem in ("vocals", "accomp"):
+    for stem in ("vocals", "accomp", "other"):
         res = client.get(f"/api/jobs/{j['id']}/audio", params={"stem": stem})
         assert res.status_code == 200 and res.headers["content-type"] == "audio/flac"
         info = _probe(res.content, tmp_path)
@@ -164,7 +166,7 @@ def test_youtube_job_with_separation_has_mix_and_stems(client, monkeypatch, tmp_
     assert client.get(f"/api/jobs/{plain['id']}/audio").headers["content-type"] == "audio/mp4"
     j = _wait(client, client.post("/api/jobs/youtube", json={"url": "https://youtu.be/abc", "separate": True}).json()["id"])
     assert j["status"] == "done", j
-    assert j["stems"] == ["accomp", "mix", "vocals"] and j["title"] == "Tone"
+    assert j["stems"] == ["accomp", "mix", "other", "vocals"] and j["title"] == "Tone"
     assert client.get(f"/api/jobs/{j['id']}/audio", params={"stem": "mix"}).headers["content-type"] == "audio/mp4"
     assert client.get(f"/api/jobs/{j['id']}/audio").headers["content-type"] == "audio/flac"  # default = accomp
 
@@ -193,6 +195,7 @@ def test_youtube_job_keeps_the_mix_when_separation_fails(client, monkeypatch):
     assert r.status_code == 200 and r.headers["content-type"] == "audio/mp4"
     assert client.get(f"/api/jobs/{j['id']}/audio").headers["content-type"] == "audio/mp4"  # default = mix
     assert client.get(f"/api/jobs/{j['id']}/audio", params={"stem": "vocals"}).status_code == 404
+    assert client.get(f"/api/jobs/{j['id']}/audio", params={"stem": "other"}).status_code == 404
 
 
 def test_separation_jobs_report_their_time(client):

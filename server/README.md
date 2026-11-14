@@ -5,11 +5,11 @@ A small FastAPI service that adds two capabilities to the web app:
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /` | name, version, license (`AGPL-3.0-or-later`) and a link to the source code |
-| `GET /api/health` | version, license, source link and enabled features (`features.separation`, `features.stems`, `features.youtube`) |
+| `GET /api/health` | version, license, source link and enabled features (`features.separation`, `features.stems`, `features.otherStem`, `features.youtube`) |
 | `POST /api/jobs/youtube` `{url, separate}` | fetch a YouTube video's audio with yt-dlp; with `separate: true` also split it into stems |
-| `POST /api/jobs/separate` (multipart `file`) | SCNet source separation: a **vocal stem** and the **accompaniment without drums or vocals** (bass + other) |
+| `POST /api/jobs/separate` (multipart `file`) | SCNet source separation: a **vocal stem**, the **accompaniment without drums or vocals** (bass + other) and its **other** stem alone (no bass) |
 | `GET /api/jobs/{id}` | status, stage (`decoding` → `separating` → `encoding`), real per-segment progress, available `stems`, `separationMs` (the server's separation time). A YouTube job whose separation fails still finishes as `done` with only the `mix` stem and the reason in `separationError`, so the client can separate that audio itself without a second download. |
-| `GET /api/jobs/{id}/audio?stem=vocals\|accomp\|mix` | a result file. Stems are mono 22.05 kHz FLAC, sample-aligned with the mixture; `mix` (YouTube) is AAC/M4A. Without `stem`: the accompaniment for separation jobs, the mix for plain YouTube jobs (what pre-2.0 clients expect). |
+| `GET /api/jobs/{id}/audio?stem=vocals\|accomp\|other\|mix` | a result file. Stems are mono 22.05 kHz FLAC, sample-aligned with the mixture: `vocals`, `accomp` (bass + other: no drums, no vocals) and `other` (accomp without the bass: what the app's "Remove singing and drums" under Piano solo transcribes; `/api/health` reports `features.otherStem`, and an app talking to an older server without it uses `accomp` with a notice); `mix` (YouTube) is AAC/M4A. Without `stem`: the accompaniment for separation jobs, the mix for plain YouTube jobs (what pre-2.0 clients expect). |
 
 The web app still does the transcription: it puts the sung melody (vocal stem) on the right hand and
 transcribes the drum-less accompaniment for the rest. The browser can run the same separation itself

@@ -11,9 +11,10 @@ produce the same stems:
     i.e. 10 % overlap) with 1.1 s linear cross-fades; a long track is reflect-extended by the overlap
     on both sides (Music-Source-Separation-Training demix()).
 
-We only need two mono stems, so the stereo channels and bass + other are summed in the spectral domain
-(the iSTFT is linear): 2 inverse transforms per segment instead of 16, and two mono accumulators.
-  vocals = stem 3,  accomp = stem 1 (bass) + stem 2 (other)  -> no drums, no vocals.
+We only need three mono stems, so the stereo channels (and bass + other) are summed in the spectral domain
+(the iSTFT is linear): 3 inverse transforms per segment instead of 16, and three mono accumulators.
+  vocals = stem 3,  accomp = stem 1 (bass) + stem 2 (other)  -> no drums, no vocals,
+  other = stem 2 alone  -> no drums, no vocals, no bass (what the app's "Remove singing and drums" transcribes).
 """
 from __future__ import annotations
 
@@ -148,8 +149,8 @@ def separate(
     step: float | None = None,
     run: Callable[[np.ndarray], np.ndarray] | None = None,
 ) -> dict[str, np.ndarray]:
-    """audio: (2, n) float32 at 44.1 kHz. Returns mono 44.1 kHz float32 {'vocals', 'accomp'} (DC removed, like the
-    browser). `run` maps mix_spec [1,4,F,T] float32 -> [1,16,F,T]; defaults to the SCNet ONNX session."""
+    """audio: (2, n) float32 at 44.1 kHz. Returns mono 44.1 kHz float32 {'vocals', 'accomp', 'other'} (DC removed,
+    like the browser). `run` maps mix_spec [1,4,F,T] float32 -> [1,16,F,T]; defaults to the SCNet ONNX session."""
     if audio.ndim != 2 or audio.shape[0] != 2:
         raise ValueError("expected stereo audio shaped (2, n)")
     run = run or _onnx_runner()
@@ -160,7 +161,7 @@ def separate(
     std = float(mono.std(ddof=1)) + 1e-8 if n > 1 else 1.0
     del mono
     starts, m, offset, fade = plan_segments(n, step)
-    acc = np.zeros((2, m), np.float32)  # vocals, accomp
+    acc = np.zeros((3, m), np.float32)  # vocals, accomp, other
     ws = np.zeros(m, np.float32)
     spec = np.zeros((1, 4, F, T), np.float32)
     for k, st in enumerate(starts):
@@ -178,12 +179,13 @@ def separate(
         y = run(spec)[0].astype(np.float64)  # (16, F, T)
         # index 2 * (stem * 2 + channel) = re, +1 = im; mono = mean of L and R
         voc = (y[12] + y[14]) + 1j * (y[13] + y[15])
-        acc_z = (y[4] + y[6] + y[8] + y[10]) + 1j * (y[5] + y[7] + y[9] + y[11])
-        out = istft(np.stack([voc, acc_z])) * (0.5 * std)  # (2, L)
+        other_z = (y[8] + y[10]) + 1j * (y[9] + y[11])
+        acc_z = (y[4] + y[6]) + 1j * (y[5] + y[7]) + other_z
+        out = istft(np.stack([voc, acc_z, other_z])) * (0.5 * std)  # (3, L)
         w = _weights(ln, k, len(starts), fade)
         acc[:, st : st + ln] += (out[:, :ln] * w).astype(np.float32)
         ws[st : st + ln] += w.astype(np.float32)
         if on_progress:
             on_progress(k + 1, len(starts))
     res = acc[:, offset : offset + n] / np.maximum(ws[offset : offset + n], 1e-12)
-    return {"vocals": res[0].astype(np.float32), "accomp": res[1].astype(np.float32)}
+    return {"vocals": res[0].astype(np.float32), "accomp": res[1].astype(np.float32), "other": res[2].astype(np.float32)}

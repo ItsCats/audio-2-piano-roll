@@ -40,7 +40,7 @@ def test_plan_matches_browser_layout():
 
 
 def _identity_model(spec):
-    """Every stem = the input mixture, so vocals = mix - DC and accomp (bass + other) = 2 * (mix - DC)."""
+    """Every stem = the input mixture, so vocals = other = mix - DC and accomp (bass + other) = 2 * (mix - DC)."""
     return np.tile(spec, (1, 4, 1, 1))
 
 
@@ -59,6 +59,7 @@ def test_separate_reconstructs_with_identity_model(seconds):
     assert out["vocals"].shape == (n,) and out["vocals"].dtype == np.float32
     assert np.max(np.abs(out["vocals"] - expect)) < 1e-5
     assert np.max(np.abs(out["accomp"] - 2 * expect)) < 2e-5
+    assert out["other"].shape == (n,) and np.max(np.abs(out["other"] - expect)) < 1e-5
     total = progress[-1][1]
     assert progress == [(k, total) for k in range(1, total + 1)]
     assert total == len(sep.plan_segments(n, 0.9)[0])

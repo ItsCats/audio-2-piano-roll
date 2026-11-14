@@ -263,6 +263,33 @@ export const PIANO_BLEND_EFFECT = {
   ],
 };
 
+/**
+ * "Remove singing and drums" under Piano solo (pipeline.ts transcribePianoPart): 60 s excerpts of 5 MAESTRO
+ * test-split pieces (exact MIDI) mixed with the separated singing (and drums, bass, guitars and synths) of
+ * 5 pop songs, through the app's real pipeline in Chromium; note F1, onset ±50 ms, mean over pieces.
+ * Each cell: normal model / high-accuracy model. tests/accuracy/README.md has how.
+ */
+export const PIANO_PART_EFFECT = {
+  title: 'Piano solo: “Remove singing and drums”',
+  intro:
+    'For songs with singing on top of piano. The song is split into singing, drums, bass and everything else, and only “everything else” is turned into notes, so the singer isn’t played on the piano. Measured on recordings of 5 concert pieces with an exact answer key, with the singing (and the drums, bass and other instruments) of 5 pop songs mixed in. Each cell: normal model / high-accuracy piano model.',
+  rows: [
+    { what: 'Notes right: singing as loud as the piano', before: '55% / 59%', after: '78% / 88%', note: '5 pieces' },
+    { what: 'Notes right: singing louder than the piano', before: '36% / 45%', after: '69% / 80%', note: '3 pieces, singing 6 dB louder' },
+    { what: 'Notes right: singing, drums and a bass guitar', before: '30% / 49%', after: '72% / 83%', note: '5 pieces' },
+    { what: 'Notes right: full band', before: '23% / 37%', after: '53% / 59%', note: '3 pieces. Guitars and synths stay in, so the gain is smaller' },
+    { what: 'Notes right: solo piano, no singing', before: '85% / 99%', after: '85% / 99%', note: 'Removing nothing costs nothing' },
+    { what: 'Wrong notes at the singer’s pitch', before: '1.1 / 0.6 per s', after: '0.01 / 0.03 per s', note: 'Singing as loud as the piano' },
+    { what: 'Time per minute of song', before: '8 s / 47 s', after: '≈ 1.1 / ≈ 1.8 min', note: 'Separation ≈ 1 min per minute with 3 threads' },
+    { what: 'Peak memory of the browser tab', before: '0.4 / 1.0 GB', after: '≈ 2 GB', note: 'The piano model runs after the separation, never at the same time' },
+  ] as CompareRow[],
+  notes: [
+    'Opt-in: Import → Piano solo → tick “Remove singing and drums” (also on the Record tab). Works with both models.',
+    'Guitars, synths, strings and other keyboards stay in with the piano: the separation can’t tell them apart. It works best when the piano is the main instrument besides the singer. Separated audio isn’t perfect: some piano notes can be lost or blurred, and loud singing can leave a few traces.',
+    'Today’s “Separate vocals & drums” under Full song is different: it turns the singing into the right hand’s melody.',
+  ],
+};
+
 /** The same (final) app with and without separation, "Full song" preset. */
 export const SEPARATION_EFFECT: CompareRow[] = [
   { what: 'Easy right hand plays the singer’s note', before: '24%', after: '50%', note: '5 sung songs; best possible 62%' },
