@@ -10,13 +10,16 @@
  * they are (tune line, bass line, hands) and the piano model only adds notes:
  *   - lead notes in holes of the tune line (blendLeadCandidates; through music/leadRecovery.ts
  *     `extra`, so they get the roles recovered lead notes get),
+ *   - re-strikes: an app note Basic Pitch held through a repeated note is split where the piano
+ *     model hears it struck again (blendRestrikes; pitch, start and hand stay),
  *   - fills: keyboard parts and in-between notes at least `below` semitones under the tune note
  *     sounding (or where no tune note sounds), with density and hand caps (blendFills).
- * Two rules are built but off (PIANO_BLEND.octave.enabled, .riff.enabled) until they meet their
- * own measurement bars: moving a tune note to the piano model's octave, and letting fills go above
- * the tune where the tune line is sparse and the piano model plays a riff.
+ * Two rules are built but off (PIANO_BLEND.octave.enabled, .riff.enabled): moving a tune note to
+ * the piano model's octave, and letting fills go above the tune where the tune line is sparse and the
+ * piano model plays a riff (measured: no gain on the band test song, a lost lead note at 1:00).
  *
- * The thresholds are starting points from the design measurements; they are not tuned yet.
+ * Tuned on band-instrumental-1 (lead reference, multi-instrument estimate) and the Slakh band set
+ * (exact notes; tracks with a detected sung line do not blend); numbers in docs/TRANSCRIPTION.md §3c.
  *
  * Pure: the pipeline (transcription/pipeline.ts accompFromRaw) supplies Basic Pitch's evidence.
  */
@@ -46,18 +49,27 @@ export const SPEC_NOTE_FIELDS = 6;
 export interface PianoBlendRule {
   /** the piano model's onsets come ~5-7 ms before Basic Pitch's: shifted by this (s) */
   shift: number;
-  /** same-pitch fragments with a gap below `joinGap` s are one note unless Basic Pitch hears a rise of `joinRise` there */
+  /**
+   * same-pitch fragments with a gap below `joinGap` s are one note unless Basic Pitch hears a rise of
+   * `joinRise` there or the later one has an onset peak of at least `joinOnset` (a repeated note: the
+   * piano model ends a note where the next one of its pitch starts)
+   */
   joinGap: number;
   joinRise: number;
+  joinOnset: number;
   /** relative velocity: to the loudest piano-model note starting within this many seconds */
   relVelWindow: number;
   /** a piano-model note with an app note of the same pitch starting within this many seconds is already there */
   match: number;
   /** no notes below this pitch (the bass line is the Full song's) */
   minMidi: number;
-  /** notes up to this pitch need Basic Pitch frame evidence `lowBpMean` and no bass-line note of their pitch class */
+  /**
+   * notes up to this pitch need Basic Pitch frame evidence `lowBpMean` and, with `lowBassPc`, no bass-line
+   * note of their pitch class sounding
+   */
   lowMax: number;
   lowBpMean: number;
+  lowBassPc: boolean;
   /** drum hit: a drum onset of at least `drumHit` (8-bit) within ±`drumWindow` s, Basic Pitch onset below `drumBpOn` and shorter than `drumDur` s */
   drumHit: number;
   drumWindow: number;
@@ -68,9 +80,17 @@ export interface PianoBlendRule {
   harmonicBpMean: number;
   /** inside a sounding app note of its pitch: kept only with a Basic Pitch frame rise of at least this */
   continuationRise: number;
+  /**
+   * re-strikes: a piano-model note inside a sounding app note of its pitch (no Basic Pitch rise) with an
+   * onset peak of at least `onsetPeak` and relative velocity `relVel`, at least `minIn` s after the app
+   * note's start and `minLeft` s before its end, splits the app note there (a repeated note the app held
+   * through); not on bass-line notes
+   */
+  restrike: { enabled: boolean; onsetPeak: number; relVel: number; minIn: number; minLeft: number };
   /** shorter notes are dropped (s) */
   minDur: number;
   hole: {
+    enabled: boolean;
     /** a gap of at least this (s) between consecutive tune-line notes */
     minGap: number;
     /** no tune-line note sounding within this many seconds of the candidate's start */
@@ -133,16 +153,23 @@ export interface PianoBlendRule {
   };
 }
 
-/** Starting thresholds (design: docs/TRANSCRIPTION.md §3c); tuning is the next step. */
+/**
+ * The thresholds (docs/TRANSCRIPTION.md §3c). Tuned from the design's starting points: `joinOnset`
+ * 2 -> 0.6 and `restrike` on (repeated notes: band lead-note recall 68.9 -> 70.9 %), `fill.fuse`
+ * 0.55 -> 0.75, `fill.rh` 4 -> 5 and `lowBassPc` off (Slakh lead recall 44.1 -> 45.0 %, comping
+ * recall 49.0 -> 49.9 %; fewer unexplained notes on the band song, 196 -> 189 per minute).
+ */
 export const PIANO_BLEND: PianoBlendRule = {
   shift: 0.005,
   joinGap: 0.06,
   joinRise: 0.15,
+  joinOnset: 0.6,
   relVelWindow: 0.05,
   match: 0.08,
   minMidi: 43,
   lowMax: 54,
   lowBpMean: 0.3,
+  lowBassPc: false,
   drumHit: 128,
   drumWindow: 0.03,
   drumBpOn: 0.3,
@@ -151,9 +178,10 @@ export const PIANO_BLEND: PianoBlendRule = {
   harmonicBpMean: 0.15,
   continuationRise: 0.15,
   minDur: 0.05,
-  hole: { minGap: 0.2, clear: 0.06, near: 5, farNear: 7, farGap: 1, relVel: 0.8, onsetPeak: 0.5, bpMean: 0.08, perSec: 3, cluster: 0.05 },
+  restrike: { enabled: true, onsetPeak: 0.6, relVel: 0.8, minIn: 0.12, minLeft: 0.08 },
+  hole: { enabled: true, minGap: 0.2, clear: 0.06, near: 5, farNear: 7, farGap: 1, relVel: 0.8, onsetPeak: 0.5, bpMean: 0.08, perSec: 3, cluster: 0.05 },
   octave: { enabled: false, window: 0.06, absent: 0.08, onsetPeak: 0.6, relVel: 0.9, bpRatio: 0.5, near: 7 },
-  fill: { fuse: 0.55, bpFull: 0.25, onsetPeak: 0.4, bpMean: 0.05, below: 3, minDur: 0.12, perSec: 4, window: 2, rh: 4, lh: 3, cluster: 0.05 },
+  fill: { fuse: 0.75, bpFull: 0.25, onsetPeak: 0.4, bpMean: 0.05, below: 3, minDur: 0.12, perSec: 4, window: 2, rh: 5, lh: 3, cluster: 0.05 },
   riff: { enabled: false, seg: 2, minSegs: 2, maxTuneRate: 1.25, fuse: 0.6, minRate: 3, minMedian: 0.12 },
 };
 
@@ -220,6 +248,8 @@ export interface PreparedNote extends SpecNote {
   bpOn: number;
   /** an app note of the same pitch starts within PIANO_BLEND.match s */
   matched: boolean;
+  /** inside a sounding app note of its pitch without a Basic Pitch rise: only a re-strike candidate (blendRestrikes) */
+  inside?: boolean;
 }
 
 const sounding = (n: Note, t: number) => n.start <= t && t < n.start + n.dur;
@@ -282,7 +312,7 @@ export function joinFragments(spec: SpecNote[], ev: Pick<BlendEvidence, 'rise'>,
     for (let i = 1; i < a.length; i++) {
       const n = a[i];
       const gap = n.start - (cur.start + cur.dur);
-      if (gap < rule.joinGap && ev.rise(n.midi, n.start) < rule.joinRise) {
+      if (gap < rule.joinGap && n.onsetPeak < rule.joinOnset && ev.rise(n.midi, n.start) < rule.joinRise) {
         const end = Math.max(cur.start + cur.dur, n.start + n.dur);
         const w0 = cur.dur;
         const w1 = n.dur;
@@ -327,14 +357,15 @@ export function prepareSpecialist(spec: SpecNote[], app: Note[], ev: BlendEviden
     const bpOn = ev.onset(n.midi, n.start);
     if (n.midi <= rule.lowMax) {
       if (bpMean < rule.lowBpMean) continue;
-      if (bassLine.some((b) => sounding(b, n.start + 0.02) && (b.midi - n.midi) % 12 === 0)) continue;
+      if (rule.lowBassPc && bassLine.some((b) => sounding(b, n.start + 0.02) && (b.midi - n.midi) % 12 === 0)) continue;
     }
     if (ev.drum && n.dur < rule.drumDur && bpOn < rule.drumBpOn && ev.drum(n.start - rule.drumWindow, n.start + rule.drumWindow) >= rule.drumHit) continue;
     const near = idx.at(n.start + 0.02);
     if (bpMean < rule.harmonicBpMean && near.some((a) => rule.harmonicIntervals.includes(n.midi - a.midi))) continue;
     const matched = idx.startingIn(n.start - rule.match, n.start + rule.match).some((a) => a.midi === n.midi);
-    if (!matched && near.some((a) => a.midi === n.midi) && ev.rise(n.midi, n.start) < rule.continuationRise) continue;
-    out.push({ ...n, relVel: rel.get(n) ?? 1, bpMean, bpOn, matched });
+    const inside = !matched && near.some((a) => a.midi === n.midi) && ev.rise(n.midi, n.start) < rule.continuationRise;
+    if (inside && !rule.restrike.enabled) continue;
+    out.push({ ...n, relVel: rel.get(n) ?? 1, bpMean, bpOn, matched, ...(inside ? { inside } : {}) });
   }
   return out;
 }
@@ -347,13 +378,13 @@ export function prepareSpecialist(spec: SpecNote[], app: Note[], ev: BlendEviden
  * matches, that no line note sounds near, close to the line between the hole's neighbors, loud in its
  * cluster with a clear onset, heard by Basic Pitch or the stem pitch track, and the highest such note
  * of its cluster; at most hole.perSec per second of hole (strongest first). Returned as notes for
- * music/leadRecovery.ts `extra` (src 'piano').
+ * music/leadRecovery.ts `extra` (src 'piano-lead').
  */
 export function blendLeadCandidates(prepared: PreparedNote[], line: Note[], ev: Pick<BlendEvidence, 'pitchAgrees'> = {}, rule: PianoBlendRule = PIANO_BLEND): Note[] {
   const h = rule.hole;
   const L = sortNotes(line);
-  if (L.length < 2) return [];
-  const cands = prepared.filter((p) => !p.matched).sort((a, b) => a.start - b.start);
+  if (!h.enabled || L.length < 2) return [];
+  const cands = prepared.filter((p) => !p.matched && !p.inside).sort((a, b) => a.start - b.start);
   const out: Note[] = [];
   let ci = 0;
   for (let i = 0; i + 1 < L.length; i++) {
@@ -384,7 +415,7 @@ export function blendLeadCandidates(prepared: PreparedNote[], line: Note[], ev: 
     kept.forEach((c, k) => {
       const next = k + 1 < kept.length ? kept[k + 1].start : t1;
       const dur = Math.max(0.03, Math.min(c.dur, next - c.start - 0.005));
-      out.push({ id: newNoteId(), midi: c.midi, start: c.start, dur, vel: noteVel(c.vel), hand: 'R', src: 'piano' });
+      out.push({ id: newNoteId(), midi: c.midi, start: c.start, dur, vel: noteVel(c.vel), hand: 'R', src: 'piano-lead' });
     });
   }
   return out;
@@ -425,6 +456,52 @@ export function octaveFixes(notes: Note[], line: Note[], prepared: PreparedNote[
   });
   if (!move.size) return { notes, moved: 0 };
   return { notes: notes.map((n) => (move.has(n.id) ? { ...n, midi: move.get(n.id)! } : n)), moved: move.size };
+}
+
+// ---------------------------------------------------------------- re-strikes
+
+/**
+ * App notes the piano model hears re-struck, split in two (PianoBlendRule.restrike): a repeated note
+ * Basic Pitch heard as one held note. The first piece keeps the note's id; the second is a copy (hand
+ * and role kept, src 'restrike') from the re-strike to the old end. `used`: the piano-model notes
+ * that split a note (not fills).
+ */
+export function blendRestrikes(notes: Note[], prepared: PreparedNote[], rule: PianoBlendRule = PIANO_BLEND): { notes: Note[]; used: Set<PreparedNote>; split: number } {
+  const r = rule.restrike;
+  const used = new Set<PreparedNote>();
+  if (!r.enabled) return { notes, used, split: 0 };
+  const idx = new NoteIndex(notes);
+  // per app note: the re-strike times, in order
+  const cuts = new Map<Note, { t: number; p: PreparedNote }[]>();
+  for (const p of prepared) {
+    if (p.matched || p.onsetPeak < r.onsetPeak || p.relVel < r.relVel) continue;
+    const a = idx.at(p.start + 0.02).find((x) => x.midi === p.midi && x.role !== 'bass');
+    if (!a || p.start - a.start < r.minIn || a.start + a.dur - p.start < r.minLeft) continue;
+    const list = cuts.get(a) ?? [];
+    if (list.some((c) => Math.abs(c.t - p.start) < r.minIn)) continue;
+    list.push({ t: p.start, p });
+    cuts.set(a, list);
+  }
+  if (!cuts.size) return { notes, used, split: 0 };
+  const out: Note[] = [];
+  let split = 0;
+  for (const n of notes) {
+    const list = cuts.get(n);
+    if (!list) {
+      out.push(n);
+      continue;
+    }
+    list.sort((x, y) => x.t - y.t);
+    const end = n.start + n.dur;
+    out.push({ ...n, dur: list[0].t - 0.005 - n.start });
+    list.forEach((c, k) => {
+      const next = k + 1 < list.length ? list[k + 1].t - 0.005 : end;
+      out.push({ ...n, id: newNoteId(), start: c.t, dur: next - c.t, vel: noteVel(Math.max(c.p.vel, n.vel * 0.8)), src: 'restrike' });
+      used.add(c.p);
+      split++;
+    });
+  }
+  return { notes: sortNotes(out), used, split };
 }
 
 // ---------------------------------------------------------------- fills
@@ -492,17 +569,18 @@ export function blendFills(
   const hand = handBySplit(handed, duration);
   const cands: { n: Note; s: number }[] = [];
   for (const p of prepared) {
-    if (p.matched || opts.skip?.has(p)) continue;
+    if (p.matched || p.inside || opts.skip?.has(p)) continue;
     const s = fuseScore(p, rule);
     if (s < f.fuse || p.onsetPeak < f.onsetPeak || p.bpMean < f.bpMean) continue;
     const tune = lineIdx.at(p.start + 0.02);
-    if (tune.length && !inRanges(riff, p.start) && tune.some((t) => p.midi > t.midi - f.below)) continue;
+    const free = inRanges(riff, p.start);
+    if (tune.length && !free && tune.some((t) => p.midi > t.midi - f.below)) continue;
     let end = p.start + p.dur;
     const held = ev.heldEnd ? ev.heldEnd(p.midi, p.start, end, p.start + Math.max(p.dur, 2)) : end;
     end = Math.max(end, held, p.start + f.minDur);
     // the register rule holds for the whole fill: it ends where a tune note starts that it would sit
     // less than `below` under (a fill held over the next tune notes became the tune line on Easy)
-    if (!inRanges(riff, p.start)) for (const t of lineIdx.startingIn(p.start + 0.02, end)) if (p.midi > t.midi - f.below) end = Math.min(end, t.start - 0.005);
+    if (!free) for (const t of lineIdx.startingIn(p.start + 0.02, end)) if (p.midi > t.midi - f.below) end = Math.min(end, t.start - 0.005);
     // not into a later app note of its pitch; nothing where one already sounds
     for (const a of appIdx.overlapping(p.start, end)) {
       if (a.midi !== p.midi) continue;

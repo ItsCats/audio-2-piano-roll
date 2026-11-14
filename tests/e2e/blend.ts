@@ -97,7 +97,7 @@ async function run(blend: boolean, extra: Partial<TranscribeOptions> = {}) {
     maxBlendProgress,
     details: [...details],
     notes: slim(res.notes),
-    added: res.notes.filter((n) => n.src === 'piano').length,
+    added: res.notes.filter((n) => n.src === 'piano' || n.src === 'piano-lead').length,
     pianoBlend: res.info.pianoBlend ?? null,
     specialistStored: res.posteriors?.specialist ? res.posteriors.specialist.length / 6 : 0,
     warnings: res.info.warnings,

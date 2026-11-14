@@ -122,7 +122,7 @@ describe('"Full song + piano model" blend (pipeline)', () => {
   it('adds the piano model’s notes (a fill under the tune, a lead note in its hole) and keeps every other note as it is', () => {
     const off = accompFromRaw(raw, undefined, rms, EXTRACTION_PRESETS.mix, D, ctx);
     const on = accompFromRaw(raw, undefined, rms, EXTRACTION_PRESETS.mix, D, { ...ctx, specialist });
-    const added = on.notes.filter((n) => n.src === 'piano');
+    const added = on.notes.filter((n) => n.src === 'piano' || n.src === 'piano-lead');
     expect(added.map((n) => n.midi).sort()).toEqual([64, 74]);
     expect(strip(on.notes.filter((n) => !n.src))).toEqual(strip(off.notes));
     expect(on.blend).toEqual({ leadAdded: 1, fills: 1, riffSegments: 0, octaveFixes: 0 });

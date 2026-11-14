@@ -29,7 +29,7 @@ import { assignHands } from '../music/hands';
 import { estimateTempo } from '../music/beats';
 import { detectKey } from '../music/theory';
 import { addExtraLead, recoverLead, type LeadRecoveryOptions } from '../music/leadRecovery';
-import { PIANO_BLEND, blendFills, blendLeadCandidates, octaveFixes, packSpecNotes, prepareSpecialist, riffPassages, specNotesFromOutputs, unpackSpecNotes, type BlendEvidence, type SpecNote } from '../music/pianoBlend';
+import { PIANO_BLEND, blendFills, blendRestrikes, blendLeadCandidates, octaveFixes, packSpecNotes, prepareSpecialist, riffPassages, specNotesFromOutputs, unpackSpecNotes, type BlendEvidence, type SpecNote } from '../music/pianoBlend';
 import { extractMelodyLine, instrumentLine, mergeMelody, tuneCandidates } from '../music/melody';
 import { sustainTuneLine } from '../music/sustain';
 import type { StoredPosteriors } from './posteriors';
@@ -676,25 +676,28 @@ export function accompFromRaw(
   });
   if (prepared && blendEv && counts) {
     // fills under the (held) tune line: keyboard parts and in-between notes
+    // repeated notes the app held through, split where the piano model hears them re-struck
+    const rs = blendRestrikes(held, prepared);
+    held = rs.notes;
     const line = tuneLineOf(held, duration);
     const riff = PIANO_BLEND.riff.enabled ? riffPassages(line, prepared, duration) : [];
-    const f = blendFills(held, prepared, line, duration, blendEv, { riff });
+    const f = blendFills(held, prepared, line, duration, blendEv, { riff, skip: rs.used });
     held = f.notes;
-    counts = { ...counts, fills: f.fills.length, riffSegments: riff.reduce((k, [a, b]) => k + Math.round((b - a) / PIANO_BLEND.riff.seg), 0) };
+    counts = { ...counts, ...(rs.split ? { restrikes: rs.split } : {}), fills: f.fills.length, riffSegments: riff.reduce((k, [a, b]) => k + Math.round((b - a) / PIANO_BLEND.riff.seg), 0) };
   }
   return { notes: held, main: tempoNotes, ...(counts ? { blend: counts } : {}) };
 }
 
 /** What the piano-model blend added (TranscriptionInfo.pianoBlend without its version and status). */
-export type BlendCounts = Pick<PianoBlendInfo, 'leadAdded' | 'fills' | 'riffSegments' | 'octaveFixes'>;
+export type BlendCounts = Pick<PianoBlendInfo, 'leadAdded' | 'fills' | 'riffSegments' | 'octaveFixes' | 'restrikes'>;
 
 /** The instruments' tune line through `notes` as the arrangements see it (Hard-only doublings aside). */
-function tuneLineOf(notes: Note[], duration: number): Note[] {
+export function tuneLineOf(notes: Note[], duration: number): Note[] {
   return instrumentLine(tuneCandidates(assignHands(sortNotes(notes.filter((n) => n.role !== 'lead')), duration)));
 }
 
 /** Basic Pitch's evidence (and the drum and stem-pitch cues) for the piano-model blend. */
-function blendEvidence(ctx: CleanContext): BlendEvidence {
+export function blendEvidence(ctx: CleanContext): BlendEvidence {
   const frames = ctx.frames!;
   const onsets = ctx.onsets;
   const nFrames = ctx.nFrames!;

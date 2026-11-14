@@ -59,16 +59,18 @@ try {
 
   const on = await withTimeout(page.evaluate(() => window.run(true)), 'blend on');
   // pitch, start, velocity, hand and role of every blend-off note are kept; a held tune note may end
-  // earlier where a lead note was added in the hole after it (music/sustain.ts holds up to the next line note)
+  // earlier where a lead note was added in the hole after it (music/sustain.ts holds up to the next line note),
+  // and a held note may be split where the piano model hears it re-struck (its second piece is src 'restrike')
   const key = (n) => n.split(' ').filter((_, i) => i !== 2).join(' ');
   const offSet = new Set(off.notes.map(key));
-  const kept = on.notes.filter((n) => !n.endsWith(' piano'));
+  const kept = on.notes.filter((n) => !/ (piano|piano-lead|restrike)$/.test(n));
+  const restrikes = on.notes.filter((n) => n.endsWith(' restrike')).length;
   const unchanged = kept.length === off.notes.length && kept.every((n) => offSet.has(key(n)));
   const shorter = kept.filter((n) => !off.notes.includes(n)).length;
   console.log(`blend on   ${on.notes.length} notes (${on.added} added), ${JSON.stringify(on.pianoBlend)}, ${(on.ms / 1000).toFixed(1)} s, stages ${on.stages.join(' > ')}, details ${JSON.stringify(on.details)}`);
   check(on.pianoBlend?.status === 'ok' && on.specialistStored > 0, 'blend on   ', `status ${on.pianoBlend?.status}, ${on.specialistStored} piano-model notes stored`);
   check(on.stages.includes('piano-model') && on.maxBlendProgress >= 0.99, 'progress   ', `piano-model stage reached ${on.maxBlendProgress}`);
-  check(unchanged, 'app notes  ', unchanged ? `every blend-off note kept (pitch, start, velocity, hand, role; ${shorter} held shorter)` : `${kept.length} vs ${off.notes.length}; first differences ${JSON.stringify(kept.filter((n) => !offSet.has(n)).slice(0, 3))}`);
+  check(unchanged, 'app notes  ', unchanged ? `every blend-off note kept (pitch, start, velocity, hand, role; ${shorter} held shorter, ${restrikes} split by a re-strike)` : `${kept.length} vs ${off.notes.length}; first differences ${JSON.stringify(kept.filter((n) => !offSet.has(n)).slice(0, 3))}`);
 
   const ab = await withTimeout(page.evaluate(() => window.runCancel()), 'cancel');
   check(ab.rejected && ab.name === 'AbortError' && ab.abortedDuringBlend && ab.rejectAfterAbortMs <= 5000, 'cancel     ', JSON.stringify(ab));

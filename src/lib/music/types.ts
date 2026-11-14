@@ -21,11 +21,14 @@ export interface Note {
    */
   role?: 'melody' | 'lead' | 'bass';
   /**
-   * 'piano': added by the "Full song + piano model" blend (music/pianoBlend.ts) from the piano
-   * model's notes: a lead note in a hole of the tune line, or a fill (keyboard part, in-between
-   * note; never role 'melody' or 'lead'). Absent on every other note.
+   * Added by the "Full song + piano model" blend (music/pianoBlend.ts) from the piano model's notes:
+   * 'piano' a fill (keyboard part, in-between note; no role, never part of Easy's or Medium's tune
+   * line), 'piano-lead' a lead note in a hole of the tune line (the roles recovered lead notes get).
+   * 'restrike': the second piece of an app note the blend split
+   * where the piano model hears it struck again (pianoBlend.ts blendRestrikes; Easy joins the pieces
+   * back). Absent on every other note.
    */
-  src?: 'piano';
+  src?: 'piano' | 'piano-lead' | 'restrike';
 }
 
 /** Sustain pedal held from `start` to `end` (seconds). */
@@ -192,6 +195,8 @@ export interface PianoBlendInfo {
   riffSegments: number;
   /** tune notes moved to the piano model's octave (off unless enabled) */
   octaveFixes: number;
+  /** held app notes split where the piano model hears them re-struck (absent: none) */
+  restrikes?: number;
 }
 
 export interface Song {

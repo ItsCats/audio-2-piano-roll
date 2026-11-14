@@ -548,10 +548,10 @@ export function mergeMelody(accomp: Note[], melody: Note[], duration: number): N
   const all = accomp.map(withoutRole);
   // the piano-model blend's notes (Note.src, music/pianoBlend.ts) take no part in the hand split
   // either: they get the hand of the split the others make, so those keep the hands they have without the blend
-  const blend = all.some((n) => n.src === 'piano' && n.role !== 'lead');
-  if (blend) {
-    const added = all.filter((n) => n.src === 'piano' && n.role !== 'lead');
-    const rest = mergeMelody(all.filter((n) => !(n.src === 'piano' && n.role !== 'lead')), melody, duration);
+  const isAdded = (n: Note) => (n.src === 'piano' || n.src === 'piano-lead') && n.role !== 'lead';
+  if (all.some(isAdded)) {
+    const added = all.filter(isAdded);
+    const rest = mergeMelody(all.filter((n) => !isAdded(n)), melody, duration);
     const hand = handBySplit(rest.filter((n) => n.role !== 'lead'), duration);
     return sortNotes([...rest, ...added.map((n) => ({ ...n, hand: hand(n) }))]);
   }

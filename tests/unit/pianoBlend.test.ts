@@ -3,6 +3,7 @@ import {
   PIANO_BLEND,
   blendFills,
   blendLeadCandidates,
+  blendRestrikes,
   fuseScore,
   joinFragments,
   octaveFixes,
@@ -17,6 +18,7 @@ import {
 } from '../../src/lib/music/pianoBlend';
 import { addExtraLead, recoverLead } from '../../src/lib/music/leadRecovery';
 import { mergeMelody } from '../../src/lib/music/melody';
+import { BLEND_LEVELS, blendTuneLine, generateEasy, withoutRestrikes } from '../../src/lib/music/difficulty';
 import type { Note } from '../../src/lib/music/types';
 
 let id = 1;
@@ -70,13 +72,15 @@ describe('piano-model notes', () => {
     expect(specNotesFromOutputs({ frame, onset, offset, velocity, nFrames, fps: 100 }, 0.9)).toHaveLength(0);
   });
 
-  it('joins same-pitch fragments unless Basic Pitch hears a new attack at the join', () => {
-    const a = [spec(64, 1, 0.3), spec(64, 1.33, 0.3)];
+  it('joins same-pitch fragments unless Basic Pitch hears a new attack at the join or the later one has a clear onset', () => {
+    const a = [spec(64, 1, 0.3), spec(64, 1.33, 0.3, { onsetPeak: 0.4 })];
     expect(joinFragments(a, evidence({ rise: 0.05 }))).toHaveLength(1);
     expect(joinFragments(a, evidence({ rise: 0.05 }))[0].dur).toBeCloseTo(0.63, 6);
     expect(joinFragments(a, evidence({ rise: 0.4 }))).toHaveLength(2);
     // a gap of 60 ms or more is two notes
-    expect(joinFragments([spec(64, 1, 0.3), spec(64, 1.37, 0.3)], evidence({ rise: 0 }))).toHaveLength(2);
+    expect(joinFragments([spec(64, 1, 0.3), spec(64, 1.37, 0.3, { onsetPeak: 0.4 })], evidence({ rise: 0 }))).toHaveLength(2);
+    // a clear onset (at least joinOnset): a repeated note, not a fragment
+    expect(joinFragments([spec(64, 1, 0.3), spec(64, 1.33, 0.3, { onsetPeak: PIANO_BLEND.joinOnset })], evidence({ rise: 0 }))).toHaveLength(2);
   });
 
   it('drops low notes, drum hits, overtones, continuations and very short notes; marks matches', () => {
@@ -85,7 +89,7 @@ describe('piano-model notes', () => {
     const out = prepareSpecialist(
       [
         spec(38, 1, 0.5), // below MIDI 43
-        spec(52, 6.1, 0.5), // low, the bass line's pitch class (E): explained
+        spec(52, 6.1, 0.5), // low, the bass line's pitch class (E): kept (lowBassPc off), dropped with lowBassPc
         spec(50, 6.1, 0.5), // low, Basic Pitch hears it (0.3), not the bass line's pitch class: kept
         spec(72, 3, 0.1), // drum hit: short, weak Basic Pitch onset (overridden below)
         spec(60, 0.5, 0.5), // an octave above the sounding C3 with no Basic Pitch evidence: overtone
@@ -97,8 +101,13 @@ describe('piano-model notes', () => {
       app,
       { ...ev, onset: (m) => (m === 72 ? 0.1 : 0.6) },
     );
-    expect(out.map((n) => n.midi).sort((a, b) => a - b)).toEqual([50, 67, 76]);
-    expect(out.find((n) => n.midi === 67)!.matched).toBe(true);
+    const noRestrike = { ...PIANO_BLEND, restrike: { ...PIANO_BLEND.restrike, enabled: false } };
+    expect(prepareSpecialist([spec(67, 4.4, 0.4)], app, ev, noRestrike)).toEqual([]);
+    expect(prepareSpecialist([spec(52, 6.1, 0.5)], app, ev, { ...PIANO_BLEND, lowBassPc: true })).toEqual([]);
+    // the continuation is kept only as a re-strike candidate (inside), never as a fill or lead note
+    expect(out.map((n) => n.midi).sort((a, b) => a - b)).toEqual([50, 52, 67, 67, 76]);
+    expect(out.filter((n) => n.inside).map((n) => [n.midi, n.start])).toEqual([[67, 4.4 + PIANO_BLEND.shift]]);
+    expect(out.find((n) => n.midi === 67 && !n.inside)!.matched).toBe(true);
     expect(out.find((n) => n.midi === 76)!.matched).toBe(false);
     // shifted by +5 ms
     expect(out.find((n) => n.midi === 76)!.start).toBeCloseTo(5 + PIANO_BLEND.shift, 9);
@@ -127,7 +136,7 @@ describe('lead notes in holes of the tune line', () => {
     ];
     const ins = blendLeadCandidates(c, line);
     expect(ins.map((n) => [n.midi, n.start])).toEqual([[74, 1.0]]);
-    expect(ins[0].src).toBe('piano');
+    expect(ins[0].src).toBe('piano-lead');
     expect(ins[0].role).toBeUndefined();
     // cap: 3 per second of hole (1.5 s -> 4); 6 candidates -> 4 strongest
     const many = [0.6, 0.8, 1.0, 1.2, 1.4, 1.6].map((t, i) => prep(73 + (i % 3), t, 0.15, { onsetPeak: 0.5 + i * 0.08 }));
@@ -149,11 +158,11 @@ describe('lead notes in holes of the tune line', () => {
     const ins = blendLeadCandidates([prep(74, 1.0, 0.3), prep(62, 1.0, 0.3, { midi: 62 })], instrumentLineStub(base));
     const out = recoverLead(base, [], 3, { extra: ins, doublesHardOnly: true });
     for (const b of base) expect(out).toContain(b);
-    expect(out.filter((n) => n.src === 'piano').map((n) => n.midi)).toEqual([74]);
+    expect(out.filter((n) => n.src === 'piano-lead').map((n) => n.midi)).toEqual([74]);
     // Hard-only when asked (sung songs), doubling a main note an octave away: Hard-only as well
-    expect(addExtraLead(base, ins, { hardOnly: true }).find((n) => n.src === 'piano')!.role).toBe('lead');
+    expect(addExtraLead(base, ins, { hardOnly: true }).find((n) => n.src === 'piano-lead')!.role).toBe('lead');
     const dbl = [...base, note(62, 1.0, 0.5)];
-    expect(addExtraLead(dbl, ins, { doublesHardOnly: true }).find((n) => n.src === 'piano')!.role).toBe('lead');
+    expect(addExtraLead(dbl, ins, { doublesHardOnly: true }).find((n) => n.src === 'piano-lead')!.role).toBe('lead');
     // nothing inside excluded ranges, nothing already there
     expect(addExtraLead(base, ins, { exclude: [[0.9, 1.2]] })).toBe(base);
     expect(addExtraLead([...base, note(74, 0.98, 0.4)], ins)).toHaveLength(4);
@@ -229,11 +238,11 @@ describe('fills', () => {
     const dense = Array.from({ length: 20 }, (_, i) => prep(55 + (i % 10), 4 + i * 0.1, 0.2, { onsetPeak: 0.5 + (i % 5) * 0.1 }));
     const r = blendFills(app, dense, tune, 8);
     for (let t = 3; t < 7; t += 0.05) expect(r.fills.filter((n) => n.start >= t && n.start < t + 2).length).toBeLessThanOrEqual(8);
-    // one cluster of 8 right-hand candidates with 2 app notes there: at most 4 right-hand notes in all
+    // one cluster of 8 right-hand candidates with 2 app notes there: at most fill.rh right-hand notes in all
     const appR = [note(84, 5, 1), note(86, 5, 1)];
     const chord = [60, 62, 64, 65, 67, 69, 71, 72].map((m) => prep(m + 12, 5.01, 0.4));
     const r2 = blendFills(appR, chord, [], 8);
-    expect(r2.fills.filter((n) => n.hand === 'R').length).toBe(2);
+    expect(r2.fills.filter((n) => n.hand === 'R').length).toBe(PIANO_BLEND.fill.rh - 2);
   });
 
   it('fills take their hand from the split the app notes make, without moving the app notes’ hands', () => {
@@ -266,5 +275,67 @@ describe('riff on top (off by default)', () => {
     const without = blendFills(line, riff.filter((p) => p.start < 4), line, 10);
     expect(withRiff.fills.length).toBeGreaterThan(without.fills.length);
     expect(without.fills.every((n) => n.midi <= 69)).toBe(true);
+  });
+});
+
+describe('re-strikes', () => {
+  it('splits an app note where the piano model hears it struck again, keeping its hand and role', () => {
+    const held = note(70, 1, 1, { role: 'lead' });
+    const bass = note(40, 1, 1, { hand: 'L', role: 'bass' });
+    const other = note(64, 1, 1);
+    const p = [
+      prep(70, 1.5, 0.3, { matched: false, inside: true }), // re-strike of the held B♭4
+      prep(40, 1.5, 0.3, { inside: true }), // the bass line is not split
+      prep(64, 1.05, 0.3, { inside: true }), // too soon after the note's start (minIn)
+      prep(64, 1.96, 0.3, { inside: true }), // too close to its end (minLeft)
+    ];
+    const r = blendRestrikes([held, bass, other], p);
+    expect(r.split).toBe(1);
+    expect(r.used).toEqual(new Set([p[0]]));
+    const pieces = r.notes.filter((n) => n.midi === 70);
+    expect(pieces.map((n) => [+n.start.toFixed(3), +(n.start + n.dur).toFixed(3), n.role, n.src ?? ''])).toEqual([
+      [1, 1.495, 'lead', ''],
+      [1.5, 2, 'lead', 'restrike'],
+    ]);
+    expect(pieces[0].id).toBe(held.id);
+    expect(pieces[1].id).not.toBe(held.id);
+    expect(r.notes).toContain(bass);
+    expect(r.notes).toContain(other);
+    // weak onsets or quiet notes do not split; nor when the rule is off
+    expect(blendRestrikes([held], [prep(70, 1.5, 0.3, { onsetPeak: 0.3, inside: true })]).split).toBe(0);
+    expect(blendRestrikes([held], [prep(70, 1.5, 0.3, { relVel: 0.5, inside: true })]).split).toBe(0);
+    expect(blendRestrikes([held], [p[0]], { ...PIANO_BLEND, restrike: { ...PIANO_BLEND.restrike, enabled: false } }).notes).toEqual([held]);
+  });
+
+  it('re-strike candidates are never fills or lead inserts', () => {
+    const line = [note(72, 0, 1), note(76, 3, 1)];
+    const inside = prep(60, 1.5, 0.3, { inside: true });
+    expect(blendFills(line, [inside], line, 5).fills).toEqual([]);
+    expect(blendLeadCandidates([prep(74, 1.5, 0.3, { inside: true })], line)).toEqual([]);
+  });
+
+  it('Easy joins the pieces back into one held note', () => {
+    const a = note(70, 1, 0.495);
+    const b = note(70, 1.5, 0.5, { src: 'restrike' });
+    const c = note(70, 3, 0.5, { src: 'restrike' }); // not right after a piece of its pitch: kept
+    const out = withoutRestrikes([a, b, c, note(60, 1, 1)]);
+    expect(out.filter((n) => n.midi === 70).map((n) => [n.start, n.dur])).toEqual([[1, 1], [3, 0.5]]);
+    expect(a.dur).toBe(0.495); // the input is not changed
+    const tempo = { bpm: 120, confidence: 1, beatsPerBar: 4, downbeatIndex: 0, beats: Array.from({ length: 12 }, (_, i) => i * 0.5) };
+    const easy = generateEasy([a, b, note(48, 1, 1, { hand: 'L' })], tempo, 6);
+    expect(easy.filter((n) => n.midi === 70)).toHaveLength(1);
+  });
+});
+
+describe('fills and the Easy / Medium tune line', () => {
+  it('fills join the tune line only where the line without them has no note', () => {
+    expect(BLEND_LEVELS.fillsInTune).toBe('holes');
+    // a tune C5 D5 E5 with a rest at 1-2 s; a run of louder fills under it, and one fill in the rest
+    const tune = [note(72, 0, 1, { vel: 0.5 }), note(74, 2, 1, { vel: 0.5 }), note(76, 3, 1, { vel: 0.5 })];
+    const fills = [note(69, 0, 1, { src: 'piano', vel: 1 }), note(71, 1.1, 0.8, { src: 'piano' }), note(67, 2, 1, { src: 'piano', vel: 1 })];
+    const all: [number, number][] = [[-Infinity, Infinity]];
+    const line = blendTuneLine([...tune, ...fills], all);
+    for (const t of tune) expect(line.map((n) => n.id)).toContain(t.id);
+    expect(line.filter((n) => n.src === 'piano').map((n) => n.midi)).toEqual([71]);
   });
 });

@@ -343,8 +343,9 @@ export function resumeTranscriber(
 
 /**
  * Whether "Add the high-accuracy piano model" starts ticked for the "Full song" preset on a device
- * that can run it. Off until the blend's thresholds are tuned and measured against the references
- * (docs/TRANSCRIPTION.md §3c): it ships opt-in.
+ * that can run it. Off: the tuned blend is better on every reference measured, but it misses some
+ * of its own bars (the band song's bridge, the share of added notes another transcriber confirms;
+ * docs/TRANSCRIPTION.md §3c), and it adds about 40 s per minute of audio, so it ships opt-in.
  */
 export const PIANO_BLEND_DEFAULT = false;
 
