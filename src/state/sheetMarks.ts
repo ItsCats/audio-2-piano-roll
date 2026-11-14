@@ -7,7 +7,7 @@ import type { Arrangement, Song, SheetKey, SheetMeter, SheetTempo, TempoUnit } f
 import { ensureSheet } from '../lib/sheet/lock';
 import { deleteMarkOp, moveMarkOp, pedalSel, resolveMark, type MarkEditResult } from '../lib/sheet/marks';
 import type { BarMarkRef } from '../lib/sheet/render';
-import { canRetime, retime } from '../lib/sheet/retime';
+import { canRetime, retime, scaleSongTempo } from '../lib/sheet/retime';
 import { TEMPO_UNIT_Q } from '../lib/sheet/score';
 import { sortNotes } from '../lib/music/cleanup';
 import type { SheetCtx } from '../lib/sheet/edit';
@@ -121,6 +121,10 @@ export function setMeterAt(m: number, beatsPerBar: number, beatUnit: 2 | 4 | 8):
 /**
  * Tempo mark from measure m. Songs without a recording or hands video: optionally re-times the music
  * from there (one undo step with the mark); otherwise the mark is a label and the speed stays.
+ * On bar 1 with no other re-timed mark, the whole song is scaled to the new speed instead
+ * (scaleSongTempo: written tempo changes and fermatas keep their proportions); from a later bar
+ * (or with re-timed marks after it) the bars from there up to the next re-timed mark are re-timed
+ * to the new speed, which is then steady there.
  */
 export function setTempoAt(m: number, bpm: number, unit: TempoUnit, text: string, changeSpeed: boolean): boolean {
   const ctx = sheetCtx();
@@ -129,15 +133,18 @@ export function setTempoAt(m: number, bpm: number, unit: TempoUnit, text: string
   const words = text.replace(/[\u0000-\u001F\u007F-\u009F]/g, '').trim().slice(0, 40);
   const re = changeSpeed && canRetime(ctx.song);
   const item: SheetTempo = { pos, bpm, unit, ...(words ? { text: words } : {}), retimed: re };
+  const scale = re && pos === 0 && !(ctx.song.sheet?.tempos ?? []).some((x) => x.retimed && x.pos > 0);
   markSheetEdited();
   useStudio.getState().editSong((s) => {
     const sheet = { ...ensureSheet(s, ctx.level) };
+    if (scale) return scaleSongTempo({ ...s, sheet }, bpm, unit, { mark: true, text: words }).patch;
     sheet.tempos = upsert(sheet.tempos, item, pos);
     const withMark: Song = { ...s, sheet };
     if (!re) return { sheet };
     return retime(withMark, pos, bpm * TEMPO_UNIT_Q[unit]).patch;
   });
-  if (re) afterRetime();
+  // a scale keeps every bar's place: the loop is scaled with it (Studio), a re-time clears it
+  if (re && !scale) afterRetime();
   else if (changeSpeed) toast.info('This song plays a recording, so the tempo mark is shown but the playback speed stays the same.');
   useStudio.setState({ markSel: `tempo:${pos}` });
   return true;

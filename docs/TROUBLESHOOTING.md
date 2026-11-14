@@ -17,7 +17,8 @@ The worker uses WebGL when a hardware GPU is available, otherwise WASM (SIMD), o
 * Blend in the original recording (Sound tab → *Original recording*) to hear what's wrong, then fix notes in Edit mode.
 
 ### Tempo / beat grid is wrong
-Studio → Notes → *Tempo*: type the correct BPM and press *Set tempo* (rebuilds the grid and the Easy/Medium levels).
+* **Sheet music, MIDI files, the demo** (songs that follow a written tempo): Studio → Notes → *Tempo*: pick the beat (♩, ♩., 𝅗𝅥, ♪), type the tempo printed on your page (or use −/+, *Half*, *Double*) and press *Set tempo*. The whole song is re-timed: every level (Hard too), the sheet music, practice and every export; edits, fingering and markings stay, later tempo changes and fermatas keep their proportions, and Undo puts it back. The line above the field says where the tempo came from. The sheet-music readers don't read tempo marks: a PDF or photo plays at ♩ = 120 unless the tempo was typed on the import screen or found in the PDF's text.
+* **Songs from audio**: Studio → Notes → *Tempo*: type the correct BPM and press *Set tempo* (rebuilds the grid and the Easy/Medium levels; the notes keep following the recording).
 
 ### Hands are split wrongly
 Edit mode → select notes → press **L**/**R** (or **H** to swap). Then *Easy & Medium from Hard* to propagate.

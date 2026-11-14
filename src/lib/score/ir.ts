@@ -66,6 +66,13 @@ export interface IRJump {
   alCoda?: boolean;
 }
 
+export interface IRTempo {
+  pos: number;
+  qpm: number;
+  /** guessed from these tempo words (no number in them) */
+  words?: string;
+}
+
 export interface IRMeasure {
   /** Number printed in the score (for messages). */
   label: string;
@@ -80,8 +87,12 @@ export interface IRMeasure {
   timeChange?: boolean;
   /** A key signature starts here (concert pitch). */
   key?: { fifths: number; mode: 'major' | 'minor' };
-  /** Tempo marks: quarter notes per minute at a position. */
-  tempos: { pos: number; qpm: number }[];
+  /**
+   * Tempo marks: quarter notes per minute at a position. `words`: a guess from tempo words
+   * ("Andante"), which an explicit mark (metronome, sound tempo, a number in the words) at the same
+   * position in any part overrides (perform.ts).
+   */
+  tempos: IRTempo[];
   notes: IRNote[];
   dynamics: IRDynamic[];
   /** Sustain pedal down/up at a position ('change' = up and down again). */
@@ -172,6 +183,20 @@ export const DEFAULT_QPM = 120;
 
 /** Tempo words → quarter notes per minute, for scores that have words but no metronome mark. */
 const TEMPO_WORDS: [RegExp, number][] = [
+  // English and German words common in printed piano music (the two-word ones first: same start)
+  [/\bmoderately slow(ly)?\b/, 84],
+  [/\bmoderately (fast|bright(ly)?|quick(ly)?)\b/, 132],
+  [/\bvery slow(ly)?\b/, 50],
+  [/\bslow(ly)?\b/, 66],
+  [/\bmoderate(ly)?\b/, 104],
+  [/\bbright(ly)?\b/, 144],
+  [/\blively\b/, 144],
+  [/\b(fast|quick(ly)?)\b/, 152],
+  [/\bsehr langsam\b/, 46],
+  [/\blangsam\b/, 60],
+  [/\bm(ä|ae|a)(ß|ss)ig\b/, 100],
+  [/\blebhaft\b/, 144],
+  [/\bschnell\b/, 152],
   [/\bgrave\b/, 40],
   [/\blarghissimo\b/, 40],
   [/\blargo\b/, 50],
@@ -192,13 +217,48 @@ const TEMPO_WORDS: [RegExp, number][] = [
 
 /** Quarter notes per minute suggested by tempo words ("Allegro moderato" → the first word wins). */
 export function tempoFromWords(words: string): number | null {
-  const w = words.toLowerCase();
+  const w = words.toLowerCase().normalize('NFC');
   let best: { at: number; qpm: number } | null = null;
   for (const [re, qpm] of TEMPO_WORDS) {
     const m = re.exec(w);
     if (m && (!best || m.index < best.at)) best = { at: m.index, qpm };
   }
   return best?.qpm ?? null;
+}
+
+/** Quarters in one beat of a written tempo unit. */
+export const TEMPO_UNIT_QUARTERS = { q: 1, h: 2, e: 0.5, 'q.': 1.5 } as const;
+export type WrittenTempoUnit = keyof typeof TEMPO_UNIT_QUARTERS;
+
+/**
+ * The beat a tempo number counts when the page doesn't say (a music-font note before "=" that
+ * can't be read): the felt beat of the meter, as the app's sheet music writes it (a dotted quarter
+ * in 6/8, a half note in 2/2, an eighth in 5/8, else a quarter).
+ */
+export function meterTempoUnit(beats: number, beatType: number): WrittenTempoUnit {
+  if (beatType === 8) return beats % 3 === 0 ? 'q.' : 'e';
+  if (beatType === 2) return 'h';
+  return 'q';
+}
+
+/**
+ * A metronome mark typed as text ("♩ = 72", "q. = 60", "(♩ = c. 100)", "Andante ♩=72"): the number
+ * and its beat unit (null when the note before "=" is not readable: a music-font glyph). Null when
+ * the text has no tempo number.
+ */
+export function tempoNumberInText(text: string): { bpm: number; unit: WrittenTempoUnit | null } | null {
+  const m = /(\S{0,3}?)\s*=\s*(?:c(?:a|irca)?\.?\s*)?(\d{2,3}(?:[.,]\d)?)(?!\d)/iu.exec(text.normalize('NFC'));
+  if (!m) return null;
+  const bpm = parseFloat(m[2].replace(',', '.'));
+  if (!(bpm >= 20 && bpm <= 400)) return null;
+  const g = m[1].replace(/[\s(]/g, '');
+  const dotted = /[.\u00B7\u{1D16D}]$/u.test(g);
+  const head = g.replace(/[.\u00B7\u{1D16D}]$/u, '');
+  let unit: WrittenTempoUnit | null = null;
+  if (/^(♩|q|\u{1D15F})$/iu.test(head)) unit = dotted ? 'q.' : 'q';
+  else if (/^(𝅗𝅥|h|\u{1D15E})$/iu.test(head)) unit = dotted ? null : 'h';
+  else if (/^(♪|e|\u{1D160})$/iu.test(head)) unit = dotted ? null : 'e';
+  return { bpm, unit };
 }
 
 /**

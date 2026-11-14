@@ -12,6 +12,10 @@ import type { Gray, PdfDocument, SheetReaderSupport } from '../../lib/omr';
 import { homrReaderSupport, type ReaderSupport } from '../../lib/omr/homr/support';
 import { readerFacts, readerTime, readerMayBeTooHeavy, sheetReaderChoice, SHEET_READER_INFO, type SheetReaderId } from '../../lib/omr/readers';
 import { pageDeviceInfo } from '../../lib/transcription/backendChoice';
+import type { TempoUnit } from '../../lib/music/types';
+import type { ImportTempo } from '../../lib/score';
+import type { PageTempo } from '../../lib/score/pageTempo';
+import { TEMPO_UNITS, UNIT_LABEL, UNIT_NAME, tempoNumber } from '../../lib/sheet/tempoUnits';
 
 /** Most pages read in one go from this screen (the reader takes up to 20; this keeps waits sensible). */
 export const MAX_READ_PAGES = 10;
@@ -119,6 +123,7 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
   const [editing, setEditing] = useState<number | null>(null);
   const [opening, setOpening] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [tempo, setTempo] = useState<TempoEntry>(NO_TEMPO);
   const importSheet = useImport((s) => s.importSheet);
   const cameraInput = useRef<HTMLInputElement>(null);
   const photoInput = useRef<HTMLInputElement>(null);
@@ -163,6 +168,7 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
     setEditing(null);
     setOpening(0);
     setError(null);
+    setTempo(NO_TEMPO);
     target.current = null;
   };
 
@@ -194,6 +200,13 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
         return;
       }
       pdfDoc.current = doc;
+      // the tempo printed on the first page, when the PDF has its text (typeset, not scanned)
+      void doc
+        .tempo(1)
+        .then((found) => {
+          if (found && session.current === my) setTempo((cur) => (cur.edited ? cur : { value: tempoNumber(found.bpm), unit: found.unit ?? 'q', found, edited: false }));
+        })
+        .catch(() => undefined);
       const count = doc.numPages;
       const shown = Math.min(count, THUMB_PAGES);
       setPdf({ file, count, thumbs: Array(shown).fill(null), selected: Array.from({ length: Math.min(count, maxPages) }, (_, i) => i + 1) });
@@ -319,7 +332,7 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
   const readPdf = async () => {
     if (!pdf || !pdf.selected.length || busy) return;
     const { file, selected } = pdf;
-    const p = importSheet({ kind: 'pdf', file, fileName: file.name, pages: [...selected].sort((a, b) => a - b).slice(0, maxPages) }, { reader });
+    const p = importSheet({ kind: 'pdf', file, fileName: file.name, pages: [...selected].sort((a, b) => a - b).slice(0, maxPages) }, { reader, ...withTempo(tempo) });
     onStarted();
     reset();
     await p;
@@ -328,7 +341,7 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
     if (!photos.length || photos.length > maxPages || busy) return;
     const omr = await loadOmr();
     const list = photos.map((p) => ({ blob: p.file as Blob, name: p.file.name, image: p.image, quad: omr.orderQuad(p.corners) }));
-    const p = importSheet({ kind: 'photo', photos: list, fileName: photos[0].file.name, title: photoTitle(photos[0].file.name) }, { reader });
+    const p = importSheet({ kind: 'photo', photos: list, fileName: photos[0].file.name, title: photoTitle(photos[0].file.name) }, { reader, ...withTempo(tempo) });
     onStarted();
     reset();
     await p;
@@ -442,9 +455,10 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
               )}
             </>
           )}
+          <TempoField tempo={tempo} onChange={setTempo} disabled={busy} />
           <ReadBar
             label={pdf.selected.length === 1 ? 'Read 1 page' : `Read ${pdf.selected.length} pages`}
-            disabled={busy || !pdf.count || !pdf.selected.length}
+            disabled={busy || !pdf.count || !pdf.selected.length || !tempoOk(tempo)}
             onRead={() => void readPdf()}
             estimate={estimate}
             pages={pdf.selected.length}
@@ -528,10 +542,11 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
                   Up to {maxPages} pages at a time{support?.phone ? ' on a phone' : ''}.{photos.length > maxPages ? ' Remove a page to read these.' : ''}
                 </p>
               )}
+              {photos.length > 0 && <TempoField tempo={tempo} onChange={setTempo} disabled={busy} />}
               {photos.length > 0 && (
                 <ReadBar
                   label={photos.length === 1 ? 'Read 1 page' : `Read ${photos.length} pages`}
-                  disabled={busy || !photos.length || photos.length > maxPages || opening > 0}
+                  disabled={busy || !photos.length || photos.length > maxPages || opening > 0 || !tempoOk(tempo)}
                   onRead={() => void readPhotos()}
                   estimate={estimate}
                   pages={photos.length}
@@ -688,6 +703,79 @@ function ReadBar({
       </div>
       {support?.phone && pages > 1 && <p className="text-[12px] text-ink-300">Keep this page open while it reads; the screen stays on.</p>}
       {note && <p className="text-[11.5px] text-ink-400">{note}</p>}
+    </div>
+  );
+}
+
+/** The optional tempo on the read screen: typed, or found in the PDF's text (the readers read no tempo). */
+interface TempoEntry {
+  value: string;
+  unit: TempoUnit;
+  /** found on the first page (pageTempo.ts) */
+  found: PageTempo | null;
+  /** changed by the user (a found tempo is then theirs) */
+  edited: boolean;
+}
+
+const NO_TEMPO: TempoEntry = { value: '', unit: 'q', found: null, edited: false };
+
+const tempoValue = (t: TempoEntry): number => parseFloat(t.value.replace(',', '.'));
+/** Empty, or a usable number. */
+const tempoOk = (t: TempoEntry): boolean => !t.value.trim() || (tempoValue(t) >= 20 && tempoValue(t) <= 400);
+
+/** The tempo to import with (none: the page's or the default, set later in the Studio). */
+function withTempo(t: TempoEntry): { tempo?: ImportTempo } {
+  const n = tempoValue(t);
+  if (!t.value.trim() || !(n >= 20 && n <= 400)) return {};
+  if (t.found && !t.edited) return { tempo: { bpm: t.found.bpm, unit: t.found.unit, from: 'page', text: t.found.text, ...(t.found.guess ? { guess: true } : {}) } };
+  return { tempo: { bpm: Math.round(n * 10) / 10, unit: t.unit, from: 'set' } };
+}
+
+function TempoField({ tempo, onChange, disabled }: { tempo: TempoEntry; onChange: (t: TempoEntry) => void; disabled: boolean }) {
+  const bad = !tempoOk(tempo);
+  return (
+    <div className="flex flex-col gap-1.5 rounded-xl border border-ink-700 bg-ink-900/60 p-3" data-testid="import-tempo">
+      <label htmlFor="import-tempo-input" className="text-[13px] font-medium text-ink-100">
+        Tempo <span className="font-normal text-ink-400">(optional)</span>
+      </label>
+      <div className="flex flex-wrap items-center gap-2">
+        <select
+          value={tempo.unit}
+          disabled={disabled}
+          onChange={(e) => onChange({ ...tempo, unit: e.target.value as TempoUnit, edited: true })}
+          aria-label="Beat"
+          className="focus-ring h-9 rounded-[10px] border border-ink-600 bg-ink-800 px-2 text-[13px] text-ink-50"
+        >
+          {TEMPO_UNITS.map((u) => (
+            <option key={u} value={u}>
+              {UNIT_LABEL[u]} {UNIT_NAME[u]}
+            </option>
+          ))}
+        </select>
+        <span className="text-ink-300">=</span>
+        <input
+          id="import-tempo-input"
+          value={tempo.value}
+          disabled={disabled}
+          onChange={(e) => onChange({ ...tempo, value: e.target.value, edited: true })}
+          inputMode="decimal"
+          placeholder="120"
+          aria-invalid={bad}
+          data-testid="import-tempo-input"
+          className={cn(
+            'focus-ring h-9 w-24 rounded-[10px] border bg-ink-800 px-2.5 text-center font-mono text-[13px] text-ink-50',
+            bad ? 'border-warn' : 'border-ink-600',
+          )}
+        />
+        <span className="text-[12px] text-ink-300">per minute</span>
+      </div>
+      <p className="text-[11.5px] leading-snug text-ink-400" data-testid="import-tempo-note">
+        {bad
+          ? 'Enter a number between 20 and 400, or leave it empty.'
+          : tempo.found && !tempo.edited
+            ? `Found on the page: “${tempo.found.text}”${tempo.found.unit ? '' : ' (the beat comes from the time signature)'}${tempo.found.guess ? ', a guess from the tempo word' : ''}. Change it if your page says otherwise.`
+            : 'The reader reads the notes, not tempo marks. Enter the tempo printed on your page, or leave it empty to start at ♩ = 120. You can change it later in the Studio (Notes tab, Tempo).'}
+      </p>
     </div>
   );
 }

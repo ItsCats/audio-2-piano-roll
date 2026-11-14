@@ -67,6 +67,13 @@ function TipsModal({ open, onClose, song }: { open: boolean; onClose: () => void
           </ul>
         </div>
         <div>
+          <p className="font-medium text-ink-50">Set the tempo</p>
+          <p className="mt-1">
+            The reader reads the notes, not tempo marks. Type the tempo printed on your page in the Notes tab (Tempo): every level, Hard included, then
+            plays at it.
+          </p>
+        </div>
+        <div>
           <p className="font-medium text-ink-50">Fix mistakes in Edit mode</p>
           {touch ? (
             <ul className="mt-1 list-disc pl-5">

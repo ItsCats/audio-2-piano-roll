@@ -47,7 +47,7 @@ import { getAudio } from '../lib/storage/db';
 import { downloadBlob, downloadMidi, downloadMusicXml, exportProject, renderWav, safeFileName } from '../lib/export/downloads';
 import { showExportNoticeOnce } from '../lib/exportNotice';
 import { midiInput, QWERTY_MAP } from '../lib/midiInput/webmidi';
-import type { Difficulty } from '../lib/music/types';
+import type { Difficulty, TempoInfo } from '../lib/music/types';
 import { toast } from '../state/toastStore';
 import { useImport } from '../state/importStore';
 import { arrowSeekDelta, shouldHandleGlobalKey } from '../state/studioKeys';
@@ -336,10 +336,12 @@ function usePlayerSync() {
   }, [sheetMeters, song?.sheet?.grid]);
 
   // an edit that changed the tempo or the length (a sheet edit past the end, undo of one): the
-  // player takes the new values without losing its place
+  // player takes the new values without losing its place. A tempo set for the whole song (every
+  // time scaled by one factor, or the undo of that) keeps the place in the music: the playback
+  // position and the loop are scaled with it.
   const tempo = song?.tempo;
   const duration = song?.duration;
-  const synced = useRef<{ id?: string; tempo?: unknown; duration?: number }>({});
+  const synced = useRef<{ id?: string; tempo?: TempoInfo; duration?: number }>({});
   useEffect(() => {
     const prev = synced.current;
     synced.current = { id: songId, tempo, duration };
@@ -347,12 +349,17 @@ function usePlayerSync() {
     const s = useStudio.getState().song;
     const a = s && currentArrangement(useStudio.getState());
     if (!s || !a) return;
+    const r = prev.tempo && prev.duration ? uniformScale(prev.tempo, prev.duration, s.tempo, s.duration) : 1;
     const player = getPlayer();
-    const t = player.getTime();
+    const t = player.getTime() * r;
     const playing = player.isPlaying;
     if (playing) player.pause();
     player.setSong(a.notes, a.pedal, s.tempo, s.duration);
     player.seek(Math.min(t, s.duration));
+    if (r !== 1) {
+      const loop = useTransport.getState().loop;
+      if (loop) useTransport.setState({ loop: { start: loop.start * r, end: Math.min(s.duration, loop.end * r) } });
+    }
     if (playing) void player.play();
   }, [songId, tempo, duration]);
 
@@ -590,4 +597,13 @@ export default function StudioPage() {
       <SheetPdfDialog open={pdfOpen} onClose={() => setPdfOpen(false)} />
     </div>
   );
+}
+
+/** The factor every time was scaled by between two tempos of a song (1: not a uniform scale). */
+function uniformScale(t0: TempoInfo, d0: number, t1: TempoInfo, d1: number): number {
+  const r = d1 / d0;
+  if (!(r > 0) || Math.abs(r - 1) < 1e-9 || t0.beats.length !== t1.beats.length || t0.beats.length < 2) return 1;
+  const near = (a: number, b: number) => Math.abs(a - b) <= 1e-6 * Math.max(1, Math.abs(b));
+  const last = t0.beats.length - 1;
+  return near(t1.beats[1], t0.beats[1] * r) && near(t1.beats[last], t0.beats[last] * r) ? r : 1;
 }

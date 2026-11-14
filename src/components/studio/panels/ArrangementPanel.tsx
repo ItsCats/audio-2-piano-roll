@@ -14,6 +14,9 @@ import type { Difficulty, ExtractionParams, NoteLength } from '../../../lib/musi
 import { Badge, Button, Section, Segmented, Slider, Toggle } from '../../ui';
 import { toast } from '../../../state/toastStore';
 import { arrangementOptions, easyMediumFromHard, hasNoteLength, makeThumbnail, noteLengthOf, withNoteLength } from '../../../lib/songs';
+import { followsWrittenTempo } from '../../../lib/sheet/retime';
+import { NO_TEMPO_READ_WARNING } from '../../../lib/omr/readers';
+import { SongTempoSection, focusTempoInput, tempoFrom, tempoGuessed, tempoText } from './TempoControl';
 
 function LevelStats() {
   const song = useStudio((s) => s.song)!;
@@ -125,6 +128,9 @@ export function ArrangementPanel() {
   const [bpm, setBpm] = useState(String(song.tempo.bpm));
   const t = song.transcription;
   const estimated = t.estimated;
+  // sheet music, MIDI files, the demo: setting the tempo re-times the whole song (TempoControl)
+  const written = followsWrittenTempo(song);
+  const warnings = t.warnings.filter((w) => w !== NO_TEMPO_READ_WARNING);
 
   const redetect = async () => {
     const edited = (['easy', 'medium', 'hard'] as Difficulty[]).filter((d) => song.arrangements[d].edited);
@@ -193,6 +199,14 @@ export function ArrangementPanel() {
                   How accurate is it?
                 </Link>
               </p>
+              {written && tempoFrom(song) === 'default' && (
+                <p className="mt-1.5 text-ink-200" data-testid="reader-tempo-note">
+                  The reader doesn’t read tempo marks, so this plays at {tempoText(song)}.{' '}
+                  <button type="button" onClick={focusTempoInput} className="focus-ring rounded text-accent-400 underline-offset-2 hover:text-accent-300 hover:underline">
+                    Set the tempo printed on your page
+                  </button>
+                </p>
+              )}
             </div>
           </div>
         ) : estimated ? (
@@ -224,8 +238,16 @@ export function ArrangementPanel() {
         {hasNoteLength(song) && <NoteLengthControl />}
         <dl className="grid grid-cols-2 gap-y-1 text-[12.5px]">
           <dt className="text-ink-300">Tempo</dt>
-          <dd className="text-right text-ink-100">
-            {song.tempo.bpm} BPM {song.tempo.source === 'estimated' && song.tempo.confidence < 0.2 && <Badge tone="warn">uncertain</Badge>}
+          <dd className="text-right text-ink-100" data-testid="tempo-value">
+            {written ? (
+              <>
+                {tempoText(song)} {tempoGuessed(song) && <Badge tone="warn">guess</Badge>}
+              </>
+            ) : (
+              <>
+                {song.tempo.bpm} BPM {song.tempo.source === 'estimated' && song.tempo.confidence < 0.2 && <Badge tone="warn">uncertain</Badge>}
+              </>
+            )}
           </dd>
           <dt className="text-ink-300">Meter</dt>
           <dd className="text-right text-ink-100">
@@ -304,9 +326,9 @@ export function ArrangementPanel() {
             </Badge>
           </div>
         )}
-        {t.warnings.length > 0 && (
+        {warnings.length > 0 && (
           <ul className="flex flex-col gap-1">
-            {t.warnings.map((w) => (
+            {warnings.map((w) => (
               <li key={w} className="text-[12px] text-warn">
                 • {w}
               </li>
@@ -314,6 +336,9 @@ export function ArrangementPanel() {
           </ul>
         )}
       </Section>
+
+      {/* songs that follow a written tempo: right under what the song is, easy to find on a phone */}
+      {written && <SongTempoSection />}
 
       <Section title="Difficulty levels">
         <LevelStats />
@@ -334,6 +359,7 @@ export function ArrangementPanel() {
         </div>
       </Section>
 
+      {!written && (
       <Section title="Tempo">
         <div className="flex items-end gap-2">
           <label className="flex flex-1 flex-col gap-1 text-[12.5px] text-ink-200">
@@ -351,6 +377,7 @@ export function ArrangementPanel() {
         </div>
         <p className="text-[11.5px] text-ink-400">Sets a steady grid for the metronome, quantizing and the simplified levels.</p>
       </Section>
+      )}
 
       {song.hasPosteriors && (
         <Section title="Re-detect notes">

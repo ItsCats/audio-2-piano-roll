@@ -27,9 +27,9 @@ import { separationSupport, type SeparationSupport } from '../lib/separation';
 import { pianoSpecialistSupport } from '../lib/pianoSpecialist';
 import { isMemoryConstrained, pageDeviceInfo } from '../lib/transcription/backendChoice';
 import type { Song, SongSource } from '../lib/music/types';
-import type { ParsedScore, ScoreMeta } from '../lib/score';
+import type { ImportTempo, ParsedScore, ScoreMeta } from '../lib/score';
 import type { Gray, Quad, ReadProgress } from '../lib/omr';
-import { isSheetReaderId, quickStaysAfterCrash, readerOf, sheetReaderChoice, type SheetReaderId } from '../lib/omr/readers';
+import { isSheetReaderId, NO_TEMPO_READ_WARNING, quickStaysAfterCrash, readerOf, sheetReaderChoice, type SheetReaderId } from '../lib/omr/readers';
 import { toast } from './toastStore';
 import { holdReload } from '../lib/newVersion';
 
@@ -168,7 +168,8 @@ interface ImportState {
    * Read printed music from a PDF or photos (lib/omr) and import it like a sheet-music file. `reader`
    * defaults to the remembered pick, else this device's default (sheetReaderChoice).
    */
-  importSheet: (input: SheetInput, opts?: { pendingId?: string; lowMemory?: boolean; reader?: SheetReaderId }) => Promise<string | null>;
+  /** `tempo`: the starting tempo given on the import screen (typed, or found on the PDF page); the readers read none. */
+  importSheet: (input: SheetInput, opts?: { pendingId?: string; lowMemory?: boolean; reader?: SheetReaderId; tempo?: ImportTempo }) => Promise<string | null>;
   importAudioBlob: (
     blob: Blob,
     meta: { title: string; artist?: string; source: SongSource; separate?: boolean } & ImportRunOptions,
@@ -1177,6 +1178,7 @@ export const useImport = create<ImportState>((set, get) => {
             ? { kind: 'pdf' as const, pages: [...input.pages] }
             : { kind: 'photo' as const, photos: input.photos.map((p) => ({ blob: p.blob, name: p.name, quad: p.quad ? p.quad.map((q) => [q[0], q[1]] as [number, number]) : null })) }),
           ...(opts.lowMemory ? { lowMemory: true } : {}),
+          ...(opts.tempo ? { tempo: opts.tempo } : {}),
         };
         const first = input.kind === 'pdf' ? input.file : input.photos[0]?.blob;
         const size = input.kind === 'pdf' ? input.file.size : input.photos.reduce((a, p) => a + p.blob.size, 0);
@@ -1260,17 +1262,19 @@ export const useImport = create<ImportState>((set, get) => {
         // 3. the MusicXML goes through the normal score import
         update({ stage: 'arranging', progress: null, detail: 'Building arrangements' });
         const { importMusicXml } = await import('../lib/score');
-        const parsed = importMusicXml(result.musicXml, { fileName });
+        const parsed = importMusicXml(result.musicXml, { fileName, ...(opts.tempo ? { tempo: opts.tempo } : {}) });
         return await finishScore(ctx, parsed, source, input.title ?? title, (song) => {
-          // the reader's notes are an estimate: its own notes first, then the score import's (reworded)
-          song.transcription.warnings = [...result.warnings, ...readScoreWarnings(song.transcription.warnings)];
+          // the reader's notes are an estimate: its own notes first, then the score import's (reworded);
+          // no tempo given or found: it plays at the default, say so
+          const tempoNote = song.tempo.from === 'default' ? [NO_TEMPO_READ_WARNING] : [];
+          song.transcription.warnings = [...result.warnings, ...tempoNote, ...readScoreWarnings(song.transcription.warnings)];
           song.transcription.processingMs = Math.round(result.stats.ms);
         });
       } catch (err) {
         return fail(ctx, err, {
-          retry: () => get().importSheet(input, { lowMemory: opts.lowMemory, reader }),
+          retry: () => get().importSheet(input, { lowMemory: opts.lowMemory, reader, tempo: opts.tempo }),
           // just this once (the remembered pick stays: a failed read is not a sign of too little memory)
-          retryQuick: reader === 'accurate' ? () => get().importSheet(input, { reader: 'quick' }) : undefined,
+          retryQuick: reader === 'accurate' ? () => get().importSheet(input, { reader: 'quick', tempo: opts.tempo }) : undefined,
         });
       } finally {
         for (const b of bitmaps) b.close();
@@ -1326,11 +1330,15 @@ export const useImport = create<ImportState>((set, get) => {
         const crashedAccurate = readerOf(rec.source) === 'accurate';
         const accurateAgain = crashedAccurate && resumeOpts.reader === 'accurate';
         if (crashedAccurate && !accurateAgain && quickStaysAfterCrash(sheet.lowMemory)) get().setSheetReaderPref('quick');
-        const again = accurateAgain
-          ? { pendingId: rec.id, lowMemory: true, reader: 'accurate' as const }
-          : crashedAccurate
-            ? { pendingId: rec.id, reader: 'quick' as const }
-            : { pendingId: rec.id, lowMemory: true, reader: 'quick' as const };
+        const tempo = validImportTempo(sheet.tempo);
+        const again = {
+          ...(accurateAgain
+            ? { pendingId: rec.id, lowMemory: true, reader: 'accurate' as const }
+            : crashedAccurate
+              ? { pendingId: rec.id, reader: 'quick' as const }
+              : { pendingId: rec.id, lowMemory: true, reader: 'quick' as const }),
+          ...(tempo ? { tempo } : {}),
+        };
         if (sheet.kind === 'pdf') return get().importSheet({ kind: 'pdf', file: rec.blob, fileName, pages: sheet.pages, title: rec.title }, again);
         const photos: SheetPhoto[] = sheet.photos.map((p) => ({ blob: p.blob, name: p.name, quad: p.quad && p.quad.length === 4 ? (p.quad as Quad) : null }));
         return get().importSheet({ kind: 'photo', photos, fileName, title: rec.title }, again);
@@ -1620,3 +1628,13 @@ export const STAGE_LABELS: Record<ImportStage, string> = {
   done: 'Done',
   error: 'Failed',
 };
+
+/** A tempo kept on an interrupted import's record, when it is well formed (records are read back from storage). */
+function validImportTempo(t: unknown): ImportTempo | undefined {
+  if (!t || typeof t !== 'object') return undefined;
+  const x = t as Partial<ImportTempo>;
+  if (typeof x.bpm !== 'number' || !(x.bpm >= 20 && x.bpm <= 400)) return undefined;
+  if (x.unit !== null && x.unit !== 'q' && x.unit !== 'h' && x.unit !== 'e' && x.unit !== 'q.') return undefined;
+  if (x.from !== 'page' && x.from !== 'set') return undefined;
+  return { bpm: x.bpm, unit: x.unit, from: x.from, ...(typeof x.text === 'string' ? { text: x.text.slice(0, 60) } : {}), ...(x.guess === true ? { guess: true } : {}) };
+}
