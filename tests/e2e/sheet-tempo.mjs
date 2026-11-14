@@ -39,7 +39,7 @@ const dist = opt('dist');
 const port = Number(opt('port', '6230'));
 const only = opt('only');
 const read = !args.includes('--no-read');
-const shots = opt('shots', fs.mkdtempSync(path.join(os.tmpdir(), 'p2v-sheet-tempo-')));
+const shots = opt('shots') ?? fs.mkdtempSync(path.join(os.tmpdir(), 'p2v-sheet-tempo-'));
 if (!dist || !fs.existsSync(path.join(dist, 'index.html'))) {
   console.error('usage: node tests/e2e/sheet-tempo.mjs --dist BUILD_DIR [--port N] [--shots DIR] [--only desktop|iphone] [--no-read]');
   process.exit(2);
