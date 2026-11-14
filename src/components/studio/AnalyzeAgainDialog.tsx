@@ -12,7 +12,8 @@ import { JobProgress } from '../import/JobProgress';
 import { useStoredOriginal } from '../../hooks/useStoredOriginal';
 import { reanalyzeSupport, type ReanalyzeSupport } from '../../lib/reanalyze';
 import { analysisLabel, presetOfInfo, sameAsLast } from '../../lib/transcription/analysisSummary';
-import { lossText, lostWork } from '../../lib/songs';
+import { lossText, lostWork, type KeptVersion } from '../../lib/songs';
+import { getOtherVersion } from '../../lib/storage/db';
 import { ensurePianoSamples, getPlayer, releasePianoSamplesIfLight } from '../../state/playback';
 import { swapSongVersions } from '../../state/songVersions';
 import { toast } from '../../state/toastStore';
@@ -80,7 +81,18 @@ function Options({ song, onRun, busy }: { song: Song; onRun: (o: ReanalyzeOption
   const choice: ReanalyzeOptions = { presetId: preset, separate: sep.checked, transcriber: model.transcriber, pianoBlend: blend.offered && blend.checked };
   const last = analysisLabel(song.transcription, custom);
   const same = sameAsLast(song.transcription, choice, custom);
-  const loss = useMemo(() => lossText(lostWork(song), hasUndo), [song, hasUndo]);
+  // a version kept from an earlier run is replaced by this one (only one is kept): the text says so
+  const [kept, setKept] = useState<KeptVersion | null | undefined>(undefined);
+  useEffect(() => {
+    let alive = true;
+    void getOtherVersion(song.id)
+      .catch(() => undefined)
+      .then((o) => alive && setKept(o ? { label: analysisLabel(o.transcription, custom), lost: lostWork(o) } : null));
+    return () => {
+      alive = false;
+    };
+  }, [song.id, song.updatedAt, custom]);
+  const loss = useMemo(() => lossText(lostWork(song), hasUndo, kept), [song, hasUndo, kept]);
   return (
     <>
       <div className="flex flex-col gap-4 p-5">
@@ -95,6 +107,7 @@ function Options({ song, onRun, busy }: { song: Song; onRun: (o: ReanalyzeOption
           <AlertTriangle size={16} className="mt-0.5 shrink-0 text-warn" />
           <p>{loss}</p>
         </div>
+        <p className="text-[11.5px] text-ink-400">The boxes you tick here are also used for your next import.</p>
       </div>
       <footer className="sticky bottom-0 flex flex-col items-stretch gap-2 border-t border-ink-700 bg-ink-850 px-5 py-3 sm:flex-row sm:items-center sm:justify-end">
         {busy && <p className="text-[11.5px] text-ink-400 sm:mr-auto">{BUSY_HINT}</p>}
@@ -102,7 +115,7 @@ function Options({ song, onRun, busy }: { song: Song; onRun: (o: ReanalyzeOption
           <Button variant="ghost" onClick={() => useStudio.getState().setAnalyzeOpen(false)}>
             Cancel
           </Button>
-          <Button variant="primary" disabled={busy} onClick={() => onRun(choice)} icon={<Wand2 size={15} />}>
+          <Button variant="primary" disabled={busy || kept === undefined} onClick={() => onRun(choice)} icon={<Wand2 size={15} />}>
             Analyze again
           </Button>
         </div>
@@ -136,7 +149,18 @@ export function AnalyzeAgainDialog() {
       setShown(mine.id);
       setStarting(false);
     }
-  }, [open, running, mine, shown]);
+    // open because this song's run is going on (back in the Studio after leaving it): the dialog shows
+    // it, so the run's end is told here, not with a toast
+    if (open && running && !analyzeOpen) setAnalyzeOpen(true);
+  }, [open, running, mine, shown, analyzeOpen, setAnalyzeOpen]);
+  // opened with a finished run of this song not seen yet (it ended while the Studio was left, the
+  // "New notes are ready" toast's Open): its result, with the way back, or its error
+  useEffect(() => {
+    if (open && mine && !importBusy(mine) && shown === null && !starting) setShown(mine.id);
+  }, [open, mine, shown, starting]);
+  // the dialog goes with the Studio page (swiping back mid-run): not open when the page comes back,
+  // and a run that ends meanwhile says so with a toast
+  useEffect(() => () => useStudio.getState().setAnalyzeOpen(false), []);
   useEffect(() => {
     if (!open) {
       setShown(null);
@@ -151,7 +175,8 @@ export function AnalyzeAgainDialog() {
   if (!song || !open) return null;
   const busyOther = importBusy(job) && !mine;
   // (a run started from the error card's Try again shows at once)
-  const current = mine && (mine.id === shown || running) ? mine : null;
+  // (a finished run this dialog has not shown yet is shown when it opens)
+  const current = mine && (mine.id === shown || running || (shown === null && !starting)) ? mine : null;
   const close = () => {
     if (running) return;
     // a finished job of this dialog: its card is done with (the sidebar pill too)
@@ -159,6 +184,9 @@ export function AnalyzeAgainDialog() {
     setAnalyzeOpen(false);
   };
   const cancel = () => {
+    // the new notes are being written: too late to stop (the card shows no Cancel by then)
+    const live = useImport.getState().job;
+    if (live?.reanalyze && live.stage === 'saving') return;
     useImport.getState().cancel();
     setAnalyzeOpen(false);
     toast.info('Analyze again stopped', 'Your song wasn’t changed.');

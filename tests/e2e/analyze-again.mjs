@@ -17,8 +17,8 @@
  *    unedited level says it is already as detected and offers Analyze again, which opens the dialog
  *    with Piano solo preselected and a loss text that names Hard;
  *  - Analyze again with the high-accuracy box ticked, cancelled within seconds: the song is exactly as
- *    it was, no crash marker is left; a reload mid-run leaves the song as it was too (no crash notice,
- *    no interrupted-import notice: nothing was written);
+ *    it was, no crash marker is left; a reload mid-run leaves the song as it was too, and the next load
+ *    says the run stopped (no crash notice, no interrupted-import record: nothing was written);
  *  - a tab that died during it (a crash marker without its lock): the re-analysis notice, the box off,
  *    and "Open the song" opens the dialog with the box unticked;
  *  - Analyze again with the high-accuracy piano model: same id, title, favorite and title-page text;
@@ -26,12 +26,15 @@
  *    sheet data gone, the old version kept (role 'older'), one library entry with the new count;
  *  - Go back to the old notes: Basic Pitch with the Hard fix, Re-detect shown; Use the new analysis
  *    swaps back;
- *  - Analyze again with "Remove singing and drums" too (skipped with --no-separation): only the
- *    piano part was transcribed;
+ *  - a second Analyze again warns that the version kept from the first run (with its fix) will be
+ *    deleted; run with "Remove singing and drums" too (skipped with --no-separation): only the piano
+ *    part was transcribed;
  *  - the MIDI song: "came straight from the MIDI file" with Import a recording.
- * iPhone 14 (deviceScaleFactor 2): the same import, the options with Import's phone warning, a run
- *   with the piano model, the result, the version card, the reset toast and the MIDI explanation, all
- *   without sideways scroll. Both: no console errors. Screenshots in --shots.
+ * iPhone 14 (deviceScaleFactor 2): the same import, the entry point, the options with the phone
+ *   warning for this song's length, a run with the piano model that is left mid-run (swiping back,
+ *   then the Library, which shows "Analyzing again…"), the "ready" toast whose Open shows the result
+ *   with the way back, the version card (enabled), the reset toast, a song whose recording is gone and
+ *   the MIDI explanation, all without sideways scroll. Both: no console errors. Screenshots in --shots.
  */
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -110,11 +113,15 @@ async function newPage(contextOpts) {
   const ctx = await browser.newContext({ acceptDownloads: true, ...contextOpts });
   const page = await ctx.newPage();
   const errors = [];
+  const asked = [];
   page.on('pageerror', (e) => errors.push(e.message));
   page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
   // confirm() (Reset, Delete) and the leave-page question while a run is busy: yes
-  page.on('dialog', (d) => void d.accept().catch(() => {}));
-  return { ctx, page, errors };
+  page.on('dialog', (d) => {
+    asked.push(d.message());
+    void d.accept().catch(() => {});
+  });
+  return { ctx, page, errors, asked };
 }
 const songIdOf = (page) => decodeURIComponent(new URL(page.url()).pathname.split('/').pop());
 /** a record of the 'songs' store (or 'summaries'), and every key of a store */
@@ -206,7 +213,7 @@ async function runAndWait(page, timeoutMs = 8 * 60000) {
 
 try {
   // ======== desktop
-  const { ctx, page, errors } = await newPage({ viewport: { width: 1280, height: 800 } });
+  const { ctx, page, errors, asked } = await newPage({ viewport: { width: 1280, height: 800 } });
   // 1. the recording: the synthetic MIDI's Hard level rendered by the app's piano engine
   const midiId = await importMidi(page);
   await difficulty(page, 'Hard');
@@ -257,6 +264,8 @@ try {
   await resetToast.waitFor({ timeout: 5000 });
   const resetBody = await resetToast.innerText();
   check('desktop: Reset Hard says what went back', /notes? went back to the detected version/.test(resetBody), resetBody.split('\n')[1]);
+  const question = asked.find((m) => m.startsWith('Reset Hard')) ?? '';
+  check('desktop: the Reset question says what goes back', /^Reset Hard to the detected notes\? Your \d+ note fix(es)? on this level will be replaced\. You can undo this right after\.$/.test(question), question);
   let s1 = await storedSong(page, id, (s) => !s.arrangements.hard.edited);
   check('desktop: Hard is as detected after the reset', s1.arrangements.hard.edited === false);
   await page.screenshot({ path: path.join(shots, 'desktop-reset-toast.png') });
@@ -275,7 +284,7 @@ try {
   const presetChecked = await dialog(page).getByRole('radiogroup', { name: 'Detection preset' }).getByRole('radio', { name: 'Piano solo' }).getAttribute('aria-checked');
   check('desktop: the dialog opens with Piano solo preselected', presetChecked === 'true');
   const loss = await dialog(page).getByTestId('analyze-loss').innerText();
-  check('desktop: the loss text names the Hard fixes', /Your fixes on Hard/.test(loss) && /You can go back to the old notes afterward\./.test(loss), loss);
+  check('desktop: the loss text says the Hard fixes stay in the old notes', /Your fixes on Hard won’t be in the new notes\. They stay in the old notes, which you can switch back to afterward\./.test(loss) && !/deleted/.test(loss), loss);
   check('desktop: "Last time" says how it was analyzed', (await dialog(page).getByTestId('analyze-last').innerText()) === 'Last time: Piano solo · standard model');
   await page.screenshot({ path: path.join(shots, 'desktop-options.png') });
   await dialog(page).getByRole('button', { name: 'Cancel' }).click();
@@ -301,7 +310,7 @@ try {
   check('desktop: no crash marker left', (await markers(page)).length === 0, await markers(page));
   check('desktop: no other version after Cancel', !(await idb(page, 'songs', `${id}:previous`)));
 
-  // 5. a reload mid-run (the page asks first: yes): the song is untouched, nothing is offered to resume
+  // 5. a reload mid-run (the page asks first: yes): the song is untouched, the next load says it stopped
   await openAnalyze(page);
   await runButton(page).click();
   await dialog(page).getByText(/^Analyzing “My practice piece” again/).waitFor({ timeout: 10000 });
@@ -311,9 +320,21 @@ try {
   await page.waitForTimeout(1500);
   after = await storedSong(page, id);
   check('desktop: after a reload mid-run the song is exactly as it was', strip(after) === strip(before));
-  check('desktop: after a reload no notice (nothing to resume, nothing crashed)', !(await page.getByRole('alertdialog').count()), await page.getByRole('alertdialog').allInnerTexts());
+  const stopped = page.getByRole('alertdialog', { name: 'Analyze again stopped' });
+  await stopped.waitFor({ timeout: 8000 }).catch(() => {});
+  const stoppedText = (await stopped.count()) ? await stopped.innerText() : '';
+  check(
+    'desktop: after a reload the run is said to have stopped, the song unchanged',
+    /The page was closed or reloaded while “My practice piece” was being analyzed again, so it stopped\. Your song wasn’t changed\./.test(stoppedText) && (await page.getByRole('alertdialog').count()) === 1,
+    stoppedText.split('\n')[1] ?? (await page.getByRole('alertdialog').allInnerTexts()),
+  );
+  await page.screenshot({ path: path.join(shots, 'desktop-reload-notice.png') });
   const pend = await idb(page, 'pending', null);
   check('desktop: no interrupted-import record was written', Array.isArray(pend) && pend.length === 0, pend);
+  await page.reload();
+  await page.locator('canvas').first().waitFor();
+  await page.waitForTimeout(1200);
+  check('desktop: said once (not again on the next load)', !(await page.getByRole('alertdialog', { name: 'Analyze again stopped' }).count()));
 
   // 6. a tab that died while the piano model ran (its marker without a lock): the notice, the box off
   await page.evaluate((id) => localStorage.setItem('piano2vision-piano-specialist-running', JSON.stringify({ reanalyze: id, title: 'My practice piece', at: Date.now() - 30000 })), id);
@@ -372,9 +393,18 @@ try {
   check('desktop: Use the new analysis swaps back', s4.transcription.method === 'piano-specialist' && s4.noteLength === 'played');
   await dismissToasts(page);
 
-  // 9. "Remove singing and drums" with the piano model (a short clip: the separation runs in the browser)
+  // 9. a second run: the version kept from the first one (with the Hard fix) will be deleted, and says so
+  await openAnalyze(page);
+  const loss2 = await dialog(page).getByTestId('analyze-loss').innerText();
+  check(
+    'desktop: a second run warns that the kept old notes (with the fix) will be deleted',
+    /Only one earlier version is kept, so the one kept now \(Piano solo · standard model, with your fixes on Hard\) will be deleted for good\./.test(loss2),
+    loss2,
+  );
+  await page.screenshot({ path: path.join(shots, 'desktop-second-run.png') });
+  // "Remove singing and drums" with the piano model (a short clip: the separation runs in the browser)
+  if (!withSeparation) await dialog(page).getByRole('button', { name: 'Cancel' }).click();
   if (withSeparation) {
-    await openAnalyze(page);
     await setBox(page, /High-accuracy piano model/, true);
     await setBox(page, /Remove singing and drums/, true);
     const t = await runAndWait(page, 12 * 60000);
@@ -406,38 +436,97 @@ try {
     const { ctx: pctx, page: p, errors: perr } = await newPage({ ...devices['iPhone 14'], deviceScaleFactor: 2 });
     const pMidi = await importMidi(p);
     const pid = await importWav(p, wav);
-    await openAnalyze(p);
+    // the entry point: the Notes tab
+    await openPanel(p, 'Notes');
+    const entry = p.getByRole('button', { name: 'Analyze again…' });
+    await entry.scrollIntoViewIfNeeded();
+    await p.screenshot({ path: path.join(shots, 'iphone-entry.png') });
+    check('iPhone: the Notes tab says how it was analyzed', (await p.getByTestId('analyzed-as').innerText()) === 'Analyzed as: Piano solo · standard model');
+    await entry.click();
+    await dialog(p).waitFor();
     const warn = await dialog(p).getByText(/^May be slow on phones/).innerText().catch(() => '');
-    check('iPhone: the piano model warning is Import’s', warn === 'May be slow on phones. Songs over 6 minutes might not work on phones with little memory.', warn);
+    check('iPhone: the piano model warning knows this song is short', warn === 'May be slow on phones. This song is under 6 minutes, so it should fit in this phone’s memory.', warn);
     check('iPhone: no sideways scroll (options)', (await sideScroll(p)) <= 0);
     await p.screenshot({ path: path.join(shots, 'iphone-options.png') });
     await setBox(p, /High-accuracy piano model/, true);
+    await p.screenshot({ path: path.join(shots, 'iphone-options-ticked.png') });
     await runButton(p).click();
     await dialog(p).getByText(/^Analyzing “.+” again/).waitFor({ timeout: 10000 });
     await p.waitForTimeout(1500);
     await p.screenshot({ path: path.join(shots, 'iphone-progress.png') });
     check('iPhone: "Keep this page open" while analyzing', await dialog(p).getByText('Keep this page open while it’s analyzing.').isVisible());
-    await dialog(p).getByText('New notes are ready', { exact: true }).waitFor({ timeout: 10 * 60000 });
+    // left mid-run: swiping back, then the Library (no page load: the run goes on)
+    await p.goBack();
+    await p.waitForURL(/\/import/, { timeout: 5000 });
+    await p.getByRole('link', { name: 'Library' }).last().click();
+    await p.waitForURL(/\/library/, { timeout: 5000 });
+    const badge = p.getByTestId('reanalyzing-badge').first();
+    await badge.waitFor({ timeout: 5000 }).catch(() => {});
+    check('iPhone: the Library shows the song is being analyzed again', await badge.isVisible().catch(() => false));
+    await p.screenshot({ path: path.join(shots, 'iphone-library-running.png') });
+    const ready = p.getByRole('alertdialog', { name: 'New notes are ready' });
+    await ready.waitFor({ timeout: 10 * 60000 });
+    check('iPhone: a run that ended while the Studio was left says so', /was analyzed again/.test(await ready.innerText()));
+    await p.waitForTimeout(700); // (sheets and toasts animate in)
+    await p.screenshot({ path: path.join(shots, 'iphone-ready-toast.png') });
+    await ready.getByRole('button', { name: 'Open' }).click();
+    await p.waitForURL(/\/studio\//, { timeout: 8000 });
+    await dialog(p).getByTestId('analyze-done').waitFor({ timeout: 8000 });
+    check('iPhone: Open shows the result with the way back', (await dialog(p).getByRole('button', { name: 'Go back to the old notes' }).count()) === 1);
+    await p.waitForTimeout(700); // (sheets and toasts animate in)
     await p.screenshot({ path: path.join(shots, 'iphone-done.png') });
     check('iPhone: no sideways scroll (result)', (await sideScroll(p)) <= 0);
     const ps = await storedSong(p, pid);
     check('iPhone: re-analyzed with the piano model, notes as played', ps.transcription.method === 'piano-specialist' && ps.noteLength === 'played');
     await dialog(p).getByRole('button', { name: 'See the new notes' }).click();
+    await dialog(p).waitFor({ state: 'detached' });
     const pcard = p.getByTestId('version-card');
     await pcard.scrollIntoViewIfNeeded();
+    await p.waitForTimeout(700); // (sheets and toasts animate in)
     await p.screenshot({ path: path.join(shots, 'iphone-version-card.png') });
-    check('iPhone: the version card is shown', (await pcard.count()) === 1);
+    check('iPhone: the version card is shown, its buttons usable', (await pcard.count()) === 1 && (await pcard.getByRole('button', { name: 'Go back to the old notes' }).isEnabled()));
+    // back in the song later: the dialog is not open by itself
+    check('iPhone: the dialog stays closed', !(await dialog(p).count()));
     // the reset toast (an unedited level)
     await p.getByRole('button', { name: /^Reset (Easy|Medium|Hard) to detected notes$/ }).click();
     await p.getByRole('alertdialog', { name: /is already as detected$/ }).waitFor({ timeout: 5000 });
+    await p.waitForTimeout(700); // (sheets and toasts animate in)
     await p.screenshot({ path: path.join(shots, 'iphone-reset-toast.png') });
     check('iPhone: no sideways scroll (reset toast)', (await sideScroll(p)) <= 0);
     await dismissToasts(p);
+    // a song whose recording is no longer stored (site data cleared): why, and importing it again
+    await p.evaluate(
+      (id) =>
+        new Promise((res, rej) => {
+          const r = indexedDB.open('pianovision');
+          r.onsuccess = () => {
+            const tx = r.result.transaction('audio', 'readwrite');
+            tx.objectStore('audio').delete(id);
+            tx.oncomplete = () => (r.result.close(), res(undefined));
+            tx.onerror = () => rej(tx.error);
+          };
+          r.onerror = () => rej(r.error);
+        }),
+      pid,
+    );
+    await p.reload();
+    await p.locator('canvas').first().waitFor();
+    await openAnalyze(p);
+    const gone = dialog(p).getByTestId('analyze-nothing');
+    await gone.waitFor();
+    check(
+      'iPhone: a song whose recording is gone says why and offers importing it again',
+      /no longer has this song’s recording/.test(await gone.innerText()) && (await gone.getByRole('button', { name: 'Import the recording again' }).count()) === 1,
+    );
+    await p.waitForTimeout(700); // (sheets and toasts animate in)
+    await p.screenshot({ path: path.join(shots, 'iphone-not-stored.png') });
+    await dialog(p).getByRole('button', { name: 'Close' }).last().click();
     // the MIDI song
     await p.goto(`${base}/studio/${encodeURIComponent(pMidi)}`);
     await p.locator('canvas').first().waitFor();
     await openAnalyze(p);
     await dialog(p).getByTestId('analyze-nothing').waitFor();
+    await p.waitForTimeout(700); // (sheets and toasts animate in)
     await p.screenshot({ path: path.join(shots, 'iphone-midi.png') });
     check('iPhone: no sideways scroll (MIDI song)', (await sideScroll(p)) <= 0);
     check('iPhone: no console errors', !perr.length, perr.slice(0, 5));

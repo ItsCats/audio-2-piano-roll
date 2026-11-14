@@ -372,17 +372,43 @@ export function lostWork(song: Song): LostWork {
   };
 }
 
-/** The confirmation text of "Analyze again" (`hasUndo`: there are steps to undo now). */
-export function lossText(lost: LostWork, hasUndo: boolean): string {
+/** "fixes on Hard, sheet edits and …" (empty: nothing of the user's) */
+export function lostParts(lost: LostWork): string {
   const parts: string[] = [];
   if (lost.levels.length) parts.push(`fixes on ${joinAnd(lost.levels.map(levelName))}`);
   if (lost.sheet) parts.push('sheet edits and key/time/tempo marks');
   if (lost.pedal.length) parts.push(`pedal changes on ${joinAnd(lost.pedal.map(levelName))}`);
   if (lost.heard) parts.push('“As heard” note lengths');
+  return joinAnd(parts);
+}
+
+/**
+ * The version kept from an earlier "Analyze again" (or "Go back"), which a new run replaces: only one
+ * other version is kept (a whole song record: phones have little storage).
+ */
+export interface KeptVersion {
+  /** its analysis ("Piano solo · standard model") */
+  label: string;
+  /** the user's work on it (lostWork) */
+  lost: LostWork;
+}
+
+/**
+ * The confirmation text of "Analyze again" (`hasUndo`: there are steps to undo now; `kept`: a version
+ * kept from before, which this run deletes). The notes on screen become the kept old notes.
+ */
+export function lossText(lost: LostWork, hasUndo: boolean, kept?: KeptVersion | null): string {
+  const mine = lostParts(lost);
   const out = ['This replaces the notes on every level.'];
-  if (parts.length) out.push(`Your ${joinAnd(parts)} will be removed.`);
+  if (mine) out.push(`Your ${mine} won’t be in the new notes. They stay in the old notes, which you can switch back to afterward.`);
+  else out.push('You can switch back to the old notes afterward.');
+  if (kept) {
+    const theirs = lostParts(kept.lost);
+    out.push(
+      `Only one earlier version is kept, so the one kept now (${kept.label || 'earlier settings'}${theirs ? `, with your ${theirs}` : ''}) will be deleted for good.`,
+    );
+  }
   if (hasUndo) out.push('Undo history is cleared.');
-  out.push('You can go back to the old notes afterward.');
   return out.join(' ');
 }
 
@@ -428,6 +454,15 @@ export function resetLevel(song: Song, d: Difficulty): ResetResult {
   if (old.marks?.length || old.notes.some((n) => n.art?.length)) extras.push('markings');
   if (old.pedalEdited || old.showPedal || pedalKey(old.pedal) !== pedalKey(fresh.pedal)) extras.push('pedal changes');
   return { song: next, changed: noteChanges > 0 || extras.length > 0, noteChanges, extras, userEdited: old.edited || !!old.pedalEdited };
+}
+
+/** The question before resetting a level the user changed: what exactly goes back (resetLevel's preview). */
+export function resetConfirmText(r: ResetResult, d: Difficulty): string {
+  const parts: string[] = [];
+  if (r.noteChanges > 0) parts.push(r.noteChanges === 1 ? '1 note fix' : `${r.noteChanges} note fixes`);
+  parts.push(...r.extras);
+  const what = parts.length ? `Your ${joinAnd(parts)} on this level will be replaced.` : 'Your changes on this level will be replaced.';
+  return `Reset ${levelName(d)} to the detected notes? ${what} You can undo this right after.`;
 }
 
 /** The body of the toast after a level was reset (`r.changed`). */

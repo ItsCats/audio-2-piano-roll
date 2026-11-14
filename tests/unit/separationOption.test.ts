@@ -66,8 +66,9 @@ describe('"Analyze again" knows the song’s length', () => {
     const phone = { phone: true, warnAboveSeconds: 360 };
     expect(pianoModelWarning(phone, 8 * 60)).toBe('May be slow on phones. This song is 8 minutes long, so it might not work on this phone.');
     expect(pianoModelWarning({ phone: false, warnAboveSeconds: 360 }, 8 * 60)).toBe('May be slow on this device. This song is 8 minutes long, so it might not work here.');
-    // short enough, or not known (the Import page): as before
-    expect(pianoModelWarning(phone, 3 * 60)).toBe('May be slow on phones. Songs over 6 minutes might not work on phones with little memory.');
+    // short enough: says so; not known (the Import page): as before
+    expect(pianoModelWarning(phone, 3 * 60)).toBe('May be slow on phones. This song is under 6 minutes, so it should fit in this phone’s memory.');
+    expect(pianoModelWarning({ phone: false, warnAboveSeconds: 360 }, 22)).toBe('May be slow on this device. This song is under 6 minutes, so it should work here.');
     expect(pianoModelWarning(phone)).toBe('May be slow on phones. Songs over 6 minutes might not work on phones with little memory.');
     expect(pianoModelWarning({ phone: false })).toBe('May be slow on this device. Songs over 6 minutes might not work.');
   });
@@ -88,6 +89,12 @@ describe('"Analyze again" knows the song’s length', () => {
         const t = separationOptionText({ piano: true, engine: a.engine, est: long.estSecondsPerMinute, maxSeconds: long.maxSeconds, lowMemory: true, reason: a.reason });
         expect(t.warning).toBe(`May run out of memory on this device. ${longReason(15 * 60)}`);
       }
+      // a phone: the memory said for this recording (a short one needs nearly as much)
+      vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Safari/604.1', maxTouchPoints: 5 });
+      const phone = separationSupport(22);
+      expect(phone.ok && !phone.recommended).toBe(true);
+      expect(phone.reason).toMatch(/^Needs about [\d.]+ GB of memory even for a 22-second recording like this one, and takes a while on a phone\.$/);
+      expect(separationSupport().reason ?? '').toMatch(/for a 4-minute song|^$/);
       expect(longReason(15 * 60)).toMatch(/^A 15-minute recording needs about [\d.]+ GB of memory to separate in this browser\.$/);
     } finally {
       vi.unstubAllGlobals();

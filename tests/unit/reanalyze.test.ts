@@ -165,12 +165,22 @@ describe('what "Analyze again" says it replaces', () => {
     const lost = lostWork(fullSong());
     expect(lost).toEqual({ levels: ['hard', 'easy'], sheet: true, pedal: ['hard'], heard: true });
     expect(lossText(lost, true)).toBe(
-      'This replaces the notes on every level. Your fixes on Hard and Easy, sheet edits and key/time/tempo marks, pedal changes on Hard and “As heard” note lengths will be removed. Undo history is cleared. You can go back to the old notes afterward.',
+      'This replaces the notes on every level. Your fixes on Hard and Easy, sheet edits and key/time/tempo marks, pedal changes on Hard and “As heard” note lengths won’t be in the new notes. They stay in the old notes, which you can switch back to afterward. Undo history is cleared.',
     );
     expect(lossText({ levels: ['hard', 'easy'], sheet: true, pedal: [], heard: false }, false)).toBe(
-      'This replaces the notes on every level. Your fixes on Hard and Easy and sheet edits and key/time/tempo marks will be removed. You can go back to the old notes afterward.',
+      'This replaces the notes on every level. Your fixes on Hard and Easy and sheet edits and key/time/tempo marks won’t be in the new notes. They stay in the old notes, which you can switch back to afterward.',
     );
-    expect(lossText({ levels: [], sheet: false, pedal: [], heard: false }, false)).toBe('This replaces the notes on every level. You can go back to the old notes afterward.');
+    expect(lossText({ levels: [], sheet: false, pedal: [], heard: false }, false)).toBe('This replaces the notes on every level. You can switch back to the old notes afterward.');
+  });
+
+  it('says that a version kept from an earlier run is deleted (only one is kept), with the fixes on it', () => {
+    const none = { levels: [], sheet: false, pedal: [], heard: false };
+    expect(lossText({ ...none, levels: ['hard'] }, false, { label: 'Piano solo · standard model', lost: { ...none, levels: ['hard'] } })).toBe(
+      'This replaces the notes on every level. Your fixes on Hard won’t be in the new notes. They stay in the old notes, which you can switch back to afterward. Only one earlier version is kept, so the one kept now (Piano solo · standard model, with your fixes on Hard) will be deleted for good.',
+    );
+    expect(lossText(none, true, { label: 'Full song', lost: none })).toBe(
+      'This replaces the notes on every level. You can switch back to the old notes afterward. Only one earlier version is kept, so the one kept now (Full song) will be deleted for good. Undo history is cleared.',
+    );
     expect(joinAnd(['Hard', 'Medium', 'Easy'])).toBe('Hard, Medium and Easy');
   });
 });

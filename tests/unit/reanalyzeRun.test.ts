@@ -47,7 +47,17 @@ vi.mock('../../src/lib/pianoSpecialist', () => ({
 
 const pipeline = await import('../../src/lib/transcription/pipeline');
 const db = await import('../../src/lib/storage/db');
-const { useImport, checkCrashedSpecialist, checkCrashedBlend, separationCrashNotice, SPECIALIST_RUNNING_KEY, BLEND_RUNNING_KEY, BLEND_CRASH_NOTICE } = await import('../../src/state/importStore');
+const {
+  useImport,
+  checkCrashedSpecialist,
+  checkCrashedBlend,
+  checkInterruptedReanalysis,
+  separationCrashNotice,
+  SPECIALIST_RUNNING_KEY,
+  BLEND_RUNNING_KEY,
+  BLEND_CRASH_NOTICE,
+  REANALYZE_RUNNING_KEY,
+} = await import('../../src/state/importStore');
 const { useStudio } = await import('../../src/state/studioStore');
 const { useSettings } = await import('../../src/state/settingsStore');
 const { useToasts } = await import('../../src/state/toastStore');
@@ -227,7 +237,57 @@ describe('Analyze again: the run', () => {
     expect(st.job!.reanalyzeResult!.keptOther).toBe(false);
     // the same notes (not analyzed again)
     expect(pipeline.transcribeAudio).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(db.commitReanalysis).mock.calls[1][0]).toBe(vi.mocked(db.commitReanalysis).mock.calls[0][0]);
+    const [first, second] = vi.mocked(db.commitReanalysis).mock.calls.map(([n]) => n);
+    expect(second.base).toEqual(first.base);
+    expect(second.transcription).toEqual(first.transcription);
+  });
+
+  it('saving without the old notes later puts them on the song as it is then (renamed, a hands video added)', async () => {
+    vi.mocked(pipeline.transcribeAudio).mockResolvedValueOnce(specialistResult());
+    vi.mocked(db.commitReanalysis).mockResolvedValueOnce('quota');
+    await useImport.getState().reanalyze('song-1', opts());
+    // while the storage-full card waits for an answer
+    song = { ...song, title: 'Renamed', favorite: false, handVideo: { mimeType: 'video/mp4', duration: 3 } as Song['handVideo'] };
+    await useImport.getState().failed!.saveWithoutOld!();
+    const written = vi.mocked(db.commitReanalysis).mock.calls[1][0];
+    expect(written.title).toBe('Renamed');
+    expect(written.favorite).toBe(false);
+    expect(written.handVideo).toEqual(song.handVideo);
+    expect(written.transcription.method).toBe('piano-specialist');
+    expect(useImport.getState().job!.stage).toBe('done');
+  });
+
+  it('Cancel while the new notes are being written is ignored: the run ends and says what happened', async () => {
+    vi.mocked(pipeline.transcribeAudio).mockResolvedValueOnce(specialistResult());
+    let stageThen: string | undefined;
+    vi.mocked(db.commitReanalysis).mockImplementationOnce(async (next) => {
+      song = next;
+      stageThen = useImport.getState().job?.stage;
+      // (a tap on Cancel landing during the commit)
+      useImport.getState().cancel();
+      return 'ok';
+    });
+    useStudio.setState({ song: structuredClone(song) });
+    const id = await useImport.getState().reanalyze('song-1', opts());
+    expect(stageThen).toBe('saving');
+    expect(id).toBe('song-1');
+    const job = useImport.getState().job!;
+    expect(job.stage).toBe('done');
+    expect(job.reanalyzeResult!.label).toMatch(/high-accuracy/);
+    expect(useStudio.getState().song!.transcription.method).toBe('piano-specialist');
+  });
+
+  it('the "ready" toast (dialog not open) opens the song with the dialog, which shows the result', async () => {
+    vi.mocked(pipeline.transcribeAudio).mockResolvedValueOnce(specialistResult());
+    await useImport.getState().reanalyze('song-1', opts());
+    const t = useToasts.getState().toasts.find((x) => x.title === 'New notes are ready')!;
+    expect(t.actions!.map((a) => a.label)).toEqual(['Open']);
+    const { setAppNavigate } = await import('../../src/lib/appNavigate');
+    const to: string[] = [];
+    setAppNavigate((x) => to.push(x));
+    t.actions![0].onClick();
+    setAppNavigate(null);
+    expect(to).toEqual(['/studio/song-1?analyze=1']);
   });
 
   it('still too full: the second message, the song unchanged', async () => {
@@ -238,6 +298,21 @@ describe('Analyze again: the run', () => {
     const job = useImport.getState().job!;
     expect(job.reanalyze!.failure).toBe('quota-again');
     expect(job.error).toBe('Couldn’t save the new notes because this browser’s storage is full. Your song wasn’t changed.');
+  });
+});
+
+describe('Re-detect after the notes changed', () => {
+  it('a result for an analysis no longer on screen is dropped', () => {
+    const a = structuredClone(song);
+    useStudio.setState({ song: a, past: [], future: [] });
+    const startedOn = a.transcription;
+    // switched to the other version meanwhile (a new transcription object)
+    const b = { ...a, transcription: { ...a.transcription, method: 'piano-specialist' as const } };
+    useStudio.getState().applyReanalysis(b);
+    expect(useStudio.getState().replaceSong({ ...a, base: [] }, { ifTranscription: startedOn })).toBe(false);
+    expect(useStudio.getState().song).toBe(b);
+    expect(useStudio.getState().replaceSong({ ...b, base: [] }, { ifTranscription: b.transcription })).toBe(true);
+    expect(useStudio.getState().song!.base).toEqual([]);
   });
 });
 
@@ -334,6 +409,33 @@ describe('crash markers of Analyze again', () => {
     expect(useToasts.getState().toasts.at(-1)!.body).toBe(
       'The page most likely ran out of memory while analyzing “My recording” again. Your song wasn’t changed. “Add the high-accuracy piano model” is now off; you can tick it again under Full song in Analyze again.',
     );
+  });
+
+  it('a run marker that survives a reload: the next load says the run stopped (once), unless a crash toast did', async () => {
+    let during: Record<string, unknown> | null = null;
+    vi.mocked(pipeline.transcribeAudio).mockImplementationOnce(async () => {
+      during = JSON.parse(store.get(REANALYZE_RUNNING_KEY) ?? 'null');
+      return specialistResult();
+    });
+    await useImport.getState().reanalyze('song-1', opts());
+    expect(during).toMatchObject({ reanalyze: 'song-1', title: 'My recording' });
+    expect(store.has(REANALYZE_RUNNING_KEY)).toBe(false);
+    // left by a page that was reloaded mid-run (its lock is gone)
+    store.set(REANALYZE_RUNNING_KEY, JSON.stringify({ reanalyze: 'song-1', title: 'My recording', at: Date.now() }));
+    expect(await checkInterruptedReanalysis(false)).toBe(true);
+    const t = useToasts.getState().toasts.at(-1)!;
+    expect([t.title, t.body]).toEqual(['Analyze again stopped', 'The page was closed or reloaded while “My recording” was being analyzed again, so it stopped. Your song wasn’t changed.']);
+    expect(t.actions!.map((a) => a.label)).toEqual(['Open the song']);
+    expect(store.has(REANALYZE_RUNNING_KEY)).toBe(false);
+    expect(await checkInterruptedReanalysis(false)).toBe(false);
+    // a crash toast for it was shown on this load: not twice
+    store.set(REANALYZE_RUNNING_KEY, JSON.stringify({ reanalyze: 'song-1', title: 'My recording', at: Date.now() }));
+    expect(await checkInterruptedReanalysis(true)).toBe(false);
+    // another tab is running one now: left alone
+    store.set(REANALYZE_RUNNING_KEY, JSON.stringify({ reanalyze: 'song-1', title: 'My recording', at: Date.now() }));
+    held.add('piano2vision-reanalyze-running');
+    expect(await checkInterruptedReanalysis(false)).toBe(false);
+    expect(store.has(REANALYZE_RUNNING_KEY)).toBe(true);
   });
 
   it('an import’s marker (or one from an older version) keeps the import wording, without a button', async () => {

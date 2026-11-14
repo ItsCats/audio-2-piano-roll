@@ -133,6 +133,12 @@ export function pianoModelWarning(support: Pick<PianoSpecialistSupport, 'phone' 
       ? `May be slow on phones. This song is ${min} minutes long, so it might not work on this phone.`
       : `May be slow on this device. This song is ${min} minutes long, so it might not work here.`;
   }
+  if (seconds !== undefined && support.warnAboveSeconds !== undefined) {
+    const max = Math.round(support.warnAboveSeconds / 60);
+    return support.phone
+      ? `May be slow on phones. This song is under ${max} minutes, so it should fit in this phone’s memory.`
+      : `May be slow on this device. This song is under ${max} minutes, so it should work here.`;
+  }
   return support.phone ? 'May be slow on phones. Songs over 6 minutes might not work on phones with little memory.' : 'May be slow on this device. Songs over 6 minutes might not work.';
 }
 

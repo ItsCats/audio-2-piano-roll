@@ -458,20 +458,28 @@ const SPECIALIST_RUNNING_LOCK = 'piano2vision-piano-specialist-running';
 /** markers this tab set and has not removed yet (the pagehide handler removes them) */
 const ownedMarkers = new Set<string>();
 
-function setCrashMarker(key: string, lock: string, payload: Record<string, unknown>): () => void {
+/**
+ * `keepOnUnload`: the marker stays through a normal unload too (a reload, closing the tab, a phone
+ * evicting it), so the next load can say the run stopped (REANALYZE_RUNNING_KEY).
+ */
+function setCrashMarker(key: string, lock: string, payload: Record<string, unknown>, opts: { keepOnUnload?: boolean } = {}): () => void {
   const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
   if (!locks) return () => {};
   let release: () => void = () => {};
   const held = new Promise<void>((r) => (release = r));
   void locks.request(lock, () => held).catch(() => undefined);
+  let set = false;
   try {
     localStorage.setItem(key, JSON.stringify({ ...payload, at: Date.now() }));
-    ownedMarkers.add(key);
+    if (opts.keepOnUnload) set = true;
+    else ownedMarkers.add(key);
   } catch {
     /* storage blocked: no crash detection */
   }
   return () => {
-    if (ownedMarkers.delete(key)) {
+    const mine = opts.keepOnUnload ? set : ownedMarkers.delete(key);
+    set = false;
+    if (mine) {
       try {
         localStorage.removeItem(key);
       } catch {
@@ -522,8 +530,40 @@ function reanalyzeOf(m: Record<string, unknown>): ReanalyzeMark | null {
   return typeof m.reanalyze === 'string' ? { reanalyze: m.reanalyze, title: typeof m.title === 'string' ? m.title : 'your song' } : null;
 }
 
+/**
+ * Set while an "Analyze again" runs (with its tab's lock). Unlike the crash markers it is not removed
+ * by a normal unload: a reload, closing the tab or a phone evicting it mid-run leaves it, and the next
+ * load says that the run stopped and the song wasn't changed (checkInterruptedReanalysis).
+ */
+export const REANALYZE_RUNNING_KEY = 'piano2vision-reanalyze-running';
+const REANALYZE_RUNNING_LOCK = 'piano2vision-reanalyze-running';
+/** a crash toast for an "Analyze again" was shown on this load (the interrupted one is then not shown as well) */
+let reanalyzeCrashShown = false;
+
+function markReanalyzing(re: { songId: string; title: string }): () => void {
+  return setCrashMarker(REANALYZE_RUNNING_KEY, REANALYZE_RUNNING_LOCK, { ...reMark(re) }, { keepOnUnload: true });
+}
+
+/** The toast after a page load ended an "Analyze again" of `title`. */
+export function reanalyzeInterruptedNotice(title: string): [title: string, body: string] {
+  return ['Analyze again stopped', `The page was closed or reloaded while “${title}” was being analyzed again, so it stopped. Your song wasn’t changed.`];
+}
+
+/**
+ * An "Analyze again" that a page load ended: a toast says so, unless a crash toast already did
+ * (`crashShown`: by default, whether one was shown on this load).
+ */
+export async function checkInterruptedReanalysis(crashShown = reanalyzeCrashShown): Promise<boolean> {
+  const m = await takeCrashMarker(REANALYZE_RUNNING_KEY, REANALYZE_RUNNING_LOCK);
+  const re = m && reanalyzeOf(m);
+  if (!re || crashShown) return false;
+  toast.info(...reanalyzeInterruptedNotice(re.title), openSongAction(re));
+  return true;
+}
+
 /** The crash toast's button for an "Analyze again": the song, with the dialog open (the option is unticked by now). */
 function openSongAction(re: ReanalyzeMark) {
+  reanalyzeCrashShown = true;
   return { actions: [{ label: 'Open the song', variant: 'primary' as const, onClick: () => appNavigate(`/studio/${encodeURIComponent(re.reanalyze)}?analyze=1`) }], ttl: 0 };
 }
 
@@ -1611,20 +1651,28 @@ export const useImport = create<ImportState>((set, get) => {
       const kind: SongSource['kind'] = song?.source.kind ?? 'audio';
       const ctx = start(title, kind, planFor(kind, undefined), undefined, opts.presetId, opts.transcriber, opts.pianoBlend, { reanalyze: { songId } });
       ctx.update({ songId });
+      const unmarkRun = markReanalyzing({ songId, title });
       let separate = !!opts.separate;
-      /** the new notes, once analyzed (a storage-full card saves them without the old notes) */
-      let pending: { next: Song; was: Song; posteriors: Awaited<ReturnType<typeof transcribeAudio>>['posteriors']; label: string } | null = null;
+      /** the new analysis, once done (a storage-full card saves it without the old notes) */
+      let analyzed: Awaited<ReturnType<typeof transcribeAudio>> | null = null;
       const again = (transcriber: TranscriptionEngine) => () => get().reanalyze(songId, { ...opts, transcriber, pianoBlend: ctx.blend });
       const commit = async (keepOther: boolean): Promise<string | null> => {
-        const p = pending!;
-        const outcome = await commitReanalysis(p.next, p.posteriors, { keepOther });
+        const result = analyzed!;
+        // the song as it is now (edited, renamed or given a hands video meanwhile, also while a
+        // storage-full card waited for an answer; or deleted): the new notes go on that
+        await settleStudioSave();
+        const was = await getSong(songId);
+        if (!was) throw reanalyzeFailure('deleted', `“${title}” was deleted while it was being analyzed again, so the new notes weren’t saved.`);
+        const next = songFromReanalysis(was, result, Date.now());
+        const label = analysisLabel(next.transcription, useSettings.getState().customDetection);
+        const outcome = await commitReanalysis(next, result.posteriors, { keepOther });
         if (outcome === 'deleted') throw reanalyzeFailure('deleted', `“${title}” was deleted while it was being analyzed again, so the new notes weren’t saved.`);
         if (outcome === 'quota') {
           if (keepOther) throw reanalyzeFailure('quota', 'This browser’s storage is full. You can save the new notes without keeping the old ones (you won’t be able to go back), or cancel and keep your song as it is.', 'Not enough storage to keep the old notes');
           throw reanalyzeFailure('quota-again', 'Couldn’t save the new notes because this browser’s storage is full. Your song wasn’t changed.');
         }
         // the Studio shows the new notes if it has this song open (also after leaving the page: the store keeps it)
-        const saved = (await getSong(songId)) ?? p.next;
+        const saved = (await getSong(songId)) ?? next;
         useStudio.getState().applyReanalysis(saved);
         void useLibrary.getState().refresh();
         const hard = (s: Song) => s.arrangements.hard.notes.length;
@@ -1635,17 +1683,18 @@ export const useImport = create<ImportState>((set, get) => {
           finishedAt: Date.now(),
           detail: undefined,
           reanalyzeResult: {
-            label: p.label,
+            label,
             notes: hard(saved),
-            was: hard(p.was),
-            ...(p.was.tempo.source === 'manual' ? { keptTempo: p.was.tempo.bpm } : {}),
+            was: hard(was),
+            ...(was.tempo.source === 'manual' ? { keptTempo: was.tempo.bpm } : {}),
             keptOther: keepOther,
           },
         });
         const st = useStudio.getState();
         if (!(st.analyzeOpen && st.song?.id === songId)) {
           toast.success('New notes are ready', `“${title}” was analyzed again.`, {
-            actions: [{ label: 'Open', variant: 'primary', onClick: () => appNavigate(`/studio/${encodeURIComponent(songId)}`) }],
+            // (the Studio with the dialog open: the result, with the way back to the old notes)
+            actions: [{ label: 'Open', variant: 'primary', onClick: () => appNavigate(`/studio/${encodeURIComponent(songId)}?analyze=1`) }],
             ttl: 0,
           });
         }
@@ -1686,21 +1735,22 @@ export const useImport = create<ImportState>((set, get) => {
         const original = new File([rec.blob], name, { type: rec.type || rec.blob.type });
         const { result } = await analyze(ctx, original, name, engine);
         if (ctx.signal.aborted) return null;
+        // from here on the song is being replaced: Cancel is gone (cancel() ignores a saving re-analysis)
         ctx.update({ warnings: result.info.warnings, stage: 'saving', progress: null, detail: 'Replacing the notes' });
-        // the song as it is now (edited in the Studio meanwhile, or deleted)
-        await settleStudioSave();
-        const cur = await getSong(songId);
-        if (!cur) throw reanalyzeFailure('deleted', `“${title}” was deleted while it was being analyzed again, so the new notes weren’t saved.`);
-        const next = songFromReanalysis(cur, result, Date.now());
-        pending = { next, was: cur, posteriors: result.posteriors, label: analysisLabel(next.transcription, useSettings.getState().customDetection) };
-        if (ctx.signal.aborted) return null;
+        analyzed = result;
         return await commit(true);
       } catch (err) {
         return failed(err);
+      } finally {
+        unmarkRun();
       }
     },
 
     cancel: () => {
+      // an "Analyze again" that is writing its new notes can't be stopped any more (the commit is one
+      // transaction, already under way): the run ends and says what happened
+      const j = get().job;
+      if (j?.reanalyze && j.stage === 'saving') return;
       get().controller?.abort();
       void current?.unpend?.();
       set({ job: null, controller: null, failed: null });
@@ -1751,6 +1801,8 @@ if (typeof window !== 'undefined') {
         checkCrashedSpecialist(() => useImport.getState().setPianoModelPref(false)),
         checkCrashedBlend(() => useImport.getState().setPianoBlendPref(false)),
       ])
+        // (after them: a crash during "Analyze again" has said it already)
+        .then(() => checkInterruptedReanalysis())
         .catch(() => undefined)
         .then(() => resolve());
     }, 0),

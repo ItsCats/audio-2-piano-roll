@@ -132,6 +132,10 @@ export function JobProgress({
   // (a failure that says it itself, or that the song is gone, has no "Your song wasn't changed." line)
   const unchangedLine = !!re && err && reFailure !== 'deleted' && reFailure !== 'quota' && reFailure !== 'quota-again';
   const saveWithoutOld = failedHere?.saveWithoutOld;
+  // an "Analyze again" writing its new notes can't be stopped any more (importStore cancel)
+  const cancellable = !done && !err && !(re && job.stage === 'saving');
+  // the progress line in plain words (sheet music, "Analyze again"), or the import's compact one
+  const plain = !!job.sheet || !!re;
   return (
     <div ref={card} data-import-card tabIndex={-1} className={cn('panel animate-fade-in scroll-mt-4 p-5 outline-none', className)} aria-live="polite">
       <div className="flex items-start justify-between gap-4">
@@ -142,7 +146,7 @@ export function JobProgress({
             {status} · {formatTime(elapsed)}
           </p>
         </div>
-        {!done && !err && (
+        {cancellable && (
           <Button size="sm" variant="ghost" onClick={onCancel}>
             Cancel
           </Button>
@@ -157,11 +161,13 @@ export function JobProgress({
             </p>
           )}
           {job.progress !== null && (
-            <p className={cn('mt-1.5 flex justify-between gap-3 text-ink-300', job.sheet ? 'text-[12px]' : 'font-mono text-[11px]')}>
+            <p className={cn('mt-1.5 flex justify-between gap-3 text-ink-300', plain ? 'text-[12px]' : 'font-mono text-[11px]')}>
               <span>
                 {job.sheet
                   ? sentence(eta ?? (job.stage === 'analyzing' && job.progress < 0.99 ? 'Working out the time left…' : ''))
-                  : (eta ?? ((job.stage === 'separating' || job.stage === 'analyzing' || job.stage === 'piano-model') && job.progress < 0.99 ? `${etaStep(job)}: measuring speed…` : ''))}
+                  : re
+                    ? sentence(eta ?? ((job.stage === 'separating' || job.stage === 'analyzing' || job.stage === 'piano-model') && job.progress < 0.99 ? `${etaStep(job)}: working out the time left…` : ''))
+                    : (eta ?? ((job.stage === 'separating' || job.stage === 'analyzing' || job.stage === 'piano-model') && job.progress < 0.99 ? `${etaStep(job)}: measuring speed…` : ''))}
               </span>
               <span>{Math.round(job.progress * 100)}%</span>
             </p>

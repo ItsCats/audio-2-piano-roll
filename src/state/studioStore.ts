@@ -94,7 +94,12 @@ interface StudioState {
    */
   resetLevel: (d: Difficulty) => (ResetResult & { token: HistorySnap | null }) | null;
   updateSong: (patch: Partial<Song>) => void;
-  replaceSong: (song: Song) => void;
+  /**
+   * The song replaced as a whole (Re-detect), history cleared. `ifTranscription`: only if the open
+   * song still has this analysis (a run that took a while is dropped when the notes were switched or
+   * analyzed again meanwhile). Returns whether it was replaced.
+   */
+  replaceSong: (song: Song, opts?: { ifTranscription?: Song['transcription'] }) => boolean;
   /**
    * The song after "Analyze again" (already saved): shown at once if it is the open song (also when
    * the Studio page was left: the store keeps the song), with the history cleared and no save.
@@ -331,9 +336,14 @@ export const useStudio = create<StudioState>((set, get) => {
       set({ song: rebased({ ...s.song, ...patch, updatedAt: Date.now() }), ...history });
       scheduleSave();
     },
-    replaceSong: (song) => {
+    replaceSong: (song, opts) => {
+      if (opts?.ifTranscription) {
+        const cur = get().song;
+        if (!cur || cur.id !== song.id || cur.transcription !== opts.ifTranscription) return false;
+      }
       set({ song: rebased(song), past: [], future: [], selection: new Set(), markSel: null });
       scheduleSave();
+      return true;
     },
     applyReanalysis: (song) => {
       if (get().song?.id !== song.id) return;
