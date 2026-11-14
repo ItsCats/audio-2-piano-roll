@@ -1,11 +1,17 @@
 import { resolveMeter } from '../../../lib/sheet/grid';
 import { readByBeta, readFromSheet, readerWhat } from '../SheetReaderNotice';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, Wand2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, History, Loader2, RotateCcw, Wand2 } from 'lucide-react';
 import { useStudio } from '../../../state/studioStore';
-import { detectionParams } from '../../../state/settingsStore';
-import { getPosteriors } from '../../../lib/storage/db';
+import { detectionParams, useSettings } from '../../../state/settingsStore';
+import { getOtherVersion, getPosteriors, type StoredOther } from '../../../lib/storage/db';
+import { importBusy, useImport } from '../../../state/importStore';
+import { analysisLabel } from '../../../lib/transcription/analysisSummary';
+import { reanalyzeSupport } from '../../../lib/reanalyze';
+import { useStoredOriginal } from '../../../hooks/useStoredOriginal';
+import { deleteOtherSongVersion, swapSongVersions } from '../../../state/songVersions';
+import { isAudioSong } from '../../../lib/music/autoPedal';
 import { blendAddedNotes, redetectNotes, redetectedBlendInfo, withLeadPass, EXTRACTION_PRESETS } from '../../../lib/transcription/pipeline';
 import { regularBeats } from '../../../lib/music/beats';
 import { detectKey } from '../../../lib/music/theory';
@@ -13,7 +19,7 @@ import { generateAllArrangements } from '../../../lib/music/difficulty';
 import type { Difficulty, ExtractionParams, NoteLength } from '../../../lib/music/types';
 import { Badge, Button, Section, Segmented, Slider, Toggle } from '../../ui';
 import { toast } from '../../../state/toastStore';
-import { arrangementOptions, easyMediumFromHard, hasNoteLength, makeThumbnail, noteLengthOf, withNoteLength } from '../../../lib/songs';
+import { arrangementOptions, easyMediumFromHard, hasNoteLength, levelName, makeThumbnail, noteLengthOf, resetConfirmText, resetLevel as resetLevelOf, resetToastBody, withNoteLength } from '../../../lib/songs';
 import { followsWrittenTempo } from '../../../lib/sheet/retime';
 import { NO_TEMPO_READ_WARNING } from '../../../lib/omr/readers';
 import { SongTempoSection, TempoText, focusTempoInput, tempoFrom, tempoGuessed } from './TempoControl';
@@ -118,14 +124,120 @@ function NoteLengthControl() {
   );
 }
 
+/**
+ * "Analyze again" (AnalyzeAgainDialog): what the song was analyzed with, the button, and, after a
+ * re-analysis, the version card (the other version is kept in storage: switch to it or delete it).
+ */
+function AnalyzeAgainSection({ redetecting }: { redetecting: boolean }) {
+  const song = useStudio((s) => s.song)!;
+  const setAnalyzeOpen = useStudio((s) => s.setAnalyzeOpen);
+  const custom = useSettings((s) => s.customDetection);
+  const job = useImport((s) => s.job);
+  // this song is being analyzed again right now (a finished or failed run blocks nothing)
+  const mine = importBusy(job) && job?.reanalyze?.songId === song.id;
+  const busyOther = importBusy(job) && !mine;
+  const [other, setOther] = useState<StoredOther | null>(null);
+  const [working, setWorking] = useState(false);
+  // while Re-detect runs, the notes it will replace must stay the ones on screen
+  const locked = working || mine || redetecting;
+  useEffect(() => {
+    let alive = true;
+    void getOtherVersion(song.id)
+      .catch(() => undefined)
+      .then((o) => alive && setOther(o ?? null));
+    return () => {
+      alive = false;
+    };
+  }, [song.id, song.updatedAt, job?.stage]);
+  const t = song.transcription;
+  const what =
+    song.source.kind === 'midi' || t.method === 'midi-file'
+      ? 'Notes from the MIDI file'
+      : song.source.kind === 'score' || t.method === 'score-file'
+        ? 'Notes from the sheet music'
+        : `Analyzed as: ${analysisLabel(t, custom) || 'Earlier settings'}`;
+  const swap = async () => {
+    if (!other) return;
+    setWorking(true);
+    try {
+      const role = other.otherVersion.role;
+      const s = await swapSongVersions(song.id);
+      if (!s) return;
+      if (role === 'older') toast.success('Back to the old notes', 'The new analysis is kept, so you can switch again under Analyze again.');
+      else toast.success('Using the new analysis', 'The old notes are kept, so you can switch again under Analyze again.');
+    } catch (e) {
+      toast.error('Couldn’t switch versions', (e as Error).message);
+    } finally {
+      setWorking(false);
+    }
+  };
+  const remove = async () => {
+    if (!other) return;
+    const older = other.otherVersion.role === 'older';
+    if (!confirm(older ? 'Delete the old notes for good? You won’t be able to go back to them.' : 'Delete the new analysis for good? You won’t be able to go back to it.')) return;
+    await deleteOtherSongVersion(song.id);
+    setOther(null);
+    toast.info('Deleted', 'Only the version you’re using is kept.');
+  };
+  const n = other?.arrangements.hard.notes.length ?? 0;
+  const otherLabel = other ? analysisLabel(other.transcription, custom) : '';
+  return (
+    <Section title="Analyze again">
+      <p className="text-[12.5px] text-ink-200" data-testid="analyzed-as">
+        {what}
+      </p>
+      <div>
+        <Button variant="primary" size="sm" icon={<Wand2 size={14} />} disabled={busyOther || redetecting} onClick={() => setAnalyzeOpen(true)}>
+          Analyze again…
+        </Button>
+        {busyOther && (
+          <p className="mt-1.5 text-[11.5px] text-ink-400">
+            Another import is running. Wait for it to finish.{' '}
+            <Link to="/import" className="text-accent-400 hover:text-accent-300">
+              See progress
+            </Link>
+          </p>
+        )}
+      </div>
+      {other && (
+        <div className="flex flex-col gap-2 rounded-lg border border-ink-700 bg-ink-900/60 p-3 text-[12.5px] text-ink-100" data-testid="version-card">
+          <p className="flex gap-2">
+            <History size={15} className="mt-0.5 shrink-0 text-accent-400" />
+            <span>
+              {other.otherVersion.role === 'older'
+                ? `Your old notes are kept (${otherLabel ? `${otherLabel}, ` : ''}Hard: ${n} notes).`
+                : `You’re using the old notes. The new analysis is kept (${otherLabel ? `${otherLabel}, ` : ''}Hard: ${n} notes).`}
+            </span>
+          </p>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+            <Button size="sm" disabled={locked} onClick={() => void swap()}>
+              {other.otherVersion.role === 'older' ? 'Go back to the old notes' : 'Use the new analysis'}
+            </Button>
+            <button type="button" className="focus-ring rounded text-[12px] text-ink-300 underline-offset-2 hover:text-ink-50 hover:underline" disabled={locked} onClick={() => void remove()}>
+              {other.otherVersion.role === 'older' ? 'Delete the old notes' : 'Delete the new analysis'}
+            </button>
+          </div>
+          <p className="text-[11.5px] text-ink-400">Switching clears undo history.</p>
+        </div>
+      )}
+    </Section>
+  );
+}
+
 export function ArrangementPanel() {
   const song = useStudio((s) => s.song)!;
   const replaceSong = useStudio((s) => s.replaceSong);
-  const regenerateLevels = useStudio((s) => s.regenerateLevels);
   const difficulty = useStudio((s) => s.difficulty);
+  const audioSong = isAudioSong(song) && song.transcription.estimated;
+  const stored = useStoredOriginal(song.id, song.hasAudio, audioSong);
   const [params, setParams] = useState<ExtractionParams>(() => withLeadPass(song.transcription.params ?? detectionParams()));
   const [busy, setBusy] = useState(false);
   const [bpm, setBpm] = useState(String(song.tempo.bpm));
+  // the song's notes were analyzed again or switched to the other version: start from its own values
+  const analysis = song.transcription;
+  useEffect(() => setParams(withLeadPass(analysis.params ?? detectionParams())), [analysis]);
+  const tempoBpm = song.tempo.bpm;
+  useEffect(() => setBpm(String(tempoBpm)), [tempoBpm]);
   const t = song.transcription;
   const estimated = t.estimated;
   // sheet music, MIDI files, the demo: setting the tempo re-times the whole song (TempoControl)
@@ -150,22 +262,79 @@ export function ArrangementPanel() {
       const info = { ...t };
       delete info.pianoBlend;
       const pianoBlend = redetectedBlendInfo(t.pianoBlend, det.blend);
-      replaceSong({
-        ...rest,
-        base: notes,
-        tempo,
-        key: detectKey(notes),
-        arrangements: generateAllArrangements(notes, song.basePedal, tempo, song.duration, arrangementOptions(song)),
-        transcription: { ...info, params, ...(pianoBlend ? { pianoBlend } : {}) },
-        thumbnail: makeThumbnail(notes, song.duration),
-        updatedAt: Date.now(),
-      });
+      // (only if the song still has the analysis this started from: switched to its other version,
+      // analyzed again or another song opened meanwhile, the result belongs to notes no longer on screen)
+      const replaced = replaceSong(
+        {
+          ...rest,
+          base: notes,
+          tempo,
+          key: detectKey(notes),
+          arrangements: generateAllArrangements(notes, song.basePedal, tempo, song.duration, arrangementOptions(song)),
+          transcription: { ...info, params, ...(pianoBlend ? { pianoBlend } : {}) },
+          thumbnail: makeThumbnail(notes, song.duration),
+          updatedAt: Date.now(),
+        },
+        { ifTranscription: t },
+      );
+      if (!replaced) {
+        toast.info('Re-detect stopped', 'The song’s notes changed while re-detecting, so the result wasn’t used.');
+        return;
+      }
       toast.success('Notes re-detected', `${notes.length} notes with the new settings.`);
     } catch (e) {
       toast.error('Re-detection failed', (e as Error).message);
     } finally {
       setBusy(false);
     }
+  };
+
+  /** "Reset {Level} to detected notes": one undo step, and a toast that says what changed (with Undo). */
+  const resetCurrent = () => {
+    const st = useStudio.getState();
+    const cur = st.song;
+    if (!cur) return;
+    const d = st.difficulty;
+    const L = levelName(d);
+    const a = cur.arrangements[d];
+    if (a.edited || a.pedalEdited) {
+      // (the question says what exactly goes back)
+      const preview = resetLevelOf(cur, d);
+      if (preview.changed && !confirm(resetConfirmText(preview, d))) return;
+    }
+    const r = st.resetLevel(d);
+    if (!r) return;
+    if (!r.changed) {
+      const offer = audioSong && reanalyzeSupport(cur, stored === 'yes').ok;
+      if (offer)
+        toast.info(`${L} is already as detected`, 'Nothing to reset. To detect the notes again, for example with the high-accuracy piano model, use Analyze again.', {
+          actions: [{ label: 'Analyze again', variant: 'primary', onClick: () => useStudio.getState().setAnalyzeOpen(true) }],
+          ttl: 12000,
+        });
+      else toast.info(`${L} is already as detected`, 'Nothing to reset.');
+      return;
+    }
+    const token = r.token;
+    toast.success(`${L} reset to the detected notes`, resetToastBody(r, d), {
+      actions: [
+        {
+          label: 'Undo',
+          onClick: () => {
+            const s = useStudio.getState();
+            if (token && s.past[s.past.length - 1] === token) {
+              s.undo();
+              toast.info('Reset undone');
+            } else if (token && s.past.includes(token)) {
+              toast.info('Can’t undo the reset from here', 'You changed this level since. Use Undo in the editor to step back.');
+            } else {
+              toast.info('Can’t undo the reset anymore', 'Undo history was cleared when you switched levels.');
+            }
+          },
+        },
+      ],
+      // (time to read it and reach Undo on a phone)
+      ttl: 15000,
+    });
   };
 
   const applyBpm = () => {
@@ -340,14 +509,13 @@ export function ArrangementPanel() {
       {/* songs that follow a written tempo: right under what the song is, easy to find on a phone */}
       {written && <SongTempoSection />}
 
+      {song.source.kind !== 'demo' && t.method !== 'demo' && <AnalyzeAgainSection redetecting={busy} />}
+
       <Section title="Difficulty levels">
         <LevelStats />
         <div className="flex flex-wrap gap-2">
-          <Button size="sm" variant="subtle" icon={<RefreshCw size={14} />} onClick={() => {
-            if (song.arrangements[difficulty].edited && !confirm(`Regenerate ${difficulty}? Your note fixes, fingering and markings on this level will be replaced.`)) return;
-            regenerateLevels([difficulty]);
-          }}>
-            Regenerate {difficulty}
+          <Button size="sm" variant="subtle" icon={<RotateCcw size={14} />} onClick={resetCurrent}>
+            Reset {levelName(difficulty)} to detected notes
           </Button>
           <Button size="sm" variant="ghost" onClick={() => {
             const fixed = song.arrangements.easy.edited || song.arrangements.medium.edited;
@@ -357,6 +525,10 @@ export function ArrangementPanel() {
             Easy & Medium from Hard
           </Button>
         </div>
+        <p className="text-[11.5px] leading-snug text-ink-400">
+          Reset puts one level back to the notes found when the song was analyzed.
+          {audioSong ? ' To find the notes again with other settings, like the high-accuracy piano model, use Analyze again above.' : ''}
+        </p>
       </Section>
 
       {!written && (

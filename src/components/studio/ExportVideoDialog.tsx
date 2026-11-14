@@ -22,7 +22,8 @@ import { VISUAL_THEMES, applyTheme } from '../../lib/render/settings';
 import { downloadBlob, safeFileName } from '../../lib/export/downloads';
 import { showExportNoticeOnce } from '../../lib/exportNotice';
 import { formatTime } from '../../lib/music/theory';
-import { getMedia, hasStoredAudio } from '../../lib/storage/db';
+import { getMedia } from '../../lib/storage/db';
+import { useStoredOriginal } from '../../hooks/useStoredOriginal';
 import { newId } from '../../lib/storage/db';
 import { useDecalImage } from './useDecalImage';
 import { useCanvasRestored } from './useCanvasRestored';
@@ -44,24 +45,6 @@ const PHASE_LABEL: Record<ExportProgress['phase'], string> = {
 };
 
 const SOUND_LABEL: Record<ExportSound, string> = { piano: 'piano', original: 'original song', both: 'piano + original song', hands: 'video sound', 'hands+piano': 'video sound + piano' };
-
-/** Whether the open song's original recording is still stored ('checking' while we look). */
-function useStoredOriginal(songId: string | undefined, hasAudio: boolean | undefined, open: boolean): 'checking' | 'yes' | 'no' {
-  const [state, setState] = useState<{ id: string; has: boolean } | null>(null);
-  useEffect(() => {
-    if (!open || !songId || !hasAudio) return;
-    let alive = true;
-    void hasStoredAudio(songId)
-      .catch(() => false)
-      .then((has) => alive && setState({ id: songId, has }));
-    return () => {
-      alive = false;
-    };
-  }, [songId, hasAudio, open]);
-  if (!songId || !hasAudio) return 'no';
-  if (!state || state.id !== songId) return 'checking';
-  return state.has ? 'yes' : 'no';
-}
 
 /** `active` false (the setup screen is open, an export runs): the hands video file is let go of and the last frame stays. */
 function CompositionPreview({ settings, previewTime, layout, watermark, active }: { settings: ExportSettings; previewTime: number; layout: HandsLayout; watermark: WatermarkSettings | null; active: boolean }) {

@@ -138,7 +138,7 @@ export function separationSupport(seconds?: number): SeparationSupport {
   const est = Math.round(EST_SECONDS_PER_MINUTE / SPEEDUP[Math.min(4, separationThreads())]);
   const mem = typeof navigator === 'undefined' ? undefined : (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
   const maxSeconds = typeof mem === 'number' && mem >= 8 ? LARGE_DEVICE_MAX_SECONDS : BROWSER_SEPARATION_MAX_SECONDS;
-  const base = separationSupportBase(est, mem, maxSeconds);
+  const base = separationSupportBase(est, mem, maxSeconds, seconds);
   if (base.ok && base.recommended && seconds !== undefined && seconds > maxSeconds) {
     return { ...base, recommended: false, reason: longReason(seconds) };
   }
@@ -150,7 +150,13 @@ export function longReason(seconds: number): string {
   return `A ${Math.round(seconds / 60)}-minute recording needs ${formatMemory(estimateSeparationMB(seconds))} of memory to separate in this browser.`;
 }
 
-function separationSupportBase(est: number, mem: number | undefined, maxSeconds: number): SeparationSupport {
+/** "a 22-second recording", "a 3-minute recording" */
+function recordingLength(seconds: number): string {
+  return seconds < 60 ? `a ${Math.max(1, Math.round(seconds))}-second recording` : `a ${Math.round(seconds / 60)}-minute recording`;
+}
+
+/** `seconds`: the recording's length, when known ("Analyze again"): the memory it needs, said for it. */
+function separationSupportBase(est: number, mem: number | undefined, maxSeconds: number, seconds?: number): SeparationSupport {
   if (typeof WebAssembly !== 'object' || typeof Worker === 'undefined') {
     return { ok: false, recommended: false, reason: 'This browser has no WebAssembly or Web Worker support.', estSecondsPerMinute: est, maxSeconds };
   }
@@ -168,7 +174,10 @@ function separationSupportBase(est: number, mem: number | undefined, maxSeconds:
     return {
       ok: true,
       recommended: false,
-      reason: `Needs ${typical} of memory for a 4-minute song (more for longer ones) and several minutes per song.`,
+      reason:
+        seconds !== undefined
+          ? `Needs ${formatMemory(estimateSeparationMB(seconds))} of memory even for ${recordingLength(seconds)} like this one, and takes a while on a phone.`
+          : `Needs ${typical} of memory for a 4-minute song (more for longer ones) and several minutes per song.`,
       estSecondsPerMinute: est * 2,
       maxSeconds,
     };
@@ -177,7 +186,10 @@ function separationSupportBase(est: number, mem: number | undefined, maxSeconds:
     return {
       ok: true,
       recommended: false,
-      reason: `This device reports ${mem} GB of memory; separating a song needs ${typical} for a 4-minute song.`,
+      reason:
+        seconds !== undefined
+          ? `This device reports ${mem} GB of memory; separating ${recordingLength(seconds)} like this one needs ${formatMemory(estimateSeparationMB(seconds))}.`
+          : `This device reports ${mem} GB of memory; separating a song needs ${typical} for a 4-minute song.`,
       estSecondsPerMinute: est,
       maxSeconds,
     };

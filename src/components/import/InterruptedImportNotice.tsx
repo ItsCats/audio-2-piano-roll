@@ -5,6 +5,7 @@ import { discardInterrupted, findInterruptedImport, interruptedNotice, stillInte
 import { toast, useToasts, type ToastAction } from '../../state/toastStore';
 import { saveBlobAs } from '../../lib/saveBlob';
 import { watchDatabaseBlocked } from '../../lib/storage/db';
+import { setAppNavigate } from '../../lib/appNavigate';
 
 /**
  * Once per page load: if the previous page died mid-import (see state/interruptedImport.ts), say so
@@ -13,6 +14,11 @@ import { watchDatabaseBlocked } from '../../lib/storage/db';
  */
 export function InterruptedImportNotice() {
   const navigate = useNavigate();
+  // toast buttons shown by the stores navigate in the app (lib/appNavigate.ts)
+  useEffect(() => {
+    setAppNavigate((to) => navigate(to));
+    return () => setAppNavigate(null);
+  }, [navigate]);
   // after an update, a tab still running the previous version keeps the library closed to this one
   useEffect(() => {
     let shown: number | null = null;

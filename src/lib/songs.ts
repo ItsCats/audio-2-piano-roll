@@ -9,6 +9,7 @@ import type { ParsedScore } from './score';
 import { bachPreludeDemo } from './music/demo';
 import { carryMarks } from './sheet/carry';
 import { asHeard, asPlayed } from './music/noteLength';
+import type { TranscriptionResult } from './transcription/pipeline';
 
 /** A compact piano-roll overview image used as the song's thumbnail. */
 export function makeThumbnail(notes: Note[], duration: number, colors = { R: '#4f9dff', L: '#f5a524' }): string | undefined {
@@ -97,7 +98,7 @@ export function easyMediumFromHard(song: Song): Song {
   return { ...song, arrangements: { ...song.arrangements, easy: carryMarks(hardArr, all.easy), medium: carryMarks(hardArr, all.medium) }, updatedAt: Date.now() };
 }
 
-interface BuildInput {
+export interface BuildInput {
   title: string;
   artist?: string;
   source: SongSource;
@@ -264,6 +265,216 @@ export function demoSong(): Song {
     hasAudio: false,
     hasPosteriors: false,
   });
+}
+
+/**
+ * What buildSong takes for a transcription result (an import and "Analyze again" build their songs
+ * the same way): the result's notes, pedal, tempo, key and info; the automatic pedal on Medium and
+ * Hard unless the result has the pedal heard in the recording (the high-accuracy piano model), whose
+ * notes are then "as played". `tempo`: use this tempo instead of the result's (a tempo set by hand).
+ */
+export function songInputFromResult(
+  result: Pick<TranscriptionResult, 'notes' | 'pedal' | 'tempo' | 'duration' | 'key' | 'info' | 'posteriors'>,
+  meta: { title: string; artist?: string; source: SongSource; tempo?: TempoInfo },
+): BuildInput {
+  return {
+    title: meta.title,
+    artist: meta.artist,
+    source: meta.source,
+    notes: result.notes,
+    pedal: result.pedal ?? [],
+    tempo: meta.tempo ?? result.tempo,
+    duration: result.duration,
+    key: result.key,
+    transcription: result.info,
+    hasAudio: true,
+    // re-detection works on Basic Pitch posteriors only (the piano specialist's outputs are not stored)
+    hasPosteriors: !!result.posteriors,
+    // Medium and Hard: sustain pedal derived from the notes (switch in the Sound panel)
+    autoPedal: !result.pedal,
+    ...(result.pedal ? { noteLength: 'played' as const } : {}),
+  };
+}
+
+// ---------------------------------------------------------------- "Analyze again" (the song's recording analyzed once more)
+
+/**
+ * The song fields an analysis produces: "Analyze again" replaces them (the old values are kept as the
+ * song's other version, lib/storage/db.ts), and switching versions swaps them.
+ */
+export const ANALYSIS_KEYS = ['base', 'basePedal', 'duration', 'tempo', 'key', 'transcription', 'arrangements', 'thumbnail', 'hasPosteriors', 'autoPedal', 'noteLength'] as const satisfies readonly (keyof Song)[];
+/** Fields that belong to one analysis's notes and go with them (the sheet's grid lock and marks, the kept as-played notes). */
+export const REMOVED_KEYS = ['sheet', 'notesAsPlayed'] as const satisfies readonly (keyof Song)[];
+/**
+ * Everything else stays with the song: its id (and with it the title card text, which is stored by
+ * song id), title, artist, source, dates, favorite, stored recording and hands video.
+ */
+export const KEPT_KEYS = ['id', 'title', 'artist', 'createdAt', 'updatedAt', 'lastPlayedAt', 'source', 'hasAudio', 'favorite', 'handVideo'] as const satisfies readonly (keyof Song)[];
+
+type AnalysisKey = (typeof ANALYSIS_KEYS)[number] | (typeof REMOVED_KEYS)[number];
+
+/** `target` with the analysis of `from` (ANALYSIS_KEYS and REMOVED_KEYS; the ones `from` lacks are removed). */
+export function withAnalysisOf(target: Song, from: Song): Song {
+  const out = { ...target } as Record<string, unknown>;
+  for (const k of [...ANALYSIS_KEYS, ...REMOVED_KEYS] as AnalysisKey[]) {
+    if (from[k] === undefined) delete out[k];
+    else out[k] = from[k];
+  }
+  return out as unknown as Song;
+}
+
+/**
+ * The song after "Analyze again": the new result's notes on every level, with the song itself kept
+ * (KEPT_KEYS). A tempo set by hand is kept (the levels are built on it, as Re-detect does); the sheet's
+ * grid lock and marks and the kept as-played notes go (they belong to the old notes).
+ */
+export function songFromReanalysis(old: Song, result: Pick<TranscriptionResult, 'notes' | 'pedal' | 'tempo' | 'duration' | 'key' | 'info' | 'posteriors'>, now: number): Song {
+  const fresh = buildSong(songInputFromResult(result, { title: old.title, artist: old.artist, source: old.source, tempo: old.tempo.source === 'manual' ? old.tempo : undefined }));
+  // (the levels were built with the new analysis's own options: arrangementOptions depends only on analysis keys)
+  const next = withAnalysisOf({ ...old, updatedAt: now }, fresh);
+  return next;
+}
+
+/** Levels in the order the loss text names them. */
+const LEVELS_HARD_FIRST: Difficulty[] = ['hard', 'medium', 'easy'];
+export const levelName = (d: Difficulty): string => d.charAt(0).toUpperCase() + d.slice(1);
+
+/** "A", "A and B", "A, B and C" */
+export function joinAnd(parts: string[]): string {
+  if (parts.length <= 1) return parts[0] ?? '';
+  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+}
+
+/** A level has work of the user's on it: note fixes, fingering or markings. */
+function levelEdited(a: Arrangement): boolean {
+  return a.edited || !!a.marks?.length || a.notes.some((n) => n.finger || n.art?.length);
+}
+
+export interface LostWork {
+  /** levels with note fixes, fingering or markings (Hard first) */
+  levels: Difficulty[];
+  /** sheet edits: the locked grid and key/time/tempo marks */
+  sheet: boolean;
+  /** levels whose pedal was edited on the sheet */
+  pedal: Difficulty[];
+  /** the note length was switched to "As heard" */
+  heard: boolean;
+}
+
+/** What "Analyze again" replaces that the user made. */
+export function lostWork(song: Song): LostWork {
+  const pedal = pedalEditedLevels(song);
+  return {
+    levels: LEVELS_HARD_FIRST.filter((d) => levelEdited(song.arrangements[d])),
+    sheet: !!song.sheet,
+    pedal: LEVELS_HARD_FIRST.filter((d) => pedal.includes(d)),
+    heard: song.noteLength === 'heard' || !!song.notesAsPlayed,
+  };
+}
+
+/** "fixes on Hard, sheet edits and …" (empty: nothing of the user's) */
+export function lostParts(lost: LostWork): string {
+  const parts: string[] = [];
+  if (lost.levels.length) parts.push(`fixes on ${joinAnd(lost.levels.map(levelName))}`);
+  if (lost.sheet) parts.push('sheet edits and key/time/tempo marks');
+  if (lost.pedal.length) parts.push(`pedal changes on ${joinAnd(lost.pedal.map(levelName))}`);
+  if (lost.heard) parts.push('“As heard” note lengths');
+  return joinAnd(parts);
+}
+
+/**
+ * The version kept from an earlier "Analyze again" (or "Go back"), which a new run replaces: only one
+ * other version is kept (a whole song record: phones have little storage).
+ */
+export interface KeptVersion {
+  /** its analysis ("Piano solo · standard model") */
+  label: string;
+  /** the user's work on it (lostWork) */
+  lost: LostWork;
+}
+
+/**
+ * The confirmation text of "Analyze again" (`hasUndo`: there are steps to undo now; `kept`: a version
+ * kept from before, which this run deletes). The notes on screen become the kept old notes.
+ */
+export function lossText(lost: LostWork, hasUndo: boolean, kept?: KeptVersion | null): string {
+  const mine = lostParts(lost);
+  const out = ['This replaces the notes on every level.'];
+  if (mine) out.push(`Your ${mine} won’t be in the new notes. They stay in the old notes, which you can switch back to afterward.`);
+  else out.push('You can switch back to the old notes afterward.');
+  if (kept) {
+    const theirs = lostParts(kept.lost);
+    out.push(
+      `Only one earlier version is kept, so the one kept now (${kept.label || 'earlier settings'}${theirs ? `, with your ${theirs}` : ''}) will be deleted for good.`,
+    );
+  }
+  if (hasUndo) out.push('Undo history is cleared.');
+  return out.join(' ');
+}
+
+export type ResetExtra = 'fingering' | 'markings' | 'pedal changes';
+
+export interface ResetResult {
+  song: Song;
+  /** the level differs from the detected notes (resetting it changes something) */
+  changed: boolean;
+  /** notes that differ (the larger of: notes only in the old level, notes only in the detected one) */
+  noteChanges: number;
+  /** other differences the reset removes */
+  extras: ResetExtra[];
+  /** the level was edited by the user (note fixes, or the pedal on the sheet) */
+  userEdited: boolean;
+}
+
+const noteKey = (n: Note) => `${n.midi}|${Math.round(n.start * 1000)}|${Math.round(n.dur * 1000)}|${n.hand}|${Math.round(n.vel * 1000)}`;
+const pedalKey = (p: PedalRange[]) => p.map((r) => `${Math.round(r.start * 1000)}-${Math.round(r.end * 1000)}`).join(',');
+
+/**
+ * "Reset {Level} to detected notes": level `d` built again from the detected notes (regenerate), and
+ * what that changes compared with the level as it is (note ids and build times are ignored).
+ */
+export function resetLevel(song: Song, d: Difficulty): ResetResult {
+  const next = regenerate(song, [d]);
+  const old = song.arrangements[d];
+  const fresh = next.arrangements[d];
+  const count = new Map<string, number>();
+  for (const n of old.notes) count.set(noteKey(n), (count.get(noteKey(n)) ?? 0) + 1);
+  let onlyNew = 0;
+  for (const n of fresh.notes) {
+    const k = noteKey(n);
+    const c = count.get(k) ?? 0;
+    if (c > 0) count.set(k, c - 1);
+    else onlyNew++;
+  }
+  let onlyOld = 0;
+  for (const c of count.values()) onlyOld += c;
+  const noteChanges = Math.max(onlyOld, onlyNew);
+  const extras: ResetExtra[] = [];
+  if (old.notes.some((n) => n.finger)) extras.push('fingering');
+  if (old.marks?.length || old.notes.some((n) => n.art?.length)) extras.push('markings');
+  if (old.pedalEdited || old.showPedal || pedalKey(old.pedal) !== pedalKey(fresh.pedal)) extras.push('pedal changes');
+  return { song: next, changed: noteChanges > 0 || extras.length > 0, noteChanges, extras, userEdited: old.edited || !!old.pedalEdited };
+}
+
+/** The question before resetting a level the user changed: what exactly goes back (resetLevel's preview). */
+export function resetConfirmText(r: ResetResult, d: Difficulty): string {
+  const parts: string[] = [];
+  if (r.noteChanges > 0) parts.push(r.noteChanges === 1 ? '1 note fix' : `${r.noteChanges} note fixes`);
+  parts.push(...r.extras);
+  const what = parts.length ? `Your ${joinAnd(parts)} on this level will be replaced.` : 'Your changes on this level will be replaced.';
+  return `Reset ${levelName(d)} to the detected notes? ${what} You can undo this right after.`;
+}
+
+/** The body of the toast after a level was reset (`r.changed`). */
+export function resetToastBody(r: ResetResult, d: Difficulty): string {
+  if (!r.userEdited && !r.extras.length) return `${levelName(d)} matches the detected notes again.`;
+  const parts: string[] = [];
+  if (r.noteChanges > 0) parts.push(r.noteChanges === 1 ? '1 note went back to the detected version.' : `${r.noteChanges} notes went back to the detected version.`);
+  if (r.extras.length) {
+    const what = joinAnd(r.extras);
+    parts.push(`${what.charAt(0).toUpperCase()}${what.slice(1)} on this level ${r.extras.length === 1 && r.extras[0] !== 'pedal changes' && r.extras[0] !== 'markings' ? 'was' : 'were'} removed.`);
+  }
+  return parts.length ? parts.join(' ') : `${levelName(d)} matches the detected notes again.`;
 }
 
 export function regenerate(song: Song, which: Difficulty[]): Song {

@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Search, Star, Trash2, Upload, LayoutGrid, List, FileJson, Library as LibraryIcon } from 'lucide-react';
 import { useLibrary } from '../state/libraryStore';
 import { Badge, Button, EmptyState, IconButton, Segmented, Select, cn } from '../components/ui';
-import { SongCard, sourceIcon, sourceLabel } from '../components/SongCard';
+import { ReanalyzingBadge, SongCard, sourceIcon, sourceLabel } from '../components/SongCard';
 import { formatTime } from '../lib/music/theory';
 import type { SongSummary } from '../lib/music/types';
 import { getSong, saveSong } from '../lib/storage/db';
@@ -169,6 +169,7 @@ export default function LibraryPage() {
                       <Icon size={12} /> {s.artist || (s.source.reader ? sourceLabel(s.source.kind, s.source.reader) : s.source.fileName || s.source.kind)} · {s.noteCount} notes · {Math.round(s.bpm)} BPM {s.keyName && `· ${s.keyName}`}
                     </p>
                   </Link>
+                  <ReanalyzingBadge songId={s.id} />
                   {s.estimated && <Badge tone="warn">AI</Badge>}
                   {s.source.kind === 'score' && s.source.reader && (
                     <Badge tone="warn" title={`${sourceLabel(s.source.kind, s.source.reader)} by the ${s.source.sheetReader === 'accurate' ? 'Accurate sheet-music reader' : 'Quick sheet-music reader (Beta)'} — check the notes`}>

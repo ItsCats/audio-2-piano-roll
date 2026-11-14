@@ -1,8 +1,23 @@
 import { Link } from 'react-router-dom';
-import { Music2, SquarePlay, FileAudio, FileMusic, Sparkles, Mic } from 'lucide-react';
+import { Music2, SquarePlay, FileAudio, FileMusic, Sparkles, Mic, Loader2 } from 'lucide-react';
 import type { SongSummary } from '../lib/music/types';
 import { formatTime } from '../lib/music/theory';
-import { Badge } from './ui';
+import { importBusy, useImport } from '../state/importStore';
+import { Badge, cn } from './ui';
+
+/**
+ * "Analyzing again…" on a song whose "Analyze again" is running (phones have no import pill: this is
+ * where the library shows it).
+ */
+export function ReanalyzingBadge({ songId, className }: { songId: string; className?: string }) {
+  const running = useImport((s) => importBusy(s.job) && s.job?.reanalyze?.songId === songId);
+  if (!running) return null;
+  return (
+    <span className={cn('inline-flex items-center gap-1 rounded-md bg-black/70 px-1.5 py-0.5 text-[11px] font-medium text-accent-300', className)} data-testid="reanalyzing-badge">
+      <Loader2 size={11} className="animate-spin" /> Analyzing again…
+    </span>
+  );
+}
 
 export const sourceIcon = (kind: SongSummary['source']['kind']) =>
   kind === 'youtube' ? SquarePlay : kind === 'midi' ? Music2 : kind === 'score' ? FileMusic : kind === 'demo' ? Sparkles : kind === 'capture' ? Mic : FileAudio;
@@ -30,6 +45,7 @@ export function SongCard({ song }: { song: SongSummary }) {
     >
       <div className="relative aspect-video bg-ink-900">
         {song.thumbnail ? <img src={song.thumbnail} alt="" className="h-full w-full object-cover" loading="lazy" /> : null}
+        <ReanalyzingBadge songId={song.id} className="absolute bottom-2 left-2" />
         <span className="absolute right-2 bottom-2 rounded-md bg-black/60 px-1.5 py-0.5 font-mono text-[11px] text-ink-100">{formatTime(song.duration)}</span>
       </div>
       <div className="flex flex-col gap-1.5 p-3">
