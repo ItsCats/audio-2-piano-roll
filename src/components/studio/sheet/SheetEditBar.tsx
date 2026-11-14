@@ -188,7 +188,7 @@ export function SheetEditBar({ layout, fixed = false }: { layout: 'row' | 'dock'
 
   if (!dock)
     return (
-      <div className="relative z-30 flex flex-wrap items-center gap-0.5 border-b border-ink-800 bg-ink-900/95 px-3 py-1" data-testid="sheet-edit-bar" role="toolbar" aria-label="Edit the sheet music">
+      <div className="relative z-20 flex flex-wrap items-center gap-0.5 border-b border-ink-800 bg-ink-900/95 px-3 py-1" data-testid="sheet-edit-bar" role="toolbar" aria-label="Edit the sheet music">
         <span className="mr-1 rounded-md bg-accent-500/15 px-2 py-1 text-[11.5px] font-semibold text-accent-300 capitalize">Editing: {difficulty}</span>
         <Tool dock={false} label="Undo" title="Undo (Ctrl/⌘+Z)" disabled={!past} why="Nothing to undo." onClick={undo} testId="sheet-undo">
           <Undo2 size={16} />
