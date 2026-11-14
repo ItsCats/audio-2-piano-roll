@@ -251,15 +251,6 @@ export function serverHasStems(h: BackendHealth | null | undefined): boolean {
   return f.stems === true;
 }
 
-/**
- * Whether a processing server with stems also returns the "other" stem alone (no bass), which "Remove
- * singing and drums" transcribes. Older 2.x servers do not: their accompaniment (bass + other) is used,
- * with a warning (separation PIANO_PART_OLD_SERVER).
- */
-export function serverHasOtherStem(h: BackendHealth | null | undefined): boolean {
-  return serverHasStems(h) && h?.features.otherStem === true;
-}
-
 const healthCache = new Map<string, { at: number; value: Promise<BackendHealth | null> }>();
 
 /**
@@ -864,7 +855,6 @@ export const useImport = create<ImportState>((set, get) => {
     const url = backendUrl();
     if (!url) throw new Error('No processing server is configured.');
     const pianoPart = isPianoPart(ctx);
-    const withOther = pianoPart && serverHasOtherStem(await serverHealth(url));
     update({ stage: 'uploading', progress: null, detail: 'Uploading to your processing server' });
     const job = await createSeparationJob(url, blob, name);
     if (signal.aborted) throw new DOMException('Canceled', 'AbortError');
@@ -880,6 +870,9 @@ export const useImport = create<ImportState>((set, get) => {
       signal,
     );
     update({ stage: 'downloading', progress: null, detail: pianoPart ? 'Downloading the separated parts' : 'Downloading the separated vocals and accompaniment' });
+    // the finished job lists its stems: a 2.1+ server's "other" (no bass) is fetched for the piano part
+    // (decided from the job itself, not a health check that could time out right now)
+    const withOther = pianoPart && !!done.stems?.includes('other');
     const stems = withOther ? await backendApi.fetchStems(url, job.id, signal, true) : await backendApi.fetchStems(url, job.id, signal);
     if (signal.aborted) throw new DOMException('Canceled', 'AbortError');
     return { ...stems, serverMs: done.separationMs ?? undefined };
@@ -1608,6 +1601,7 @@ export function stageLabel(job: Pick<ImportJob, 'sheet' | 'pianoPart'>, stage: I
 /** Timeline labels of a "Remove singing and drums" import (the rest as in STAGE_LABELS). */
 export const PIANO_PART_STAGE_LABELS: Partial<Record<ImportStage, string>> = {
   separating: 'Removing singing and drums',
+  analyzing: 'Finding the piano notes',
 };
 
 export const STAGE_LABELS: Record<ImportStage, string> = {

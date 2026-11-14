@@ -1110,7 +1110,7 @@ async function transcribeAudioOnce(
   if (vocal && !melody.length) warnings.push('Singing was detected but no clear melody line could be extracted from it.');
   if (notes.length === 0) warnings.push('No notes were detected. Try the "Sensitive" detection preset.');
   const tempo = transcriptionTempo(accomp.main, notes, duration);
-  if (tempo.confidence < 0.15) warnings.push('Tempo could not be detected reliably; the beat grid and quantisation may be off.');
+  if (tempo.confidence < 0.15) warnings.push('Tempo could not be detected reliably; the beat grid and quantization may be off.');
   const meanConf = result.notes.length ? result.notes.reduce((s, n) => s + n.amplitude, 0) / result.notes.length : 0;
   return {
     notes,
@@ -1276,7 +1276,7 @@ async function transcribePianoPart(
   const separation = pianoPartInfo(sep, bassRemoved);
   const drums = sep.drumOnsets;
   normalise(audio);
-  const result = await runModel(audio, params, onProgress, signal, 'Neural pitch detection — piano part');
+  const result = await runModel(audio, params, onProgress, signal, 'Finding the piano notes');
   onProgress({ stage: 'arranging', progress: null, detail: 'Cleaning notes, assigning hands, tracking beats' });
   const accomp = accompFromRaw(result.notes, result.leadNotes, result.rms, params, duration, {
     frames: result.frames,
@@ -1291,7 +1291,7 @@ async function transcribePianoPart(
   }
   if (notes.length === 0) warnings.push('No notes were detected. Try the "Sensitive" detection preset.');
   const tempo = transcriptionTempo(accomp.main, notes, duration);
-  if (tempo.confidence < 0.15) warnings.push('Tempo could not be detected reliably; the beat grid and quantisation may be off.');
+  if (tempo.confidence < 0.15) warnings.push('Tempo could not be detected reliably; the beat grid and quantization may be off.');
   const meanConf = result.notes.length ? result.notes.reduce((s, n) => s + n.amplitude, 0) / result.notes.length : 0;
   return {
     notes,
@@ -1506,7 +1506,7 @@ async function transcribeWithSpecialist(
   if (notes.length === 0) warnings.push('No notes were detected. Is this a piano recording? Try again with the normal model.');
   else if (separation && notes.length < PIANO_PART_FEW_NOTES_PER_SECOND * duration) warnings.push(PIANO_PART_FEW_NOTES);
   const tempo = transcriptionTempo(notes, notes, duration);
-  if (tempo.confidence < 0.15) warnings.push('Tempo could not be detected reliably; the beat grid and quantisation may be off.');
+  if (tempo.confidence < 0.15) warnings.push('Tempo could not be detected reliably; the beat grid and quantization may be off.');
   return {
     notes,
     duration,

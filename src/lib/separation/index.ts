@@ -177,7 +177,7 @@ function separationSupportBase(est: number, mem: number | undefined, maxSeconds:
     return {
       ok: true,
       recommended: false,
-      reason: `This device reports ${mem} GB of memory; separating vocals & drums needs ${typical} for a 4-minute song.`,
+      reason: `This device reports ${mem} GB of memory; separating a song needs ${typical} for a 4-minute song.`,
       estSecondsPerMinute: est,
       maxSeconds,
     };

@@ -86,7 +86,7 @@ docker run -p 8000:8000 -e SHARED_SECRET=change-me -e ALLOWED_ORIGINS=https://yo
 | `MAX_DURATION_SEC` | `1200` | longest accepted audio |
 | `JOBS_PER_HOUR_PER_IP` | `20` | simple rate limit |
 | `JOB_TTL_SEC` | `3600` | results are deleted after this |
-| `WORKERS` | `1` | concurrent jobs (each separation needs ≈ 1.7 GB RAM plus 50–100 MB per minute of audio) |
+| `WORKERS` | `1` | concurrent jobs (each separation needs ≈ 1.7 GB RAM plus 50–100 MB per minute of audio; since 2.1.0 the extra `other` stem adds about 11 MB per minute, about 0.2 GB at the 20-minute `MAX_DURATION_SEC`. On a small VPS, lower `MAX_DURATION_SEC` rather than raising `WORKERS`) |
 | `DATA_DIR` | `./data` | working directory for job files |
 | `SOURCE_CODE_URL` | `https://github.com/ItsCats/audio-2-piano-roll` | source link returned by `GET /` and `/api/health`. If you run a modified server, set it to where your modified source is published (AGPL-3.0 section 13) |
 

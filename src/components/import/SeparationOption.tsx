@@ -55,11 +55,16 @@ const explainBrowser = (est: number, maxSeconds: number) =>
   `Memory grows with length (${formatMemory(estimateSeparationMB(240))} for a 4-minute song), so recordings over ${Math.round(maxSeconds / 60)} minutes are transcribed without it`;
 const EXPLAIN_SERVER = 'Better melody and fewer false notes on songs with drums or singing; runs on your processing server';
 
-/** "Remove singing and drums" (Piano solo): what it does, in this browser (`est`: seconds of work per minute of audio) */
-const explainPianoBrowser = (est: number, maxSeconds: number) =>
-  `Separates the song first and turns only the rest into notes, so the singing isn’t played on the piano. Downloads a 13 MB model once and takes ${lengthMultiple(est)}. ` +
-  `Memory grows with length (${formatMemory(estimateSeparationMB(240))} for a 4-minute song), so recordings over ${Math.round(maxSeconds / 60)} minutes are transcribed without it.`;
-const EXPLAIN_PIANO_SERVER = 'Separates the song on your processing server and turns only the rest into notes, so the singing isn’t played on the piano.';
+/** "Remove singing and drums" (Piano solo): what it keeps and what it removes */
+const PIANO_WHAT = 'Keeps only the piano part: the singing, drums and bass are removed, so they aren’t turned into notes.';
+/**
+ * …in this browser (`est`: seconds of work per minute of audio). `lowMemory` (phones, small devices):
+ * the memory warning below says it already, so the memory and length sentence is left out.
+ */
+const explainPianoBrowser = (est: number, maxSeconds: number, lowMemory: boolean) =>
+  `${PIANO_WHAT} Downloads a 13 MB model once and takes ${lengthMultiple(est)}.` +
+  (lowMemory ? '' : ` Memory grows with length (${formatMemory(estimateSeparationMB(240))} for a 4-minute song), so recordings over ${Math.round(maxSeconds / 60)} minutes are transcribed without it.`);
+const EXPLAIN_PIANO_SERVER = `${PIANO_WHAT} Runs on your processing server.`;
 /** what it cannot do (always shown under Piano solo) */
 export const PIANO_PART_LIMITS = 'Guitars, synths and other instruments stay in: the separation can’t tell them apart from the piano.';
 
@@ -77,7 +82,7 @@ export function separationOptionText(o: { piano: boolean; engine: 'server' | 'br
   const explain = o.piano
     ? o.engine === 'server'
       ? EXPLAIN_PIANO_SERVER
-      : explainPianoBrowser(o.est + (o.modelEst ?? 0), o.maxSeconds)
+      : explainPianoBrowser(o.est + (o.modelEst ?? 0), o.maxSeconds, !!o.lowMemory)
     : o.engine === 'server'
       ? EXPLAIN_SERVER
       : explainBrowser(o.est, o.maxSeconds);

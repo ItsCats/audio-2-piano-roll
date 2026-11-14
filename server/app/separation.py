@@ -187,5 +187,9 @@ def separate(
         ws[st : st + ln] += w.astype(np.float32)
         if on_progress:
             on_progress(k + 1, len(starts))
-    res = acc[:, offset : offset + n] / np.maximum(ws[offset : offset + n], 1e-12)
-    return {"vocals": res[0].astype(np.float32), "accomp": res[1].astype(np.float32), "other": res[2].astype(np.float32)}
+    # normalized in place and returned as views of the accumulator: no extra full-length copies (the third
+    # stem costs one float32 row, ~0.2 GB for a 20-minute song, and this saves more than that)
+    res = acc[:, offset : offset + n]
+    res /= np.maximum(ws[offset : offset + n], 1e-12)
+    del ws
+    return {"vocals": res[0], "accomp": res[1], "other": res[2]}

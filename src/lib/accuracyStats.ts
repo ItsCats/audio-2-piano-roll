@@ -286,7 +286,8 @@ export const PIANO_PART_EFFECT = {
   notes: [
     'Opt-in: Import → Piano solo → tick “Remove singing and drums” (also on the Record tab). Works with both models.',
     'Guitars, synths, strings and other keyboards stay in with the piano: the separation can’t tell them apart. It works best when the piano is the main instrument besides the singer. Separated audio isn’t perfect: some piano notes can be lost or blurred, and loud singing can leave a few traces.',
-    'Today’s “Separate vocals & drums” under Full song is different: it turns the singing into the right hand’s melody.',
+    'These test mixes are clean concert piano with singing and other parts added on top, so they favor the separation. In real pop songs the piano is blended with other instruments and effects, so expect fewer notes right than this table shows. On 5 real songs with singing it cut the notes at the singer’s pitch from 15% to about 1%, but 3 of those songs had little or no piano: there it turned synths and guitars into notes instead (the high-accuracy model found almost nothing on 2 of them and says so).',
+    'The “Separate vocals & drums” option under Full song does something else: it turns the singing into the right hand’s melody.',
   ],
 };
 

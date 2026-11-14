@@ -943,17 +943,26 @@ describe('"Remove singing and drums" (Piano solo with separation)', () => {
     expect(opts.pianoPart).toBe(true);
     expect(opts.stems?.other).toBeInstanceOf(Blob);
     expect(useImport.getState().job).toMatchObject({ pianoPart: true, separation: 'server' });
-    // an older 2.x server (no otherStem): its two stems, the pipeline uses the accompaniment and warns
-    useSettings.setState({ backendUrl: `http://server-old-${++url}.test` });
+    // decided from the finished job's stems, not from a health check (one that fails or times out at
+    // upload time must not fall back to bass + other with the "update your server" notice)
+    useSettings.setState({ backendUrl: `http://server-flaky-${++url}.test` });
     vi.mocked(client.health).mockResolvedValue(healthy);
+    vi.mocked(client.fetchStems).mockClear();
+    await useImport.getState().importFile(file(), { separate: true });
+    expect(vi.mocked(client.fetchStems).mock.calls[0][3]).toBe(true);
+    vi.mocked(pipeline.transcribeAudio).mockClear();
+    // an older 2.x server (its job lists no "other"): its two stems, the pipeline uses the accompaniment and warns
+    useSettings.setState({ backendUrl: `http://server-old-${++url}.test` });
+    vi.mocked(client.waitForJob).mockResolvedValue(done({ stems: ['accomp', 'vocals'] }));
     vi.mocked(client.fetchStems).mockClear();
     vi.mocked(client.fetchStems).mockResolvedValue({ vocals: new Blob(['v']), accomp: new Blob(['a']) });
     await useImport.getState().importFile(file(), { separate: true });
     expect(vi.mocked(client.fetchStems).mock.calls[0]).toHaveLength(3);
-    expect(vi.mocked(pipeline.transcribeAudio).mock.calls[1][4]).toMatchObject({ pianoPart: true });
+    expect(vi.mocked(pipeline.transcribeAudio).mock.calls[0][4]).toMatchObject({ pianoPart: true });
     // Full song never asks for it
     useSettings.setState({ detectionPreset: 'mix', backendUrl: `http://server-mix-${++url}.test` });
     vi.mocked(client.health).mockResolvedValue({ ...healthy, features: { ...healthy.features, otherStem: true } } as typeof healthy);
+    vi.mocked(client.waitForJob).mockResolvedValue(done({ stems: ['accomp', 'other', 'vocals'] }));
     vi.mocked(client.fetchStems).mockClear();
     await useImport.getState().importFile(file(), { separate: true });
     expect(vi.mocked(client.fetchStems).mock.calls[0]).toHaveLength(3);
@@ -968,6 +977,8 @@ describe('"Remove singing and drums" (Piano solo with separation)', () => {
     expect(separationCrashNotice('mix')[1]).toMatch(/"Separate vocals & drums" is now off for this detection preset/);
     expect(stageLabel({ pianoPart: true }, 'separating')).toBe('Removing singing and drums');
     expect(stageLabel({}, 'separating')).toBe('Separating vocals & drums');
+    expect(stageLabel({ pianoPart: true }, 'analyzing')).toBe('Finding the piano notes');
+    expect(stageLabel({}, 'analyzing')).toBe('Detecting notes');
   });
 
   it('old prefs and old interrupted-import records load unchanged; an old Piano solo record with separation resumes piano-only', async () => {

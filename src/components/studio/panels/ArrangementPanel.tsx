@@ -225,7 +225,7 @@ export function ArrangementPanel() {
               tone="accent"
               title={t.separation.bassRemoved ? 'Drums and bass were removed before the piano part was transcribed' : 'Drums were removed before the piano part was transcribed'}
             >
-              Drums removed
+              {t.separation.bassRemoved ? 'Drums and bass removed' : 'Drums removed'}
             </Badge>
           </div>
         ) : t.separation && (
@@ -287,7 +287,7 @@ export function ArrangementPanel() {
             Set tempo
           </Button>
         </div>
-        <p className="text-[11.5px] text-ink-400">Sets a steady grid for the metronome, quantising and the simplified levels.</p>
+        <p className="text-[11.5px] text-ink-400">Sets a steady grid for the metronome, quantizing and the simplified levels.</p>
       </Section>
 
       {song.hasPosteriors && (

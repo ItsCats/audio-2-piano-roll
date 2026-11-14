@@ -17,7 +17,7 @@ describe('separation option text', () => {
     const t = separationOptionText({ piano: true, ...desktop });
     expect(t.label).toBe('Remove singing and drums');
     expect(t.explain).toBe(
-      'Separates the song first and turns only the rest into notes, so the singing isn’t played on the piano. Downloads a 13 MB model once and takes about 1× the song’s length. ' +
+      'Keeps only the piano part: the singing, drums and bass are removed, so they aren’t turned into notes. Downloads a 13 MB model once and takes about 1× the song’s length. ' +
         'Memory grows with length (about 2.4 GB for a 4-minute song), so recordings over 10 minutes are transcribed without it.',
     );
     expect(t.limits).toBe(PIANO_PART_LIMITS);
@@ -27,7 +27,7 @@ describe('separation option text', () => {
     expect(separationOptionText({ piano: true, ...desktop, modelEst: 38 }).explain).toContain('takes about 2× the song’s length');
     // on the server
     expect(separationOptionText({ piano: true, ...desktop, engine: 'server' }).explain).toBe(
-      'Separates the song on your processing server and turns only the rest into notes, so the singing isn’t played on the piano.',
+      'Keeps only the piano part: the singing, drums and bass are removed, so they aren’t turned into notes. Runs on your processing server.',
     );
   });
 
@@ -36,6 +36,12 @@ describe('separation option text', () => {
     const phone = { piano: true, engine: 'browser' as const, est: 108, maxSeconds: 600, lowMemory: true, reason };
     expect(separationOptionText({ ...phone, modelEst: 70 }).warning).toBe(`May run out of memory on this device. ${reason} The piano model runs after it.`);
     expect(separationOptionText(phone).warning).toBe(`May run out of memory on this device. ${reason}`);
+    // the memory figure is said once (in the warning), and the desktop length limit is left out
+    const t = separationOptionText({ ...phone, modelEst: 70 });
+    expect(t.explain).toBe(
+      'Keeps only the piano part: the singing, drums and bass are removed, so they aren’t turned into notes. Downloads a 13 MB model once and takes about 3× the song’s length.',
+    );
+    expect(`${t.explain} ${t.limits} ${t.warning}`.match(/2\.4 GB/g)).toHaveLength(1);
   });
 
   it('Full song and Sensitive: "Separate vocals & drums" as before, no limits line', () => {

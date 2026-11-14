@@ -497,8 +497,6 @@ function RecordTab({ busy }: { busy: boolean }) {
   return (
     <div className="flex flex-col items-center gap-4 py-8 text-center">
       <p className="max-w-md text-[13px] text-ink-300">Play piano (or anything) into your microphone. A quiet room and a close mic give the best transcription.</p>
-      <PianoModelOption alwaysOffered className="w-full max-w-md" />
-      <SeparationOption preset="piano" pianoModel={model.transcriber === 'piano-specialist'} className="w-full max-w-md text-left" />
       {rec ? (
         <>
           <div className="flex items-center gap-2 text-[14px] text-ink-50">
@@ -518,6 +516,10 @@ function RecordTab({ busy }: { busy: boolean }) {
           Start recording
         </Button>
       )}
+      {/* the options sit below the button, so "Start recording" stays in view on a phone; both are read at
+          stop time, so a tick while recording still counts */}
+      <PianoModelOption alwaysOffered className="w-full max-w-md" />
+      <SeparationOption preset="piano" pianoModel={model.transcriber === 'piano-specialist'} className="w-full max-w-md text-left" />
     </div>
   );
 }

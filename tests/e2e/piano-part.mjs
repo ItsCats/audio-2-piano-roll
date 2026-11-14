@@ -223,7 +223,7 @@ try {
     await box(page).waitFor();
     const opt0 = await box(page).locator('xpath=ancestor::label').innerText();
     check((await box(page).isEnabled()) && !(await box(page).isChecked()), 'desktop    ', 'Piano solo: "Remove singing and drums" shown, enabled, off by default');
-    check(/in this browser/.test(opt0) && opt0.includes(LIMITS) && /so the singing isn’t played on the piano/.test(opt0), 'desktop    ', 'description, badge and limits line');
+    check(/in this browser/.test(opt0) && opt0.includes(LIMITS) && /the singing, drums and bass are removed/.test(opt0), 'desktop    ', 'description, badge and limits line');
     check((await page.getByRole('checkbox', { name: /Separate vocals/ }).count()) === 0, 'desktop    ', 'no "Separate vocals & drums" under Piano solo');
     await modelBox(page).check();
     check((await box(page).isEnabled()) && !/Not used with the high-accuracy piano model/.test(await page.content()), 'desktop    ', 'enabled with the high-accuracy piano model');
@@ -244,7 +244,7 @@ try {
     // the other tabs
     await page.goto(base + '/import?tab=record');
     await box(page).waitFor();
-    check(await box(page).isChecked(), 'record tab ', 'shown (and the Piano solo choice) under the piano-model box');
+    check(await box(page).isChecked(), 'record tab ', 'shown (and the Piano solo choice) with the piano-model box');
     await page.goto(base + '/import?tab=computer');
     await page.getByRole('radiogroup', { name: 'Detection preset' }).waitFor();
     check((await box(page).count()) === 1, 'computer   ', 'shown under Piano solo');
@@ -265,7 +265,7 @@ try {
     await page.getByRole('button', { name: 'Notes' }).first().click().catch(() => page.getByText('Notes', { exact: true }).first().click());
     const badge = page.getByText('Singing removed', { exact: true });
     await badge.waitFor({ timeout: 10000 }).catch(() => undefined);
-    check((await badge.count()) > 0 && (await page.getByText('Drums removed', { exact: true }).count()) > 0, 'studio     ', '"Singing removed" and "Drums removed" badges');
+    check((await badge.count()) > 0 && (await page.getByText('Drums and bass removed', { exact: true }).count()) > 0, 'studio     ', '"Singing removed" and "Drums and bass removed" badges');
     if (await badge.count()) {
       await badge.first().scrollIntoViewIfNeeded();
       await page.screenshot({ path: path.join(shots, 'piano-part-studio-badge.png') });
@@ -343,6 +343,13 @@ try {
     await page.goto(base + '/import?tab=record');
     await box(page).waitFor();
     check((await box(page).count()) === 1 && (await sideScroll(page)) <= 0, 'iPhone     ', 'Record tab: shown, no sideways scroll');
+    // "Start recording" in view without scrolling (above the bottom tab bar), the options below it
+    const rb = await page.evaluate(() => {
+      const btn = [...document.querySelectorAll('button')].find((b) => b.innerText.includes('Start recording'));
+      const nav = [...document.querySelectorAll('nav')].map((n) => n.getBoundingClientRect()).filter((r) => r.top > innerHeight / 2)[0];
+      return { bottom: Math.round(btn.getBoundingClientRect().bottom), visible: Math.round(nav ? nav.top : innerHeight) };
+    });
+    check(rb.bottom <= rb.visible, 'iPhone     ', `Record tab: "Start recording" in view (${rb.bottom} px, ${rb.visible} px visible)`);
     await page.screenshot({ path: path.join(shots, 'piano-part-record-phone.png'), fullPage: true });
     check(!errors.length, 'iPhone     ', errors.length ? `console errors: ${errors.slice(0, 3).join(' | ')}` : 'no console errors');
     await ctx.close();
