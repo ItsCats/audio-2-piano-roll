@@ -158,7 +158,7 @@ export const SPECIALIST = {
   ],
   notes: [
     'It was trained on other performances from the same dataset (Yamaha Disklavier concert grands, similar recording setup), so on very different pianos, rooms or home recordings expect lower numbers than these.',
-    '“Notes that also end right” counts where each note stops ringing (sustain pedal included), which this model hears well. The Studio shows its notes as long as each key is held instead (Notes → Note length: As played), with the pedal heard in the recording keeping them ringing: about half of the notes then end within 20% of the real key release (was 25–31%), and the right hand holds about 2 notes at a time instead of 3–4, close to the real performances (11 pieces).',
+    '“Notes that also end right” counts where each note stops ringing (sustain pedal included), which this model hears well. The Studio shows its notes as long as each key is held instead (Notes → Note length: As played), with the pedal heard in the recording keeping them ringing: about half of the notes then end within 20% of the real key release (was 25–31%), and the right hand holds about 2 notes at a time instead of 3–4, close to the real performances (15 pieces).',
     'The browser version gives the same notes as the original Python version of the model: 99.7–100% of notes on the six answer-key recordings, 96–99% on our 5 other piano recordings (MP3 files, which the browser decodes slightly differently). On those 5 that only checks the browser version, not its accuracy: we have no independent answer key for them.',
   ],
 };

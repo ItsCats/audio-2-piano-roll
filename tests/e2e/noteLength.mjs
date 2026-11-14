@@ -18,7 +18,7 @@
  *  - the MIDI export has the notes as played and the pedal (CC64);
  *  - playback keeps sounding through the pedal: the WAV export of Hard rings in the second half of
  *    each bar like the recording (and the same notes with "Sustain pedal" off do not);
- *  - "As heard" lengthens the notes (one undo step back in Edit mode, redo), is remembered after a reload; the sheet
+ *  - "As heard" lengthens the notes (one undo step back in Edit mode, with the library picture; redo), is remembered after a reload, and back to "As played" gives exactly the same notes and pedal; the sheet
  *    (MusicXML export and the drawn sheet) and the video export follow the setting;
  * iPhone 14: the same import; the notes are short; the switch works and is remembered; no
  *   sideways scroll. Both: no console errors. Screenshots in --shots.
@@ -274,7 +274,11 @@ function checkPlayed(dev, song, shift) {
   const hard = song.arrangements.hard;
   check(`${dev}: stored as played (noteLength 'played', automatic pedal off)`, song.noteLength === 'played' && song.autoPedal === false, { noteLength: song.noteLength, autoPedal: song.autoPedal });
   const pr = pedalPR(truth.pedal, song.basePedal, shift);
-  check(`${dev}: a pedal range per bar, where the MIDI pedal is (overlap P, R >= 0.8)`, song.basePedal.length >= BARS - 1 && song.basePedal.length <= BARS + 2 && pr.P >= 0.8 && pr.R >= 0.8, { ranges: song.basePedal.length, ...pr });
+  // (the pedal goes down after the keys the model heard stop, so it can start a little after the MIDI pedal: recall >= 0.75)
+  check(`${dev}: a pedal range per bar, where the MIDI pedal is (overlap P >= 0.8, R >= 0.75)`, song.basePedal.length >= BARS - 1 && song.basePedal.length <= BARS + 2 && pr.P >= 0.8 && pr.R >= 0.75, { ranges: song.basePedal.length, ...pr });
+  // Easy has no pedal: it is built from the notes as they ring (held, like before the note-length change)
+  const easyDur = median(song.arrangements.easy.notes.map((n) => n.dur));
+  check(`${dev}: Easy holds its notes (built from the notes as they ring; median >= 2x Hard's)`, easyDur >= 2 * median(hard.notes.map((n) => n.dur)), { easy: +easyDur.toFixed(3), hard: +median(hard.notes.map((n) => n.dur)).toFixed(3) });
   check(`${dev}: Medium and Hard play that pedal, Easy none`, JSON.stringify(hard.pedal) === JSON.stringify(song.basePedal) && JSON.stringify(song.arrangements.medium.pedal) === JSON.stringify(song.basePedal) && song.arrangements.easy.pedal.length === 0);
   // onsets: every MIDI note found within 50 ms
   const found = truth.notes.filter((t) => hard.notes.some((n) => n.midi === t.midi && Math.abs(n.start - (t.time - shift)) < 0.05)).length;
@@ -380,7 +384,7 @@ try {
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.keyboard.press('Control+z');
   const undone = await storedSong(page, (s) => s.noteLength === 'played');
-  check('desktop: one undo step puts As played back', undone.noteLength === 'played' && JSON.stringify(undone.base) === JSON.stringify(song.base) && JSON.stringify(undone.basePedal) === JSON.stringify(song.basePedal));
+  check('desktop: one undo step puts As played back (and the library picture)', undone.noteLength === 'played' && JSON.stringify(undone.base) === JSON.stringify(song.base) && JSON.stringify(undone.basePedal) === JSON.stringify(song.basePedal) && undone.thumbnail === song.thumbnail && heard.thumbnail !== song.thumbnail);
   await page.keyboard.press('Control+Shift+z');
   const redone = await storedSong(page, (s) => s.noteLength === 'heard');
   check('desktop: redo gives As heard again', redone.noteLength === 'heard');
@@ -414,8 +418,7 @@ try {
   await openPanel(page, 'Notes');
   await noteLength(page).getByRole('radio', { name: 'As played' }).click();
   const back = await storedSong(page, (s) => s.noteLength === 'played');
-  const sameBack = back.base.filter((n, i) => Math.abs(n.dur - song.base[i].dur) < 0.05).length / song.base.length;
-  check('desktop: back to As played gives the notes again (>= 90 % within 50 ms)', back.noteLength === 'played' && sameBack >= 0.9, { share: +sameBack.toFixed(3) });
+  check('desktop: back to As played gives exactly the same notes and pedal again', back.noteLength === 'played' && JSON.stringify(back.base) === JSON.stringify(song.base) && JSON.stringify(back.basePedal) === JSON.stringify(song.basePedal) && !back.notesAsPlayed);
   check('desktop: no sideways scroll', (await sideScroll(page)) <= 0);
   check('desktop: no console errors', !errors.length, errors.slice(0, 3).join(' | '));
   await ctx.close();
