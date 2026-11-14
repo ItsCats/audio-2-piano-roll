@@ -46,6 +46,8 @@ export function usePianoBlendChoice(): {
   setChecked: (v: boolean) => void;
   avail: PianoBlendAvailability;
   downloadMB: number;
+  /** the solo piano model's speed estimate here (pianoSpecialistSupport, from the WASM threads) */
+  estSecondsPerMinute: number;
 } {
   const preset = useSettings((s) => s.detectionPreset) as PresetId;
   const prefs = useImport((s) => s.prefs);
@@ -60,11 +62,23 @@ export function usePianoBlendChoice(): {
     setChecked: setPref,
     avail,
     downloadMB: support.downloadMB,
+    estSecondsPerMinute: support.estSecondsPerMinute,
   };
 }
 
+/**
+ * The blend's added time per minute of song, from the solo model's thread-aware estimate: the blend
+ * ran 1.0-1.5x that on the band test song (other stem, 3 threads: 40-57 s per minute vs 38), so 1.2x.
+ */
+export function blendTimeText(estSecondsPerMinute: number): string {
+  const s = Math.max(5, Math.round((estSecondsPerMinute * 1.2) / 5) * 5);
+  if (s < 90) return `about ${s} seconds`;
+  const halves = Math.round(s / 30);
+  return `about ${Math.floor(halves / 2)}${halves % 2 ? '½' : ''} minutes`;
+}
+
 function PianoBlendOption({ className }: { className?: string }) {
-  const { checked, setChecked, avail, downloadMB } = usePianoBlendChoice();
+  const { checked, setChecked, avail, downloadMB, estSecondsPerMinute } = usePianoBlendChoice();
   const unavailable = !avail.available;
   return (
     <label
@@ -87,9 +101,9 @@ function PianoBlendOption({ className }: { className?: string }) {
         <span className="text-[13px] font-medium text-ink-50">Add the high-accuracy piano model</span>
         <span id="piano-blend-hint" className="flex flex-col gap-0.5 text-[12px] leading-relaxed text-ink-300">
           <span>
-            {`Blends in what the piano model hears best (keyboard parts, riffs and the notes between the melody) while keeping the Full song melody line and bass. Adds about 40 seconds per minute of song; downloads ${downloadMB} MB the first time.`}
+            {`For instrumental songs (no singing). Blends in what the piano model hears best (keyboard parts, riffs and the notes between the melody) while keeping the Full song melody line and bass. Adds ${blendTimeText(estSecondsPerMinute)} per minute of song on this device; downloads ${downloadMB} MB the first time.`}
           </span>
-          {unavailable ? <span className="text-ink-400">{avail.reason}</span> : <span className="text-ink-400">Songs over 10 minutes use the standard Full song result.</span>}
+          {unavailable ? <span className="text-ink-400">{avail.reason}</span> : <span className="text-ink-400">Songs with singing and songs over 10 minutes use the standard Full song result.</span>}
         </span>
       </span>
     </label>

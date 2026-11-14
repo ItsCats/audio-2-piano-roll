@@ -75,7 +75,7 @@ export const CREDITS: CreditGroup[] = [
       },
       {
         name: 'High-resolution Piano Transcription',
-        use: 'The optional “High-accuracy piano model”: trained only on piano recordings, it finds the notes, their exact start and end times and how hard each key was struck. Downloaded only when you choose it.',
+        use: 'The optional “High-accuracy piano model”: trained only on piano recordings, it finds the notes, their exact start and end times and how hard each key was struck. Used on its own for solo piano, or added to Full song for instrumental songs (it listens to the separated instruments and some of its notes are blended in). Downloaded only when you choose it.',
         author: 'Qiuqiang Kong, Bochen Li, Xuchen Song, Yuan Wan, Yuxuan Wang (ByteDance; “High-resolution Piano Transcription with Pedals by Regressing Onset and Offset Times”, IEEE/ACM TASLP 2021)',
         license: 'CC BY 4.0 (weights); MIT & Apache-2.0 (code)',
         licenseUrl: LIC.ccby4,

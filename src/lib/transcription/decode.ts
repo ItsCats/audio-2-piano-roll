@@ -180,6 +180,29 @@ export function analyzeLevel(mono: Float32Array): { peak: number; rms: number } 
  */
 export function resampleTo(x: Float32Array, from: number, to: number, taps = 16): Float32Array {
   if (from === to) return x.slice();
+  const r = resampler(x, from, to, taps);
+  r.run(0, r.out.length);
+  return r.out;
+}
+
+/**
+ * resampleTo in chunks of `chunkSeconds` of output, yielding to the page between them (a 10-minute
+ * song takes about 3 s on one core) and stopping with an AbortError when `signal` is aborted.
+ */
+export async function resampleToAsync(x: Float32Array, from: number, to: number, opts: { signal?: AbortSignal; chunkSeconds?: number; taps?: number } = {}): Promise<Float32Array> {
+  if (from === to) return x.slice();
+  const r = resampler(x, from, to, opts.taps ?? 16);
+  const step = Math.max(1, Math.round(to * (opts.chunkSeconds ?? 5)));
+  for (let j = 0; j < r.out.length; j += step) {
+    if (opts.signal?.aborted) throw new DOMException('Resampling canceled', 'AbortError');
+    r.run(j, Math.min(r.out.length, j + step));
+    await new Promise<void>((res) => setTimeout(res, 0));
+  }
+  if (opts.signal?.aborted) throw new DOMException('Resampling canceled', 'AbortError');
+  return r.out;
+}
+
+function resampler(x: Float32Array, from: number, to: number, taps: number): { out: Float32Array; run: (j0: number, j1: number) => void } {
   const ratio = to / from;
   const n = Math.max(0, Math.floor(x.length * ratio));
   const out = new Float32Array(n);
@@ -215,13 +238,15 @@ export function resampleTo(x: Float32Array, from: number, to: number, taps = 16)
     return table[k] + (table[k + 1] - table[k]) * f;
   };
   const len = x.length;
-  for (let j = 0; j < n; j++) {
-    const c = j / ratio;
-    const a = Math.max(0, Math.ceil(c - half));
-    const b = Math.min(len - 1, Math.floor(c + half));
-    let s = 0;
-    for (let i = a; i <= b; i++) s += x[i] * kernel(i - c);
-    out[j] = s;
-  }
-  return out;
+  const run = (j0: number, j1: number) => {
+    for (let j = j0; j < j1; j++) {
+      const c = j / ratio;
+      const a = Math.max(0, Math.ceil(c - half));
+      const b = Math.min(len - 1, Math.floor(c + half));
+      let s = 0;
+      for (let i = a; i <= b; i++) s += x[i] * kernel(i - c);
+      out[j] = s;
+    }
+  };
+  return { out, run };
 }

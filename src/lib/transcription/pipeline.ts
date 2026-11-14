@@ -23,7 +23,7 @@ import type { ExtractionParams, KeyInfo, Note, PianoBlendInfo, TempoInfo, Transc
 import { BP_FPS, BP_MIDI_OFFSET, BP_N_PITCHES, BP_SAMPLE_RATE, frameToTime, timeToFrame } from './constants';
 import type { NoteExtractionOptions, RawNoteEvent } from './noteExtraction';
 import type { TranscriptionStage, WorkerRequest, WorkerResponse } from './workerProtocol';
-import { analyzeLevel, decodeToRate, mixToMono, resampleTo } from './decode';
+import { analyzeLevel, decodeToRate, mixToMono, resampleToAsync } from './decode';
 import { BASS_FOLD, DRUM_HIT_RULE, RESTRIKE, TAIL_GATE, mergeContinuations, mergeFragments, newNoteId, removeShortQuiet, removeTailGhosts, sortNotes, suppressDrumHits, suppressHarmonics, foldBassRestrikes } from '../music/cleanup';
 import { assignHands } from '../music/hands';
 import { estimateTempo } from '../music/beats';
@@ -241,8 +241,12 @@ export interface TranscribeOptions {
    * tuning runs do not run the model again); used instead of running it.
    */
   specialistNotes?: SpecNote[];
-  /** called right before the piano model starts (the import moves its crash marker there) */
-  onPhase?: (phase: 'piano-blend') => void;
+  /**
+   * 'piano-blend': right before the piano model starts (the import moves its crash marker there);
+   * 'piano-blend-skipped': the blend was asked for but does not run for this song (a sung line, too
+   * long, no separated stems; a warning says why)
+   */
+  onPhase?: (phase: 'piano-blend' | 'piano-blend-skipped') => void;
 }
 
 /**
@@ -643,10 +647,11 @@ export function accompFromRaw(
   if (prepared && blendEv) {
     // lead notes in holes of the tune line the instruments' notes make (recovered ones included);
     // added as recovered lead notes are (leadRecovery.ts `extra`): the tune line's own notes stay
-    const inserts = blendLeadCandidates(prepared, tuneLineOf(notes, duration), blendEv);
+    // (off: PIANO_BLEND.hole.enabled; Hard-only when on: they were rarely the lead note)
+    const inserts = PIANO_BLEND.hole.enabled ? blendLeadCandidates(prepared, tuneLineOf(notes, duration), blendEv) : [];
     const before = notes.length;
-    if (inserts.length) notes = addExtraLead(notes, inserts, leadOpts);
-    const fixed = octaveFixes(notes, tuneLineOf(notes, duration), prepared, blendEv);
+    if (inserts.length) notes = addExtraLead(notes, inserts, { exclude: leadOpts.exclude, hardOnly: true });
+    const fixed = PIANO_BLEND.octave.enabled ? octaveFixes(notes, tuneLineOf(notes, duration), prepared, blendEv) : { notes, moved: 0 };
     notes = fixed.notes;
     counts = { leadAdded: notes.length - before, fills: 0, riffSegments: 0, octaveFixes: fixed.moved };
   }
@@ -1041,6 +1046,10 @@ async function transcribeAudioOnce(
   // the piano model's input: the other stem at its rate (made before the stem is freed)
   let other16: Float32Array | null = null;
   const blend = !!opts.pianoBlend && !!other && pianoBlendRuns(params, duration, !!device && isMemoryConstrained(device), { separated: !!sep, bassStem: !!sep?.bass, sung: melody.length > 0 });
+  if (opts.pianoBlend && !blend) {
+    warnings.push(melody.length ? PIANO_BLEND_SUNG : duration > EXTRA_STEM_PASS_MAX_SECONDS ? PIANO_BLEND_LONG : PIANO_BLEND_NO_STEMS);
+    opts.onPhase?.('piano-blend-skipped');
+  }
   if (other) {
     const detail = 'Following the tune in the instruments';
     try {
@@ -1051,7 +1060,14 @@ async function transcribeAudioOnce(
       if (signal?.aborted || (err as Error)?.name === 'AbortError') throw aborted();
       console.warn('[transcription] stem pitch tracking failed', err);
     }
-    if (blend) other16 = resampleTo(other, BP_SAMPLE_RATE, SPECIALIST_SAMPLE_RATE);
+    if (blend) {
+      try {
+        other16 = await resampleToAsync(other, BP_SAMPLE_RATE, SPECIALIST_SAMPLE_RATE, { signal });
+      } catch (err) {
+        if (signal?.aborted || (err as Error)?.name === 'AbortError') throw aborted();
+        throw err;
+      }
+    }
     other = null;
   }
   if (signal?.aborted) throw aborted();
@@ -1082,7 +1098,7 @@ async function transcribeAudioOnce(
     result.rms,
     params,
     duration,
-    { frames: result.frames, onsets: result.onsets, nFrames: result.nFrames, drums, bass, leadPitch, separated: !!sep, ...(specialist ? { specialist } : {}) },
+    { frames: result.frames, onsets: result.onsets, nFrames: result.nFrames, drums, bass, leadPitch, separated: !!sep, ...(specialist?.length ? { specialist } : {}) },
     { melody },
   );
   if (specialist) pianoBlend = { v: 1, status: 'ok', input: 'other', leadAdded: 0, fills: 0, riffSegments: 0, octaveFixes: 0, ...accomp.blend };
@@ -1106,7 +1122,7 @@ async function transcribeAudioOnce(
       ...(bass ? { bass } : {}),
       ...(leadPitch ? { leadPitch } : {}),
       ...(sep ? { separated: true as const } : {}),
-      ...(specialist ? { specialist: packSpecNotes(specialist) } : {}),
+      ...(specialist?.length ? { specialist: packSpecNotes(specialist) } : {}),
     },
     info: {
       method: 'basic-pitch',
@@ -1138,6 +1154,12 @@ async function transcribeAudioOnce(
 
 /** Shown when the blend's piano model could not run (the song gets the standard Full song result). */
 export const PIANO_BLEND_FAILED = 'The piano model could not run, so this song uses the standard Full song result.';
+/** Shown when the blend was asked for but the song has a sung line (the singer carries the tune). */
+export const PIANO_BLEND_SUNG = 'The piano model is only added to instrumental songs. This song has singing, so it uses the standard Full song result.';
+/** Shown when the blend was asked for on a song over EXTRA_STEM_PASS_MAX_SECONDS. */
+export const PIANO_BLEND_LONG = 'Songs over 10 minutes use the standard Full song result, without the piano model.';
+/** Shown when the blend was asked for but the song could not be separated in the browser. */
+export const PIANO_BLEND_NO_STEMS = 'The piano model needs the separated instrument parts, so this song uses the standard Full song result.';
 
 /**
  * Whether the "Full song + piano model" blend runs for an import (asked for, and): the "Full song"
@@ -1343,9 +1365,23 @@ export async function redetectNotes(
   params: ExtractionParams,
   duration: number,
   opts: ReextractOptions = {},
-): Promise<{ notes: Note[]; tempo: TempoInfo }> {
-  const { main, notes } = await reextract(post, params, duration, opts);
-  return { notes, tempo: transcriptionTempo(main, notes, duration) };
+): Promise<{ notes: Note[]; tempo: TempoInfo; blend?: BlendCounts }> {
+  const { main, notes, blend } = await reextract(post, params, duration, opts);
+  return { notes, tempo: transcriptionTempo(main, notes, duration), ...(blend ? { blend } : {}) };
+}
+
+/**
+ * TranscriptionInfo.pianoBlend after a re-detection: the new counts where the blend ran again, the
+ * failure where the piano model had not run on import, and none otherwise (another preset, a sung line).
+ */
+export function redetectedBlendInfo(before: PianoBlendInfo | undefined, blend: BlendCounts | undefined): PianoBlendInfo | undefined {
+  if (blend) return { v: 1, status: 'ok', input: 'other', ...blend };
+  return before?.status === 'failed' ? before : undefined;
+}
+
+/** Whether the piano-model blend added anything (the song is labeled "Full song + piano model"). */
+export function blendAddedNotes(b: PianoBlendInfo | undefined): boolean {
+  return b?.status === 'ok' && b.fills + b.leadAdded + (b.restrikes ?? 0) + b.octaveFixes > 0;
 }
 
 /** The clean context of stored posteriors (re-detection): the same evidence an import passes to accompFromRaw. */
@@ -1362,9 +1398,9 @@ export function storedContext(post: StoredPosteriors): CleanContext {
   };
 }
 
-async function reextract(post: StoredPosteriors, params: ExtractionParams, duration: number, opts: ReextractOptions): Promise<{ main: Note[]; notes: Note[] }> {
+async function reextract(post: StoredPosteriors, params: ExtractionParams, duration: number, opts: ReextractOptions): Promise<{ main: Note[]; notes: Note[]; blend?: BlendCounts }> {
   const raw = await extractRaw(post, params);
   const melody = (opts.melody ?? []).filter((n) => n.role === 'melody').map((n) => ({ ...n, hand: 'R' as const }));
   const accomp = accompFromRaw(raw.notes, raw.leadNotes, post.rms, params, duration, storedContext(post), { melody });
-  return { main: accomp.main, notes: mergeMelody(accomp.notes, melody, duration) };
+  return { main: accomp.main, notes: mergeMelody(accomp.notes, melody, duration), ...(accomp.blend ? { blend: accomp.blend } : {}) };
 }

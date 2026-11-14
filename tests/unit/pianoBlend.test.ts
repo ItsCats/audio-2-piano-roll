@@ -4,6 +4,7 @@ import {
   blendFills,
   blendLeadCandidates,
   blendRestrikes,
+  endBeforeRepeats,
   fuseScore,
   joinFragments,
   octaveFixes,
@@ -123,7 +124,13 @@ describe('piano-model notes', () => {
   });
 });
 
-describe('lead notes in holes of the tune line', () => {
+describe('lead notes in holes of the tune line (off by default)', () => {
+  // they were rarely the lead note (2 of 22 on band-instrumental-1, 10 of 95 on Slakh): measured, not shipped
+  const HOLE = { ...PIANO_BLEND, hole: { ...PIANO_BLEND.hole, enabled: true } };
+  it('adds nothing while off', () => {
+    expect(PIANO_BLEND.hole.enabled).toBe(false);
+    expect(blendLeadCandidates([prep(74, 1.0, 0.3)], [note(72, 0, 0.5), note(76, 2, 0.5)])).toEqual([]);
+  });
   const line = [note(72, 0, 0.5), note(76, 2, 0.5), note(74, 2.6, 0.3)];
   it('fills a hole with the highest strong note near the line, capped per second of hole', () => {
     const c = [
@@ -134,13 +141,13 @@ describe('lead notes in holes of the tune line', () => {
       prep(73, 1.25, 0.2, { matched: true }), // the app has it already
       prep(75, 2.4, 0.2), // between 2.5 and 2.6: gap 0.1 s, not a hole
     ];
-    const ins = blendLeadCandidates(c, line);
+    const ins = blendLeadCandidates(c, line, {}, HOLE);
     expect(ins.map((n) => [n.midi, n.start])).toEqual([[74, 1.0]]);
     expect(ins[0].src).toBe('piano-lead');
     expect(ins[0].role).toBeUndefined();
     // cap: 3 per second of hole (1.5 s -> 4); 6 candidates -> 4 strongest
     const many = [0.6, 0.8, 1.0, 1.2, 1.4, 1.6].map((t, i) => prep(73 + (i % 3), t, 0.15, { onsetPeak: 0.5 + i * 0.08 }));
-    const capped = blendLeadCandidates(many, line);
+    const capped = blendLeadCandidates(many, line, {}, HOLE);
     expect(capped).toHaveLength(4);
     expect(capped.map((n) => n.start)).toEqual([1.0, 1.2, 1.4, 1.6]);
     // an insert never runs into the next one
@@ -149,13 +156,13 @@ describe('lead notes in holes of the tune line', () => {
 
   it('a note Basic Pitch does not hear needs the stem pitch track to agree', () => {
     const c = [prep(74, 1.0, 0.3, { bpMean: 0.02 })];
-    expect(blendLeadCandidates(c, line)).toHaveLength(0);
-    expect(blendLeadCandidates(c, line, { pitchAgrees: (m) => m % 12 === 2 })).toHaveLength(1);
+    expect(blendLeadCandidates(c, line, {}, HOLE)).toHaveLength(0);
+    expect(blendLeadCandidates(c, line, { pitchAgrees: (m) => m % 12 === 2 }, HOLE)).toHaveLength(1);
   });
 
   it('goes into the arrangement as recovered lead notes do, without touching the tune notes', () => {
     const base = [note(72, 0, 0.5), note(76, 2, 0.5), note(48, 0, 2.5, { hand: 'L' })];
-    const ins = blendLeadCandidates([prep(74, 1.0, 0.3), prep(62, 1.0, 0.3, { midi: 62 })], instrumentLineStub(base));
+    const ins = blendLeadCandidates([prep(74, 1.0, 0.3), prep(62, 1.0, 0.3, { midi: 62 })], instrumentLineStub(base), {}, HOLE);
     const out = recoverLead(base, [], 3, { extra: ins, doublesHardOnly: true });
     for (const b of base) expect(out).toContain(b);
     expect(out.filter((n) => n.src === 'piano-lead').map((n) => n.midi)).toEqual([74]);
@@ -201,16 +208,26 @@ describe('fills', () => {
   const left = [note(48, 0, 3, { hand: 'L' })];
   const app = [...tune, ...left];
 
-  it('adds strong notes at least 3 semitones under the tune, or anywhere where no tune note sounds', () => {
+  it('adds strong notes at least 3 semitones under the tune, or near the line where no tune note sounds', () => {
     const p = [
       prep(67, 0.2, 0.3), // under C5: yes
       prep(71, 0.4, 0.3), // one semitone under: no
       prep(79, 0.6, 0.3), // above the tune: no
-      prep(84, 1.4, 0.3), // no tune note sounding: yes (may be the top)
+      prep(84, 1.4, 0.3), // no tune note sounding, but far above the line between C5 and E5: no
+      prep(75, 1.5, 0.3), // no tune note sounding, near that line: yes (may be the top)
       prep(64, 2.2, 0.3, { onsetPeak: 0.2, bpMean: 0.02, relVel: 0.3 }), // weak: no
+      prep(52, 2.4, 0.3), // below MIDI 48? no, 52: under E5, yes
+      prep(45, 2.6, 0.3), // in the bass line's register: no
     ];
     const r = blendFills(app, p, tune, 4);
-    expect(r.fills.map((n) => n.midi)).toEqual([67, 84]);
+    expect(r.fills.map((n) => n.midi)).toEqual([67, 75, 52]);
+    // with no tune note around (more than fill.reach s away) any register is free
+    expect(blendFills(app, [prep(84, 5, 0.3)], tune, 8).fills.map((n) => n.midi)).toEqual([84]);
+    // where none sounds: under the tune notes around it, or the stem pitch track in the line's octave
+    expect(blendFills(app, [prep(68, 1.4, 0.3)], tune, 4).fills).toHaveLength(1);
+    expect(blendFills(app, [prep(78, 1.4, 0.3)], tune, 4).fills).toHaveLength(0);
+    expect(blendFills(app, [prep(78, 1.4, 0.3)], tune, 4, { pitchAgrees: () => true }).fills).toHaveLength(1);
+    expect(blendFills(app, [prep(86, 1.4, 0.3)], tune, 4, { pitchAgrees: () => true }).fills).toHaveLength(0);
     for (const a of app) expect(r.notes).toContain(a);
     for (const f of r.fills) {
       expect(f.src).toBe('piano');
@@ -225,13 +242,25 @@ describe('fills', () => {
     const r2 = blendFills([...app, note(64, 0.5, 0.5)], [prep(64, 0.2, 0.1)], tune, 4, { heldEnd: (_m, s) => s + 0.9 });
     expect(r2.fills[0].start + r2.fills[0].dur).toBeLessThan(0.5);
     // a fill in a gap of the tune ends where a tune note starts that it would sit on or above
-    const gap = blendFills(app, [prep(79, 1.2, 0.3)], tune, 4, { heldEnd: (_m, s) => s + 1.6 });
+    const gap = blendFills(app, [prep(75, 1.2, 0.3)], tune, 4, { heldEnd: (_m, s) => s + 1.6 });
     expect(gap.fills[0].start + gap.fills[0].dur).toBeCloseTo(2 - 0.005, 6);
     // ...but not one it stays well under
     const under = blendFills(app, [prep(67, 1.2, 0.3)], tune, 4, { heldEnd: (_m, s) => s + 1.6 });
     expect(under.fills[0].dur).toBeCloseTo(1.6, 6);
     // where an app note of its pitch already sounds: nothing
     expect(blendFills([...app, note(64, 0.1, 0.5)], [prep(64, 0.2, 0.3)], tune, 4).fills).toHaveLength(0);
+  });
+
+  it('never holds a fill through the next fill of its pitch', () => {
+    // two E4s of the piano model 0.4 s apart, both held by Basic Pitch for 2 s: the first ends before the second
+    const r = blendFills([], [prep(64, 1.0, 0.2), prep(64, 1.4, 0.2)], [], 4, { heldEnd: (_m, _s, _e, limit) => limit });
+    expect(r.fills.map((n) => [n.midi, n.start, +(n.start + n.dur).toFixed(4)])).toEqual([
+      [64, 1.0, 1.395],
+      [64, 1.4, 3.4],
+    ]);
+    // a fill left shorter than minDur by the next one is dropped
+    const close = endBeforeRepeats([note(60, 1, 1), note(60, 1.04, 1), note(62, 1, 1)], PIANO_BLEND.minDur);
+    expect(close.map((n) => [n.midi, n.start])).toEqual([[60, 1.04], [62, 1]]);
   });
 
   it('caps the density (4 per second in any 2 s) and the notes per hand in a cluster', () => {

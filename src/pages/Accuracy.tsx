@@ -12,6 +12,7 @@ import {
   MAESTRO_CAVEATS,
   METHOD_NOTES,
   OTHER_PIANO_ROWS,
+  PIANO_BLEND_EFFECT,
   PLAYABILITY,
   SEPARATION_EFFECT,
   SHEET_READER,
@@ -116,7 +117,8 @@ function SpecialistSpotlight() {
           </p>
           <p className="mt-3 text-[13px] text-ink-300">
             To use it: <b className="text-ink-100">Import</b> → <b className="text-ink-100">Piano solo</b> → tick{' '}
-            <b className="text-ink-100">High-accuracy piano model</b>.{' '}
+            <b className="text-ink-100">High-accuracy piano model</b>. For instrumental band songs it can also be added to{' '}
+            <b className="text-ink-100">Full song</b> (“Add the high-accuracy piano model”).{' '}
             <a href="#high-accuracy" className="text-accent-300 underline-offset-2 hover:underline">
               Details
             </a>
@@ -545,6 +547,14 @@ export default function AccuracyPage() {
         </section>
 
         <section>
+          <SectionTitle title={PIANO_BLEND_EFFECT.title} sub={PIANO_BLEND_EFFECT.intro} />
+          <BeforeAfterTable rows={PIANO_BLEND_EFFECT.rows} cols={['', 'Full song', 'With the piano model']} />
+          {PIANO_BLEND_EFFECT.notes.map((n) => (
+            <Note key={n}>{n}</Note>
+          ))}
+        </section>
+
+        <section>
           <SectionTitle
             title="Playable arrangements"
             sub="Two things that made the generated levels hard to play: long notes chopped into quick repeats of the same key, and chords one hand cannot reach. Measured on the same songs and pieces, before → now."
@@ -600,7 +610,7 @@ export default function AccuracyPage() {
           <h2 className="text-[15px] font-semibold text-ink-50">Getting the best result</h2>
           <ol className="mt-3 flex flex-col gap-2 text-[13px] leading-relaxed text-ink-200">
             {[
-              'Choose the right detection preset when importing: Piano solo, Full song or Sensitive (fast or very soft playing). For solo piano on a computer, pick “High-accuracy piano model” when you can wait a few minutes.',
+              'Choose the right detection preset when importing: Piano solo, Full song or Sensitive (fast or very soft playing). For solo piano on a computer, pick “High-accuracy piano model” when you can wait a few minutes; for instrumental band songs, “Full song” with “Add the high-accuracy piano model” adds keyboard parts the normal model misses.',
               'For songs with a singer, keep “Separate vocals & drums” on: the right hand then follows the singer.',
               'Use the cleanest recording you can — less reverb, crowd noise and background music means better notes.',
               'In the Studio, blend in the original recording (Sound tab → Original recording) to hear differences.',

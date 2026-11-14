@@ -724,6 +724,21 @@ describe('"Full song + piano model" (piano-model blend)', () => {
     expect(vi.mocked(pipeline.transcribeAudio).mock.calls[0][4]).toEqual({ separate: true });
   });
 
+  it('a song the blend does not run on (a sung line): its stage leaves the checklist', async () => {
+    useImport.getState().setPianoBlendPref(true);
+    let planDuring: string[] | undefined;
+    vi.mocked(pipeline.transcribeAudio).mockImplementationOnce(async (_b, _p, _o, _s, opts) => {
+      opts!.onPhase!('piano-blend-skipped');
+      planDuring = [...useImport.getState().job!.plan];
+      // the crash marker stays at separation: the piano model never ran
+      expect(store.has(BLEND_RUNNING_KEY)).toBe(false);
+      return result();
+    });
+    await useImport.getState().importFile(file(), { separate: true });
+    expect(planDuring).not.toContain('piano-model');
+    expect(planDuring).toContain('separating');
+  });
+
   it('unticked (the default): the pipeline gets exactly what it got before', async () => {
     vi.mocked(pipeline.transcribeAudio).mockResolvedValue(result());
     await useImport.getState().importFile(file(), { separate: true });

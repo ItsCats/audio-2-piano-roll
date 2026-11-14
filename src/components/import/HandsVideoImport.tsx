@@ -58,7 +58,7 @@ export function HandsVideoImport({ busy, pianoModelOn, onVideo }: { busy: boolea
             Import the video: the notes come from your playing, and the video is kept with the song so you can export it with the falling notes on top, like
             the big piano channels.
           </span>
-          {!pianoModelOn && <span className="text-[12px] text-ink-400">Tip: for solo piano, turn on “High-accuracy piano model” below.</span>}
+          {!pianoModelOn && <span className="text-[12px] text-ink-400">Tip: for solo piano, choose Piano solo and turn on “High-accuracy piano model”.</span>}
         </div>
       </div>
       <input ref={input} type="file" accept="video/*,.mp4,.mov,.m4v,.webm,.mkv" className="hidden" aria-label="Video of you playing" data-testid="hands-video-input" onChange={(e) => { void pick(e.target.files?.[0]); e.target.value = ''; }} />

@@ -586,7 +586,7 @@ export default function ImportPage() {
         <header>
           <h1 className="text-[26px] font-semibold tracking-tight text-ink-50">Import music</h1>
           <p className="mt-1 text-[14px] text-ink-300">
-            Audio is analyzed on your device with Spotify’s Basic Pitch neural network (or, for solo piano, an optional high-accuracy piano model).
+            Audio is analyzed on your device with Spotify’s Basic Pitch neural network (or an optional high-accuracy piano model: on its own for solo piano, or blended into Full song results for instrumental songs).
             Nothing is uploaded unless you use your own processing server.
             The result is an AI estimate —{' '}
             <Link to="/accuracy" className="text-accent-400 hover:text-accent-300">

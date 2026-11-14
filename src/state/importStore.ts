@@ -478,7 +478,7 @@ function markBlend(pendingId: string | undefined): () => void {
 const crashedBlendRecords = new Set<string>();
 
 /** The notice after a tab died during the blend's piano model. */
-export const BLEND_CRASH_NOTICE = 'The piano model was turned off after the last import closed unexpectedly. You can turn it back on under Detection.';
+export const BLEND_CRASH_NOTICE = 'The piano model was turned off after the last import closed unexpectedly. You can turn it back on with “Add the high-accuracy piano model” under Full song on the Import page.';
 
 /**
  * A tab that died while the blend's piano model ran: the blend is turned off (the pref), the record it
@@ -904,7 +904,13 @@ export const useImport = create<ImportState>((set, get) => {
       opts = {
         ...opts,
         pianoBlend: true,
-        onPhase: () => {
+        onPhase: (phase) => {
+          if (phase === 'piano-blend-skipped') {
+            // not run for this song (the pipeline's warning says why): no checkmark for a stage that never ran
+            const job = get().job;
+            if (job) update({ plan: job.plan.filter((st) => st !== 'piano-model') });
+            return;
+          }
           unmark();
           unmark = markBlend(ctx.pendingId);
         },

@@ -540,14 +540,59 @@ function withoutRole(n: Note): Note {
 }
 
 /**
+ * Re-strike pieces (src 'restrike': they start 5 ms after the note or piece before them ends) joined
+ * back into one note each; `parts`: per joined note's id, the note as it was and its pieces in order.
+ */
+function joinRestrikePieces(notes: Note[]): { joined: Note[]; parts: Map<number, Note[]> } {
+  const joined: Note[] = [];
+  const parts = new Map<number, Note[]>();
+  const last = new Map<number, { copy: Note; orig: Note }>();
+  for (const n of [...notes].sort((a, b) => a.start - b.start)) {
+    const prev = last.get(n.midi);
+    if (n.src === 'restrike' && prev && Math.abs(prev.copy.start + prev.copy.dur + 0.005 - n.start) < 0.002) {
+      const p = parts.get(prev.copy.id) ?? [prev.orig];
+      p.push(n);
+      parts.set(prev.copy.id, p);
+      prev.copy.dur = n.start + n.dur - prev.copy.start;
+      continue;
+    }
+    const copy = { ...n };
+    if (n.src === 'restrike') {
+      // a piece whose note is not there (edited): a note of its own here, its src kept on the way out
+      delete copy.src;
+      parts.set(copy.id, [n]);
+    }
+    joined.push(copy);
+    last.set(n.midi, { copy, orig: n });
+  }
+  return { joined, parts };
+}
+
+/**
  * Accompaniment + melody line → one note list with hands; the melody always stays in the right hand.
  * Hard-only notes (role 'lead') go to the right hand and do not take part in the hand split, so the
  * notes Easy and Medium are built from get the same hands with or without them.
  */
 export function mergeMelody(accomp: Note[], melody: Note[], duration: number): Note[] {
   const all = accomp.map(withoutRole);
-  // the piano-model blend's notes (Note.src, music/pianoBlend.ts) take no part in the hand split
-  // either: they get the hand of the split the others make, so those keep the hands they have without the blend
+  // the piano-model blend's re-strike pieces (Note.src 'restrike', music/pianoBlend.ts blendRestrikes)
+  // are joined back into the note they were split from for the hand split and split again with its
+  // hand, so every app note keeps the hand it has without the blend
+  if (all.some((n) => n.src === 'restrike')) {
+    const { joined, parts } = joinRestrikePieces(all);
+    return sortNotes(
+      mergeMelody(joined, melody, duration).flatMap((m) => {
+        const p = parts.get(m.id);
+        if (!p || Math.abs(m.start - p[0].start) > 1e-6) return [m];
+        const end = m.start + m.dur;
+        return p
+          .filter((x, k) => k === 0 || x.start < end - 0.02)
+          .map((x, k) => (k === 0 ? { ...m, ...(x.src ? { src: x.src } : {}), dur: Math.min(x.dur, m.dur) } : { ...x, hand: m.hand, dur: Math.min(x.dur, end - x.start) }));
+      }),
+    );
+  }
+  // the blend's added notes take no part in the hand split either: they get the hand of the split the
+  // others make, so those keep the hands they have without the blend
   const isAdded = (n: Note) => (n.src === 'piano' || n.src === 'piano-lead') && n.role !== 'lead';
   if (all.some(isAdded)) {
     const added = all.filter(isAdded);
