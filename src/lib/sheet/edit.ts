@@ -121,7 +121,9 @@ export function resolveOverlaps(ctx: SheetCtx, notes: Note[], touched: Set<numbe
   const span = new Map<number, { on: number; off: number }>();
   const sp = (n: Note) => {
     let s = span.get(n.id);
-    if (!s) span.set(n.id, (s = spanOf(ctx, n)));
+    // a note this edit placed is where its new pin says, also on a song's first edit (its grid lock
+    // comes in the same step, so spanOf would still read the old place)
+    if (!s) span.set(n.id, (s = touched.has(n.id) && pinValid(n) && n.pin!.off > n.pin!.on ? { on: n.pin!.on, off: n.pin!.off } : spanOf(ctx, n)));
     return s;
   };
   const removed = new Set<number>();

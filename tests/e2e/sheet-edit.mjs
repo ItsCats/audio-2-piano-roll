@@ -476,7 +476,7 @@ try {
     const count0 = original.arrangements.hard.notes.length;
     await page.getByRole('button', { name: /^Edit/ }).first().tap();
     await page.waitForTimeout(700);
-    const dock = page.locator('[data-testid="sheet-edit-dock"]');
+    const dock = page.locator('[data-testid="sheet-edit-dock"]:not([inert])');
     const layout = await dock.getAttribute('data-layout');
     const small = [];
     for (const tb of ['notes', 'marks', 'bar']) {
@@ -557,11 +557,18 @@ try {
     const addedText = addedShown ? await page.getByTestId('sheet-added').innerText() : '';
     console.log(`   added message after ${Date.now() - tTap} ms: ${addedShown}`);
     await page.screenshot({ path: path.join(shots, 'm3-phone-added.png') });
-    s = await savedWhen(page, id, (x) => x.arrangements.hard.notes.length > c1);
+    const idsOf = (x) => x.arrangements.hard.notes.map((n) => n.id).join(',');
+    const ids1 = idsOf(s);
+    s = await savedWhen(page, id, (x) => idsOf(x) !== ids1, 4000);
     const c2 = s.arrangements.hard.notes.length;
-    if (addedShown) await edit(page, () => page.getByTestId('sheet-added-undo').tap());
-    s = await savedWhen(page, id, (x) => x.arrangements.hard.notes.length === c1);
-    check('phone: Add + a tap places one note ("Added …"); its Undo takes it back', banner && addedShown && c2 === c1 + 1 && s.arrangements.hard.notes.length === c1, { banner, addedText, c1, c2, after: s.arrangements.hard.notes.length });
+    const stillShown = (await page.locator('[data-testid="sheet-added-undo"]').count()) === 1;
+    console.log(`   after the save (${Date.now() - tTap} ms): ${c1} -> ${c2} notes, message shown: ${stillShown}`);
+    if (stillShown) await edit(page, () => page.getByTestId('sheet-added-undo').tap());
+    // (the new note can replace a same-pitch note it covers: count the new ids, not the notes)
+    const had = new Set(ids1.split(','));
+    const fresh = idsOf(s).split(',').filter((x) => !had.has(x));
+    s = await savedWhen(page, id, (x) => idsOf(x) === ids1);
+    check('phone: Add + a tap places one note ("Added …"); its Undo takes it back', banner && addedShown && stillShown && fresh.length === 1 && idsOf(s) === ids1, { banner, addedText, c1, c2, fresh, back: idsOf(s) === ids1 });
     await page.getByTestId('sheet-add').tap();
     await page.waitForTimeout(200);
 
@@ -587,10 +594,10 @@ try {
     const helpTouch = await page.getByTestId('sheet-help').innerText();
     await page.getByRole('button', { name: 'Close' }).first().tap();
     await page.waitForTimeout(300);
-    check('phone: Help lists the touch gestures first', /On a phone or tablet[\s\S]*Mouse and keyboard/.test(helpTouch) && /Press and hold/.test(helpTouch));
+    check('phone: Help lists the touch gestures first', /On a phone or tablet[\s\S]*Mouse and keyboard/i.test(helpTouch) && /Press and hold/.test(helpTouch));
     await page.getByRole('button', { name: 'Full screen' }).first().tap();
     await page.waitForTimeout(1000);
-    const fsDock = await page.locator('[data-testid="sheet-edit-dock"]').boundingBox();
+    const fsDock = await page.locator('[data-testid="sheet-edit-dock"]:not([inert])').boundingBox();
     await page.screenshot({ path: path.join(shots, 'm3-phone-fullscreen.png') });
     check('phone: full screen keeps Edit mode with the dock at the bottom', !!fsDock && fsDock.y + fsDock.height <= 664 + 1 && fsDock.y > 300 && !(await overflowX(page)), { fsDock });
     await clean(page, errors, 'phone');
@@ -604,7 +611,7 @@ try {
     const original = await idbSong(page, id);
     await page.getByRole('button', { name: /^Edit/ }).first().tap();
     await page.waitForTimeout(700);
-    const dock = page.locator('[data-testid="sheet-edit-dock"]');
+    const dock = page.locator('[data-testid="sheet-edit-dock"]:not([inert])');
     const layout = await dock.getAttribute('data-layout');
     const small = await smallButtons(page);
     await page.getByTestId('sheet-rail-fullscreen').tap();
@@ -660,7 +667,7 @@ try {
         out.push(
           await page.evaluate(() => {
             const done = performance.getEntriesByName('sheet:edit-done').at(-1)?.startTime ?? 0;
-            return { ms: Math.round(done - window.__k), redrawn: Number(document.querySelector('[data-redrawn]')?.getAttribute('data-redrawn') ?? -1) };
+            return { ms: Math.round(done - window.__k), redrawn: Number(document.querySelector('[data-redrawn]')?.getAttribute('data-redrawn') ?? -1), status: document.querySelector('[data-testid="sheet-status"]')?.textContent };
           }),
         );
       }
@@ -688,11 +695,13 @@ try {
       const ms = l.map((x) => x.ms).sort((a, b) => a - b);
       return { median: ms[Math.floor(ms.length / 2)], max: ms.at(-1), redrawn: [...new Set(l.map((x) => x.redrawn))] };
     };
+    console.log("   per key", JSON.stringify(keys.map((k, i) => [k, fast[i], slow[i]])));
     const f = stats(fast);
     const sl = stats(slow);
     console.log(`   long song (165 bars, 5:30, Hard, ${chunks} chunks): first lines ${firstMs} ms, all ${allMs} ms; edits ${JSON.stringify(f)}, CPU ÷4 ${JSON.stringify(sl)}`);
-    check('5½-minute song: each edit is on screen within 300 ms (median under 150 ms), one chunk redrawn', f.max < 300 && f.median < 150 && f.redrawn.every((r) => r === 1), { firstMs, allMs, chunks, fast: f });
-    check('5½-minute song, CPU slowed 4× (a phone): each edit within 1 s', sl.max < 1000 && sl.redrawn.every((r) => r === 1), { slow: sl });
+    check('5½-minute song: each edit is on screen within 300 ms (median under 150 ms), one chunk redrawn', f.max < 300 && f.median < 150 && f.redrawn.every((r) => r <= 1) && f.redrawn.includes(1), { firstMs, allMs, chunks, fast: f });
+    // (0 chunks: an edit that doesn't change the drawing, such as ] on a note the next same-pitch note cuts short)
+    check('5½-minute song, CPU slowed 4× (a phone): each edit within 1 s, at most one chunk redrawn', sl.max < 1000 && sl.redrawn.every((r) => r <= 1) && sl.redrawn.includes(1), { slow: sl });
     await page.screenshot({ path: path.join(shots, 'm3-long-song.png') });
     await clean(page, errors, 'long song');
     await ctx.close();

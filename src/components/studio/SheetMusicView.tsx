@@ -55,6 +55,13 @@ export function SheetMusicView() {
   // in full screen the edit tools dock inside the stage (otherwise the Studio shows them)
   const dock = editMode && fullscreen && layout === 'dock';
   const scrollRef = useRef<HTMLDivElement>(null);
+  // in full screen the stage's play / timeline controls keep clear of the rail
+  useEffect(() => {
+    const stage = scrollRef.current?.closest<HTMLElement>('[data-fullscreen]');
+    if (!stage || !rail || !fullscreen) return;
+    stage.style.setProperty('--fs-rail', railWidth);
+    return () => void stage.style.removeProperty('--fs-rail');
+  }, [rail, fullscreen, railWidth]);
   const pageRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const cursorRef = useRef<HTMLDivElement>(null);

@@ -190,6 +190,26 @@ describe('sheet edit operations', () => {
     expect(lengthOp(easy, new Set([1]), { triplet: true })).toBeNull();
   });
 
+  it("a song's first edit (no grid lock yet) follows the same overlap rules as later ones", () => {
+    // C4 quarter, then C4 quarter: making the first one longer cuts it where the second starts
+    const notes = [
+      { id: 1, midi: 60, start: 0, dur: q, hand: 'R' as const },
+      { id: 2, midi: 60, start: q, dur: q, hand: 'R' as const },
+    ];
+    const lockedSong = plain(notes);
+    const { sheet: _sheet, ...unlocked } = lockedSong;
+    void _sheet;
+    for (const song of [unlocked as Song, lockedSong]) {
+      const res = lengthOp(ctxOf(song, 'medium'), new Set([1]), { step: 1 })!;
+      const n1 = res.notes.find((n) => n.id === 1)!;
+      expect(n1.pin, song.sheet ? 'locked' : 'first edit').toMatchObject({ on: 0, off: 12 });
+      expect(n1.start + n1.dur).toBeCloseTo(q, 9);
+      expect(res.notes.map((n) => n.id)).toEqual([1, 2]);
+      // a half note covers the second one: it goes
+      expect(lengthOp(ctxOf(song, 'medium'), new Set([1]), { len: 24 })!.notes.map((n) => n.id)).toEqual([1]);
+    }
+  });
+
   it('delete, add (a chord tone at an existing onset), hand', () => {
     const ctx = ctxOf(base(), 'medium');
     expect(deleteOp(ctx, new Set([2]))!.notes.map((n) => n.id)).toEqual([1, 3, 4]);

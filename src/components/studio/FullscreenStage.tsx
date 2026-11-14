@@ -226,7 +226,8 @@ function Controls({ auto, visible, keysHeight, onExit }: { auto: AutoHide; visib
         </div>
 
         {/* sits just above the on-screen keys (keysHeight), so they stay visible and playable */}
-        <div className="relative bg-gradient-to-t from-black/60 to-transparent px-3 pt-8 pb-2" style={{ marginBottom: keysHeight }}>
+        {/* (--fs-rail: the sheet's edit tools as a column on the right, set by the sheet view: the controls stay beside it) */}
+        <div className="relative bg-gradient-to-t from-black/60 to-transparent px-3 pt-8 pb-2" style={{ marginBottom: keysHeight, marginRight: 'var(--fs-rail, 0px)' }}>
           {speedOpen && (
             <div
               role="group"

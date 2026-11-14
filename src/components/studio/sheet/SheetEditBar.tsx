@@ -251,7 +251,7 @@ export function SheetEditBar({ layout, fixed = false }: { layout: 'row' | 'dock'
     // a phone held sideways: a column beside the music
     if (ui.collapsed)
       return (
-        <div className="flex h-full w-[60px] flex-col items-center gap-1 border-l border-ink-700 bg-ink-900/97 py-1.5" data-testid="sheet-edit-dock" data-layout="rail" role="toolbar" aria-label="Edit the sheet music">
+        <div className="flex h-full w-[60px] flex-col items-center gap-1 border-l border-ink-700 bg-ink-900 py-1.5" data-testid="sheet-edit-dock" data-layout="rail" role="toolbar" aria-label="Edit the sheet music">
           <Tool dock label="Show tools" onClick={() => ui.set({ collapsed: false })} testId="sheet-dock-expand">
             <ChevronsLeft size={20} />
           </Tool>
@@ -264,7 +264,7 @@ export function SheetEditBar({ layout, fixed = false }: { layout: 'row' | 'dock'
         </div>
       );
     return (
-      <div className="flex h-full w-[min(44vw,320px)] flex-col border-l border-ink-700 bg-ink-900/97" data-testid="sheet-edit-dock" data-layout="rail" role="toolbar" aria-label="Edit the sheet music">
+      <div className="flex h-full w-[min(44vw,320px)] flex-col border-l border-ink-700 bg-ink-900" data-testid="sheet-edit-dock" data-layout="rail" role="toolbar" aria-label="Edit the sheet music">
         <div className="flex shrink-0 items-center gap-0.5 px-1.5 pt-1">
           <span className="shrink-0 rounded-md bg-accent-500/15 px-1.5 py-1 text-[11px] font-semibold text-accent-300 capitalize">{difficulty}</span>
           <span className="flex-1" />
