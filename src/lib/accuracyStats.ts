@@ -15,7 +15,7 @@
  * recording is in it (shown, flagged, not averaged). "Fast" = the "Piano solo" (Basic Pitch) run of round 2 on
  * the same files. Notes found by register / speed: round-2 register.py rules on the same 5 pieces.
  */
-export const ACCURACY_UPDATED = '2026-11-12';
+export const ACCURACY_UPDATED = '2026-11-14';
 
 export interface GlanceCard {
   icon: 'piano' | 'mic' | 'bass' | 'timer';
@@ -237,6 +237,32 @@ export const INSTRUMENTAL = {
   ],
 };
 
+/**
+ * "Full song + piano model" (opt-in, docs/TRANSCRIPTION.md §3c), measured 2026-11-14: the offline import path
+ * on the browser's own posteriors with the in-browser piano model's notes, plain "Full song" → with the blend.
+ * Band track: the instrumental track above (lead reference as above; keyboard part: a multi-instrument AI
+ * transcriber's piano notes). Slakh: 15 synthesized band mixes with exact notes (4 more have a sung line and
+ * do not blend). The thresholds were chosen on these same songs.
+ */
+export const PIANO_BLEND_EFFECT = {
+  title: 'Full song + piano model (instrumental songs)',
+  intro:
+    'An option for instrumental songs: the high-accuracy piano model also listens to the separated instruments, and the notes it hears best — keyboard parts and the notes between the melody — are added to the Full song result. The melody line and the bass stay as they were. Measured on the instrumental band track above and on 15 synthesized band songs with an exact answer key.',
+  rows: [
+    { what: 'Hard right hand plays the lead tune’s exact note', before: '64%', after: '70%', note: 'Band track. Most of the added lead notes are inside a chord, under the top note: the tune you hear on top changes little (53% → 54%).' },
+    { what: 'Medium / Easy right hand plays the lead tune’s exact note', before: '51% / 38%', after: '55% / 39%', note: 'Band track; no lead note lost at any level' },
+    { what: 'The band’s keyboard part found', before: '24%', after: '36%', note: 'Band track, compared with an AI transcriber’s estimate of the piano part' },
+    { what: 'Accompaniment parts found (piano, guitar, organ…)', before: '41%', after: '53%', note: 'Synthesized band songs, exact answer key' },
+    { what: 'Lead tune found on Hard', before: '41%', after: '46%', note: 'Synthesized band songs; no song lower' },
+    { what: 'Bass notes', before: 'unchanged', after: 'unchanged', note: 'The bass line is never changed' },
+    { what: 'Notes per second (Hard / Medium / Easy)', before: '—', after: '+29% / +13% / +2%', note: 'Band track' },
+  ] as CompareRow[],
+  notes: [
+    'Opt-in: Import → Full song → tick “Add the high-accuracy piano model”. It needs in-browser separation and is not offered on phones and low-memory devices (about 0.8 GB more memory). Songs with singing and songs over 10 minutes get the standard Full song result.',
+    'The settings were chosen on these same songs, so the numbers are in-sample. It does not fix notes played in the wrong octave.',
+  ],
+};
+
 /** The same (final) app with and without separation, "Full song" preset. */
 export const SEPARATION_EFFECT: CompareRow[] = [
   { what: 'Easy right hand plays the singer’s note', before: '24%', after: '50%', note: '5 sung songs; best possible 62%' },
@@ -263,6 +289,7 @@ export const SPEED_ROWS: CompareRow[] = [
   { what: 'With one thread only (browsers without cross-origin isolation)', before: '7 s', after: '≈ 2 min 15 s', note: 'Measured on a 1.5-minute song. Safari runs single-threaded: it does not support the isolation the app uses.' },
   { what: 'Piano solo / Sensitive, per minute of audio', before: '7 s', after: '—', note: 'no separation for piano' },
   { what: 'High-accuracy piano model, per minute of audio', before: '≈ 38 s', after: '—', note: '3 threads, 11 piano recordings (36–41 s); ≈ 97 s single-threaded. Peak tab memory 0.8–0.9 GB; 41 MB model downloaded once' },
+  { what: 'Full song + piano model, extra time per minute of audio', before: '—', after: '≈ 40–60 s', note: '3 threads, band track; longer single-threaded. Runs after separation, so the peak memory stays separation’s' },
   { what: 'Peak memory of the browser tab', before: '0.4–0.9 GB', after: '1.9–2.2 GB', note: 'Separation is off by default on phones and skipped for recordings over 10 minutes (20 minutes on devices with 8 GB or more)' },
 ];
 

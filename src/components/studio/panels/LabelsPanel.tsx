@@ -20,6 +20,12 @@ export function LabelsPanel() {
     <div>
       <Section title="Note labels">
         <Toggle label="Show labels on notes" checked={on} onChange={(v) => setLabels({ style: v ? 'letter' : 'none' })} />
+        <Toggle
+          label="Fingering"
+          hint="Finger numbers added on the sheet music, on their falling notes and in videos"
+          checked={l.fingering !== false}
+          onChange={(fingering) => setLabels({ fingering })}
+        />
         <Select<LabelStyle>
           label="Style"
           value={l.style}

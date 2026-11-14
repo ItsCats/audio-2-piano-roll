@@ -43,12 +43,14 @@ export interface InterruptedNotice {
 /**
  * Plain-language notice for an interrupted import (no technical terms: most of these are phones).
  * For a high-accuracy piano model run, `retryWith` (importStore resumeTranscriber) says which model
- * Try again will use.
+ * Try again will use; for a "Full song + piano model" run, `blendAgain` (importStore resumeBlend)
+ * whether Try again adds the piano model again.
  */
 export function interruptedNotice(
-  rec: Pick<PendingImport, 'title' | 'kind' | 'blob'> & { transcriber?: string; sheet?: PendingImport['sheet']; source?: { sheetReader?: unknown } },
+  rec: Pick<PendingImport, 'title' | 'kind' | 'blob'> & { transcriber?: string; pianoBlend?: boolean; sheet?: PendingImport['sheet']; source?: { sheetReader?: unknown } },
   retryWith?: 'basic-pitch' | 'piano-specialist',
   device: DeviceInfo | undefined = pageDeviceInfo(),
+  blendAgain?: boolean,
 ): InterruptedNotice {
   // a sheet-music reader (Accurate or Quick): a PDF or photos, read again from the kept copy
   if (rec.kind === 'score') {
@@ -106,7 +108,11 @@ export function interruptedNotice(
       ? retryWith === 'basic-pitch'
         ? ' It was using the high-accuracy piano model, which needs a lot of memory: Try again uses the normal model.'
         : ' Try again uses the high-accuracy piano model again; close other tabs first.'
-      : '';
+      : kept && rec.pianoBlend && blendAgain !== undefined
+        ? blendAgain
+          ? ' Try again adds the piano model again; close other tabs first.'
+          : ' It was adding the piano model, which needs a lot of memory: Try again uses the standard Full song result.'
+        : '';
   return {
     title: 'Your last import was interrupted',
     body: `Your last import (“${rec.title}”) was interrupted — your browser probably ran out of memory. ${what}${model}`,

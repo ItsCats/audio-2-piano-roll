@@ -155,6 +155,13 @@ describe('interrupted-import notice', async () => {
     expect(big.canRetry).toBe(false);
     expect(big.body).toMatch(/Choose the file again/);
   });
+
+  it('a "Full song + piano model" import says whether Try again adds the piano model again', () => {
+    const r = { title: 'band', kind: 'audio' as const, blob: new Blob(['x']), pianoBlend: true };
+    expect(interruptedNotice(r, 'basic-pitch', undefined, false).body).toMatch(/It was adding the piano model, which needs a lot of memory: Try again uses the standard Full song result\.$/);
+    expect(interruptedNotice(r, 'basic-pitch', undefined, true).body).toMatch(/Try again adds the piano model again; close other tabs first\.$/);
+    expect(interruptedNotice({ ...r, pianoBlend: undefined }, 'basic-pitch', undefined, false).body).toMatch(/Your file was kept\.$/);
+  });
 });
 
 describe('screen wake lock', () => {

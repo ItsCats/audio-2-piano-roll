@@ -6,14 +6,14 @@ import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, Wand2 } from 'lucide-r
 import { useStudio } from '../../../state/studioStore';
 import { detectionParams } from '../../../state/settingsStore';
 import { getPosteriors } from '../../../lib/storage/db';
-import { redetectNotes, withLeadPass, EXTRACTION_PRESETS } from '../../../lib/transcription/pipeline';
+import { blendAddedNotes, redetectNotes, redetectedBlendInfo, withLeadPass, EXTRACTION_PRESETS } from '../../../lib/transcription/pipeline';
 import { regularBeats } from '../../../lib/music/beats';
 import { detectKey } from '../../../lib/music/theory';
 import { generateAllArrangements } from '../../../lib/music/difficulty';
 import type { Difficulty, ExtractionParams } from '../../../lib/music/types';
 import { Badge, Button, Section, Slider, Toggle } from '../../ui';
 import { toast } from '../../../state/toastStore';
-import { arrangementOptions, makeThumbnail } from '../../../lib/songs';
+import { arrangementOptions, easyMediumFromHard, makeThumbnail } from '../../../lib/songs';
 
 function LevelStats() {
   const song = useStudio((s) => s.song)!;
@@ -67,7 +67,7 @@ export function ArrangementPanel() {
 
   const redetect = async () => {
     const edited = (['easy', 'medium', 'hard'] as Difficulty[]).filter((d) => song.arrangements[d].edited);
-    if (edited.length && !confirm(`Re-detecting replaces your edits to ${edited.join(', ')}. Continue?`)) return;
+    if ((edited.length || song.sheet) && !confirm(`Re-detecting replaces your edits${edited.length ? ` to ${edited.join(', ')}` : ''}.${song.sheet ? ' Sheet edits on every level and key/time/tempo marks will be removed.' : ''} Continue?`)) return;
     setBusy(true);
     try {
       const post = await getPosteriors(song.id);
@@ -77,13 +77,19 @@ export function ArrangementPanel() {
       const det = await redetectNotes(post, params, song.duration, { melody: song.base.filter((n) => n.role === 'melody') });
       const notes = det.notes;
       const tempo = song.tempo.source === 'manual' ? song.tempo : det.tempo;
+      const { sheet: _sheet, ...rest } = song;
+      void _sheet;
+      // the piano-model blend runs again only where it can (Full song preset, no sung line)
+      const info = { ...t };
+      delete info.pianoBlend;
+      const pianoBlend = redetectedBlendInfo(t.pianoBlend, det.blend);
       replaceSong({
-        ...song,
+        ...rest,
         base: notes,
         tempo,
         key: detectKey(notes),
         arrangements: generateAllArrangements(notes, song.basePedal, tempo, song.duration, arrangementOptions(song)),
-        transcription: { ...t, params },
+        transcription: { ...info, params, ...(pianoBlend ? { pianoBlend } : {}) },
         thumbnail: makeThumbnail(notes, song.duration),
         updatedAt: Date.now(),
       });
@@ -101,9 +107,13 @@ export function ArrangementPanel() {
       toast.error('Invalid tempo', 'Enter a BPM between 20 and 300.');
       return;
     }
+    const edited = (['easy', 'medium', 'hard'] as Difficulty[]).filter((d) => song.arrangements[d].edited);
+    if ((edited.length || song.sheet) && !confirm(`Setting the tempo rebuilds every level from the detected notes: your edits${edited.length ? ` to ${edited.join(', ')}` : ''}${song.sheet ? ', the sheet’s bar lines and its key/time/tempo marks' : ''} will be replaced. Continue?`)) return;
     const first = song.tempo.beats[song.tempo.downbeatIndex] ?? song.base[0]?.start ?? 0;
     const tempo = { ...song.tempo, bpm: v, beats: regularBeats(v, first, song.duration), downbeatIndex: 0, source: 'manual' as const, confidence: 1 };
-    replaceSong({ ...song, tempo, arrangements: generateAllArrangements(song.base, song.basePedal, tempo, song.duration, arrangementOptions(song)) });
+    const { sheet: _sheet, ...rest } = song;
+    void _sheet;
+    replaceSong({ ...rest, tempo, arrangements: generateAllArrangements(song.base, song.basePedal, tempo, song.duration, arrangementOptions(song)) });
     toast.success('Tempo updated', 'The beat grid and the Easy/Medium arrangements were regenerated.');
   };
 
@@ -173,6 +183,12 @@ export function ArrangementPanel() {
               </dd>
             </>
           )}
+          {blendAddedNotes(t.pianoBlend) && (
+            <>
+              <dt className="text-ink-300">Detection</dt>
+              <dd className="text-right text-ink-100">Full song + piano model</dd>
+            </>
+          )}
           {t.processingMs !== undefined && (
             <>
               <dt className="text-ink-300">Processing time</dt>
@@ -225,16 +241,15 @@ export function ArrangementPanel() {
         <LevelStats />
         <div className="flex flex-wrap gap-2">
           <Button size="sm" variant="subtle" icon={<RefreshCw size={14} />} onClick={() => {
-            if (song.arrangements[difficulty].edited && !confirm(`Discard your edits to ${difficulty}?`)) return;
+            if (song.arrangements[difficulty].edited && !confirm(`Regenerate ${difficulty}? Your note fixes, fingering and markings on this level will be replaced.`)) return;
             regenerateLevels([difficulty]);
           }}>
             Regenerate {difficulty}
           </Button>
           <Button size="sm" variant="ghost" onClick={() => {
-            if (!confirm('Rebuild Easy and Medium from the current Hard arrangement (including your Hard edits)?')) return;
-            const hard = song.arrangements.hard.notes;
-            const all = generateAllArrangements(hard, song.basePedal, song.tempo, song.duration, arrangementOptions(song));
-            replaceSong({ ...song, arrangements: { ...song.arrangements, easy: all.easy, medium: all.medium } });
+            const fixed = song.arrangements.easy.edited || song.arrangements.medium.edited;
+            if (!confirm(`Rebuild Easy and Medium from the current Hard arrangement (including your Hard edits)?${fixed ? ' Fixes and markings made on Easy and Medium will be replaced.' : ''} Hard’s fingering and markings are copied over.`)) return;
+            replaceSong(easyMediumFromHard(song));
           }}>
             Easy & Medium from Hard
           </Button>

@@ -87,6 +87,17 @@ export function splitPoints(notes: Note[], duration: number): { times: number[];
   return { times: splits.map((_, i) => (i + 0.5) * WINDOW), splits };
 }
 
+/**
+ * The hand a note gets from the split points of `reference` (assignHands without the span and
+ * finger rules): for notes added on top of a hand-assigned transcription (the piano-model blend's
+ * fills, music/pianoBlend.ts) without moving the split, and so the hands, of the others.
+ */
+export function handBySplit(reference: Note[], duration: number): (n: { midi: number; start: number }) => Note['hand'] {
+  if (!reference.length) return (n) => (n.midi < 60 ? 'L' : 'R');
+  const { splits } = splitPoints(reference, duration);
+  return (n) => (n.midi < splits[Math.min(splits.length - 1, Math.max(0, Math.floor(n.start / WINDOW)))] ? 'L' : 'R');
+}
+
 export function assignHands(notes: Note[], duration: number): Note[] {
   if (!notes.length) return notes;
   const { splits } = splitPoints(notes, duration);

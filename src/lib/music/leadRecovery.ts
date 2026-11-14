@@ -144,6 +144,14 @@ export interface LeadRecoveryOptions {
    * pass's note there instead of jumping to the doubling (see LEAD_DOUBLE)
    */
   doublesHardOnly?: boolean;
+  /**
+   * Lead notes from another model (the piano model's hole inserts, music/pianoBlend.ts): they skip
+   * the posterior test (Basic Pitch missing them is why they are here) and do not take part in the
+   * tune line (so the notes it picks are the same with or without them); they still go through
+   * `exclude`, freshCandidates (against the main notes and the recovered ones) and the
+   * hardOnly / doublesHardOnly tagging.
+   */
+  extra?: Note[];
 }
 
 /** doublesHardOnly: a main note starting within `window` s of a recovered note, a whole number of octaves away, that still sounds `overlap` s in. */
@@ -356,6 +364,27 @@ function inRanges(ranges: [number, number][] | undefined, t: number): boolean {
  * are assigned later as for any transcription.
  */
 export function recoverLead(base: Note[], candidates: Note[], duration: number, opts: LeadRecoveryOptions = {}): Note[] {
+  const notes = recoverFromCandidates(base, candidates, duration, opts);
+  return opts.extra?.length ? addExtraLead(notes, opts.extra, opts) : notes;
+}
+
+/**
+ * `notes` (main + recovered) plus the `extra` lead notes (LeadRecoveryOptions.extra) not already
+ * there, tagged as recovered notes are; the same objects when none is added.
+ */
+export function addExtraLead(notes: Note[], extra: Note[], opts: Pick<LeadRecoveryOptions, 'rule' | 'exclude' | 'hardOnly' | 'doublesHardOnly'> = {}): Note[] {
+  const rule = { ...LEAD_RECOVERY, ...opts.rule };
+  const fresh = freshCandidates(notes, extra.filter((c) => !inRanges(opts.exclude, c.start)), rule);
+  if (!fresh.length) return notes;
+  const tagged = opts.hardOnly
+    ? fresh.map((n) => ({ ...n, role: 'lead' as const }))
+    : opts.doublesHardOnly
+      ? fresh.map((n) => (doublesMainNote(n, notes) ? { ...n, role: 'lead' as const } : n))
+      : fresh;
+  return sortNotes([...notes, ...tagged]);
+}
+
+function recoverFromCandidates(base: Note[], candidates: Note[], duration: number, opts: LeadRecoveryOptions): Note[] {
   const rule = { ...LEAD_RECOVERY, ...opts.rule };
   const ev = new Map<number, LeadEvidence>();
   const meanOf = (n: Note) => {

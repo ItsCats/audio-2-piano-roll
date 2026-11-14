@@ -12,6 +12,16 @@ export interface RawNote {
   on: number;
   off: number;
   staff: Staff;
+  /** Song note ids (threaded through to the written chords). */
+  ids?: number[];
+  /** A sheet edit's written position (Note.pin): used as it is, never snapped. */
+  pin?: { on: number; off: number };
+}
+
+/** Finest straight grid (or 3 = triplet 8ths) a position needs within its quarter; 0 = none fits. */
+export function gridNeeded(pos: number): number {
+  const r = ((pos % DIV) + DIV) % DIV;
+  return r === 0 ? 1 : r % 6 === 0 ? 2 : r % 3 === 0 ? 4 : r % 4 === 0 ? 3 : 0;
 }
 
 const PENALTY: Record<number, number> = { 1: 0, 2: 0.6, 4: 1.6, 3: 3 };
@@ -82,12 +92,34 @@ export function quantize(raw: RawNote[], rules: SheetLevelRules): Quantized {
       if (!tripletQuarters.has(k) && (gridOf.get(k) ?? emptyGrid) < finest) gridOf.set(k, finest);
     }
   }
+  // a pinned note's quarters take a grid at least as fine as its positions (pins win)
+  for (const r of raw) {
+    if (!r.pin) continue;
+    for (const p of [r.pin.on, r.pin.off]) {
+      const g = gridNeeded(p);
+      if (g <= 1) continue;
+      const k = Math.floor(p / DIV);
+      const cur = gridOf.get(k) ?? emptyGrid;
+      if (g === 3) {
+        gridOf.set(k, 3);
+        tripletQuarters.add(k);
+      } else if (cur === 3) {
+        gridOf.set(k, g);
+        tripletQuarters.delete(k);
+      } else if (cur % g !== 0) gridOf.set(k, Math.max(cur, g) % Math.min(cur, g) === 0 ? Math.max(cur, g) : 4);
+    }
+  }
   const stepAt = (on: number) => Math.max(rules.minDur, Math.min(rules.maxStep ?? Infinity, DIV / (gridOf.get(Math.floor(on / DIV)) ?? emptyGrid)));
   const rawOn = new Map<QNote, number>();
   let notes: QNote[] = raw.map((r) => {
+    if (r.pin) {
+      const n: QNote = { midi: r.midi, on: r.pin.on, off: r.pin.off, staff: r.staff, src: [...(r.ids ?? [])], pinned: true };
+      rawOn.set(n, r.pin.on);
+      return n;
+    }
     const on = Math.max(0, snap(r.on));
     const off = Math.max(on + stepAt(on), snap(r.off));
-    const n: QNote = { midi: r.midi, on, off, staff: r.staff };
+    const n: QNote = { midi: r.midi, on, off, staff: r.staff, src: [...(r.ids ?? [])] };
     rawOn.set(n, r.on);
     return n;
   });
@@ -97,7 +129,7 @@ export function quantize(raw: RawNote[], rules: SheetLevelRules): Quantized {
     const onsets = new Set(notes.map((n) => n.staff * 1e7 + n.on));
     for (const n of notes) {
       const k = Math.floor(n.off / DIV);
-      if (n.off % DIV === 0 || !tripletQuarters.has(k)) continue;
+      if (n.pinned || n.off % DIV === 0 || !tripletQuarters.has(k)) continue;
       let later = false;
       for (let p = n.off; p < (k + 1) * DIV && !later; p += 4) later = onsets.has(n.staff * 1e7 + p);
       if (later) continue;
@@ -114,6 +146,23 @@ export function quantize(raw: RawNote[], rules: SheetLevelRules): Quantized {
     const n = notes[i];
     const prev = out[out.length - 1];
     if (prev && prev.staff === n.staff && prev.midi === n.midi) {
+      // pinned notes win: an unpinned duplicate joins the pinned note; one that starts inside a
+      // pinned note starts after it (or joins it when nothing is left)
+      if (prev.on === n.on && (prev.pinned || n.pinned)) {
+        const keep = n.pinned && !prev.pinned ? n : prev;
+        const drop = keep === n ? prev : n;
+        keep.src = [...(keep.src ?? []), ...(drop.src ?? [])];
+        if (drop.pinned) keep.off = Math.max(keep.off, drop.off);
+        out[out.length - 1] = keep;
+        continue;
+      }
+      if (prev.pinned && !n.pinned && prev.off > n.on) {
+        if (n.off <= prev.off) {
+          prev.src = [...(prev.src ?? []), ...(n.src ?? [])];
+          continue;
+        }
+        n.on = prev.off;
+      }
       if (prev.on === n.on) {
         const step = stepAt(n.on);
         const to = n.on + step;
@@ -125,6 +174,7 @@ export function quantize(raw: RawNote[], rules: SheetLevelRules): Quantized {
           n.off = Math.max(n.off, to + step);
         } else {
           prev.off = Math.max(prev.off, n.off);
+          prev.src = [...(prev.src ?? []), ...(n.src ?? [])];
           continue;
         }
       }

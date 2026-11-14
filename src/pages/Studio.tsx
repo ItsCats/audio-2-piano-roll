@@ -51,12 +51,16 @@ import type { Difficulty } from '../lib/music/types';
 import { toast } from '../state/toastStore';
 import { useImport } from '../state/importStore';
 import { arrowSeekDelta, shouldHandleGlobalKey } from '../state/studioKeys';
+import { sheetActionHandler, sheetKeyAction } from '../state/sheetKeys';
+import { buildSheet } from '../lib/sheet';
+import { useSheetDockLayout } from '../state/sheetUi';
 
 type PanelTab = 'look' | 'labels' | 'sound' | 'practice' | 'arrangement';
 
 // the sheet-music view and its notation library load only when they are wanted
 const loadSheetView = () => import('../components/studio/SheetMusicView');
 const SheetMusicView = lazy(() => loadSheetView().then((m) => ({ default: m.SheetMusicView })));
+const SheetEditBar = lazy(() => import('../components/studio/sheet/SheetEditBar').then((m) => ({ default: m.SheetEditBar })));
 let warmed = false;
 /**
  * Starts loading the notation code when the switch is approached, so the sheet shows sooner. Not
@@ -95,11 +99,7 @@ function ViewSwitch({ className }: { className?: string }) {
       <Segmented<'roll' | 'sheet'>
         ariaLabel="View"
         value={view}
-        onChange={(v) => {
-          const st = useStudio.getState();
-          if (v === 'sheet' && st.editMode) st.setEditMode(false);
-          setSheet({ view: v });
-        }}
+        onChange={(v) => setSheet({ view: v })}
         options={[option('roll', 'Piano roll', Piano), option('sheet', 'Sheet music', FileMusic)]}
       />
     </span>
@@ -156,7 +156,7 @@ function ExportMenu({ onVideo, onSheetPdf }: { onVideo: () => void; onSheetPdf: 
         <div className="panel absolute top-10 right-0 z-30 w-60 p-1.5" role="menu">
           {[
             { icon: Film, label: 'Video (MP4 / WebM)…', onClick: () => { setOpen(false); onVideo(); } },
-            { icon: Music2, label: `MIDI file (${difficulty})`, onClick: () => { setOpen(false); downloadMidi(song, difficulty); showExportNoticeOnce(); } },
+            { icon: Music2, label: `MIDI file (${difficulty})`, onClick: () => { setOpen(false); void downloadMidi(song, difficulty).catch((e) => console.error(e)); showExportNoticeOnce(); } },
             { icon: FileText, label: `Sheet music PDF (${difficulty})…`, onClick: () => { setOpen(false); onSheetPdf(); } },
             { icon: FileMusic, label: `MusicXML (${difficulty})`, onClick: () => void exportMusicXml() },
             { icon: FileAudio, label: `Audio WAV (${difficulty})`, onClick: () => void exportWav() },
@@ -181,15 +181,36 @@ function ExportMenu({ onVideo, onSheetPdf }: { onVideo: () => void; onSheetPdf: 
   );
 }
 
+/**
+ * A modal dialog (Help, Export video, PDF …) or a menu is open: the page's shortcuts stay off, so
+ * keys meant for it never edit or play the song behind it (a dialog handles its own keys).
+ */
+function overlayOpen(): boolean {
+  for (const el of document.querySelectorAll<HTMLElement>('[aria-modal="true"], [role="menu"]')) {
+    if (el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden') return true;
+  }
+  return false;
+}
+
 function useStudioKeyboard(computerKeys: boolean) {
   const octave = useRef(0);
   useEffect(() => {
     const down = new Set<string>();
     const onKey = (e: KeyboardEvent) => {
-      if (!shouldHandleGlobalKey(e)) return;
+      if (!shouldHandleGlobalKey(e) || overlayOpen()) return;
       const st = useStudio.getState();
       const player = getPlayer();
       const mod = e.ctrlKey || e.metaKey;
+      // the sheet in Edit mode has its own keys (state/sheetKeys.ts); Space, F, E and Home stay
+      const sheetHandler = sheetActionHandler();
+      if (st.editMode && sheetHandler && useSettings.getState().sheet.view === 'sheet') {
+        const a = sheetKeyAction(e, st.selection.size > 0 || !!st.markSel, !!(document.activeElement as HTMLElement | null)?.closest?.('[data-testid="sheet-scroll"]'));
+        if (a) {
+          e.preventDefault();
+          sheetHandler(a);
+          return;
+        }
+      }
       if (computerKeys && !st.editMode && !mod) {
         if (e.code in QWERTY_MAP) {
           e.preventDefault();
@@ -211,7 +232,7 @@ function useStudioKeyboard(computerKeys: boolean) {
         if (delta !== null) player.seek(player.getTime() + delta);
       } else if (isFullscreenKey(e)) {
         toggleStageFullscreen();
-      } else if (e.code === 'KeyE' && !mod && !isStageFullscreen()) {
+      } else if (e.code === 'KeyE' && !mod && (!isStageFullscreen() || useSettings.getState().sheet.view === 'sheet')) {
         st.setEditMode(!st.editMode);
       } else if (st.editMode) {
         if (mod && e.code === 'KeyZ') {
@@ -298,6 +319,43 @@ function usePlayerSync() {
     if (arr) getPlayer().updateNotes(arr.notes, arr.pedal);
   }, [arr]);
 
+  // time-signature changes on the sheet: the metronome accents the sheet's bar lines
+  const sheetMeters = song?.sheet?.meters;
+  useEffect(() => {
+    const s = useStudio.getState().song;
+    if (!s?.sheet?.meters?.length) {
+      getPlayer().setBarAccent(null);
+      return;
+    }
+    const time = buildSheet(s, useStudio.getState().difficulty).time;
+    getPlayer().setBarAccent((b) => {
+      const pos = time.toPos(b);
+      const m = time.measureOf(Math.round(pos));
+      return Math.abs(pos - time.measureStart(m)) < 0.5;
+    });
+  }, [sheetMeters, song?.sheet?.grid]);
+
+  // an edit that changed the tempo or the length (a sheet edit past the end, undo of one): the
+  // player takes the new values without losing its place
+  const tempo = song?.tempo;
+  const duration = song?.duration;
+  const synced = useRef<{ id?: string; tempo?: unknown; duration?: number }>({});
+  useEffect(() => {
+    const prev = synced.current;
+    synced.current = { id: songId, tempo, duration };
+    if (!songId || prev.id !== songId || (prev.tempo === tempo && prev.duration === duration)) return;
+    const s = useStudio.getState().song;
+    const a = s && currentArrangement(useStudio.getState());
+    if (!s || !a) return;
+    const player = getPlayer();
+    const t = player.getTime();
+    const playing = player.isPlaying;
+    if (playing) player.pause();
+    player.setSong(a.notes, a.pedal, s.tempo, s.duration);
+    player.seek(Math.min(t, s.duration));
+    if (playing) void player.play();
+  }, [songId, tempo, duration]);
+
   useEffect(() => {
     getPlayer().setOptions({
       rate: transport.rate,
@@ -319,7 +377,9 @@ export default function StudioPage() {
   const [exportOpen, setExportOpen] = useState(false);
   const [pdfOpen, setPdfOpen] = useState(false);
   const view = useSettings((s) => s.sheet.view);
-  const setSheet = useSettings((s) => s.setSheet);
+  // the sheet's edit tools: a row under the header, a dock above the transport, or (a phone held
+  // sideways) a column beside the music that the sheet view draws itself
+  const sheetTools = useSheetDockLayout();
   const [computerKeys, setComputerKeys] = useState(false);
   const importDemo = useImport((s) => s.importDemo);
 
@@ -330,14 +390,6 @@ export default function StudioPage() {
 
   usePlayerSync();
   useStudioKeyboard(computerKeys);
-
-  // editing happens on the piano roll
-  useEffect(() => {
-    if (editMode && view === 'sheet') {
-      setSheet({ view: 'roll' });
-      toast.info('Editing works in the piano roll.');
-    }
-  }, [editMode, view, setSheet]);
 
   if (!id && !song) {
     return (
@@ -429,8 +481,20 @@ export default function StudioPage() {
             }))}
           />
           <ViewSwitch className="hidden md:inline-flex" />
-          <Button size="sm" variant={editMode ? 'primary' : 'subtle'} icon={<PencilRuler size={15} />} onClick={() => setEditMode(!editMode)} title="Edit notes (E)">
-            <span className="hidden sm:inline">{editMode ? 'Editing' : 'Edit'}</span>
+          {/* on: an outlined look of its own (Export Video next to it is solid blue); 44 px on phones */}
+          <Button
+            size="sm"
+            variant="subtle"
+            icon={<PencilRuler size={15} />}
+            onClick={() => setEditMode(!editMode)}
+            title={editMode ? 'Stop editing (E)' : 'Edit notes (E)'}
+            aria-pressed={editMode}
+            className={cn('max-sm:h-11 max-sm:min-w-11', editMode && 'bg-accent-500/15 text-accent-200 ring-2 ring-accent-400 hover:bg-accent-500/25')}
+            aria-label={editMode ? 'Editing' : 'Edit'}
+            data-testid="studio-edit"
+          >
+            {/* the word from 420 px (a phone's header has no room for it): the outline marks it on */}
+            <span className="hidden min-[420px]:inline">{editMode ? 'Editing' : 'Edit'}</span>
           </Button>
           <Button size="sm" variant="primary" icon={<Film size={15} />} onClick={() => setExportOpen(true)}>
             <span className="hidden lg:inline">Export Video</span>
@@ -441,10 +505,20 @@ export default function StudioPage() {
           </IconButton>
         </header>
         <SheetReaderNotice key={song.id} song={song} />
-        {editMode && <EditToolbar />}
+        {editMode &&
+          (view === 'sheet' ? (
+            sheetTools === 'row' && (
+              <Suspense fallback={<div className="h-[45px] border-b border-ink-800 bg-ink-900/95" />}>
+                <SheetEditBar layout="row" />
+              </Suspense>
+            )
+          ) : (
+            <EditToolbar />
+          ))}
         {/* full screen covers the app and the controls around the view (edit mode is for the normal layout) */}
         {/* the sheet music has its own toolbar in the stage's corner: its Full screen button lives there */}
-        <FullscreenStage onEnter={() => setEditMode(false)} enterButton={view !== 'sheet'}>
+        {/* the sheet keeps Edit mode in full screen (its edit tools dock inside the stage) */}
+        <FullscreenStage onEnter={() => useSettings.getState().sheet.view !== 'sheet' && setEditMode(false)} enterButton={view !== 'sheet'}>
           {view === 'sheet' ? (
             <Suspense
               fallback={
@@ -459,7 +533,13 @@ export default function StudioPage() {
             <PianoRollView />
           )}
         </FullscreenStage>
-        <Transport />
+        {/* phones and tablets: the sheet's edit tools as a dock above the transport */}
+        {editMode && view === 'sheet' && sheetTools === 'dock' && (
+          <Suspense fallback={null}>
+            <SheetEditBar layout="dock" />
+          </Suspense>
+        )}
+        <Transport compact={editMode && view === 'sheet' && sheetTools !== 'row'} />
       </div>
 
       {panelOpen && (

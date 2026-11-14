@@ -182,10 +182,36 @@ function lineNoteNear(line: Note[], starts: number[], t: number, reach: number):
 function chordTones(top: Note, below: Note[], count: number): Note[] {
   return below
     .filter((n) => n.midi < top.midi && top.midi - n.midi <= 12)
-    .map((n) => ({ n, s: (CONSONANCE[top.midi - n.midi] ?? 0.2) + n.vel * 0.5 }))
+    .map((n) => ({ n, s: (CONSONANCE[top.midi - n.midi] ?? 0.2) + n.vel * 0.5 - (n.src === 'piano' ? BLEND_LEVELS.fillChordPenalty : 0) }))
     .sort((a, b) => b.s - a.s)
     .slice(0, count)
     .map((x) => x.n);
+}
+
+/**
+ * The piano-model blend's fills (Note.src 'piano') in the tune line Easy and Medium follow: 'holes'
+ * lets them into it only where the line without them has no note (a run of fills under the tune took
+ * the line over: band-instrumental-1 Medium lost two bridge lead notes that way, while keeping them out
+ * altogether lost the notes they add between the tune's phrases); 'all' / 'none' for measurements.
+ * `fillChordPenalty`: Medium's chord tones under the tune prefer the app's own notes to fills by this
+ * much of the chord-tone score (a fill had replaced a bridge lead note). `mediumRestrikes` false: Medium,
+ * like Easy, joins re-strike pieces back into one note (withoutRestrikes); with them Medium had 17.9 %
+ * more notes per second than without the blend on band-instrumental-1 (limit 15 %), and the Slakh set's
+ * Medium lead coverage fell 58.2 -> 57.9 % instead of rising to 59.4 %.
+ */
+export const BLEND_LEVELS = { fillsInTune: 'holes' as 'all' | 'holes' | 'none', fillChordPenalty: 0.3, mediumRestrikes: false };
+const withoutFills = (notes: Note[]) => notes.filter((n) => n.src !== 'piano');
+
+/** tuneLine with the blend's fills as BLEND_LEVELS.fillsInTune says. */
+export function blendTuneLine(accomp: Note[], ranges: [number, number][]): Note[] {
+  const mode = BLEND_LEVELS.fillsInTune;
+  if (mode === 'all' || !accomp.some((n) => n.src === 'piano')) return tuneLine(accomp, ranges);
+  const own = tuneLine(withoutFills(accomp), ranges);
+  if (mode === 'none') return own;
+  const ownIdx = sortNotes(own);
+  const free = (n: Note) => !ownIdx.some((m) => m.start < n.start + n.dur - 0.03 && n.start < m.start + m.dur - 0.03);
+  const added = tuneLine(accomp, ranges).filter((n) => n.src === 'piano' && free(n));
+  return added.length ? sortNotes([...own, ...added]) : own;
 }
 
 /**
@@ -193,9 +219,34 @@ function chordTones(top: Note, below: Note[], count: number): Note[] {
  * tones below the tune and those at most `keepAbove` semitones above it (a melody note the line
  * reduction skipped, an ornament); chord tops further above (another instrument's register, the
  * hopping skyline) are dropped. `reach` (s): how far from a tune note a chord still counts as
- * under it.
+ * under it. `blendFills`: the piano-model blend's fills (Note.src 'piano') Medium keeps: 'tune' only
+ * those its tune line picks (BLEND_LEVELS), 'withApp' also those struck with an app note of their hand
+ * (chord tones), 'all' every one. 'withApp' (re-strikes joined back): band-instrumental-1 Medium lead
+ * recall 52.3 % with 'tune' -> 54.5 %, notes per second +14 % over the song without the blend (limit 15 %).
  */
-export const MEDIUM_TUNE = { keepAbove: 9, reach: 0.5 };
+export const MEDIUM_TUNE = { keepAbove: 9, reach: 0.5, blendFills: 'withApp' as 'all' | 'tune' | 'withApp' };
+
+/**
+ * Re-strike pieces (Note.src 'restrike', music/pianoBlend.ts blendRestrikes) joined back into the note
+ * they were split from (Easy, and Medium unless BLEND_LEVELS.mediumRestrikes): Easy's 8th-grid tune
+ * dropped the short second piece, which left a hole where the held note sounded.
+ */
+export function withoutRestrikes(notes: Note[]): Note[] {
+  if (!notes.some((n) => n.src === 'restrike')) return notes;
+  const out: Note[] = [];
+  const lastOf = new Map<number, Note>();
+  for (const n of [...notes].sort((a, b) => a.start - b.start)) {
+    const prev = lastOf.get(n.midi);
+    if (n.src === 'restrike' && prev && n.start - (prev.start + prev.dur) <= 0.02) {
+      prev.dur = n.start + n.dur - prev.start;
+      continue;
+    }
+    const c = { ...n };
+    out.push(c);
+    lastOf.set(n.midi, c);
+  }
+  return out;
+}
 
 /** Easy and Medium are built without Hard-only notes (role 'lead', see Note.role). */
 export function withoutHardOnly(notes: Note[]): Note[] {
@@ -203,7 +254,7 @@ export function withoutHardOnly(notes: Note[]): Note[] {
 }
 
 export function generateMedium(allNotes: Note[], tempo: TempoInfo): Note[] {
-  const base = withoutHardOnly(allNotes);
+  const base = BLEND_LEVELS.mediumRestrikes ? withoutHardOnly(allNotes) : withoutRestrikes(withoutHardOnly(allNotes));
   const melody = base.filter((n) => n.role === 'melody');
   const fine = melody.length ? gridFactor(tempo) : 1;
   const accomp = melody.length ? base.filter((n) => n.role !== 'melody') : base;
@@ -211,14 +262,23 @@ export function generateMedium(allNotes: Note[], tempo: TempoInfo): Note[] {
   // with a sung line the right hand follows it; the accompaniment's right hand only fills long
   // instrumental stretches, where its top voice follows the instruments' tune
   const gaps = melody.length ? melodyGaps(melody, tempo, songDuration(base), MELODY_GAP_BEATS, fine) : [[-Infinity, Infinity] as [number, number]];
-  const tune = tuneLine(accomp, gaps);
+  const tune = blendTuneLine(accomp, gaps);
   const tuneIds = new Set(tune.map((n) => n.id));
   const tuneStarts = tune.map((n) => n.start);
+  // the piano-model blend's fills (Note.src): 'tune' keeps only those the tune line picks; 'withApp'
+  // also those struck with an app note of the same hand (chord tones), not fills on their own
+  const fillMode = MEDIUM_TUNE.blendFills;
+  const isFill = (n: Note) => n.src === 'piano' && !tuneIds.has(n.id);
   const rh: Note[][] = [];
   const lh: Note[][] = [];
   // groups whose first note is a line note (the tune or the sung melody): kept when thinning
   const lineGroups = new Set<Note[]>();
-  for (const c of clusters) {
+  for (const c0 of clusters) {
+    const c =
+      fillMode === 'all' || !c0.some(isFill)
+        ? c0
+        : c0.filter((n) => !isFill(n) || (fillMode === 'withApp' && c0.some((m) => m.hand === n.hand && m.src !== 'piano')));
+    if (!c.length) continue;
     const r = c.filter((n) => n.hand === 'R' && !tuneIds.has(n.id)).sort((a, b) => b.midi - a.midi);
     const l = c.filter((n) => n.hand === 'L' && !tuneIds.has(n.id)).sort((a, b) => a.midi - b.midi);
     if (inRanges(gaps, c[0].start)) {
@@ -412,7 +472,7 @@ export function easySungLine(sung: Note[], tempo: TempoInfo, div = 2): Note[] {
 export const EASY_TUNE = { octaveFix: 9 };
 
 export function generateEasy(allNotes: Note[], tempo: TempoInfo, duration: number): Note[] {
-  const base = withoutHardOnly(allNotes);
+  const base = withoutRestrikes(withoutHardOnly(allNotes));
   if (!base.length) return [];
   const sung = base.filter((n) => n.role === 'melody');
   const div = 2 * (sung.length ? gridFactor(tempo) : 1);
@@ -425,7 +485,7 @@ export function generateEasy(allNotes: Note[], tempo: TempoInfo, duration: numbe
   //    8th grid like the sung line
   const gaps = sung.length ? melodyGaps(sung, tempo, duration, MELODY_GAP_BEATS, gridFactor(tempo)) : [[-Infinity, Infinity] as [number, number]];
   // isolated octave leaps are moved back into the line (a beginner's hand stays in one place)
-  let tune = fixOctaveOutliers(easySungLine(tuneLine(accomp, gaps), tempo, div), 3, EASY_TUNE.octaveFix);
+  let tune = fixOctaveOutliers(easySungLine(blendTuneLine(accomp, gaps), tempo, div), 3, EASY_TUNE.octaveFix);
   // comfortable register: only an implausibly high / low line moves (by octaves, as a whole)
   const med = median(tune.map((n) => n.midi));
   const globalShift = med > 84 ? -12 * Math.ceil((med - 79) / 12) : med < 60 ? 12 * Math.ceil((60 - med) / 12) : 0;

@@ -28,6 +28,12 @@
  * cache, so only the first run downloads it — see timing.stagesMs['loading-model']). Use --coi for
  * the desktop speed (WASM threads); one run at a time.
  *
+ * --presets mix-blend runs "Full song + piano model" (TranscribeOptions.pianoBlend: the piano model on the
+ * separated other stem, blended into the Full song result; use with --separate). With
+ * --specialist-notes DIR the piano model's notes are cached there (DIR/<basename>.spec.f32, 6 float32
+ * per note: start, dur, midi, velocity, onset peak, frame mean): a run whose cache file exists uses it
+ * instead of running the model again (tuning sweeps), and a run without one writes it.
+ *
  * --timeout-min N (default 30) gives up on a run after N minutes (the tab is closed, which stops its
  * workers) and goes on with the next one.
  *
@@ -75,6 +81,7 @@ const override = JSON.parse(opt('override', 'null'));
 const force = flag('force');
 const coi = flag('coi');
 const timeoutMs = +opt('timeout-min', '30') * 60000;
+const specCache = opt('specialist-notes', null);
 const songs = args;
 if (!outDir || !songs.length) {
   console.error('usage: node tests/accuracy/transcribe.mjs --out DIR [--port N] [--presets piano,mix] [--posteriors] [--separate] [--coi] [--force] files...');
@@ -230,7 +237,9 @@ try {
         console.log(`skip ${name} ${preset}`);
         continue;
       }
-      if (separate || preset === 'specialist') {
+      const cacheFile = specCache && preset === 'mix-blend' ? path.join(specCache, `${name}.spec.f32`) : null;
+      const cached = cacheFile && fs.existsSync(cacheFile) ? Array.from(new Float32Array(new Uint8Array(fs.readFileSync(cacheFile)).buffer)) : null;
+      if (separate || preset === 'specialist' || preset === 'mix-blend') {
         // a fresh tab per separated / specialist run: per-song memory peaks, no heap carried over
         await page.close().catch(() => {});
         await openPage();
@@ -246,8 +255,8 @@ try {
           let timer;
           r = await Promise.race([
             page.evaluate(
-              ([u, p, w, s]) => window.transcribeUrl(u, p, w, s),
-              [`http://localhost:${port}/__accaudio/${i}`, preset, withPosteriors, separate],
+              ([u, p, w, s, c]) => window.transcribeUrl(u, p, w, s, c ?? undefined),
+              [`http://localhost:${port}/__accaudio/${i}`, preset, withPosteriors, separate, cached],
             ),
             new Promise((_, reject) => {
               timer = setTimeout(() => reject(new Error(`timed out after ${timeoutMs / 60000} min`)), timeoutMs);
@@ -276,6 +285,12 @@ try {
       sample();
       r.memory = mem;
       mem = null;
+      if (cacheFile && !cached && r.specialistNotes) {
+        fs.mkdirSync(specCache, { recursive: true });
+        fs.writeFileSync(cacheFile, Buffer.from(new Float32Array(r.specialistNotes).buffer));
+      }
+      r.specialistCached = !!cached;
+      delete r.specialistNotes;
       r.coi = coi;
       r.song = name;
       r.file = path.resolve(songs[i]);

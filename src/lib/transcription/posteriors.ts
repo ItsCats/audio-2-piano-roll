@@ -27,6 +27,13 @@ export interface StoredPosteriors {
    */
   separated?: true;
   /**
+   * "Full song + piano model" (music/pianoBlend.ts): the piano model's notes on the other stem, 6
+   * numbers each (start, dur, midi, velocity, onset peak, frame mean; pianoBlend.ts packSpecNotes),
+   * about 0.4 KB per second. Re-detection blends them in again. The model's own output maps are not
+   * stored, so its own thresholds cannot be re-tuned. Absent on every other song.
+   */
+  specialist?: Float32Array;
+  /**
    * @deprecated Older records (before the melody line was kept as notes) also stored the vocal
    * stem's posteriors here. Nothing reads them any more; re-detection keeps the song's
    * melody notes instead.
