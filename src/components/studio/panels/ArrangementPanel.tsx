@@ -16,7 +16,7 @@ import { toast } from '../../../state/toastStore';
 import { arrangementOptions, easyMediumFromHard, hasNoteLength, makeThumbnail, noteLengthOf, withNoteLength } from '../../../lib/songs';
 import { followsWrittenTempo } from '../../../lib/sheet/retime';
 import { NO_TEMPO_READ_WARNING } from '../../../lib/omr/readers';
-import { SongTempoSection, focusTempoInput, tempoFrom, tempoGuessed, tempoText } from './TempoControl';
+import { SongTempoSection, TempoText, focusTempoInput, tempoFrom, tempoGuessed } from './TempoControl';
 
 function LevelStats() {
   const song = useStudio((s) => s.song)!;
@@ -201,7 +201,7 @@ export function ArrangementPanel() {
               </p>
               {written && tempoFrom(song) === 'default' && (
                 <p className="mt-1.5 text-ink-200" data-testid="reader-tempo-note">
-                  The reader doesn’t read tempo marks, so this plays at {tempoText(song)}.{' '}
+                  The reader doesn’t read tempo marks, so this plays at <TempoText song={song} />, a guess.{' '}
                   <button type="button" onClick={focusTempoInput} className="focus-ring rounded text-accent-400 underline-offset-2 hover:text-accent-300 hover:underline">
                     Set the tempo printed on your page
                   </button>
@@ -241,7 +241,7 @@ export function ArrangementPanel() {
           <dd className="text-right text-ink-100" data-testid="tempo-value">
             {written ? (
               <>
-                {tempoText(song)} {tempoGuessed(song) && <Badge tone="warn">guess</Badge>}
+                <TempoText song={song} /> {tempoGuessed(song) && <Badge tone="warn">guess</Badge>}
               </>
             ) : (
               <>

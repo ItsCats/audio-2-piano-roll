@@ -16,19 +16,21 @@ import { tempoFromPageText, topLines, type PageTextItem } from '../../src/lib/sc
 import { buildSheet } from '../../src/lib/sheet';
 import { ensureSheet } from '../../src/lib/sheet/lock';
 import { gridFromLock } from '../../src/lib/sheet/grid';
-import { followsWrittenTempo, retime, scaleSongTempo, songStartQpm, songTempoUnit } from '../../src/lib/sheet/retime';
+import { followsWrittenTempo, retime, scaleSongTempo, songStart, songStartQpm, songTempoUnit } from '../../src/lib/sheet/retime';
 import { sheetMidiMeta } from '../../src/lib/sheet/midiMeta';
 import { exportMidi, parseMidi } from '../../src/lib/music/midi';
 import { tempoQpm } from '../../src/lib/music/beats';
 import { DIV } from '../../src/lib/sheet/types';
 import { songFromScore } from '../../src/lib/songs';
-import { straightSong } from './sheetSongs';
+import { performedSong, straightSong } from './sheetSongs';
 
 vi.mock('../../src/lib/storage/db', async (orig) => ({ ...(await orig<object>()), getSong: vi.fn(), saveSong: vi.fn(async () => undefined) }));
 vi.mock('../../src/state/playback', () => ({ getPlayer: () => ({ isPlaying: false, getTime: () => 0, liveNoteOn() {}, liveNoteOff() {} }) }));
 vi.stubGlobal('window', { setTimeout: (f: () => void, ms: number) => setTimeout(f, ms), clearTimeout: (t: number) => clearTimeout(t) });
 const { useStudio } = await import('../../src/state/studioStore');
-const { setTempoAt } = await import('../../src/state/sheetMarks');
+const { deleteSelectedMark, setTempoAt } = await import('../../src/state/sheetMarks');
+const { useToasts } = await import('../../src/state/toastStore');
+const { tempoFrom, tempoGuessed } = await import('../../src/components/studio/panels/TempoControl');
 
 const require = createRequire(import.meta.url);
 const { Midi } = require('@tonejs/midi');
@@ -239,28 +241,108 @@ describe('setting the tempo of a sheet-music song', () => {
     expect(s1.duration).toBeCloseTo(song.duration * 1.5, 12);
   });
 
-  it('re-timed tempo marks scale with it; label-only ones and a start mark take the new value', () => {
+  it('a tempo set later on the sheet keeps its speed; label-only and start marks take the new value', () => {
     const song0 = songOf(scoreXml());
     const sheet = ensureSheet(song0, 'hard');
     const t = gridFromLock(sheet.grid, song0.tempo.source);
     const pos4 = t.measureStart(4);
     let song: Song = { ...song0, sheet: { ...sheet, tempos: [{ pos: pos4, bpm: 90, unit: 'q', retimed: true }] } };
     song = apply(song, retime(song, pos4, 90).patch);
-    const s1 = apply(song, scaleSongTempo(song, 60, 'q').patch);
-    expect(s1.sheet!.tempos).toEqual([{ pos: pos4, bpm: 45, unit: 'q', retimed: true }]);
-    expect(barSeconds(s1)[5]).toBeCloseTo(barSeconds(song)[5] * 2, 9);
-    expect(sheetMidiMeta(s1, 'hard')!.tempos).toEqual([{ time: expect.any(Number), qpm: 45 }]);
+    const before = barSeconds(song);
+    const r = scaleSongTempo(song, 60, 'q');
+    const s1 = apply(song, r.patch);
+    expect(r.keptFrom).toHaveLength(1);
+    // bars 1-4 twice as long, bar 5 on at the tempo typed there
+    expect(s1.sheet!.tempos).toEqual([{ pos: pos4, bpm: 90, unit: 'q', retimed: true }]);
+    barSeconds(s1).forEach((x, i) => expect(x).toBeCloseTo(before[i] * (i < 4 ? 2 : 1), 9));
+    expect(JSON.stringify(written(s1, 'hard'))).toBe(JSON.stringify(written(song, 'hard')));
+    expect(sheetMidiMeta(s1, 'hard')!.tempos).toEqual([{ time: expect.any(Number), qpm: 90 }]);
+    expect(s1.duration).toBeCloseTo(song.duration + barSeconds(song).slice(0, 4).reduce((x, y) => x + y, 0), 9);
     // a start mark from the sheet: bar 1 at ♩ = 100 with a mark, then the Studio sets 50
     const withMark = apply(s1, scaleSongTempo(s1, 100, 'q', { mark: true, text: 'Allegretto' }).patch);
     expect(withMark.sheet!.tempos![0]).toEqual({ pos: 0, bpm: 100, unit: 'q', text: 'Allegretto', retimed: true });
-    expect(withMark.sheet!.tempos![1].bpm).toBe(75);
+    expect(withMark.sheet!.tempos![1].bpm).toBe(90);
     expect(songStartQpm(withMark)).toBe(100);
     const s2 = apply(withMark, scaleSongTempo(withMark, 50, 'q').patch);
     expect(s2.sheet!.tempos![0]).toEqual({ pos: 0, bpm: 50, unit: 'q', text: 'Allegretto', retimed: true });
-    expect(s2.sheet!.tempos![1].bpm).toBe(37.5);
     const marks = buildSheet(s2, 'hard').tempoMarks;
     expect(marks[0]).toMatchObject({ measure: 0, bpm: 50, text: 'Allegretto' });
-    expect(marks.at(-1)).toMatchObject({ measure: 4, bpm: 37.5 });
+    expect(marks.at(-1)).toMatchObject({ measure: 4, bpm: 90 });
+    expect(barSeconds(s2)[6]).toBeCloseTo(before[6], 9);
+    // and back: the seconds return
+    const back = apply(s2, scaleSongTempo(s2, 120, 'q').patch);
+    back.arrangements.hard.notes.forEach((n, i) => expect(n.start).toBeCloseTo(song.arrangements.hard.notes[i].start, 6));
+  });
+
+  it('an eighth-note tempo later on the sheet is kept as typed (no clamp) when the start doubles', () => {
+    const song0 = songOf(scoreXml());
+    const sheet = ensureSheet(song0, 'hard');
+    const pos4 = gridFromLock(sheet.grid, song0.tempo.source).measureStart(4);
+    let song: Song = { ...song0, sheet: { ...sheet, tempos: [{ pos: pos4, bpm: 240, unit: 'e', retimed: true }] } };
+    song = apply(song, retime(song, pos4, 120).patch);
+    const up = apply(song, scaleSongTempo(song, 240, 'q').patch);
+    expect(up.sheet!.tempos![0].bpm).toBe(240);
+    expect((8 * 60) / barSeconds(up)[5]).toBeCloseTo(240, 6);
+    expect(sheetMidiMeta(up, 'hard')!.tempos).toEqual([{ time: expect.any(Number), qpm: 120 }]);
+    const back = apply(up, scaleSongTempo(up, 120, 'q').patch);
+    expect(back.sheet!.tempos![0].bpm).toBe(240);
+  });
+
+  it('a label-only tempo mark on bar 1 says the new tempo', () => {
+    const song0 = songOf(scoreXml());
+    const sheet = ensureSheet(song0, 'hard');
+    const song: Song = { ...song0, sheet: { ...sheet, tempos: [{ pos: 0, bpm: 120, unit: 'q', text: 'Allegro', retimed: false }] } };
+    const s1 = apply(song, scaleSongTempo(song, 60, 'q').patch);
+    expect([songStartQpm(s1), buildSheet(s1, 'hard').tempoMarks[0].bpm, buildSheet(s1, 'hard').tempoMarks[0].text]).toEqual([60, 60, 'Allegro']);
+  });
+
+  it('a played-in MIDI file: the start is the sheet\'s tempo, and setting it keeps the bars', () => {
+    const song = performedSong();
+    expect(followsWrittenTempo(song)).toBe(true);
+    const shown = buildSheet(song, 'hard').tempoMarks[0].qpm;
+    expect(songStart(song).by).toBe('sheet');
+    expect(Math.abs(songStartQpm(song) - shown)).toBeLessThan(5);
+    const w0 = written(song, 'hard');
+    for (const q of [60, shown, 120, 200]) {
+      const s1 = apply(song, scaleSongTempo(song, q, 'q').patch);
+      expect(s1.sheet).toBeDefined();
+      expect(JSON.stringify(written(s1, 'hard'))).toBe(JSON.stringify(w0));
+      expect(songStartQpm(s1)).toBeCloseTo(q, 6);
+      expect(buildSheet(s1, 'hard').tempoMarks[0].bpm).toBe(Math.round(q));
+      // a sheet edit locked earlier: the same
+      const locked: Song = { ...song, sheet: ensureSheet(song, 'hard') };
+      expect(songStartQpm(locked)).toBeCloseTo(songStartQpm(song), 6);
+      const s2 = apply(locked, scaleSongTempo(locked, q, 'q').patch);
+      expect(JSON.stringify(written(s2, 'hard'))).toBe(JSON.stringify(w0));
+    }
+    // a quantized MIDI file follows its own tempo
+    expect(songStart(straightSong()).by).toBe('tempo');
+  });
+
+  it('older songs: bar 1 re-timed before the tempo was kept, its mark deleted since', () => {
+    const song0 = songOf(scoreXml(), undefined, true);
+    const sheet = ensureSheet(song0, 'hard');
+    let song: Song = { ...song0, sheet: { ...sheet, tempos: [{ pos: 0, bpm: 60, unit: 'q', retimed: true }] } };
+    const p = retime(song, 0, 60).patch;
+    // the old re-time left the song tempo alone (no qpm / from) and the grid's bpm too
+    const stale = { ...p.tempo, bpm: song0.tempo.bpm } as Song['tempo'];
+    delete stale.qpm;
+    delete stale.from;
+    song = apply(song, { ...p, tempo: stale, sheet: { ...p.sheet!, grid: { ...p.sheet!.grid, bpm: sheet.grid.bpm } } });
+    expect([songStartQpm(song), tempoFrom(song), tempoGuessed(song)]).toEqual([60, 'set', false]);
+    const del: Song = { ...song, sheet: { ...song.sheet! } };
+    delete del.sheet!.tempos;
+    expect((4 * 60) / barSeconds(del)[0]).toBeCloseTo(60, 6);
+    expect(songStartQpm(del)).toBeCloseTo(60, 6);
+    expect(tempoFrom(del)).toBe('set');
+    const s1 = apply(del, scaleSongTempo(del, 90, 'q').patch);
+    expect((4 * 60) / barSeconds(s1)[0]).toBeCloseTo(90, 6);
+    // an older song that was never re-timed is still a guess
+    const plain = { ...song0, tempo: { ...song0.tempo } };
+    delete plain.tempo.qpm;
+    delete plain.tempo.from;
+    expect([tempoFrom(plain), tempoGuessed(plain)]).toEqual(['default', true]);
+    expect(tempoFrom({ ...plain, sheet: ensureSheet(plain, 'hard') })).toBe('default');
   });
 
   it('a re-time from bar 1 updates the song tempo too', () => {
@@ -308,6 +390,37 @@ describe('tempo mark on bar 1 (sheet editor) and undo', () => {
     expect(st().song!.tempo).toBe(s0.tempo);
     expect(st().song!.duration).toBe(s0.duration);
     expect('sheet' in st().song!).toBe(false);
+  });
+
+  it('says nothing about a recording when bar 1 changes the speed', () => {
+    useToasts.setState({ toasts: [] });
+    expect(setTempoAt(0, 80, 'q', '', true)).toBe(true);
+    expect(useToasts.getState().toasts.map((t) => t.title)).toEqual([]);
+    expect(songStartQpm(useStudio.getState().song!)).toBe(80);
+  });
+
+  it('bar 1 with a tempo set later: scaled up to it, the later tempo stays', () => {
+    const st = useStudio.getState;
+    const t = buildSheet(st().song!, 'hard').time;
+    expect(setTempoAt(5, 60, 'q', '', true)).toBe(true);
+    const s1 = st().song!;
+    const before = barSeconds(s1);
+    expect(setTempoAt(0, 50, 'q', '', true)).toBe(true);
+    const s2 = st().song!;
+    barSeconds(s2).forEach((x, i) => expect(x).toBeCloseTo(before[i] * (i < 5 ? 2 : 1), 9));
+    expect(s2.sheet!.tempos!.find((x) => x.pos === t.measureStart(5))!.bpm).toBe(60);
+  });
+
+  it('deleting the re-timed start mark keeps the speed and the song says it', () => {
+    const st = useStudio.getState;
+    setTempoAt(0, 80, 'q', '', true);
+    useStudio.setState({ markSel: 'tempo:0' });
+    expect(deleteSelectedMark()).toBe(true);
+    const s = st().song!;
+    expect(s.sheet?.tempos).toBeUndefined();
+    expect(s.tempo).toMatchObject({ qpm: 80, from: 'set' });
+    expect(songStartQpm(s)).toBe(80);
+    expect((4 * 60) / barSeconds(s)[0]).toBeCloseTo(80, 6);
   });
 
   it('the Studio tempo is one undo step', () => {

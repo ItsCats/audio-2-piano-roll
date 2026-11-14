@@ -204,7 +204,7 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
       void doc
         .tempo(1)
         .then((found) => {
-          if (found && session.current === my) setTempo((cur) => (cur.edited ? cur : { value: tempoNumber(found.bpm), unit: found.unit ?? 'q', found, edited: false }));
+          if (found && session.current === my) setTempo((cur) => (cur.edited ? cur : { value: tempoNumber(found.bpm), unit: found.unit, found, edited: false }));
         })
         .catch(() => undefined);
       const count = doc.numPages;
@@ -710,7 +710,8 @@ function ReadBar({
 /** The optional tempo on the read screen: typed, or found in the PDF's text (the readers read no tempo). */
 interface TempoEntry {
   value: string;
-  unit: TempoUnit;
+  /** null: the beat of the time signature (a dotted quarter in 6/8, a half in 2/2), worked out once the page is read */
+  unit: TempoUnit | null;
   /** found on the first page (pageTempo.ts) */
   found: PageTempo | null;
   /** changed by the user (a found tempo is then theirs) */
@@ -731,6 +732,9 @@ function withTempo(t: TempoEntry): { tempo?: ImportTempo } {
   return { tempo: { bpm: Math.round(n * 10) / 10, unit: t.unit, from: 'set' } };
 }
 
+/** The select's value for "the beat of the time signature". */
+const METER_BEAT = 'meter';
+
 function TempoField({ tempo, onChange, disabled }: { tempo: TempoEntry; onChange: (t: TempoEntry) => void; disabled: boolean }) {
   const bad = !tempoOk(tempo);
   return (
@@ -740,12 +744,14 @@ function TempoField({ tempo, onChange, disabled }: { tempo: TempoEntry; onChange
       </label>
       <div className="flex flex-wrap items-center gap-2">
         <select
-          value={tempo.unit}
+          value={tempo.unit ?? METER_BEAT}
           disabled={disabled}
-          onChange={(e) => onChange({ ...tempo, unit: e.target.value as TempoUnit, edited: true })}
+          onChange={(e) => onChange({ ...tempo, unit: e.target.value === METER_BEAT ? null : (e.target.value as TempoUnit), edited: true })}
           aria-label="Beat"
-          className="focus-ring h-9 rounded-[10px] border border-ink-600 bg-ink-800 px-2 text-[13px] text-ink-50"
+          data-testid="import-tempo-unit"
+          className="focus-ring h-9 max-w-full rounded-[10px] border border-ink-600 bg-ink-800 px-2 text-[13px] text-ink-50"
         >
+          <option value={METER_BEAT}>Beat of the time signature</option>
           {TEMPO_UNITS.map((u) => (
             <option key={u} value={u}>
               {UNIT_LABEL[u]} {UNIT_NAME[u]}
@@ -773,8 +779,8 @@ function TempoField({ tempo, onChange, disabled }: { tempo: TempoEntry; onChange
         {bad
           ? 'Enter a number between 20 and 400, or leave it empty.'
           : tempo.found && !tempo.edited
-            ? `Found on the page: “${tempo.found.text}”${tempo.found.unit ? '' : ' (the beat comes from the time signature)'}${tempo.found.guess ? ', a guess from the tempo word' : ''}. Change it if your page says otherwise.`
-            : 'The reader reads the notes, not tempo marks. Enter the tempo printed on your page, or leave it empty to start at ♩ = 120. You can change it later in the Studio (Notes tab, Tempo).'}
+            ? `Found on the page: “${tempo.found.text}”${tempo.found.unit ? '' : ' (the note before the “=” wasn’t readable, so the number counts the main beat of the time signature)'}${tempo.found.guess ? ', a guess from the tempo word' : ''}. Change it if your page says otherwise.`
+            : 'The reader reads the notes, not the tempo. Type the number next to the note at the top of your page (like ♩ = 72), or leave it empty to start at ♩ = 120. You can change it later in the Studio (Notes tab, Tempo).'}
       </p>
     </div>
   );

@@ -22,6 +22,9 @@
  *   "= 72": the import screen fills it in and the song plays at 72), a scanned copy (no text) with a
  *   tempo typed on the import screen, and on the phone the scanned copy read with nothing typed: the
  *   Studio says the reader doesn't read tempo marks, and its "Set the tempo" link leads to the field.
+ * Also: the "tempo is a guess" strip and the speed menu's "Wrong tempo?" and a tap on the sheet's
+ * tempo mark open the tempo field; a wrong number says why, a changed one says to tap Set tempo;
+ * the sheet editor's bar-1 tempo changes the speed with no "plays a recording" message.
  * No console errors, no sideways page scroll on the phone, cross-origin isolated.
  */
 import { spawn } from 'node:child_process';
@@ -198,6 +201,17 @@ async function closePanel(page) {
   await page.waitForTimeout(300);
 }
 const tempoText = (page) => page.getByTestId('tempo-from').innerText();
+/** Note heads on the sheet (Edit mode), screen coordinates. */
+const heads = (page) =>
+  page.evaluate(() => {
+    const sc = document.querySelector('[data-testid="sheet-scroll"]').getBoundingClientRect();
+    return [...document.querySelectorAll('[data-note-ids]')]
+      .map((e) => {
+        const r = e.getBoundingClientRect();
+        return { ids: e.getAttribute('data-note-ids'), x: r.left + r.width / 2, y: r.top + r.height / 2 };
+      })
+      .filter((h) => h.ids && h.y > sc.top + 70 && h.y < sc.bottom - 24 && h.x > sc.left + 8 && h.x < sc.right - 8);
+  });
 async function setTempo(page, id, value, unit) {
   if (unit) await page.getByTestId('song-tempo-unit').selectOption(unit);
   await page.getByTestId('song-tempo-input').fill(String(value));
@@ -248,6 +262,7 @@ async function readPdf(page, file, { typed } = {}) {
   await page.waitForSelector('[data-testid="pdf-pages"] button[aria-label^="Page "] img', { timeout: 60000 });
   await page.waitForTimeout(1500);
   const prefilled = await page.getByTestId('import-tempo-input').inputValue();
+  const unit = await page.getByTestId('import-tempo-unit').inputValue();
   const note = await page.getByTestId('import-tempo-note').innerText();
   if (typed) await page.getByTestId('import-tempo-input').fill(String(typed));
   const t0 = Date.now();
@@ -259,7 +274,7 @@ async function readPdf(page, file, { typed } = {}) {
     await page.waitForTimeout(500);
   }
   await page.waitForTimeout(2000);
-  return { prefilled, note, id: songId(page), seconds: Math.round((Date.now() - t0) / 1000) };
+  return { prefilled, note, unit, id: songId(page), seconds: Math.round((Date.now() - t0) / 1000) };
 }
 
 // ---------------------------------------------------------------- runs
@@ -275,7 +290,25 @@ try {
     let id = await importScore(page, SCORES.none.path);
     let s0 = await idbSong(page, id);
     check(`${dev} no tempo: plays at 120 (Hard), length 16 s`, rhPerMinute(s0.arrangements.hard.notes) === 120 && Math.abs(s0.duration - 16) < 0.01, { qpm: rhPerMinute(s0.arrangements.hard.notes), duration: s0.duration });
+    // the strip under the header: the tempo is a guess; its "Set tempo" opens the field
+    const guessNotice = await page.getByTestId('tempo-guess-notice').innerText().catch(() => '');
+    check(`${dev} no tempo: a strip under the header says the tempo is a guess`, /No metronome mark/.test(guessNotice) && /♩ = 120 is a guess/.test(guessNotice), guessNotice);
+    if (phone) await shot(page, `${dev}-none-notice`);
+    await closePanel(page);
+    await page.getByTestId('notice-set-tempo').click();
+    await page.waitForTimeout(800);
+    check(`${dev} no tempo: the strip's "Set tempo" opens Notes with the cursor in the tempo field`, await page.evaluate(() => document.activeElement?.id === 'song-tempo-input'));
     await openNotes(page);
+    // a wrong number says why; a changed number says to tap Set tempo
+    await page.getByTestId('song-tempo-input').fill('500');
+    const helpBad = await page.getByTestId('song-tempo-help').innerText();
+    check(`${dev} 500 typed: says the range, Set tempo off`, /between 20 and 400/.test(helpBad) && (await page.getByTestId('song-tempo-set').isDisabled()), helpBad);
+    await page.getByTestId('song-tempo-input').fill('120');
+    await page.getByTestId('song-tempo-double').click();
+    const helpPending = await page.getByTestId('song-tempo-help').innerText();
+    check(`${dev} Double: 240 in the box, "Tap Set tempo", the song still at 120`, (await page.getByTestId('song-tempo-input').inputValue()) === '240' && /Tap Set tempo/.test(helpPending) && (await page.getByTestId('song-tempo-set').getAttribute('data-pending')) === 'true' && Math.abs((await idbSong(page, id)).duration - 16) < 1e-6, helpPending);
+    if (phone) await page.locator('section', { has: page.getByTestId('song-tempo-input') }).screenshot({ path: path.join(shots, `${dev}-none-tempo-pending.png`) });
+    await page.getByTestId('song-tempo-input').fill('120');
     let txt = await tempoText(page);
     check(`${dev} no tempo: the Notes tab says ♩ = 120 is a guess`, /♩ = 120/.test(txt) && /guess/.test(txt) && /no tempo mark/.test(txt), txt);
     check(`${dev} no tempo: the field shows 120, labeled in quarter notes`, (await page.getByTestId('song-tempo-input').inputValue()) === '120' && /quarter note = 120/.test(await page.locator('label[for="song-tempo-input"]').innerText()));
@@ -290,7 +323,20 @@ try {
     check(`${dev} set ♩ = 60: confirmed with a message`, /Tempo set: ♩ = 60/.test(toastText), toastText);
     txt = await tempoText(page);
     check(`${dev} set ♩ = 60: the Notes tab says "Set by you"`, /♩ = 60/.test(txt) && /Set by you/.test(txt) && !/guess/.test(txt), txt);
+    check(`${dev} set ♩ = 60: the "guess" strip is gone`, !(await page.getByTestId('tempo-guess-notice').count()));
     await shot(page, `${dev}-none-set-60`);
+    // the speed menu: Escape closes it; "Wrong tempo?" opens the tempo setting
+    await closePanel(page);
+    const speedBtn = page.getByTitle('Playback speed').filter({ visible: true }).first();
+    await speedBtn.click();
+    const hasSet = await page.getByTestId('speed-set-tempo').isVisible();
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(200);
+    check(`${dev} speed menu: a "Wrong tempo?" item, and Escape closes the menu`, hasSet && (await speedBtn.getAttribute('aria-expanded')) === 'false');
+    await speedBtn.click();
+    await page.getByTestId('speed-set-tempo').click();
+    await page.waitForTimeout(800);
+    check(`${dev} speed menu "Wrong tempo?": the cursor in the tempo field`, await page.evaluate(() => document.activeElement?.id === 'song-tempo-input'));
     const play = await playRate(page, s1);
     check(`${dev} set ♩ = 60: playback passes about one right-hand note a second`, play.perMinute >= 40 && play.perMinute <= 80, play);
     // the sheet: 8 bars, the new tempo written
@@ -298,6 +344,16 @@ try {
     await page.waitForSelector('[data-testid="sheet-music"] .sheet-chunk svg', { timeout: 60000 });
     await page.waitForTimeout(800);
     await shot(page, `${dev}-none-sheet-60`);
+    // a tap on the sheet's tempo mark opens the tempo setting
+    await closePanel(page);
+    const mark = await page.evaluate(() => {
+      const el = [...document.querySelectorAll('[data-testid="sheet-music"] svg text')].find((e) => /=\s*60/.test(e.textContent ?? '') && e.getBoundingClientRect().width > 0);
+      const r = el?.getBoundingClientRect();
+      return r ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null;
+    });
+    if (mark) await page.mouse.click(mark.x, mark.y);
+    await page.waitForTimeout(800);
+    check(`${dev} sheet: tapping "♩ = 60" opens the tempo setting`, !!mark && (await page.evaluate(() => document.activeElement?.id === 'song-tempo-input')), mark);
     const xml = fs.readFileSync(await download(page, /MusicXML/), 'utf8');
     const part1 = xml.slice(xml.indexOf('<part id="P1"'), xml.indexOf('</part>'));
     check(`${dev} set ♩ = 60: sheet keeps 8 bars of quarter notes and writes ♩ = 60`, (part1.match(/<measure /g) || []).length === 8 && /<per-minute>60<\/per-minute>/.test(xml) && /sound tempo="60"/.test(xml) && !/<type>eighth<\/type>/.test(part1), {
@@ -357,11 +413,38 @@ try {
       await page.getByRole('radio', { name: /Piano roll/ }).first().click();
     }
 
+    if (!phone) {
+      // the sheet editor's tempo on bar 1 changes the speed, with no "plays a recording" message
+      await closePanel(page);
+      await page.getByRole('radio', { name: /Sheet music/ }).first().click();
+      await page.waitForSelector('[data-testid="sheet-music"] .sheet-chunk svg', { timeout: 60000 });
+      await page.waitForTimeout(600);
+      await page.keyboard.press('e');
+      await page.waitForTimeout(300);
+      const hs = await heads(page);
+      hs.sort((a, b) => a.y - b.y || a.x - b.x);
+      const first = hs.filter((h) => Math.abs(h.y - hs[0].y) < 30).sort((a, b) => a.x - b.x)[0];
+      await page.mouse.click(first.x, first.y);
+      await page.waitForTimeout(250);
+      await page.keyboard.press('Shift+T');
+      await page.waitForSelector('[data-testid="sheet-tempo-picker"]');
+      await page.getByTestId('sheet-tempo-bpm').fill('90');
+      await page.getByTestId('sheet-tempo-apply').click();
+      const s90 = await savedWhen(page, id, (x) => Math.abs(x.duration - (s0.duration * 72) / 90) < 1e-6);
+      await page.waitForTimeout(300);
+      const body = await page.evaluate(() => document.body.innerText);
+      check(`${dev} sheet editor bar 1 = 90: plays at 90, no "plays a recording" message`, rhPerMinute(s90.arrangements.hard.notes) === 90 && !/plays a recording/.test(body), { qpm: rhPerMinute(s90.arrangements.hard.notes) });
+      await page.keyboard.press('Escape');
+      await page.keyboard.press('e');
+      await page.getByRole('radio', { name: /Piano roll/ }).first().click();
+      await page.waitForTimeout(300);
+    }
+
     // ---- tempo words: a guess from "Andante"
     id = await importScore(page, SCORES.words.path);
     await openNotes(page);
     txt = await tempoText(page);
-    check(`${dev} "Andante": ♩ = 76, guessed from the word`, /♩ = 76/.test(txt) && /Guessed from “Andante”/.test(txt) && /guess/.test(txt), txt);
+    check(`${dev} "Andante": ♩ = 76, guessed from the word`, /♩ = 76/.test(txt) && /Guessed from the word “Andante”/.test(txt) && /guess/.test(txt), txt);
     s1 = await setTempo(page, id, 66);
     check(`${dev} "Andante" set to 66: Hard plays at 66`, rhPerMinute(s1.arrangements.hard.notes) === 66);
 
@@ -393,6 +476,7 @@ try {
         const r = await readPdf(page, pdfs.mark);
         const s = await idbSong(page, r.id);
         check(`${dev} PDF with "= 72" in its text: the import screen fills in 72`, r.prefilled === '72' && /Found on the page/.test(r.note), r);
+        check(`${dev} PDF found tempo: the Beat shows what will be used (the time signature's beat when the note wasn't readable)`, (r.unit === 'meter') === /wasn’t readable/.test(r.note) && r.unit !== 'q', r);
         check(`${dev} PDF read: plays at 72 (Hard), 26.7 s, "Read from the text on the page"`, rhPerMinute(s.arrangements.hard.notes) === 72 && Math.abs(s.duration - 80 / 3) < 0.05 && s.tempo.from === 'page', { qpm: rhPerMinute(s.arrangements.hard.notes), duration: s.duration, from: s.tempo.from, notes: s.arrangements.hard.notes.length });
         await openNotes(page);
         check(`${dev} PDF read: the Notes tab says where the tempo came from`, /Read from the text on the page/.test(await tempoText(page)));
@@ -401,13 +485,15 @@ try {
       if (!phone && pdfs.scan) {
         const r = await readPdf(page, pdfs.scan, { typed: 60 });
         const s = await idbSong(page, r.id);
-        check(`${dev} scanned PDF: nothing found, the import screen asks for it`, r.prefilled === '' && /reads the notes, not tempo marks/.test(r.note), r);
+        check(`${dev} scanned PDF: nothing found, the import screen asks for it`, r.prefilled === '' && /reads the notes, not the tempo/.test(r.note), r);
         check(`${dev} scanned PDF with ♩ = 60 typed at import: plays at 60`, rhPerMinute(s.arrangements.hard.notes) === 60 && s.tempo.from === 'set' && s.tempo.qpm === 60, { qpm: rhPerMinute(s.arrangements.hard.notes), from: s.tempo.from });
       }
       if (phone && pdfs.scan) {
         const r = await readPdf(page, pdfs.scan);
         let s = await idbSong(page, r.id);
         check(`${dev} scanned PDF, nothing typed: plays at the default 120`, rhPerMinute(s.arrangements.hard.notes) === 120 && s.tempo.from === 'default', { qpm: rhPerMinute(s.arrangements.hard.notes), seconds: r.seconds });
+        const strip = await page.getByTestId('sheet-reader-notice').innerText().catch(() => '');
+        check(`${dev} reader song: the strip under the header says the tempo is a guess`, /♩ = 120 is a guess/.test(strip) && (await page.getByTestId('notice-set-tempo').count()) > 0, strip);
         await openNotes(page);
         await page.getByTestId('reader-tempo-note').scrollIntoViewIfNeeded();
         const note = await page.getByTestId('reader-tempo-note').innerText();

@@ -4,21 +4,32 @@
  * level, the sheet, practice and exports) by one factor (lib/sheet/retime.ts scaleSongTempo), as one
  * undo step. Songs from audio keep the beat-grid setting in ArrangementPanel.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Song, TempoFrom, TempoUnit } from '../../../lib/music/types';
-import { followsWrittenTempo, scaleSongTempo, songStartQpm, songTempoUnit } from '../../../lib/sheet/retime';
+import { followsWrittenTempo, scaleSongTempo, songStart, songStartQpm, songTempoUnit } from '../../../lib/sheet/retime';
 import { TEMPO_UNIT_Q } from '../../../lib/sheet/score';
 import { TEMPO_UNITS, UNIT_LABEL, UNIT_NAME, tempoNumber } from '../../../lib/sheet/tempoUnits';
 import { useStudio } from '../../../state/studioStore';
 import { toast, useToasts } from '../../../state/toastStore';
+import { TEMPO_INPUT_ID, focusTempoInput } from '../../../state/tempoUi';
 import { Badge, Button, Section, cn } from '../../ui';
 
-export const TEMPO_INPUT_ID = 'song-tempo-input';
+export { TEMPO_INPUT_ID, focusTempoInput };
 
-/** Where the starting tempo came from ('default' too for songs read from a page before this was saved). */
-export function tempoFrom(song: Pick<Song, 'tempo' | 'source'>): TempoFrom | undefined {
-  return song.tempo.from ?? (song.source.kind === 'score' && song.source.reader ? 'default' : undefined);
+/**
+ * Where the starting tempo came from. Songs saved before this was kept: 'set' when the user set it
+ * (a re-timed tempo mark on bar 1, or bar 1 re-timed and its mark deleted since), 'default' for a
+ * song read from a page (the readers read no tempo).
+ */
+export function tempoFrom(song: Pick<Song, 'tempo' | 'source' | 'sheet' | 'transcription' | 'hasAudio' | 'handVideo'>): TempoFrom | undefined {
+  if (song.tempo.from) return song.tempo.from;
+  const by = songStart(song).by;
+  if (by === 'mark' || (by === 'sheet' && song.transcription?.method !== 'midi-file')) return 'set';
+  return song.source.kind === 'score' && song.source.reader ? 'default' : undefined;
 }
+
+/** A played-in MIDI file: the starting tempo is the sheet's, worked out from how it was played. */
+const playedTempo = (song: Song): boolean => song.tempo.from !== 'set' && song.transcription?.method === 'midi-file' && songStart(song).by === 'sheet';
 
 /** The starting tempo as the sheet writes it ("♩ = 120", "♩. = 80"). */
 export function tempoText(song: Song): string {
@@ -26,40 +37,42 @@ export function tempoText(song: Song): string {
   return `${UNIT_LABEL[unit]} = ${tempoNumber(songStartQpm(song) / TEMPO_UNIT_Q[unit])}`;
 }
 
+/** tempoText with the note in the monospace font (the sans-serif one has no note glyph: a wide gap after it elsewhere). */
+export function TempoText({ song }: { song: Song }) {
+  const [note, ...rest] = tempoText(song).split(' ');
+  return (
+    <span className="whitespace-nowrap">
+      <span className="font-mono">{note}</span> {rest.join(' ')}
+    </span>
+  );
+}
+
 /** The tempo is a guess (no metronome mark on the page or in the file). */
-export const tempoGuessed = (song: Pick<Song, 'tempo' | 'source'>): boolean => {
+export const tempoGuessed = (song: Song): boolean => {
   const f = tempoFrom(song);
-  return f === 'default' || f === 'words';
+  return f === 'default' || f === 'words' || playedTempo(song);
 };
 
 /** One sentence: where the tempo came from. */
 export function tempoFromText(song: Song): string | null {
   const reader = song.source.kind === 'score' && !!song.source.reader;
+  if (playedTempo(song)) return 'Worked out from how the MIDI file was played (the file’s own tempo doesn’t fit its notes). Type the right tempo if you know it.';
   switch (tempoFrom(song)) {
     case 'mark':
       return 'From the metronome mark in the file.';
     case 'words':
-      return `Guessed from “${song.tempo.fromText ?? 'the tempo words'}” in the file (it has no metronome mark).`;
+      return `Guessed from the word “${song.tempo.fromText ?? 'tempo'}” in the file (it has no metronome number).`;
     case 'page':
       return `Read from the text on the page${song.tempo.fromText ? `: “${song.tempo.fromText}”` : ''}. Check it against your page.`;
     case 'default':
       return reader
-        ? `Not on the page: the sheet-music reader reads the notes but not tempo marks, so ${tempoText(song)} is a guess. Set the tempo printed on your page.`
-        : `The file has no tempo mark, so ${tempoText(song)} is a guess.`;
+        ? 'Not on the page: the reader reads the notes but not the tempo, so this is a guess. Type the tempo printed on your page.'
+        : 'The file has no tempo mark, so this is a guess.';
     case 'set':
       return 'Set by you.';
     default:
       return null;
   }
-}
-
-/** Puts the cursor in the tempo field (the "Set the tempo" links). */
-export function focusTempoInput(): void {
-  const el = document.getElementById(TEMPO_INPUT_ID) as HTMLInputElement | null;
-  if (!el) return;
-  el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-  el.focus({ preventScroll: true });
-  el.select();
 }
 
 /** The song as the last tempo setting left it (kept while the panel is closed). */
@@ -87,6 +100,17 @@ export function SongTempoSection() {
   };
   const num = parseFloat(value.replace(',', '.'));
   const ok = Number.isFinite(num) && num >= 20 && num <= 400;
+  // the box differs from what the song plays: Set tempo applies it
+  const pending = ok && Math.abs(Math.round(num * 10) / 10 - startQpm / TEMPO_UNIT_Q[unit]) > 0.05;
+  // written tempo changes or fermatas (the beats aren't steady): they keep their proportions
+  const changes = useMemo(() => {
+    const b = song.tempo.beats;
+    if (b.length < 3) return false;
+    const d = b.slice(1).map((x, i) => x - b[i]);
+    const med = [...d].sort((x, y) => x - y)[d.length >> 1];
+    return d.some((x) => Math.abs(x / med - 1) > 0.02);
+  }, [song.tempo.beats]);
+  const keptLater = (song.sheet?.tempos ?? []).some((t) => t.retimed && t.pos > 0);
   const nudge = (f: (x: number) => number) => {
     const base = Number.isFinite(num) ? num : startQpm / TEMPO_UNIT_Q[unit];
     setValue(tempoNumber(Math.max(20, Math.min(400, f(base)))));
@@ -104,15 +128,18 @@ export function SongTempoSection() {
       toast.info(`The song already plays at ${UNIT_LABEL[unit]} = ${tempoNumber(v)}`);
       return;
     }
-    const { patch } = scaleSongTempo(s, v, unit);
+    const { patch, keptFrom } = scaleSongTempo(s, v, unit);
     useStudio.getState().editSong(() => patch);
     const after = useStudio.getState().song;
     lastSet = after;
+    const kept = keptFrom.length
+      ? ` The tempo you set later on the sheet (${keptFrom.map((t) => `${UNIT_LABEL[t.unit]} = ${tempoNumber(t.bpm)}`).join(', ')}) stays.`
+      : '';
     useToasts.getState().push(
       {
         kind: 'success',
         title: `Tempo set: ${UNIT_LABEL[unit]} = ${tempoNumber(v)}`,
-        body: 'Every level, the sheet music, practice and exports play at the new speed. Tempo changes later in the piece keep their proportions.',
+        body: `Every level (Hard too), the sheet music, practice and exports play at the new speed.${kept}`,
         actions: [{ label: 'Undo', variant: 'ghost', onClick: () => undoIf(after) }],
       },
       10000,
@@ -128,7 +155,7 @@ export function SongTempoSection() {
     <Section title="Tempo">
       <div className="flex flex-col gap-1" data-testid="tempo-from">
         <p className="flex flex-wrap items-center gap-1.5 text-[13px] text-ink-100">
-          Starts at <span className="font-mono">{tempoText(song)}</span>
+          Plays at <span className="font-mono">{tempoText(song)}</span>
           {guessed && (
             <Badge tone="warn" title="Not a metronome mark from the page or the file">
               guess
@@ -138,7 +165,7 @@ export function SongTempoSection() {
         {fromLine && <p className={cn('text-[11.5px] leading-snug', guessed ? 'text-warn' : 'text-ink-400')}>{fromLine}</p>}
       </div>
       <div className="flex flex-wrap items-end gap-2">
-        <label className="flex flex-col gap-1 text-[12.5px] text-ink-200">
+        <label className="flex flex-col gap-1 text-[12.5px] text-ink-200" title="The note before the “=” on your page">
           Beat
           <select
             value={unit}
@@ -167,8 +194,13 @@ export function SongTempoSection() {
               onKeyDown={(e) => e.key === 'Enter' && apply()}
               inputMode="decimal"
               aria-label={`${UNIT_NAME[unit]} notes per minute`}
+              aria-invalid={!ok}
+              aria-describedby="song-tempo-help"
               data-testid="song-tempo-input"
-              className="focus-ring h-9 w-full min-w-0 rounded-[10px] border border-ink-600 bg-ink-800 px-2.5 text-center font-mono text-[13px] text-ink-50"
+              className={cn(
+                'focus-ring h-9 w-full min-w-0 rounded-[10px] border bg-ink-800 px-2.5 text-center font-mono text-[13px] text-ink-50',
+                ok ? 'border-ink-600' : 'border-warn',
+              )}
             />
             <button type="button" className={stepBtn} aria-label="Faster" onClick={() => nudge((x) => Math.round(x) + 1)}>
               +
@@ -176,8 +208,19 @@ export function SongTempoSection() {
           </span>
         </label>
       </div>
+      <p id="song-tempo-help" className={cn('text-[11.5px] leading-snug', ok ? 'text-ink-400' : 'text-warn')} data-testid="song-tempo-help" aria-live="polite">
+        {!ok
+          ? `Enter a number between 20 and 400 ${UNIT_NAME[unit].toLowerCase()} notes per minute.`
+          : pending
+            ? 'Tap Set tempo to play at this speed.'
+            : (
+              <>
+                Type the number next to the note at the top of your page (like <span className="font-mono">♩</span> = 72), then tap Set tempo.
+              </>
+            )}
+      </p>
       <div className="flex flex-wrap items-center gap-1.5">
-        <Button size="sm" variant="ghost" onClick={() => nudge((x) => x / 2)} data-testid="song-tempo-half" title="Half the number in the box (then Set tempo)">
+        <Button size="sm" variant="ghost" onClick={() => nudge((x) => x / 2)} data-testid="song-tempo-half" title="Half the number in the box (then tap Set tempo)">
           Half
         </Button>
         <Button
@@ -185,7 +228,7 @@ export function SongTempoSection() {
           variant="ghost"
           onClick={() => nudge((x) => x * 2)}
           data-testid="song-tempo-double"
-          title="Double the number in the box (then Set tempo)"
+          title="Double the number in the box (then tap Set tempo)"
         >
           Double
         </Button>
@@ -194,13 +237,22 @@ export function SongTempoSection() {
             Undo
           </Button>
         )}
-        <Button size="sm" variant="primary" disabled={!ok} onClick={apply} data-testid="song-tempo-set" className={canUndo ? '' : 'ml-auto'}>
+        <Button
+          size="sm"
+          variant="primary"
+          disabled={!ok}
+          onClick={apply}
+          data-testid="song-tempo-set"
+          data-pending={pending || undefined}
+          className={cn(canUndo ? '' : 'ml-auto', pending && 'ring-2 ring-accent-300 ring-offset-1 ring-offset-ink-900')}
+        >
           Set tempo
         </Button>
       </div>
       <p className="text-[11.5px] leading-snug text-ink-400">
-        Use the tempo printed at the top of your page. Every level plays at it (Hard as written too), with the sheet music, practice and exports; your edits,
-        fingering and markings stay. Later tempo changes and held notes keep their proportions.
+        Every level plays at this tempo (Hard too), with the sheet music, practice and exports. Your edits, fingering and markings stay.
+        {changes && ' Tempo changes and held notes (fermatas) in the piece stay in proportion.'}
+        {keptLater && ' A tempo you set later on the sheet keeps its speed.'}
       </p>
     </Section>
   );

@@ -5,8 +5,10 @@
  * the song, so positions on the sheet never change: toPos_before(t) = toPos_after(f(t)).
  */
 import type { Note, PedalRange, SheetGridLock, SheetTempo, Song, TempoInfo, TempoUnit } from '../music/types';
-import { tempoQpm } from '../music/beats';
-import { gridFromLock, resolveMeter } from './grid';
+import { tempoQpm, upperBound } from '../music/beats';
+import { gridFromLock, gridParams, localBpm, resolveMeter } from './grid';
+import { songSheetTempo } from './index';
+import { ensureSheet } from './lock';
 import { TEMPO_UNIT_Q } from './score';
 import { DIV } from './types';
 
@@ -22,13 +24,65 @@ export const followsWrittenTempo = (song: Pick<Song, 'hasAudio' | 'handVideo' | 
   canRetime(song) && ['score-file', 'midi-file', 'demo'].includes(song.transcription?.method);
 
 /** A re-timed tempo mark at the very start (it sets the opening speed). */
-const startMark = (song: Pick<Song, 'sheet'>): SheetTempo | undefined => song.sheet?.tempos?.find((t) => t.pos === 0 && t.retimed);
+export const songStartMark = (song: Pick<Song, 'sheet'>): SheetTempo | undefined => song.sheet?.tempos?.find((t) => t.pos === 0 && t.retimed);
+const startMark = songStartMark;
 
-/** Quarter notes per minute the song starts at: a re-timed tempo mark at the start, else the song's tempo. */
-export function songStartQpm(song: Pick<Song, 'sheet' | 'tempo' | 'transcription' | 'hasAudio' | 'handVideo'>): number {
+type StartSong = Pick<Song, 'sheet' | 'tempo' | 'transcription' | 'hasAudio' | 'handVideo'> & Partial<Pick<Song, 'base' | 'duration'>>;
+
+/** Quarter notes per minute of a grid's first two bars (as the grid's bpm is worked out: gridParams). */
+function lockStartQpm(lock: Pick<SheetGridLock, 'beats' | 'db' | 'beatsPerBar' | 'beatUnit'>): number {
+  return localBpm(lock.beats, lock.db, lock.beatsPerBar * 2) * (4 / lock.beatUnit);
+}
+
+/** The estimated grid of a played-in MIDI file's sheet (unlocked), memoised by the estimate. */
+const estimatedStart = new WeakMap<TempoInfo, number>();
+
+/** Whether the first beats of a locked grid are beats of the song's tempo (scaled or re-timed with it, never re-estimated). */
+function lockFollowsTempo(lock: SheetGridLock, tempo: TempoInfo): boolean {
+  const bs = tempo.beats;
+  if (bs.length < 2) return false;
+  for (let i = lock.db; i < Math.min(lock.beats.length, lock.db + lock.beatsPerBar * 2 + 1); i++) {
+    const b = lock.beats[i];
+    const j = upperBound(bs, b);
+    const d = Math.min(j > 0 ? Math.abs(bs[j - 1] - b) : Infinity, j < bs.length ? Math.abs(bs[j] - b) : Infinity);
+    if (!(d <= 1e-4 * Math.max(1, Math.abs(b)))) return false;
+  }
+  return true;
+}
+
+/**
+ * Where the speed the song starts at comes from:
+ * - 'mark': a re-timed tempo mark at the start (the sheet editor's bar 1, or set in the Studio);
+ * - 'sheet': the sheet's own beat grid, when it doesn't follow the song's tempo: a played-in MIDI
+ *   file (the sheet's beats were worked out from the notes; the file's tempo is a flat default),
+ *   or a song saved before the starting tempo was kept with it (bar 1 re-timed, its mark deleted);
+ * - 'tempo': the song's tempo (qpm, else bpm in its beat unit).
+ */
+export function songStart(song: StartSong): { qpm: number; by: 'mark' | 'sheet' | 'tempo' } {
   const m0 = canRetime(song) ? startMark(song) : undefined;
-  if (m0) return m0.bpm * TEMPO_UNIT_Q[m0.unit];
-  return tempoQpm(song.tempo, song.transcription?.method === 'midi-file');
+  if (m0) return { qpm: m0.bpm * TEMPO_UNIT_Q[m0.unit], by: 'mark' };
+  const midi = song.transcription?.method === 'midi-file';
+  const qpm = tempoQpm(song.tempo, midi);
+  const old = song.tempo.qpm === undefined && song.tempo.from === undefined;
+  let g = NaN;
+  const lock = song.sheet?.grid;
+  if (lock) {
+    if (old || (midi && !lockFollowsTempo(lock, song.tempo))) g = lockStartQpm(lock);
+  } else if (midi && song.base && song.duration !== undefined) {
+    const est = songSheetTempo(song as Song);
+    if (est !== song.tempo) {
+      let v = estimatedStart.get(est);
+      if (v === undefined) estimatedStart.set(est, (v = lockStartQpm(gridParams(est, song.duration, []))));
+      g = v;
+    }
+  }
+  if (g > 0 && Number.isFinite(g) && !(Math.abs(g / qpm - 1) <= 0.02)) return { qpm: g, by: 'sheet' };
+  return { qpm, by: 'tempo' };
+}
+
+/** Quarter notes per minute the song starts at (songStart). */
+export function songStartQpm(song: StartSong): number {
+  return songStart(song).qpm;
 }
 
 /** The felt beat of a meter, as the sheet writes its tempo marks (a dotted quarter in 6/8, a half in 2/2). */
@@ -50,13 +104,11 @@ export function songTempoUnit(song: Pick<Song, 'sheet' | 'tempo'>): TempoUnit {
 }
 
 /** `bpm` of a TempoInfo (beats of its beat unit per minute, one decimal) for a quarter tempo. */
-function bpmOf(tempo: TempoInfo, qpm: number): number {
+export function bpmOf(tempo: TempoInfo, qpm: number): number {
   const { beatUnit } = resolveMeter(tempo);
   return Math.round(qpm * (beatUnit / 4) * 10) / 10;
 }
 
-const round2 = (x: number) => Math.round(x * 100) / 100;
-const clampBpm = (x: number) => Math.max(20, Math.min(400, x));
 
 export type RetimePatch = Pick<Song, 'arrangements' | 'base' | 'basePedal' | 'tempo' | 'duration' | 'sheet'>;
 
@@ -132,32 +184,58 @@ export function retime(song: Song, pos0In: number, qpm: number): { patch: Retime
   };
 }
 
+/** The tempo of a song set to start at `qpm` (bpm in its beat unit, the exact qpm, set by the user). */
+export function withStartQpm(tempo: TempoInfo, qpm: number): TempoInfo {
+  const out: TempoInfo = { ...tempo, bpm: bpmOf(tempo, qpm), qpm, from: 'set' };
+  delete out.fromText;
+  return out;
+}
+
 /**
  * Sets the speed the song starts at, `bpm` beats of `unit` per minute (songs without a recording or
- * hands video: canRetime), by scaling every time in the song by one factor k = old / new: every
- * level (edited or not: notes, pedal, pins, articulation lengths), the notes the levels are made
- * from, the beat grid, the length and the sheet's locked grid. Positions on the sheet never change,
- * so fingering, markings, key / time changes and pins stay where they are, and tempo changes later
- * in the piece (written ones, fermatas, re-timed tempo marks) keep their proportions. Exact and
+ * hands video: canRetime), by scaling every time in the song by one factor k = old / new up to the
+ * first tempo mark set later on the sheet (a re-timed mark after bar 1): every level (edited or
+ * not: notes, pedal, pins, articulation lengths), the notes the levels are made from, the beat
+ * grid, the length and the sheet's locked grid. From that later mark on the music keeps its speed
+ * (it is the tempo the user typed there) and only moves in time. Positions on the sheet never
+ * change, so fingering, markings, key / time changes and pins stay where they are, and the tempo
+ * changes written in the piece (and fermatas) before that mark keep their proportions. Exact and
  * reversible (setting the old tempo again gives the same seconds back, up to rounding error).
  *
+ * A song whose sheet is written on beats worked out from the notes (a played-in MIDI file) gets
+ * its grid locked first, so the bars on the sheet stay the same at the new speed.
+ *
  * `mark`: also put a re-timed tempo mark at the start (the sheet editor's tempo mark on bar 1; the
- * song must have its grid locked). An existing re-timed mark at the start always takes the new
- * value, in the new unit.
+ * song must have its grid locked). An existing tempo mark at the start always takes the new value,
+ * in the new unit (a label too: it says the tempo the song now starts at).
  */
-export function scaleSongTempo(song: Song, bpm: number, unit: TempoUnit, opts: { mark?: boolean; text?: string } = {}): { patch: RetimePatch; k: number } {
+export function scaleSongTempo(
+  song: Song,
+  bpm: number,
+  unit: TempoUnit,
+  opts: { mark?: boolean; text?: string } = {},
+): { patch: RetimePatch; k: number; f: (t: number) => number; keptFrom: SheetTempo[] } {
   const qpm = bpm * TEMPO_UNIT_Q[unit];
-  const old = songStartQpm(song);
+  const start = songStart(song);
+  const old = start.qpm;
   if (!canRetime(song)) throw new Error('scaleSongTempo: this song follows a recording');
   if (!(qpm > 0 && Number.isFinite(qpm)) || !(old > 0 && Number.isFinite(old))) throw new Error('scaleSongTempo: no tempo');
   const k = old / qpm;
-  const f = (t: number) => t * k;
+  // the sheet re-estimates its beats from the notes' seconds (a played-in MIDI file): lock them first
+  let sheet = song.sheet ?? (start.by === 'sheet' ? ensureSheet(song, 'hard') : undefined);
+  // the first tempo mark set later on the sheet: the music from it on keeps its speed
+  const later = (sheet?.tempos ?? []).filter((t) => t.retimed && t.pos > 0).sort((a, b) => a.pos - b.pos);
+  const T1 = later.length && sheet ? gridFromLock(sheet.grid, song.tempo.source).posToTime(later[0].pos) : Infinity;
+  const shift = Number.isFinite(T1) ? T1 * (k - 1) : 0;
+  const f = (t: number) => (t <= T1 ? t * k : t + shift);
+  // a length from time t (exactly k times as long when the whole song is scaled)
+  const len = (t: number, d: number) => (Number.isFinite(T1) ? f(t + d) - f(t) : d * k);
   const mapNote = (n: Note): Note => {
     const start = f(n.start);
-    const dur = f(n.dur);
+    const dur = len(n.start, n.dur);
     const out: Note = { ...n, start, dur };
     if (n.pin) out.pin = n.pin.t === n.start && n.pin.d === n.dur ? { ...n.pin, t: start, d: dur } : { ...n.pin };
-    if (n.artBase?.dur !== undefined) out.artBase = { ...n.artBase, dur: f(n.artBase.dur) };
+    if (n.artBase?.dur !== undefined) out.artBase = { ...n.artBase, dur: len(n.start, n.artBase.dur) };
     return out;
   };
   const mapPedal = (p: PedalRange): PedalRange => ({ start: f(p.start), end: f(p.end) });
@@ -166,21 +244,26 @@ export function scaleSongTempo(song: Song, bpm: number, unit: TempoUnit, opts: {
     const a = arrangements[lv];
     arrangements[lv] = { ...a, notes: a.notes.map(mapNote), pedal: a.pedal.map(mapPedal) };
   }
-  const tempo: TempoInfo = { ...song.tempo, beats: song.tempo.beats.map(f), bpm: bpmOf(song.tempo, qpm), qpm, from: 'set' };
-  delete tempo.fromText;
-  let sheet = song.sheet;
+  const tempo: TempoInfo = { ...withStartQpm(song.tempo, qpm), beats: song.tempo.beats.map(f) };
   if (sheet) {
     const text = opts.text?.trim();
     let tempos = (sheet.tempos ?? []).map((t): SheetTempo => {
-      if (!t.retimed) return t;
-      if (t.pos === 0) return { pos: 0, bpm, unit, ...(text ? { text } : t.text && !opts.mark ? { text: t.text } : {}), retimed: true };
-      return { ...t, bpm: clampBpm(round2(t.bpm / k)) };
+      if (t.pos !== 0) return t;
+      if (!t.retimed) return { ...t, bpm, unit, ...(text ? { text } : {}) };
+      return { pos: 0, bpm, unit, ...(text ? { text } : t.text && !opts.mark ? { text: t.text } : {}), retimed: true };
     });
     if (opts.mark) {
       tempos = tempos.filter((t) => t.pos !== 0 || t.retimed);
       if (!tempos.some((t) => t.pos === 0)) tempos.unshift({ pos: 0, bpm, unit, ...(text ? { text } : {}), retimed: true });
     }
-    sheet = { ...sheet, grid: { ...sheet.grid, beats: sheet.grid.beats.map(f), bpm: sheet.grid.bpm / k } };
+    let beats = sheet.grid.beats;
+    if (Number.isFinite(T1)) {
+      // the grid runs on past the end at its old speed, so bars added after the end keep the later tempo
+      const step = 60 / sheet.grid.bpm;
+      beats = [...beats];
+      while (beats.length < 200000 && beats[beats.length - 1] < song.duration + 32 * step) beats.push(beats[beats.length - 1] + step);
+    }
+    sheet = { ...sheet, grid: { ...sheet.grid, beats: beats.map(f), bpm: sheet.grid.bpm / k } };
     if (tempos.length) sheet.tempos = tempos;
     else delete sheet.tempos;
   } else if (opts.mark) throw new Error('scaleSongTempo: a tempo mark needs the locked grid');
@@ -194,5 +277,7 @@ export function scaleSongTempo(song: Song, bpm: number, unit: TempoUnit, opts: {
       sheet,
     },
     k,
+    f,
+    keptFrom: later,
   };
 }
