@@ -72,6 +72,8 @@ export interface PrepareOptions {
    * silence) with the export's time limit and cancel; without it they are awaited as they are
    */
   guard?: StepGuard;
+  /** called after each title page / end card frame: gives the page a turn now and then (taps, repaint) */
+  breathe?: () => Promise<void>;
   /** told after each title page / end card frame */
   onFrame?: (done: number, total: number, part: 'title' | 'end') => void;
   /** drawn over every title page / end card frame (e.g. the watermark) */
@@ -236,6 +238,7 @@ async function prepare(tc: TitleCardJob | undefined, o: PrepareOptions): Promise
       drawIntro(ctx, i / fps);
       await guard(track.add(i / fps, 1 / fps));
       o.onFrame?.(i + 1, tl.introFrames, 'title');
+      await o.breathe?.();
     }
     introMs = performance.now() - t0;
     ctx.save();
@@ -298,6 +301,7 @@ async function prepare(tc: TitleCardJob | undefined, o: PrepareOptions): Promise
         drawOutro(ctx, i / fps);
         if (videoTrack) await guard(videoTrack.add(rollEnd + i / fps, 1 / fps));
         o.onFrame?.(i + 1, tl.outroFrames, 'end');
+        await o.breathe?.();
       }
     },
     captureRollFirst() {

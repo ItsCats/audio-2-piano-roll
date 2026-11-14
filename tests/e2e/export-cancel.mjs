@@ -18,11 +18,18 @@
  *    settings": it used to be thrown away. Cancel is not offered while the file is written.
  *  - With a finished video kept, a new export is cancelled: the earlier video is still offered, and it
  *    downloads (a real download, checked with ffprobe).
+ *  - The kept video downloads under the difficulty it was rendered at, after the Studio switched to another.
+ *  - Writing the file stalls (the video encoder's flush never ends): after 10 s Cancel is offered, it
+ *    works, and the file is removed.
  *  - After a reload, the startup clean-up leaves no export files behind.
+ * With WebCodecs but no writable files (Safari before 26: the video is held in memory), the same for a
+ * kept video: a cancelled re-render leaves the earlier video, and it downloads.
  * Without WebCodecs' audio encoder (iPhone before iOS 26: the real-time MediaRecorder fallback), with a
  * WebKit-like rule that an audio context made outside the tap stays suspended: cancel mid-way, Render
  * is back at once, and the next export finishes (it never did when the context stayed suspended) and
- * downloads. The same on a computer without WebCodecs.
+ * downloads (an MP4 where the browser can record one: Apple devices get MP4 first), then a re-render is
+ * cancelled and the earlier video (in memory) is still offered and downloads. The same on a computer
+ * without WebCodecs, whose WebM must have a duration.
  * Exits 1 on a failure. Requires ffprobe.
  */
 import { spawn, execFileSync } from 'node:child_process';
@@ -40,7 +47,7 @@ const SONG = Number(opt('song', '40'));
 const FALLBACK_SONG = 8;
 const only = opt('only', '') ? opt('only').split(',') : null;
 if (!dist) {
-  console.error('usage: node tests/e2e/export-cancel.mjs --dist DIR [--port 6150] [--only desktop,iphone,iphone-fallback,desktop-fallback] [--song 40]');
+  console.error('usage: node tests/e2e/export-cancel.mjs --dist DIR [--port 6150] [--only desktop,iphone,iphone-memory,iphone-fallback,desktop-fallback] [--song 40]');
   process.exit(2);
 }
 /** the longest Render video may stay off after a cancel (the dialog gives up waiting after 2 s) */
@@ -148,7 +155,31 @@ function strictAudioInit() {
   };
 }
 
-async function runContext({ name, device, webcodecs, strictAudio, song }) {
+/**
+ * A video encoder whose flush never ends (a stuck hardware encoder) while window.__stallFlush is true:
+ * the end of the file waits on it. Closing the encoder ends the flush with an error, as the spec says.
+ */
+function stallableFlush() {
+  const E = window.VideoEncoder;
+  if (!E) return;
+  const stuck = new WeakMap();
+  const flush = E.prototype.flush;
+  E.prototype.flush = function () {
+    const p = flush.call(this);
+    if (!window.__stallFlush) return p;
+    return new Promise((_, reject) => {
+      stuck.set(this, reject);
+      p.catch(reject);
+    });
+  };
+  const close = E.prototype.close;
+  E.prototype.close = function () {
+    close.call(this);
+    stuck.get(this)?.(new DOMException('Encoder closed', 'AbortError'));
+  };
+}
+
+async function runContext({ name, device, webcodecs, strictAudio, song, noWritable, keptOnly }) {
   const ctxOpts = device === 'iphone' ? { ...devices['iPhone 14'], acceptDownloads: true } : { viewport: { width: 1400, height: 900 }, acceptDownloads: true };
   const context = await browser.newContext(ctxOpts);
   if (webcodecs === 'none')
@@ -164,6 +195,11 @@ async function runContext({ name, device, webcodecs, strictAudio, song }) {
       delete window.AudioDecoder;
     });
   if (strictAudio) await context.addInitScript(strictAudioInit);
+  if (noWritable)
+    await context.addInitScript(() => {
+      if (window.FileSystemFileHandle) delete FileSystemFileHandle.prototype.createWritable;
+    });
+  else if (webcodecs === 'full' && !keptOnly) await context.addInitScript(stallableFlush);
   const page = await context.newPage();
   page.on('dialog', (d) => d.accept()); // "Stop the export in progress?" → OK
   const errors = [];
@@ -335,7 +371,7 @@ async function runContext({ name, device, webcodecs, strictAudio, song }) {
     const dur = Number(probe.format?.duration);
     const okStreams = streams.some((x) => x.startsWith('video:')) && streams.some((x) => x.startsWith('audio:'));
     const okDur = want.minDur === undefined || !(dur < want.minDur); // MediaRecorder WebM has no duration
-    return { ok: !probe.error && size > 10000 && okStreams && okDur && d.suggestedFilename().endsWith('.' + want.ext), info: `${d.suggestedFilename()} ${(size / 1e6).toFixed(1)} MB ${streams.join(',')} ${Number.isFinite(dur) ? dur.toFixed(1) + ' s' : ''}` };
+    return { name: d.suggestedFilename(), ok: !probe.error && size > 10000 && okStreams && okDur && d.suggestedFilename().endsWith('.' + want.ext), info: `${d.suggestedFilename()} ${(size / 1e6).toFixed(1)} MB ${streams.join(',')} ${Number.isFinite(dur) ? dur.toFixed(1) + ' s' : ''}` };
   };
   /** a cancel (or close + reopen) at `when`: Render back in time, a clean dialog, no file left */
   const cancelCase = async (label, settings, what, when) => {
@@ -367,9 +403,31 @@ async function runContext({ name, device, webcodecs, strictAudio, song }) {
     check(tag(`${label}: no file of the cancelled export left in the browser’s storage`), left.length === 0, left.join(' '));
   };
 
+  /** with a finished video kept: a new export is cancelled, the earlier video is still offered, and downloads */
+  const keptSurvivesCancel = async (settings, want) => {
+    await cancelCase('cancel a new export while a finished video is kept', settings, 'cancel', { kind: 'pct', arg: 30 });
+    const s2 = await ui();
+    check(tag('after that cancel the earlier video is still offered'), /last video is still here/.test(s2.notice ?? ''), s2.notice ?? '');
+    if (!(await dlg.getByRole('button', { name: 'Show video' }).count())) return null;
+    await dlg.getByRole('button', { name: 'Show video' }).click();
+    const dl = await download(want);
+    check(tag(`it downloads: a playable ${want.ext.toUpperCase()} (video + audio${want.minDur ? ', full length' : ''})`), dl.ok, dl.info);
+    return dl;
+  };
+  const difficultyNow = () => page.evaluate(() => document.querySelector('[role=radiogroup][aria-label=Difficulty] [aria-checked=true]')?.textContent.trim().toLowerCase() ?? '');
+
   try {
     await openDialog();
-    if (!fallback) {
+    if (keptOnly) {
+      // ---- the video is held in memory (no writable files): kept through a cancelled re-render ----
+      await setup({ sound: 'piano' });
+      const r = await renderToEnd();
+      check(tag('an export into memory finishes'), r.ok, r.ok ? `${r.secs.toFixed(0)} s` : r.why);
+      if (r.ok) {
+        await dlg.getByRole('button', { name: 'Back to settings' }).click();
+        await keptSurvivesCancel({ sound: 'both', title: true }, { ext: 'mp4', minDur: song - 1 });
+      }
+    } else if (!fallback) {
       await cancelCase('cancel while preparing', { sound: 'piano' }, 'cancel', { kind: 'immediate' });
       await cancelCase('cancel during the title page frames', { sound: 'piano', title: true }, 'cancel', { kind: 'text', arg: 'frame ' });
       await cancelCase('cancel mid-render, original + piano, title page', { sound: 'both', title: true }, 'cancel', { kind: 'pct', arg: 40 });
@@ -400,13 +458,69 @@ async function runContext({ name, device, webcodecs, strictAudio, song }) {
         await dlg.getByRole('button', { name: 'Back to settings' }).click();
 
         // ---- a new export is cancelled: the earlier video is still offered, and downloads ----
-        await cancelCase('cancel a new export while a finished video is kept', { sound: 'both', title: true }, 'cancel', { kind: 'pct', arg: 30 });
-        const s2 = await ui();
-        check(tag('after that cancel the earlier video is still offered'), /last video is still here/.test(s2.notice ?? ''), s2.notice ?? '');
+        const rendered = await difficultyNow();
+        await keptSurvivesCancel({ sound: 'both', title: true }, { ext: 'mp4', minDur: song - 1 });
+
+        // ---- the Studio switches difficulty: the kept video keeps the name it was rendered under ----
+        await dlg.getByRole('button', { name: 'Back to settings' }).click();
+        await dlg.getByRole('button', { name: 'Close' }).click();
+        const other = rendered.includes('hard') ? 'Easy' : 'Hard';
+        await page.getByRole('radiogroup', { name: 'Difficulty' }).getByRole('radio', { name: new RegExp(other, 'i') }).first().click();
+        await sleep(300);
+        await openDialog();
+        const s3 = await ui();
+        check(tag('after a difficulty switch the sheet says which difficulty the kept video has'), /last video is still here \(rendered at /i.test(s3.notice ?? ''), s3.notice ?? '');
         await dlg.getByRole('button', { name: 'Show video' }).click();
-        const dl = await download({ ext: 'mp4', minDur: song - 1 });
-        check(tag('it downloads: a playable MP4 (video + audio, full length)'), dl.ok, dl.info);
+        const dl = await download({ ext: 'mp4' });
+        const want = /hard/.test(rendered) ? 'hard' : /medium/.test(rendered) ? 'medium' : 'easy';
+        check(tag('it downloads under the difficulty it was rendered at'), dl.name.includes(` - ${want} - `), `rendered at "${rendered}", Studio now "${other}": ${dl.name}`);
+        await dlg.getByRole('button', { name: 'Back to settings' }).click();
+        await dlg.getByRole('button', { name: 'Close' }).click();
+        await page.getByRole('radiogroup', { name: 'Difficulty' }).getByRole('radio', { name: new RegExp(want, 'i') }).first().click();
+        await sleep(300);
+        await openDialog();
       }
+
+      // ---- writing the file stalls (a stuck encoder): Cancel comes back after 10 s, and works ----
+      await setup({ sound: 'piano' });
+      await page.evaluate(() => (window.__stallFlush = true));
+      const before = await opfs();
+      await renderBtn().click();
+      const seen = await page.evaluate(
+        () =>
+          new Promise((resolve) => {
+            const t0 = performance.now();
+            let since = 0;
+            const tick = () => {
+              const d = document.querySelector('[role=dialog][aria-label="Export video"]');
+              const txt = d?.innerText ?? '';
+              const cancel = d && [...d.querySelectorAll('button')].find((x) => x.textContent.trim() === 'Cancel');
+              if (/Finalizing file/.test(txt)) {
+                since ||= performance.now();
+                if (cancel) {
+                  const waited = (performance.now() - since) / 1000;
+                  cancel.click();
+                  return resolve({ ok: true, waited, note: /taking longer than usual/.test(txt) });
+                }
+              }
+              if (performance.now() - t0 > 240000) return resolve({ ok: false, why: 'timeout', txt: txt.slice(0, 200) });
+              setTimeout(tick, 20);
+            };
+            tick();
+          }),
+      );
+      check(tag('writing the file stalls: Cancel is offered after about 10 s, with a note'), seen.ok && seen.waited >= 9 && seen.waited < 20 && seen.note, JSON.stringify(seen));
+      const secs = await untilReady();
+      const st = await ui();
+      check(tag(`that Cancel works: Render video is back within ${LIMIT_S} s, a clean dialog`), secs !== null && secs <= LIMIT_S && st.progress === null && !st.error && /Export canceled/.test(st.notice ?? ''), `${secs} s ${JSON.stringify(st)}`);
+      await page.evaluate(() => (window.__stallFlush = false));
+      let leftStall = [];
+      for (let i = 0; i < 40; i++) {
+        leftStall = (await opfs()).filter((n) => !before.includes(n));
+        if (!leftStall.length) break;
+        await sleep(100);
+      }
+      check(tag('the stalled file is removed'), leftStall.length === 0, leftStall.join(' '));
       // ---- the startup clean-up ----
       await page.reload();
       await page.locator('canvas').first().waitFor();
@@ -425,8 +539,14 @@ async function runContext({ name, device, webcodecs, strictAudio, song }) {
         check(tag('the recording’s audio context was made within the tap (not left suspended)'), log.length > 0 && log.every((x) => !x.locked), JSON.stringify(log));
       }
       if (r.ok) {
-        const dl = await download({ ext: 'webm' });
-        check(tag('it downloads: a WebM with video and audio'), dl.ok, dl.info);
+        // Apple devices record MP4 where the browser can (an iPhone can't save a WebM to Photos)
+        const mp4 = device === 'iphone' && (await page.evaluate(() => MediaRecorder.isTypeSupported('video/mp4')));
+        const want = mp4 ? { ext: 'mp4' } : { ext: 'webm', minDur: FALLBACK_SONG - 1 }; // a recorded WebM gets its duration written in
+        const dl = await download(want);
+        check(tag(`it downloads: ${mp4 ? 'an MP4' : 'a WebM with a duration,'} with video and audio`), dl.ok, dl.info);
+        // ---- the video is in memory: a cancelled re-render keeps it ----
+        await dlg.getByRole('button', { name: 'Back to settings' }).click();
+        await keptSurvivesCancel({ sound: 'piano', title: true }, want);
       }
     }
     check(tag('no console errors'), errors.length === 0, errors.slice(0, 4).join(' | '));
@@ -440,6 +560,7 @@ async function runContext({ name, device, webcodecs, strictAudio, song }) {
 const contexts = [
   { name: 'desktop', device: 'desktop', webcodecs: 'full', song: SONG },
   { name: 'iphone', device: 'iphone', webcodecs: 'full', song: SONG },
+  { name: 'iphone-memory', device: 'iphone', webcodecs: 'full', noWritable: true, keptOnly: true, song: 20 },
   { name: 'iphone-fallback', device: 'iphone', webcodecs: 'noaudio', strictAudio: true, song: FALLBACK_SONG },
   { name: 'desktop-fallback', device: 'desktop', webcodecs: 'none', song: FALLBACK_SONG },
 ];

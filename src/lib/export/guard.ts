@@ -105,3 +105,30 @@ export function settleWithin(p: Promise<unknown>, ms: number): Promise<boolean> 
     new Promise<boolean>((r) => (timer = setTimeout(() => r(false), ms))),
   ]).finally(() => clearTimeout(timer));
 }
+
+/** one trip through the event loop, without a timer (timers are slowed down to once a second in a background tab) */
+function nextTask(): Promise<void> {
+  return new Promise((resolve) => {
+    const ch = new MessageChannel();
+    ch.port1.onmessage = () => {
+      ch.port1.close();
+      resolve();
+    };
+    ch.port2.postMessage(null);
+  });
+}
+
+/**
+ * Lets the page handle taps and repaint during a long run of frames. Drawing and encoding a frame often
+ * ends without a real break for the page (the encoder answers at once), so a run of title page frames
+ * could keep a tap on Cancel waiting for seconds on a phone. The returned function gives the page one
+ * turn when `everyMs` have passed since the last one; it never changes what is encoded.
+ */
+export function pageBreather(everyMs = 40): () => Promise<void> {
+  let last = performance.now();
+  return async () => {
+    if (performance.now() - last < everyMs) return;
+    await nextTask();
+    last = performance.now();
+  };
+}

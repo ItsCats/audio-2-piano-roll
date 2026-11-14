@@ -54,9 +54,11 @@ import { buildEvents } from '../audio/events';
 import { getAudio, getHandVideoBlob, getMedia } from '../storage/db';
 import { decodeToRate } from '../transcription/decode';
 import { isMemoryConstrained, pageDeviceInfo } from '../transcription/backendChoice';
+import { withWebmDuration } from './webmDuration';
+import { isAppleWebKit, recorderMimeOrder, recorderVideoCodec } from './recorderFormat';
 import { outputSize, type ExportSettings, type ExportSound } from './types';
 import { prepareTitleCards, type TitleCardHooks, type TitleCardJob } from '../render/titleCard/exportHooks';
-import { STEP_TIMEOUT_MS, abortError, finalizeTimeoutMs, guardStep, settleWithin, untilAborted } from './guard';
+import { STEP_TIMEOUT_MS, abortError, finalizeTimeoutMs, guardStep, pageBreather, settleWithin, untilAborted } from './guard';
 import { openExportFile } from './exportFiles';
 import {
   EXPORT_SAMPLE_RATE,
@@ -180,6 +182,20 @@ function forceStopAudioEncoder(src: AudioSampleSource): void {
   }
 }
 
+/**
+ * Best effort: closes the video encoder by force. Used when the end of the file is stuck on its flush
+ * (a stalled hardware encoder): mediabunny can't cancel while finalizing, and closing the encoder
+ * ends the flush with an error, after which mediabunny lets go of what it holds.
+ */
+function forceStopVideoEncoder(src: CanvasSource): void {
+  try {
+    const enc = (src as unknown as { _encoder?: { encoder?: { state?: string; close?: () => void } | null; alphaEncoder?: { state?: string; close?: () => void } | null } })._encoder;
+    for (const e of [enc?.encoder, enc?.alphaEncoder]) if (e && e.state !== 'closed') e.close?.();
+  } catch {
+    /* ignore */
+  }
+}
+
 /** how long a cancelled export may wait for the encoders to let go of their last blocks before they are stopped by force */
 export const CLEAN_CANCEL_MS = 300;
 /** the longest a cancelled export waits for its clean-up before it answers (the rest goes on in the background) */
@@ -193,10 +209,13 @@ export const CANCEL_ANSWER_MS = 1500;
  * encoder's flush, which with the WASM AAC encoder can be the whole song, so it is never waited on
  * for long: the file is closed by us, not by mediabunny.
  */
-async function abandonOutput(output: Output, audioTrack: AudioSampleSource, discard: () => Promise<void>, canceled: boolean): Promise<void> {
-  // nothing to cancel while finalizing (mediabunny ignores it): the file is closed under it below
-  const cancel = output.state === 'finalizing' || output.state === 'finalized' ? Promise.resolve() : output.cancel().catch(() => {});
-  if (!canceled || !(await settleWithin(cancel, CLEAN_CANCEL_MS))) {
+async function abandonOutput(output: Output, audioTrack: AudioSampleSource, videoTrack: CanvasSource, discard: () => Promise<void>, canceled: boolean): Promise<void> {
+  // nothing to cancel while finalizing (mediabunny ignores it): the file is closed under it below, and the
+  // encoders (whose flush the end of the file may be stuck on) are stopped at once
+  const finalizing = output.state === 'finalizing' || output.state === 'finalized';
+  const cancel = finalizing ? Promise.resolve() : output.cancel().catch(() => {});
+  if (finalizing) forceStopVideoEncoder(videoTrack);
+  if (finalizing || !canceled || !(await settleWithin(cancel, CLEAN_CANCEL_MS))) {
     forceStopAudioEncoder(audioTrack);
     await settleWithin(cancel, 1000);
   }
@@ -204,7 +223,7 @@ async function abandonOutput(output: Output, audioTrack: AudioSampleSource, disc
 }
 
 /** Heavy decodes (the whole original recording) one at a time, even when a cancelled export's is still running. */
-let heavyDecode: Promise<unknown> = Promise.resolve();
+let heavyDecode: Promise<void> = Promise.resolve();
 
 /** Decodes the original recording at the export rate and keeps only the part this export can hear. */
 async function loadOriginalSource(job: ExportJob, range: { start: number; end: number }, tl: ExportTimeline): Promise<OriginalSource> {
@@ -220,7 +239,11 @@ async function loadOriginalSource(job: ExportJob, range: { start: number; end: n
   // and the next export's decode waits until it has ended, so two never take up memory at once
   await untilAborted(heavyDecode, job.signal);
   const decoding = decodeToRate(blob, tl.sr);
-  heavyDecode = decoding.catch(() => {});
+  // only its end is waited for: the decoded sound itself must not be held here (.catch would keep it)
+  heavyDecode = decoding.then(
+    () => {},
+    () => {},
+  );
   let buffer: AudioBuffer | null;
   try {
     buffer = await untilAborted(decoding, job.signal);
@@ -571,7 +594,7 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
     cards?.dispose();
     renderer.setStage(null);
     disposeHands(hands);
-    await abandonOutput(output, audioTrack, discard, true);
+    await abandonOutput(output, audioTrack, videoTrack, discard, true);
   };
 
   const videoTrack = new CanvasSource(canvas, {
@@ -595,6 +618,8 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
   }
   // ---- title page / end card: wrap the tracks (null when off, then nothing changes) ----
   const cardMark = mark && wm?.onCards ? mark : null;
+  // the page gets a turn every few dozen milliseconds of frames, so a tap on Cancel is answered at once
+  const breathe = pageBreather();
   try {
     cards = await untilAborted(
       prepareTitleCards(job.titleCard, {
@@ -607,6 +632,7 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
         rollFrames: totalFrames,
         signal,
         guard: (step) => guardStep(step, signal, STEP_TIMEOUT_MS),
+        breathe,
         sampleRate: 48000,
         onFrame: (done, total, part) => progress({ phase: 'video', fraction: part === 'end' ? 0.98 : 0.18, framesDone: done, framesTotal: total }),
         overlay: cardMark ? (c) => cardMark.painter.draw(c) : undefined,
@@ -756,6 +782,7 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
       // the title page goes first, each of its frames under its own time limit (not all of them under this frame's)
       if (i === 0) await cards?.intro();
       await guardStep(videoSource.add(o, 1 / fps), signal, STEP_TIMEOUT_MS);
+      await breathe();
       if (i % 15 === 0 || i === totalFrames - 1) {
         const elapsed = (performance.now() - t0 - (cards?.introMs ?? 0)) / 1000; // without the title page frames
         const rfps = (i + 1) / Math.max(0.001, elapsed);
@@ -779,7 +806,7 @@ export async function exportVideo(job: ExportJob): Promise<ExportResult> {
   } catch (err) {
     // the real track, not the title-card wrapper (which has no encoder of its own)
     const canceled = !!signal?.aborted && (err as Error)?.name === 'AbortError';
-    const abandoned = abandonOutput(output, audioTrack, discard, canceled);
+    const abandoned = abandonOutput(output, audioTrack, videoTrack, discard, canceled);
     // a cancel is answered at once: what is left of the clean-up goes on in the background
     if (canceled) await settleWithin(abandoned, CANCEL_ANSWER_MS);
     else await abandoned;
@@ -858,7 +885,8 @@ async function exportWithMediaRecorder(job: ExportJob): Promise<ExportResult> {
     engine = new PianoEngine(ac, gain);
     await untilAborted(engine.applySettings(job.audio, undefined, true), signal);
     stream = new MediaStream([...canvas.captureStream(s.fps).getVideoTracks(), ...dest.stream.getAudioTracks()]);
-    const mime = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'].find((m) => MediaRecorder.isTypeSupported(m)) ?? '';
+    const apple = typeof navigator !== 'undefined' && isAppleWebKit(navigator.userAgent ?? '', navigator.maxTouchPoints ?? 0);
+    const mime = recorderMimeOrder(apple).find((m) => MediaRecorder.isTypeSupported(m)) ?? '';
     const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: bitrateFor(width, height, s.fps, s.quality) });
     rec = recorder;
     const chunks: Blob[] = [];
@@ -884,6 +912,7 @@ async function exportWithMediaRecorder(job: ExportJob): Promise<ExportResult> {
     }
     const hooks = cards;
     recorder.start(1000);
+    const recordStart = performance.now();
     await new Promise<void>((resolve, reject) => {
       // a cancel ends it at once, also while the tab is in the background (no animation frames then)
       const onAbort = () => reject(abortError());
@@ -907,18 +936,21 @@ async function exportWithMediaRecorder(job: ExportJob): Promise<ExportResult> {
       };
       requestAnimationFrame(frame);
     });
-    const blob = await new Promise<Blob>((resolve) => {
-      recorder.onstop = () => resolve(new Blob(chunks, { type: recorder.mimeType || 'video/webm' }));
+    const recorded = await new Promise<Blob>((resolve) => {
+      recorder.onstop = () => resolve(new Blob(chunks, { type: recorder.mimeType || mime || 'video/webm' }));
       recorder.stop();
     });
     rec = null;
-    const isMp4 = blob.type.includes('mp4');
+    const isMp4 = recorded.type.includes('mp4');
+    // a recorded WebM has no duration of its own (players would show no length and couldn't scrub it)
+    const blob = isMp4 ? recorded : await withWebmDuration(recorded, (performance.now() - recordStart) / 1000);
+    const type = recorder.mimeType || mime;
     return {
       blob,
       mime: blob.type,
       extension: isMp4 ? 'mp4' : 'webm',
-      videoCodec: mime,
-      audioCodec: 'opus',
+      videoCodec: recorderVideoCodec(type, isMp4),
+      audioCodec: /opus/i.test(type) || !isMp4 ? 'opus' : 'aac',
       width,
       height,
       duration: total,
