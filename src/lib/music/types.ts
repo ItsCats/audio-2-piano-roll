@@ -21,6 +21,15 @@ export interface Note {
    */
   role?: 'melody' | 'lead' | 'bass';
   /**
+   * Added by the "Full song + piano model" blend (music/pianoBlend.ts) from the piano model's notes:
+   * 'piano' a fill (keyboard part, in-between note; no role, never part of Easy's or Medium's tune
+   * line), 'piano-lead' a lead note in a hole of the tune line (the roles recovered lead notes get).
+   * 'restrike': the second piece of an app note the blend split
+   * where the piano model hears it struck again (pianoBlend.ts blendRestrikes; Easy joins the pieces
+   * back). Absent on every other note.
+   */
+  src?: 'piano' | 'piano-lead' | 'restrike';
+  /**
    * Where the note is written on the sheet, set by sheet edits (lib/sheet/edit.ts): positions on the
    * song's locked grid (Song.sheet). Valid only while `start === t && dur === d`: a piano-roll edit
    * that moves or resizes the note releases it back to the normal quantizing.
@@ -204,9 +213,33 @@ export interface TranscriptionInfo {
     ms: number;
     threads?: number;
   };
+  /**
+   * The "Full song + piano model" blend (pipeline.ts, music/pianoBlend.ts): absent when it was not
+   * asked for (and on every song imported before it existed).
+   */
+  pianoBlend?: PianoBlendInfo;
   warnings: string[];
   /** Rough 0..1 indicator of how clean the model output was (mean peak note confidence). */
   confidence?: number;
+}
+
+/** What the piano-model blend did on import (TranscriptionInfo.pianoBlend). */
+export interface PianoBlendInfo {
+  v: 1;
+  /** 'failed': the piano model did not run (the notes are the standard Full song result) */
+  status: 'ok' | 'failed';
+  /** the audio the piano model heard: the separated "other" stem (accompaniment minus bass) */
+  input: 'other';
+  /** lead notes added in holes of the tune line */
+  leadAdded: number;
+  /** fill notes added (keyboard parts, in-between notes) */
+  fills: number;
+  /** 2 s segments where fills may go above the tune ("riff on top", off unless enabled) */
+  riffSegments: number;
+  /** tune notes moved to the piano model's octave (off unless enabled) */
+  octaveFixes: number;
+  /** held app notes split where the piano model hears them re-struck (absent: none) */
+  restrikes?: number;
 }
 
 export interface Song {

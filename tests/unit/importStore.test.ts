@@ -46,8 +46,25 @@ vi.mock('../../src/lib/backend/client', async (orig) => ({
 const pipeline = await import('../../src/lib/transcription/pipeline');
 const client = await import('../../src/lib/backend/client');
 const db = await import('../../src/lib/storage/db');
-const { useImport, serverHealth, rememberServerHealth, separationChoice, separationAvailability, transcriberChoice, parsePrefs, resumeTranscriber, checkCrashedSpecialist, SPECIALIST_RUNNING_KEY } =
-  await import('../../src/state/importStore');
+const {
+  useImport,
+  serverHealth,
+  rememberServerHealth,
+  separationChoice,
+  separationAvailability,
+  transcriberChoice,
+  parsePrefs,
+  resumeTranscriber,
+  checkCrashedSpecialist,
+  SPECIALIST_RUNNING_KEY,
+  pianoBlendAvailability,
+  pianoBlendChoice,
+  PIANO_BLEND_DEFAULT,
+  BLEND_RUNNING_KEY,
+  checkCrashedBlend,
+  resumeBlend,
+  STAGE_LABELS,
+} = await import('../../src/state/importStore');
 const { interruptedNotice } = await import('../../src/state/interruptedImport');
 const { useSettings } = await import('../../src/state/settingsStore');
 
@@ -619,5 +636,174 @@ describe('sheet-music import', () => {
     const song = vi.mocked(db.saveSong).mock.calls.at(-1)![0];
     expect(song.title).toBe('Scanned minuet');
     expect(song.source).toMatchObject({ kind: 'score', fileName: 'scan.pdf' });
+  });
+});
+
+describe('"Full song + piano model" (piano-model blend)', () => {
+  let store: Map<string, string>;
+  let held: Set<string>;
+  const desktop = 'Mozilla/5.0 (X11; Linux x86_64) Chrome/140';
+  const iphone = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';
+  const browser = (ua: string, deviceMemory?: number) => {
+    vi.stubGlobal('navigator', {
+      userAgent: ua,
+      maxTouchPoints: ua === iphone ? 5 : 0,
+      ...(deviceMemory ? { deviceMemory } : {}),
+      locks: {
+        request: (name: string, cb: () => Promise<void>) => {
+          held.add(name);
+          return Promise.resolve(cb()).finally(() => held.delete(name));
+        },
+        query: async () => ({ held: [...held].map((name) => ({ name })) }),
+      },
+    });
+  };
+  beforeEach(() => {
+    store = new Map();
+    held = new Set();
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+    });
+    browser(desktop, 16);
+    for (const f of [db.savePending, db.saveSong, db.savePosteriors]) vi.mocked(f).mockClear();
+    useSettings.setState({ backendUrl: '', detectionPreset: 'mix' });
+    specialist.available = true;
+    useImport.setState({ prefs: { separate: {} } });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    useImport.setState({ prefs: { separate: {} } });
+  });
+  const file = () => new File([new Uint8Array(16)], 'band.mp3', { type: 'audio/mpeg' });
+
+  it('is offered for Full song where the piano model runs, separation runs in this browser and memory is not tight', () => {
+    const ok = { specialist: true, constrained: false, browserSeparation: true };
+    expect(pianoBlendAvailability(ok)).toEqual({ available: true });
+    expect(pianoBlendAvailability({ ...ok, constrained: true }).reason).toBe('Not recommended on this device: it needs about 0.8 GB more memory and may close the tab.');
+    expect(pianoBlendAvailability({ ...ok, browserSeparation: false }).reason).toBe('Needs in-browser instrument separation.');
+    expect(pianoBlendAvailability({ ...ok, specialist: false }).available).toBe(false);
+    // default (opt-in until the thresholds are tuned), the remembered choice, never where it cannot run
+    expect(PIANO_BLEND_DEFAULT).toBe(false);
+    expect(pianoBlendChoice({ separate: {} }, 'mix', { available: true })).toBe(PIANO_BLEND_DEFAULT);
+    expect(pianoBlendChoice({ separate: {}, pianoBlend: true }, 'mix', { available: true })).toBe(true);
+    expect(pianoBlendChoice({ separate: {}, pianoBlend: true }, 'piano', { available: true })).toBe(false);
+    expect(pianoBlendChoice({ separate: {}, pianoBlend: true }, 'mix', { available: false })).toBe(false);
+  });
+
+  it('the choice is remembered in the import prefs (on and off); older prefs still load', () => {
+    useImport.getState().setPianoBlendPref(true);
+    expect(useImport.getState().prefs.pianoBlend).toBe(true);
+    expect(JSON.parse(store.get('piano2vision-import-prefs')!).pianoBlend).toBe(true);
+    useImport.getState().setPianoBlendPref(false);
+    expect(useImport.getState().prefs.pianoBlend).toBe(false);
+    expect(parsePrefs('{"separate":{},"pianoBlend":false}').pianoBlend).toBe(false);
+    expect(parsePrefs('{"separate":{},"pianoBlend":"yes"}')).not.toHaveProperty('pianoBlend');
+    expect(parsePrefs('{"separate":{"mix":true}}')).toEqual({ separate: { mix: true }, engine: {} });
+  });
+
+  it('a ticked choice asks the pipeline for the blend (browser separation only), plans its stage and keeps it in the crash record', async () => {
+    useImport.getState().setPianoBlendPref(true);
+    vi.mocked(pipeline.transcribeAudio).mockResolvedValue(result());
+    await useImport.getState().importFile(file(), { separate: true });
+    const opts = vi.mocked(pipeline.transcribeAudio).mock.calls[0][4]!;
+    expect(opts.separate).toBe(true);
+    expect(opts.pianoBlend).toBe(true);
+    expect(typeof opts.onPhase).toBe('function');
+    expect(useImport.getState().job!.plan).toContain('piano-model');
+    expect(STAGE_LABELS['piano-model']).toBe('Piano model: keyboard parts and in-between notes');
+    expect(vi.mocked(db.savePending).mock.calls[0][0]).toMatchObject({ pianoBlend: true, separate: true });
+    // without separation (or Piano solo): nothing asked
+    vi.mocked(pipeline.transcribeAudio).mockClear();
+    await useImport.getState().importFile(file(), { separate: false });
+    expect(vi.mocked(pipeline.transcribeAudio).mock.calls[0][4]).toEqual({});
+    vi.mocked(pipeline.transcribeAudio).mockClear();
+    useSettings.setState({ detectionPreset: 'piano' });
+    await useImport.getState().importFile(file(), { separate: true });
+    expect(vi.mocked(pipeline.transcribeAudio).mock.calls[0][4]).toEqual({ separate: true });
+  });
+
+  it('a song the blend does not run on (a sung line): its stage leaves the checklist', async () => {
+    useImport.getState().setPianoBlendPref(true);
+    let planDuring: string[] | undefined;
+    vi.mocked(pipeline.transcribeAudio).mockImplementationOnce(async (_b, _p, _o, _s, opts) => {
+      opts!.onPhase!('piano-blend-skipped');
+      planDuring = [...useImport.getState().job!.plan];
+      // the crash marker stays at separation: the piano model never ran
+      expect(store.has(BLEND_RUNNING_KEY)).toBe(false);
+      return result();
+    });
+    await useImport.getState().importFile(file(), { separate: true });
+    expect(planDuring).not.toContain('piano-model');
+    expect(planDuring).toContain('separating');
+  });
+
+  it('unticked (the default): the pipeline gets exactly what it got before', async () => {
+    vi.mocked(pipeline.transcribeAudio).mockResolvedValue(result());
+    await useImport.getState().importFile(file(), { separate: true });
+    expect(vi.mocked(pipeline.transcribeAudio).mock.calls[0][4]).toEqual({ separate: true });
+    expect(vi.mocked(db.savePending).mock.calls[0][0]).not.toHaveProperty('pianoBlend');
+    expect(useImport.getState().job!.plan).not.toContain('piano-model');
+  });
+
+  it('a phone (memory-constrained) never runs it, even with the choice remembered', async () => {
+    browser(iphone);
+    useImport.getState().setPianoBlendPref(true);
+    vi.mocked(pipeline.transcribeAudio).mockResolvedValue(result());
+    await useImport.getState().importFile(file(), { separate: true });
+    expect(vi.mocked(pipeline.transcribeAudio).mock.calls[0][4]).toEqual({ separate: true });
+    // a desktop reporting little memory: the same
+    browser(desktop, 2);
+    vi.mocked(pipeline.transcribeAudio).mockClear();
+    await useImport.getState().importFile(file(), { separate: true, pianoBlend: true });
+    expect(vi.mocked(pipeline.transcribeAudio).mock.calls[0][4]).toEqual({ separate: true });
+  });
+
+  it('the crash marker moves from separation to the blend; a tab that died there resumes with separation on and the blend off', async () => {
+    useImport.getState().setPianoBlendPref(true);
+    let atSeparation: string | undefined;
+    let atBlend: string | undefined;
+    let separationAfterPhase: string | undefined;
+    vi.mocked(pipeline.transcribeAudio).mockImplementationOnce(async (_b, _p, _o, _s, opts) => {
+      atSeparation = store.get('piano2vision-separating');
+      opts!.onPhase!('piano-blend');
+      atBlend = store.get(BLEND_RUNNING_KEY);
+      separationAfterPhase = store.get('piano2vision-separating');
+      return result();
+    });
+    await useImport.getState().importFile(file(), { separate: true });
+    const pendingId = vi.mocked(db.savePending).mock.calls[0][0].id;
+    expect(atSeparation).toBeDefined();
+    expect(JSON.parse(atBlend!)).toMatchObject({ pendingId });
+    expect(separationAfterPhase).toBeUndefined();
+    expect(store.has(BLEND_RUNNING_KEY)).toBe(false);
+
+    // a dead tab's marker: the choice is turned off, separation stays on, the record resumes without the blend
+    store.set(BLEND_RUNNING_KEY, JSON.stringify({ pendingId: 'crashed-b', at: Date.now() - 30_000 }));
+    const turnOff = vi.fn(() => useImport.getState().setPianoBlendPref(false));
+    expect(await checkCrashedBlend(turnOff)).toBe(true);
+    expect(useImport.getState().prefs.pianoBlend).toBe(false);
+    expect(useImport.getState().prefs.separate.mix).not.toBe(false);
+    expect(resumeBlend({ id: 'crashed-b', pianoBlend: true })).toBe(false);
+    expect(resumeBlend({ id: 'other', pianoBlend: true })).toBe(true);
+    expect(resumeBlend({ id: 'old' })).toBe(false);
+    vi.mocked(pipeline.transcribeAudio).mockClear();
+    vi.mocked(pipeline.transcribeAudio).mockResolvedValueOnce(result());
+    await useImport.getState().resumePending({
+      id: 'crashed-b',
+      title: 'Band',
+      kind: 'audio',
+      source: { kind: 'audio', fileName: 'band.mp3', mimeType: 'audio/mpeg' },
+      blob: new Blob([new Uint8Array(16)], { type: 'audio/mpeg' }),
+      mimeType: 'audio/mpeg',
+      fileName: 'band.mp3',
+      startedAt: 1,
+      presetId: 'mix',
+      separate: true,
+      pianoBlend: true,
+    } as Parameters<ReturnType<typeof useImport.getState>['resumePending']>[0]);
+    expect(vi.mocked(pipeline.transcribeAudio).mock.calls[0][4]).toEqual({ separate: true });
+    expect(await checkCrashedBlend(turnOff)).toBe(false);
   });
 });

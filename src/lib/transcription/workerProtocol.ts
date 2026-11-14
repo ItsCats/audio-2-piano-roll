@@ -8,6 +8,8 @@ export type TranscriptionStage =
   | 'loading-model'
   | 'analyzing'
   | 'extracting'
+  /** the "Full song + piano model" blend's piano model (pipeline.ts runBlendModel) */
+  | 'piano-model'
   | 'arranging'
   | 'saving';
 

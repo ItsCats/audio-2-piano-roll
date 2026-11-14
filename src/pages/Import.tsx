@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { FileAudio, FileMusic, Mic, Loader2, CheckCircle2, XCircle, Circle, ArrowRight, Square, Info, RotateCcw, Download, Smartphone, MonitorSpeaker, Gamepad2 } from 'lucide-react';
 import { Dropzone } from '../components/import/Dropzone';
 import { SeparationOption, useSeparationChoice } from '../components/import/SeparationOption';
-import { PianoModelOption, usePianoModelChoice } from '../components/import/PianoModelOption';
+import { PianoModelOption, usePianoBlendChoice, usePianoModelChoice } from '../components/import/PianoModelOption';
 import type { TranscriptionEngine } from '../lib/transcription/pipeline';
 import { Button, ProgressBar, Segmented, cn } from '../components/ui';
 import { STAGE_LABELS, stageLabel, transcriberChoice, useImport, type ImportJob, type ImportStage } from '../state/importStore';
@@ -96,6 +96,8 @@ function etaStep(job: Pick<ImportJob, 'stage' | 'detail' | 'transcriber' | 'shee
       return 'separation';
     case 'loading-model':
       return job.transcriber === 'piano-specialist' ? 'loading the piano model' : STAGE_LABELS[job.stage].toLowerCase();
+    case 'piano-model':
+      return 'piano model';
     case 'analyzing':
       if (job.transcriber === 'piano-specialist') return 'piano model';
       return part ? `pitch detection ${part[1]} of ${part[2]}` : 'pitch detection';
@@ -174,7 +176,7 @@ function JobProgress({ onPlayGame }: { onPlayGame: () => void }) {
               <span>
                 {job.sheet
                   ? sentence(eta ?? (job.stage === 'analyzing' && job.progress < 0.99 ? 'Working out the time left…' : ''))
-                  : (eta ?? ((job.stage === 'separating' || job.stage === 'analyzing') && job.progress < 0.99 ? `${etaStep(job)}: measuring speed…` : ''))}
+                  : (eta ?? ((job.stage === 'separating' || job.stage === 'analyzing' || job.stage === 'piano-model') && job.progress < 0.99 ? `${etaStep(job)}: measuring speed…` : ''))}
               </span>
               <span>{Math.round(job.progress * 100)}%</span>
             </p>
@@ -519,6 +521,7 @@ export default function ImportPage() {
   const navigate = useNavigate();
   const sep = useSeparationChoice();
   const model = usePianoModelChoice();
+  const blend = usePianoBlendChoice();
   // the piano model is for solo piano: separation is not used with it
   const pianoModel = model.transcriber === 'piano-specialist';
   const separate = sep.checked && !pianoModel;
@@ -559,7 +562,7 @@ export default function ImportPage() {
 
   const onFile = (f: File) => {
     if (busy) return;
-    void importFile(f, { separate, transcriber: model.transcriber }).then(() => {});
+    void importFile(f, { separate, transcriber: model.transcriber, pianoBlend: blend.offered && blend.checked }).then(() => {});
     startedHere.current = (useImport.getState().job?.id ?? 0);
   };
   /** a video of the user playing: solo piano, no separation, the video kept with the song */
@@ -592,7 +595,7 @@ export default function ImportPage() {
         <header>
           <h1 className="text-[26px] font-semibold tracking-tight text-ink-50">Import music</h1>
           <p className="mt-1 text-[14px] text-ink-300">
-            Audio is analyzed on your device with Spotify’s Basic Pitch neural network (or, for solo piano, an optional high-accuracy piano model).
+            Audio is analyzed on your device with Spotify’s Basic Pitch neural network (or an optional high-accuracy piano model: on its own for solo piano, or blended into Full song results for instrumental songs).
             Nothing is uploaded unless you use your own processing server.
             The result is an AI estimate —{' '}
             <Link to="/accuracy" className="text-accent-400 hover:text-accent-300">

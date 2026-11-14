@@ -108,10 +108,15 @@ export interface ImportRunOptions {
   pendingId?: string;
   /** transcription model (default: the user's high-accuracy piano model choice, see transcriberChoice) */
   transcriber?: TranscriptionEngine;
+  /** "Full song + piano model" (default: the user's choice, see pianoBlendChoice) */
+  pianoBlend?: boolean;
 }
 
-/** An interrupted-import record with the transcription model it was started with (absent in older records: Basic Pitch). */
-export type PendingWithTranscriber = PendingImport & { transcriber?: TranscriptionEngine };
+/**
+ * An interrupted-import record with the transcription model it was started with (absent in older
+ * records: Basic Pitch) and whether the piano-model blend was on (absent: off).
+ */
+export type PendingWithTranscriber = PendingImport & { transcriber?: TranscriptionEngine; pianoBlend?: boolean };
 
 /** Detection preset ids (mirrors settings.detectionPreset). */
 export type PresetId = 'piano' | 'mix' | 'sensitive' | 'custom';
@@ -123,6 +128,11 @@ export interface ImportPrefs {
   engine?: Partial<Record<PresetId, SeparationEngine>>;
   /** "High-accuracy piano model" picked (used with the "Piano solo" preset only; off unless ticked) */
   pianoModel?: boolean;
+  /**
+   * "Add the high-accuracy piano model" for the "Full song" preset (the piano-model blend), as the
+   * user last set it (absent: PIANO_BLEND_DEFAULT)
+   */
+  pianoBlend?: boolean;
   /** the sheet-music reader picked on the "MIDI / Sheet music" tab (absent: the device default, src/lib/omr/readers.ts) */
   sheetReader?: SheetReaderId;
 }
@@ -135,6 +145,8 @@ interface ImportState {
   setSeparatePref: (preset: PresetId, value: boolean, engine?: SeparationEngine | null) => void;
   /** remember the high-accuracy piano model choice */
   setPianoModelPref: (value: boolean) => void;
+  /** remember the "Full song + piano model" choice */
+  setPianoBlendPref: (value: boolean) => void;
   /** remember the sheet-music reader picked */
   setSheetReaderPref: (value: SheetReaderId) => void;
   /** the last failed import's retry and recording (cleared by the next import, Dismiss or Cancel) */
@@ -193,7 +205,7 @@ function loadPrefs(): ImportPrefs {
   }
 }
 
-/** The stored prefs (older records lack `engine`, `pianoModel` and `sheetReader`; anything unexpected is dropped). */
+/** The stored prefs (older records lack `engine`, `pianoModel`, `pianoBlend` and `sheetReader`; anything unexpected is dropped). */
 export function parsePrefs(raw: string | null): ImportPrefs {
   try {
     if (!raw) return { separate: {} };
@@ -205,7 +217,13 @@ export function parsePrefs(raw: string | null): ImportPrefs {
       const e = p.engine?.[k];
       if (e === 'server' || e === 'browser') engine[k] = e;
     }
-    return { separate: sep, engine, ...(p.pianoModel === true ? { pianoModel: true } : {}), ...(isSheetReaderId(p.sheetReader) ? { sheetReader: p.sheetReader } : {}) };
+    return {
+      separate: sep,
+      engine,
+      ...(p.pianoModel === true ? { pianoModel: true } : {}),
+      ...(typeof p.pianoBlend === 'boolean' ? { pianoBlend: p.pianoBlend } : {}),
+      ...(isSheetReaderId(p.sheetReader) ? { sheetReader: p.sheetReader } : {}),
+    };
   } catch {
     return { separate: {} };
   }
@@ -321,6 +339,47 @@ export function resumeTranscriber(
   return available && !constrained && !crashed ? 'piano-specialist' : 'basic-pitch';
 }
 
+// ---------------------------------------------------------------- "Full song + piano model"
+
+/**
+ * Whether "Add the high-accuracy piano model" starts ticked for the "Full song" preset on a device
+ * that can run it. Off: the tuned blend is better on every reference measured, but it misses some
+ * of its own bars (the band song's bridge, the share of added notes another transcriber confirms;
+ * docs/TRANSCRIPTION.md §3c), and it adds about 40 s per minute of audio, so it ships opt-in.
+ */
+export const PIANO_BLEND_DEFAULT = false;
+
+export interface PianoBlendAvailability {
+  /** the checkbox can be ticked */
+  available: boolean;
+  /** why not (UI text) */
+  reason?: string;
+}
+
+/**
+ * Where the piano-model blend can run: the piano model runs in this browser, the device is not
+ * memory-constrained (separation already takes ~2 GB; the piano model adds ~0.8 GB) and separation
+ * runs in this browser (server stems have no bass stem, and none means no other stem).
+ */
+export function pianoBlendAvailability(env: { specialist: boolean; constrained: boolean; browserSeparation: boolean }): PianoBlendAvailability {
+  if (!env.specialist) return { available: false, reason: 'Not available in this browser.' };
+  if (env.constrained) return { available: false, reason: 'Not recommended on this device: it needs about 0.8 GB more memory and may close the tab.' };
+  if (!env.browserSeparation) return { available: false, reason: 'Needs in-browser instrument separation.' };
+  return { available: true };
+}
+
+/** The blend's checkbox for `preset`: only "Full song"; the user's last choice, else PIANO_BLEND_DEFAULT; never where it cannot run. */
+export function pianoBlendChoice(prefs: ImportPrefs, preset: PresetId, avail: PianoBlendAvailability): boolean {
+  if (preset !== 'mix' || !avail.available) return false;
+  return prefs.pianoBlend ?? PIANO_BLEND_DEFAULT;
+}
+
+/** The device facts pianoBlendAvailability needs, for the page this runs in. */
+export function pageBlendEnv(browserSeparation: boolean): { specialist: boolean; constrained: boolean; browserSeparation: boolean } {
+  const device = pageDeviceInfo();
+  return { specialist: pianoSpecialistSupport().available, constrained: !!device && isMemoryConstrained(device), browserSeparation };
+}
+
 // ---------------------------------------------------------------- crash markers (in-browser separation, piano specialist)
 
 /**
@@ -407,6 +466,38 @@ function markSpecialist(pendingId: string | undefined): () => void {
   return setCrashMarker(SPECIALIST_RUNNING_KEY, SPECIALIST_RUNNING_LOCK, pendingId ? { pendingId } : {});
 }
 
+/** the piano-model blend's marker: { pendingId?, at } (set when the import moves from separation to the blend) */
+export const BLEND_RUNNING_KEY = 'piano2vision-piano-blend-running';
+const BLEND_RUNNING_LOCK = 'piano2vision-piano-blend-running';
+
+function markBlend(pendingId: string | undefined): () => void {
+  return setCrashMarker(BLEND_RUNNING_KEY, BLEND_RUNNING_LOCK, pendingId ? { pendingId } : {});
+}
+
+/** interrupted-import records whose piano-model blend took the tab down (resumed without it) */
+const crashedBlendRecords = new Set<string>();
+
+/** The notice after a tab died during the blend's piano model. */
+export const BLEND_CRASH_NOTICE = 'The piano model was turned off after the last import closed unexpectedly. You can turn it back on with “Add the high-accuracy piano model” under Full song on the Import page.';
+
+/**
+ * A tab that died while the blend's piano model ran: the blend is turned off (the pref), the record it
+ * left is resumed with separation on and the blend off (resumeBlend), and a toast says why.
+ */
+export async function checkCrashedBlend(turnOff: () => void): Promise<boolean> {
+  const m = await takeCrashMarker(BLEND_RUNNING_KEY, BLEND_RUNNING_LOCK);
+  if (!m) return false;
+  if (typeof m.pendingId === 'string') crashedBlendRecords.add(m.pendingId);
+  turnOff();
+  toast.warn('The piano model stopped the page', BLEND_CRASH_NOTICE);
+  return true;
+}
+
+/** Whether "Try again" for an interrupted-import record runs the blend: as it was started, unless the blend took that tab down. */
+export function resumeBlend(rec: Pick<PendingWithTranscriber, 'id' | 'pianoBlend'>, crashed: boolean = crashedBlendRecords.has(rec.id)): boolean {
+  return rec.pianoBlend === true && !crashed;
+}
+
 /** interrupted-import records whose high-accuracy piano model run took the tab down (resumed with the normal model) */
 const crashedSpecialistRecords = new Set<string>();
 
@@ -490,11 +581,13 @@ const TRANSCRIBE: ImportStage[] = ['decoding', 'loading-model', 'analyzing', 'ar
 /** the sheet-music reader: preparing the pages, the reader (download once), reading, then as a score */
 export const SHEET_PLAN: ImportStage[] = ['validating', 'loading-model', 'analyzing', 'arranging', 'saving'];
 const BROWSER_SEP: ImportStage[] = ['decoding', 'separating', 'loading-model', 'analyzing', 'arranging', 'saving'];
+/** in-browser separation with the piano-model blend: the piano model runs after pitch detection */
+const BROWSER_SEP_BLEND: ImportStage[] = ['decoding', 'separating', 'loading-model', 'analyzing', 'piano-model', 'arranging', 'saving'];
 const SERVER_SEP: ImportStage[] = ['uploading', 'separating', 'downloading', ...TRANSCRIBE];
 
-function planFor(kind: SongSource['kind'], sep: SeparationEngine | undefined, youtubeServer = false): ImportStage[] {
+function planFor(kind: SongSource['kind'], sep: SeparationEngine | undefined, youtubeServer = false, blend = false): ImportStage[] {
   if (kind === 'midi' || kind === 'demo' || kind === 'score') return ['validating', 'arranging', 'saving'];
-  const rest = sep === 'server' ? SERVER_SEP : sep === 'browser' ? BROWSER_SEP : TRANSCRIBE;
+  const rest = sep === 'server' ? SERVER_SEP : sep === 'browser' ? (blend ? BROWSER_SEP_BLEND : BROWSER_SEP) : TRANSCRIBE;
   // unique: a YouTube import via the server downloads twice (the video's audio, then the stems)
   return [...new Set<ImportStage>(['validating', ...(youtubeServer ? (['downloading'] as ImportStage[]) : []), ...rest])];
 }
@@ -539,6 +632,8 @@ interface Ctx {
   preset: PresetId;
   /** transcription model of this import */
   transcriber: TranscriptionEngine;
+  /** "Full song + piano model" asked for (used only where the pipeline can run it: pianoBlendRuns) */
+  blend: boolean;
   /** warnings from before transcription (kept in the song's warnings) */
   early: string[];
   signal: AbortSignal;
@@ -583,6 +678,7 @@ export const useImport = create<ImportState>((set, get) => {
     separation?: SeparationEngine,
     preset?: PresetId,
     transcriber?: TranscriptionEngine,
+    blendAsked?: boolean,
   ): Ctx => {
     get().controller?.abort();
     void current?.unpend?.();
@@ -611,10 +707,16 @@ export const useImport = create<ImportState>((set, get) => {
     const update = (patch: Partial<ImportJob>) => {
       if (!controller.signal.aborted) apply(id, patch);
     };
+    // the blend: Basic Pitch audio imports of the "Full song" preset only (the default: the user's choice)
+    const blend =
+      model === 'basic-pitch' && presetId === 'mix' && kind !== 'midi' && kind !== 'demo' && kind !== 'score'
+        ? (blendAsked ?? pianoBlendChoice(get().prefs, presetId, pianoBlendAvailability(pageBlendEnv(true))))
+        : false;
     const ctx: Ctx = {
       id,
       preset: presetId,
       transcriber: model,
+      blend,
       early: [],
       signal: controller.signal,
       update,
@@ -636,6 +738,7 @@ export const useImport = create<ImportState>((set, get) => {
     const full: PendingWithTranscriber = { ...rec, id, startedAt: Date.now(), presetId: ctx.preset };
     // Try again after a killed tab uses the same model (older records have no field: Basic Pitch)
     if (ctx.transcriber === 'piano-specialist') full.transcriber = ctx.transcriber;
+    if (ctx.blend) full.pianoBlend = true;
     const unpend = persistPending(full);
     ctx.unpend = unpend;
     ctx.pendingId = id;
@@ -791,9 +894,28 @@ export const useImport = create<ImportState>((set, get) => {
       opts = { separate: true };
     }
     if (ctx.transcriber === 'piano-specialist') opts = { ...opts, engine: 'piano-specialist' };
+    // the piano-model blend needs this browser's separation (its bass and other stems)
+    const blendHere = ctx.blend && !!opts.separate && !!pianoBlendAvailability(pageBlendEnv(true)).available;
     // in-browser separation and the piano specialist: leave a marker in case the tab dies of it (setCrashMarker)
-    const unmark =
+    let unmark =
       opts.engine === 'piano-specialist' ? markSpecialist(ctx.pendingId) : opts.separate ? markSeparating(ctx.preset) : () => {};
+    if (blendHere) {
+      // the blend's piano model runs after separation: the crash marker moves to it
+      opts = {
+        ...opts,
+        pianoBlend: true,
+        onPhase: (phase) => {
+          if (phase === 'piano-blend-skipped') {
+            // not run for this song (the pipeline's warning says why): no checkmark for a stage that never ran
+            const job = get().job;
+            if (job) update({ plan: job.plan.filter((st) => st !== 'piano-model') });
+            return;
+          }
+          unmark();
+          unmark = markBlend(ctx.pendingId);
+        },
+      };
+    }
     let result: Awaited<ReturnType<typeof transcribeAudio>>;
     try {
       result = await transcribeAudio(original, params, progress, signal, opts);
@@ -870,6 +992,12 @@ export const useImport = create<ImportState>((set, get) => {
     failed: null,
     prefs: loadPrefs(),
 
+    setPianoBlendPref: (value) => {
+      const prefs: ImportPrefs = { ...get().prefs, pianoBlend: value };
+      set({ prefs });
+      savePrefs(prefs);
+    },
+
     setPianoModelPref: (value) => {
       const { pianoModel: _old, ...rest } = get().prefs;
       const prefs: ImportPrefs = value ? { ...rest, pianoModel: true } : rest;
@@ -932,7 +1060,7 @@ export const useImport = create<ImportState>((set, get) => {
         }
       }
       // start the job right away (the page shows it), then decide where separation runs
-      const ctx = start(title, 'audio', planFor('audio', undefined), undefined, opts.presetId, opts.transcriber);
+      const ctx = start(title, 'audio', planFor('audio', undefined), undefined, opts.presetId, opts.transcriber, opts.pianoBlend);
       let separate = opts.separate;
       try {
         separate ??= await defaultSeparate();
@@ -954,11 +1082,11 @@ export const useImport = create<ImportState>((set, get) => {
         });
         const engine = await pickEngine(separate);
         if (ctx.signal.aborted) return null;
-        ctx.update({ plan: planFor('audio', engine), separation: engine });
+        ctx.update({ plan: planFor('audio', engine, false, ctx.blend), separation: engine });
         return await transcribeAndSave(ctx, file, { title, source, fileName: file.name, keepVideo: opts.keepVideo }, engine);
       } catch (err) {
         const again = (transcriber: TranscriptionEngine) => () =>
-          get().importFile(file, { ...opts, separate, presetId: ctx.preset, transcriber, pendingId: undefined });
+          get().importFile(file, { ...opts, separate, presetId: ctx.preset, transcriber, pianoBlend: ctx.blend, pendingId: undefined });
         return fail(ctx, err, { retry: () => again(retryModel(ctx))(), retryFast: withFast(ctx, again('basic-pitch')) });
       }
     },
@@ -1094,7 +1222,7 @@ export const useImport = create<ImportState>((set, get) => {
     },
 
     importAudioBlob: async (blob, meta) => {
-      const ctx = start(meta.title, meta.source.kind, planFor(meta.source.kind, undefined), undefined, meta.presetId, meta.transcriber);
+      const ctx = start(meta.title, meta.source.kind, planFor(meta.source.kind, undefined), undefined, meta.presetId, meta.transcriber, meta.pianoBlend);
       const fileName = recordingName(meta.title, blob.type);
       let separate = !!meta.separate;
       try {
@@ -1115,11 +1243,11 @@ export const useImport = create<ImportState>((set, get) => {
         });
         const engine = await pickEngine(separate);
         if (ctx.signal.aborted) return null;
-        ctx.update({ plan: planFor(meta.source.kind, engine), separation: engine });
+        ctx.update({ plan: planFor(meta.source.kind, engine, false, ctx.blend), separation: engine });
         return await transcribeAndSave(ctx, blob, { ...meta, fileName }, engine);
       } catch (err) {
         const again = (transcriber: TranscriptionEngine) => () =>
-          get().importAudioBlob(blob, { ...meta, presetId: ctx.preset, transcriber, pendingId: undefined });
+          get().importAudioBlob(blob, { ...meta, presetId: ctx.preset, transcriber, pianoBlend: ctx.blend, pendingId: undefined });
         return fail(ctx, err, {
           retry: () => again(retryModel(ctx))(),
           retryFast: withFast(ctx, again('basic-pitch')),
@@ -1157,11 +1285,13 @@ export const useImport = create<ImportState>((set, get) => {
       // the model it was started with (older records: Basic Pitch), unless that model took the tab down
       await crashChecks;
       const transcriber = resumeTranscriber(rec as PendingWithTranscriber);
+      // the blend as it was started, unless it took that tab down (then separation stays on, the blend off)
+      const pianoBlend = resumeBlend(rec as PendingWithTranscriber);
       if (rec.kind === 'audio') {
         const file = new File([rec.blob], rec.fileName, { type: rec.mimeType || rec.blob.type });
-        return get().importFile(file, { title: rec.title, separate, presetId, transcriber, pendingId: rec.id });
+        return get().importFile(file, { title: rec.title, separate, presetId, transcriber, pianoBlend, pendingId: rec.id });
       }
-      return get().importAudioBlob(rec.blob, { title: rec.title, artist: rec.artist, source: rec.source, separate, presetId, transcriber, pendingId: rec.id });
+      return get().importAudioBlob(rec.blob, { title: rec.title, artist: rec.artist, source: rec.source, separate, presetId, transcriber, pianoBlend, pendingId: rec.id });
     },
 
     importYouTubeViaServer: async (videoUrl, videoId, separate, meta) => {
@@ -1330,6 +1460,7 @@ if (typeof window !== 'undefined') {
       void Promise.all([
         checkCrashedSeparation((preset) => useImport.getState().setSeparatePref(preset, false, 'browser')),
         checkCrashedSpecialist(() => useImport.getState().setPianoModelPref(false)),
+        checkCrashedBlend(() => useImport.getState().setPianoBlendPref(false)),
       ])
         .catch(() => undefined)
         .then(() => resolve());
@@ -1419,6 +1550,7 @@ export const STAGE_LABELS: Record<ImportStage, string> = {
   decoding: 'Decoding audio',
   'loading-model': 'Loading AI model',
   analyzing: 'Detecting notes',
+  'piano-model': 'Piano model: keyboard parts and in-between notes',
   extracting: 'Extracting notes',
   arranging: 'Building arrangements',
   saving: 'Saving',

@@ -6,7 +6,7 @@ import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, Wand2 } from 'lucide-r
 import { useStudio } from '../../../state/studioStore';
 import { detectionParams } from '../../../state/settingsStore';
 import { getPosteriors } from '../../../lib/storage/db';
-import { redetectNotes, withLeadPass, EXTRACTION_PRESETS } from '../../../lib/transcription/pipeline';
+import { blendAddedNotes, redetectNotes, redetectedBlendInfo, withLeadPass, EXTRACTION_PRESETS } from '../../../lib/transcription/pipeline';
 import { regularBeats } from '../../../lib/music/beats';
 import { detectKey } from '../../../lib/music/theory';
 import { generateAllArrangements } from '../../../lib/music/difficulty';
@@ -79,13 +79,17 @@ export function ArrangementPanel() {
       const tempo = song.tempo.source === 'manual' ? song.tempo : det.tempo;
       const { sheet: _sheet, ...rest } = song;
       void _sheet;
+      // the piano-model blend runs again only where it can (Full song preset, no sung line)
+      const info = { ...t };
+      delete info.pianoBlend;
+      const pianoBlend = redetectedBlendInfo(t.pianoBlend, det.blend);
       replaceSong({
         ...rest,
         base: notes,
         tempo,
         key: detectKey(notes),
         arrangements: generateAllArrangements(notes, song.basePedal, tempo, song.duration, arrangementOptions(song)),
-        transcription: { ...t, params },
+        transcription: { ...info, params, ...(pianoBlend ? { pianoBlend } : {}) },
         thumbnail: makeThumbnail(notes, song.duration),
         updatedAt: Date.now(),
       });
@@ -177,6 +181,12 @@ export function ArrangementPanel() {
               <dd className="text-right text-ink-100">
                 {t.method === 'piano-specialist' ? 'Piano model (Kong et al.)' : 'Basic Pitch'} · {t.backend.toUpperCase()}
               </dd>
+            </>
+          )}
+          {blendAddedNotes(t.pianoBlend) && (
+            <>
+              <dt className="text-ink-300">Detection</dt>
+              <dd className="text-right text-ink-100">Full song + piano model</dd>
             </>
           )}
           {t.processingMs !== undefined && (

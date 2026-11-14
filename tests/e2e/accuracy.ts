@@ -3,14 +3,18 @@
 // Preset 'specialist' = the high-accuracy piano model engine (TranscribeOptions.engine
 // 'piano-specialist': the ByteDance piano model in its own worker; Basic Pitch's detection
 // parameters do not apply, so `params` is null and there are no posteriors).
+// Preset 'mix-blend' = "Full song + piano model" (the Full song preset with TranscribeOptions.pianoBlend:
+// the piano model on the separated other stem, blended in; needs --separate). Its piano-model notes come
+// back packed (`specialistNotes`, 6 numbers each) so the harness can cache them (--specialist-notes).
 import { transcribeAudio, EXTRACTION_PRESETS } from '../../src/lib/transcription/pipeline';
+import { unpackSpecNotes } from '../../src/lib/music/pianoBlend';
 import { generateAllArrangements } from '../../src/lib/music/difficulty';
 import type { Note } from '../../src/lib/music/types';
 
-type Preset = keyof typeof EXTRACTION_PRESETS | 'specialist';
+type Preset = keyof typeof EXTRACTION_PRESETS | 'specialist' | 'mix-blend';
 
 const slim = (notes: Note[]) =>
-  notes.map((n) => ({ midi: n.midi, start: +n.start.toFixed(4), dur: +n.dur.toFixed(4), vel: +n.vel.toFixed(3), hand: n.hand, ...(n.role ? { role: n.role } : {}) }));
+  notes.map((n) => ({ midi: n.midi, start: +n.start.toFixed(4), dur: +n.dur.toFixed(4), vel: +n.vel.toFixed(3), hand: n.hand, ...(n.role ? { role: n.role } : {}), ...(n.src ? { src: n.src } : {}) }));
 
 function toB64(u8: Uint8Array): string {
   let s = '';
@@ -18,7 +22,7 @@ function toB64(u8: Uint8Array): string {
   return btoa(s);
 }
 
-async function transcribeUrl(url: string, preset: Preset, withPosteriors = false, separate = false) {
+async function transcribeUrl(url: string, preset: Preset, withPosteriors = false, separate = false, specialistNotes?: number[], pianoModelUrl?: string) {
   const t0 = performance.now();
   const blob = await (await fetch(url)).blob();
   const fetchMs = performance.now() - t0;
@@ -26,7 +30,8 @@ async function transcribeUrl(url: string, preset: Preset, withPosteriors = false
   let last = performance.now();
   let lastStage = '';
   const specialist = preset === 'specialist';
-  const params = specialist ? EXTRACTION_PRESETS.piano : EXTRACTION_PRESETS[preset];
+  const blend = preset === 'mix-blend';
+  const params = specialist ? EXTRACTION_PRESETS.piano : blend ? EXTRACTION_PRESETS.mix : EXTRACTION_PRESETS[preset];
   const t1 = performance.now();
   const res = await transcribeAudio(
     blob,
@@ -40,7 +45,12 @@ async function transcribeUrl(url: string, preset: Preset, withPosteriors = false
       }
     },
     undefined,
-    specialist ? { engine: 'piano-specialist' } : { separate },
+    specialist
+      ? { engine: 'piano-specialist' }
+      : {
+          separate,
+          ...(blend ? { pianoBlend: true, ...(specialistNotes ? { specialistNotes: unpackSpecNotes(specialistNotes) } : {}), ...(pianoModelUrl ? { pianoModelUrl } : {}) } : {}),
+        },
   );
   const transcribeMs = performance.now() - t1;
   if (lastStage) stageTimes[lastStage] = (stageTimes[lastStage] ?? 0) + performance.now() - last;
@@ -67,6 +77,7 @@ async function transcribeUrl(url: string, preset: Preset, withPosteriors = false
     easy: slim(arr.easy.notes),
     medium: slim(arr.medium.notes),
     hard: slim(arr.hard.notes),
+    specialistNotes: res.posteriors?.specialist ? Array.from(res.posteriors.specialist) : undefined,
     posteriors: withPosteriors && res.posteriors
       ? { nFrames: res.posteriors.nFrames, frames: toB64(res.posteriors.frames), onsets: toB64(res.posteriors.onsets) }
       : undefined,
