@@ -1,12 +1,14 @@
 import { Suspense, lazy, useEffect, useRef, useState, type ComponentType } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { FileAudio, FileMusic, Mic, Loader2, CheckCircle2, XCircle, Circle, ArrowRight, Square, Info, RotateCcw, Download, Smartphone, MonitorSpeaker, Gamepad2 } from 'lucide-react';
+import { FileAudio, FileMusic, Mic, Square, Smartphone, MonitorSpeaker } from 'lucide-react';
 import { Dropzone } from '../components/import/Dropzone';
 import { SeparationOption, useSeparationChoice } from '../components/import/SeparationOption';
 import { PianoModelOption, usePianoBlendChoice, usePianoModelChoice } from '../components/import/PianoModelOption';
 import type { TranscriptionEngine } from '../lib/transcription/pipeline';
-import { Button, ProgressBar, Segmented, cn } from '../components/ui';
-import { STAGE_LABELS, stageLabel, transcriberChoice, useImport, type ImportJob, type ImportStage } from '../state/importStore';
+import { Button, cn } from '../components/ui';
+import { transcriberChoice, useImport, type PresetId } from '../state/importStore';
+import { JobProgress } from '../components/import/JobProgress';
+import { DetectionOptions } from '../components/import/DetectionOptions';
 import { SheetMusicTab } from '../components/import/SheetMusicTab';
 import { HandsVideoImport } from '../components/import/HandsVideoImport';
 import { useSettings } from '../state/settingsStore';
@@ -14,10 +16,8 @@ import { NO_SOUND_SHARED, TERMS_NOTE, startTabAudioCapture, tabAudioSupport, typ
 import { formatTime } from '../lib/music/theory';
 import { toast } from '../state/toastStore';
 import { createScreenWakeLock, isTouchDevice } from '../lib/wakeLock';
-import { saveBlobAs } from '../lib/saveBlob';
 import { audioSessionForRecording } from '../lib/audio/audioSession';
 import { holdReload } from '../lib/newVersion';
-import { offerGame } from '../lib/games/offer';
 
 // the mini-games load only when opened (their own chunk); offline, the button just says so
 const GameOverlay = lazy<ComponentType<{ jobId: number; onClose: () => void; onOpenSong: (songId: string) => void }>>(() =>
@@ -33,223 +33,6 @@ const GameOverlay = lazy<ComponentType<{ jobId: number; onClose: () => void; onO
 );
 
 type Tab = 'audio' | 'computer' | 'midi' | 'record';
-
-function DetectionOptions() {
-  const preset = useSettings((s) => s.detectionPreset);
-  const set = useSettings((s) => s.set);
-  const descriptions: Record<string, string> = {
-    piano: 'Best for solo piano recordings. Tuned to ignore ringing strings and reverb.',
-    mix: 'For full songs with vocals, drums and band. Follows sustained melody lines.',
-    sensitive: 'Catches quiet and fast notes, at the cost of more false notes to clean up.',
-    custom: 'Your custom thresholds from Settings.',
-  };
-  return (
-    <div className="flex flex-col gap-2">
-      <span className="text-[12.5px] font-medium text-ink-200">What kind of recording is it?</span>
-      <Segmented
-        ariaLabel="Detection preset"
-        value={preset}
-        onChange={(v) => set({ detectionPreset: v })}
-        options={[
-          { value: 'piano', label: 'Piano solo' },
-          { value: 'mix', label: 'Full song' },
-          { value: 'sensitive', label: 'Sensitive' },
-        ]}
-      />
-      <p className="text-[12px] text-ink-300">{descriptions[preset]}</p>
-      <PianoModelOption className="mt-1" />
-    </div>
-  );
-}
-
-/** Timeline: the planned stages, with any unplanned stage that actually happened slotted in where it happened. */
-function timeline(job: ImportJob): ImportStage[] {
-  const order = [...job.plan];
-  job.history.forEach((st, i) => {
-    if (st === 'done' || st === 'error' || order.includes(st)) return;
-    // right after the stage that preceded it
-    const prev = i > 0 ? order.indexOf(job.history[i - 1]) : -1;
-    order.splice(prev + 1, 0, st);
-  });
-  return order;
-}
-
-function formatEta(sec: number): string {
-  if (sec < 15) return 'a few seconds left';
-  if (sec < 60) return `about ${Math.round(sec / 5) * 5} s left`;
-  const m = Math.round(sec / 60);
-  return m <= 1 ? 'about 1 min left' : `about ${m} min left`;
-}
-
-/**
- * The step the speed measurement covers ("separation", "pitch detection 1 of 2"): the ETA is for
- * this step only, so it says which one (more steps follow, see the checklist below the bar).
- */
-/** "reading: 1 min left" → "Reading: 1 min left" (the sheet reader's plain progress line) */
-const sentence = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-
-function etaStep(job: Pick<ImportJob, 'stage' | 'detail' | 'transcriber' | 'sheet'>): string {
-  const part = job.detail?.match(/\((\d+) of (\d+)\)/);
-  if (job.sheet) return job.stage === 'analyzing' ? 'reading' : job.stage === 'loading-model' ? 'download' : stageLabel(job, job.stage).toLowerCase();
-  switch (job.stage) {
-    case 'separating':
-      return 'separation';
-    case 'loading-model':
-      return job.transcriber === 'piano-specialist' ? 'loading the piano model' : STAGE_LABELS[job.stage].toLowerCase();
-    case 'piano-model':
-      return 'piano model';
-    case 'analyzing':
-      if (job.transcriber === 'piano-specialist') return 'piano model';
-      return part ? `pitch detection ${part[1]} of ${part[2]}` : 'pitch detection';
-    case 'downloading':
-      return 'download';
-    case 'uploading':
-      return 'upload';
-    default:
-      return STAGE_LABELS[job.stage].toLowerCase();
-  }
-}
-
-/** time remaining in the current step, extrapolated from its measured speed (null until measured) */
-function etaText(job: ImportJob): string | null {
-  const r = job.rate;
-  if (!r || r.etaSec === undefined || r.at === undefined) return null;
-  const left = r.etaSec - (Date.now() - r.at) / 1000;
-  return `${etaStep(job)}: ${left > 0 ? formatEta(left) : 'finishing…'}`;
-}
-
-function JobProgress({ onPlayGame }: { onPlayGame: () => void }) {
-  const job = useImport((s) => s.job);
-  const cancel = useImport((s) => s.cancel);
-  const clear = useImport((s) => s.clear);
-  const failed = useImport((s) => s.failed);
-  // a failed high-accuracy run: offer the fast model while the high-accuracy one is still selected
-  const pianoModelSelected = useImport((s) => s.prefs.pianoModel === true);
-  const navigate = useNavigate();
-  const [touch] = useState(isTouchDevice);
-  const [, force] = useState(0);
-  // a new import: bring its card into view (on a phone the button that started it is far below)
-  const card = useRef<HTMLDivElement>(null);
-  const jobId = job?.id;
-  useEffect(() => {
-    if (jobId !== undefined) card.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
-  }, [jobId]);
-  useEffect(() => {
-    const t = setInterval(() => force((x) => x + 1), 500);
-    return () => clearInterval(t);
-  }, []);
-  if (!job) return null;
-  const order = timeline(job);
-  const failedStage = job.stage === 'error' ? job.history[job.history.length - 2] : null;
-  const current = failedStage ?? job.stage;
-  const activeIdx = order.indexOf(current);
-  const eta = etaText(job);
-  const elapsed = ((job.finishedAt ?? Date.now()) - job.startedAt) / 1000;
-  const done = job.stage === 'done';
-  const err = job.stage === 'error';
-  const failedHere = err && failed?.jobId === job.id ? failed : null;
-  return (
-    <div ref={card} data-import-card tabIndex={-1} className="panel animate-fade-in scroll-mt-4 p-5 outline-none" aria-live="polite">
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <p className="truncate text-[15px] font-semibold text-ink-50">{job.title}</p>
-          <p className="mt-0.5 text-[12.5px] text-ink-300">
-            {done ? (job.kind === 'score' || job.kind === 'midi' ? 'Ready' : 'Transcription complete') : err ? 'Import failed' : job.detail ? `${job.detail}${job.sheet && job.stage !== 'saving' ? '…' : ''}` : stageLabel(job, job.stage)} · {formatTime(elapsed)}
-          </p>
-        </div>
-        {!done && !err && (
-          <Button size="sm" variant="ghost" onClick={cancel}>
-            Cancel
-          </Button>
-        )}
-      </div>
-      {!done && !err && (
-        <div className="mt-4">
-          <ProgressBar value={job.progress} />
-          {touch && job.kind !== 'midi' && job.kind !== 'demo' && (job.kind !== 'score' || job.sheet) && (
-            <p className="mt-2 flex items-center gap-1.5 text-[12px] text-ink-300">
-              <Smartphone size={13} className="shrink-0 text-accent-400" /> {job.sheet ? 'Keep this page open while it reads the music.' : 'Keep this page open while it’s analyzing.'}
-            </p>
-          )}
-          {job.progress !== null && (
-            <p className={cn('mt-1.5 flex justify-between gap-3 text-ink-300', job.sheet ? 'text-[12px]' : 'font-mono text-[11px]')}>
-              <span>
-                {job.sheet
-                  ? sentence(eta ?? (job.stage === 'analyzing' && job.progress < 0.99 ? 'Working out the time left…' : ''))
-                  : (eta ?? ((job.stage === 'separating' || job.stage === 'analyzing' || job.stage === 'piano-model') && job.progress < 0.99 ? `${etaStep(job)}: measuring speed…` : ''))}
-              </span>
-              <span>{Math.round(job.progress * 100)}%</span>
-            </p>
-          )}
-          {offerGame(job, Date.now()) && (
-            <Button size="sm" className="mt-3" onClick={onPlayGame} icon={<Gamepad2 size={15} />}>
-              Play a game while you wait
-            </Button>
-          )}
-        </div>
-      )}
-      <ol className="mt-4 grid gap-1.5 sm:grid-cols-2">
-        {order.map((st, i) => {
-          const state =
-            done ? 'done' : st === current ? (err ? 'failed' : 'active') : i < activeIdx || job.history.includes(st) ? 'done' : 'todo';
-          return (
-            <li key={st} className="flex items-center gap-2 text-[12.5px]">
-              {state === 'done' ? <CheckCircle2 size={14} className="text-ok" /> : state === 'active' ? <Loader2 size={14} className="animate-spin text-accent-400" /> : state === 'failed' ? <XCircle size={14} className="text-bad" /> : <Circle size={14} className="text-ink-500" />}
-              <span className={state === 'todo' ? 'text-ink-400' : 'text-ink-100'}>{stageLabel(job, st)}</span>
-            </li>
-          );
-        })}
-      </ol>
-      {err && <p className="mt-4 rounded-lg border border-bad/30 bg-bad/10 px-3 py-2 text-[13px] text-bad">{job.error}</p>}
-      {done && job.sheet && (
-        <p className="mt-4 flex gap-2 text-[12.5px] text-ink-200">
-          <Info size={14} className="mt-0.5 shrink-0 text-warn" /> Read from sheet music{job.sheetReader === 'accurate' ? '' : ' (Beta)'} — check the notes against your page.
-        </p>
-      )}
-      {job.warnings.length > 0 && (
-        <ul className="mt-4 flex flex-col gap-1">
-          {job.warnings.map((w) => (
-            <li key={w} className="flex gap-2 text-[12.5px] text-warn">
-              <Info size={14} className="mt-0.5 shrink-0" /> {w}
-            </li>
-          ))}
-        </ul>
-      )}
-      {(done || err) && (
-        <div className="mt-4 flex flex-wrap gap-2">
-          {done && job.songId && (
-            <Button variant="primary" onClick={() => navigate(`/studio/${job.songId}`)} icon={<ArrowRight size={16} />}>
-              Open in Piano Studio
-            </Button>
-          )}
-          {err && failedHere && (
-            <Button variant="primary" onClick={() => void failedHere.retry()} icon={<RotateCcw size={15} />}>
-              Try again
-            </Button>
-          )}
-          {err && failedHere?.retryQuick && (
-            <Button onClick={() => void failedHere.retryQuick!()} icon={<RotateCcw size={15} />}>
-              Use the Quick reader
-            </Button>
-          )}
-          {err && failedHere?.retryFast && pianoModelSelected && (
-            <Button onClick={() => void failedHere.retryFast!()} icon={<RotateCcw size={15} />}>
-              Try with the normal model
-            </Button>
-          )}
-          {err && failedHere?.recording && (
-            <Button onClick={() => saveBlobAs(failedHere.recording!.blob, failedHere.recording!.fileName)} icon={<Download size={15} />}>
-              Download recording
-            </Button>
-          )}
-          <Button variant="ghost" onClick={clear}>
-            {err ? 'Dismiss' : 'Import another'}
-          </Button>
-        </div>
-      )}
-    </div>
-  );
-}
 
 /** A link to another tab of this page. */
 function TabLink({ tab, children }: { tab: Tab; children: string }) {
@@ -415,6 +198,11 @@ function RecordTab({ busy }: { busy: boolean }) {
   const chunks = useRef<Blob[]>([]);
   const [, tick] = useState(0);
   const importBlob = useImport((s) => s.importAudioBlob);
+  // "Remove singing and drums" for the recording (Piano solo's remembered choice; read at stop time)
+  const sep = useSeparationChoice('piano');
+  const model = usePianoModelChoice(true);
+  const separateRef = useRef(sep.checked);
+  separateRef.current = sep.checked;
   const [touch] = useState(isTouchDevice);
   // a phone that auto-locks mid-recording suspends the page (and the microphone): keep the screen on
   // while recording; the import holds its own lock from "Stop & transcribe" on (importStore.ts)
@@ -464,15 +252,18 @@ function RecordTab({ busy }: { busy: boolean }) {
         const blob = new Blob(chunks.current, { type: r.mimeType || 'audio/webm' });
         // the Blob holds the data now: don't keep a second reference to every chunk
         chunks.current = [];
-        // the current preset with Basic Pitch, or (ticked below) the high-accuracy piano model with the
-        // "Piano solo" preset; read at stop time so a tick during the recording counts
+        // the current preset with Basic Pitch, or (ticked below) the high-accuracy piano model and / or
+        // "Remove singing and drums" with the "Piano solo" preset; read at stop time so a tick during
+        // the recording counts
         const transcriber = transcriberChoice(useImport.getState().prefs, 'piano');
-        const piano = transcriber === 'piano-specialist';
+        const separate = separateRef.current;
+        const piano = transcriber === 'piano-specialist' || separate;
         void importBlob(blob, {
           title: `Recording ${new Date().toLocaleString()}`,
           source: { kind: 'capture', mimeType: blob.type, fileSize: blob.size },
           transcriber,
           ...(piano ? { presetId: 'piano' as const } : {}),
+          ...(separate ? { separate: true } : {}),
         });
         // the import has asked for its own lock by now (importStore.ts)
         void wake.hold(false);
@@ -489,7 +280,6 @@ function RecordTab({ busy }: { busy: boolean }) {
   return (
     <div className="flex flex-col items-center gap-4 py-8 text-center">
       <p className="max-w-md text-[13px] text-ink-300">Play piano (or anything) into your microphone. A quiet room and a close mic give the best transcription.</p>
-      <PianoModelOption alwaysOffered className="w-full max-w-md" />
       {rec ? (
         <>
           <div className="flex items-center gap-2 text-[14px] text-ink-50">
@@ -509,6 +299,10 @@ function RecordTab({ busy }: { busy: boolean }) {
           Start recording
         </Button>
       )}
+      {/* the options sit below the button, so "Start recording" stays in view on a phone; both are read at
+          stop time, so a tick while recording still counts */}
+      <PianoModelOption alwaysOffered className="w-full max-w-md" />
+      <SeparationOption preset="piano" pianoModel={model.transcriber === 'piano-specialist'} className="w-full max-w-md text-left" />
     </div>
   );
 }
@@ -517,14 +311,22 @@ export default function ImportPage() {
   const [params] = useSearchParams();
   const tab: Tab = (params.get('tab') as Tab) || 'audio';
   const job = useImport((s) => s.job);
+  const failed = useImport((s) => s.failed);
+  const cancel = useImport((s) => s.cancel);
+  const clear = useImport((s) => s.clear);
+  // a failed high-accuracy run: offer the fast model while the high-accuracy one is still selected
+  const pianoModelSelected = useImport((s) => s.prefs.pianoModel === true);
   const importFile = useImport((s) => s.importFile);
   const navigate = useNavigate();
+  const preset = useSettings((s) => s.detectionPreset) as PresetId;
+  const setSettings = useSettings((s) => s.set);
+  const detection = <DetectionOptions value={preset} onChange={(v) => setSettings({ detectionPreset: v })} />;
   const sep = useSeparationChoice();
   const model = usePianoModelChoice();
   const blend = usePianoBlendChoice();
-  // the piano model is for solo piano: separation is not used with it
+  // (the piano model is only offered with Piano solo, where separation is "Remove singing and drums": both work together)
   const pianoModel = model.transcriber === 'piano-specialist';
-  const separate = sep.checked && !pianoModel;
+  const separate = sep.checked;
   const busy = !!job && job.stage !== 'done' && job.stage !== 'error';
 
   // "Play a game while you wait": the import it was opened for
@@ -557,7 +359,8 @@ export default function ImportPage() {
     }
   }, [job?.stage, job?.songId, job?.id, navigate]);
   useEffect(() => {
-    if (busy && startedHere.current === null && job) startedHere.current = job.id;
+    // (an "Analyze again" started in the Studio stays there: its card says where the song is)
+    if (busy && startedHere.current === null && job && !job.reanalyze) startedHere.current = job.id;
   }, [busy, job]);
 
   const onFile = (f: File) => {
@@ -605,7 +408,17 @@ export default function ImportPage() {
           </p>
         </header>
 
-        {job && <JobProgress onPlayGame={openGame} />}
+        {job && (
+          <JobProgress
+            job={job}
+            failed={failed}
+            onCancel={cancel}
+            onDismiss={clear}
+            onOpen={(songId) => navigate(`/studio/${songId}`)}
+            onPlayGame={openGame}
+            pianoModelSelected={pianoModelSelected}
+          />
+        )}
         {gameFor !== null && (
           <Suspense fallback={<div className="fixed inset-0 z-[58] bg-ink-950" aria-busy="true" />}>
             <GameOverlay jobId={gameFor} onClose={closeGame} onOpenSong={(id) => navigate(`/studio/${id}`)} />
@@ -634,8 +447,8 @@ export default function ImportPage() {
               <div className="flex flex-col gap-5">
                 <Dropzone onFile={onFile} />
                 <HandsVideoImport busy={busy} pianoModelOn={pianoModel} onVideo={onHandsVideo} />
-                <DetectionOptions />
-                <SeparationOption unusedReason={pianoModel ? 'Not used with the high-accuracy piano model.' : undefined} />
+                {detection}
+                <SeparationOption pianoModel={pianoModel} />
                 <p className="text-[12px] text-ink-400">Up to 20 minutes / 300 MB (videos of you playing: up to 4 GB). Longer files: trim first. Video files use their audio track.</p>
               </div>
             )}
@@ -644,8 +457,8 @@ export default function ImportPage() {
                 <ComputerTab busy={busy} separate={separate} transcriber={model.transcriber} />
                 {tabAudioSupport() === 'ok' && (
                   <>
-                    <DetectionOptions />
-                    <SeparationOption unusedReason={pianoModel ? 'Not used with the high-accuracy piano model.' : undefined} />
+                    {detection}
+                    <SeparationOption pianoModel={pianoModel} />
                   </>
                 )}
               </div>

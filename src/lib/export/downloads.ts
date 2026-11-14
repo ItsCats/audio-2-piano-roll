@@ -1,6 +1,7 @@
 import { sanitizeSheetData } from '../sheet/sanitize';
 import type { Difficulty, Song } from '../music/types';
 import { exportMidi } from '../music/midi';
+import { tempoQpm } from '../music/beats';
 import { renderOfflineChunks } from '../audio/offlineRender';
 import { WavWriter } from '../audio/wav';
 import type { AudioSettings } from '../audio/types';
@@ -11,6 +12,12 @@ export function safeFileName(s: string): string {
   return s.replace(/[\\/:*?"<>|]+/g, '').replace(/\s+/g, ' ').trim().slice(0, 80) || 'piano2vision';
 }
 
+/**
+ * How long a download's link stays valid. Safari on iPhone first asks "Do you want to download…?" and
+ * reads the file only after the tap: a link revoked before that gives a failed or empty download.
+ */
+export const DOWNLOAD_URL_LIFETIME_MS = 10 * 60_000;
+
 export function downloadBlob(blob: Blob, name: string): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -19,14 +26,16 @@ export function downloadBlob(blob: Blob, name: string): void {
   document.body.appendChild(a);
   a.click();
   a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  setTimeout(() => URL.revokeObjectURL(url), DOWNLOAD_URL_LIFETIME_MS);
 }
 
 export async function downloadMidi(song: Song, difficulty: Difficulty): Promise<void> {
   const arr = song.arrangements[difficulty];
   // key, time and tempo changes placed on the sheet go in as meta events (songs without: unchanged)
   const meta = song.sheet ? (await import('../sheet/midiMeta')).sheetMidiMeta(song, difficulty) : undefined;
-  const bytes = exportMidi(arr.notes, arr.pedal, song.tempo, song.title, meta);
+  // the file's tempo in quarters per minute (older MIDI-file songs stored the file's as bpm)
+  const tempo = { ...song.tempo, qpm: tempoQpm(song.tempo, song.transcription?.method === 'midi-file') };
+  const bytes = exportMidi(arr.notes, arr.pedal, tempo, song.title, meta);
   downloadBlob(new Blob([bytes as BlobPart], { type: 'audio/midi' }), `${safeFileName(song.title)} (${difficulty}).mid`);
 }
 

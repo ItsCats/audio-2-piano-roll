@@ -5,11 +5,11 @@ A small FastAPI service that adds two capabilities to the web app:
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /` | name, version, license (`AGPL-3.0-or-later`) and a link to the source code |
-| `GET /api/health` | version, license, source link and enabled features (`features.separation`, `features.stems`, `features.youtube`) |
+| `GET /api/health` | version, license, source link and enabled features (`features.separation`, `features.stems`, `features.otherStem`, `features.youtube`) |
 | `POST /api/jobs/youtube` `{url, separate}` | fetch a YouTube video's audio with yt-dlp; with `separate: true` also split it into stems |
-| `POST /api/jobs/separate` (multipart `file`) | SCNet source separation: a **vocal stem** and the **accompaniment without drums or vocals** (bass + other) |
+| `POST /api/jobs/separate` (multipart `file`) | SCNet source separation: a **vocal stem**, the **accompaniment without drums or vocals** (bass + other) and its **other** stem alone (no bass) |
 | `GET /api/jobs/{id}` | status, stage (`decoding` → `separating` → `encoding`), real per-segment progress, available `stems`, `separationMs` (the server's separation time). A YouTube job whose separation fails still finishes as `done` with only the `mix` stem and the reason in `separationError`, so the client can separate that audio itself without a second download. |
-| `GET /api/jobs/{id}/audio?stem=vocals\|accomp\|mix` | a result file. Stems are mono 22.05 kHz FLAC, sample-aligned with the mixture; `mix` (YouTube) is AAC/M4A. Without `stem`: the accompaniment for separation jobs, the mix for plain YouTube jobs (what pre-2.0 clients expect). |
+| `GET /api/jobs/{id}/audio?stem=vocals\|accomp\|other\|mix` | a result file. Stems are mono 22.05 kHz FLAC, sample-aligned with the mixture: `vocals`, `accomp` (bass + other: no drums, no vocals) and `other` (accomp without the bass: what the app's "Remove singing and drums" under Piano solo transcribes; `/api/health` reports `features.otherStem`, and an app talking to an older server without it uses `accomp` with a notice); `mix` (YouTube) is AAC/M4A. Without `stem`: the accompaniment for separation jobs, the mix for plain YouTube jobs (what pre-2.0 clients expect). |
 
 The web app still does the transcription: it puts the sung melody (vocal stem) on the right hand and
 transcribes the drum-less accompaniment for the rest. The browser can run the same separation itself
@@ -86,7 +86,7 @@ docker run -p 8000:8000 -e SHARED_SECRET=change-me -e ALLOWED_ORIGINS=https://yo
 | `MAX_DURATION_SEC` | `1200` | longest accepted audio |
 | `JOBS_PER_HOUR_PER_IP` | `20` | simple rate limit |
 | `JOB_TTL_SEC` | `3600` | results are deleted after this |
-| `WORKERS` | `1` | concurrent jobs (each separation needs ≈ 1.7 GB RAM plus 50–100 MB per minute of audio) |
+| `WORKERS` | `1` | concurrent jobs (each separation needs ≈ 1.7 GB RAM plus 50–100 MB per minute of audio; since 2.1.0 the extra `other` stem adds about 11 MB per minute, about 0.2 GB at the 20-minute `MAX_DURATION_SEC`. On a small VPS, lower `MAX_DURATION_SEC` rather than raising `WORKERS`) |
 | `DATA_DIR` | `./data` | working directory for job files |
 | `SOURCE_CODE_URL` | `https://github.com/ItsCats/audio-2-piano-roll` | source link returned by `GET /` and `/api/health`. If you run a modified server, set it to where your modified source is published (AGPL-3.0 section 13) |
 

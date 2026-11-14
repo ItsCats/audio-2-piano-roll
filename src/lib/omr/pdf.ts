@@ -9,6 +9,7 @@
  */
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { grayFromRGBA, type Gray } from './image';
+import { tempoFromPageText, type PageTempo, type PageTextItem } from '../score/pageTempo';
 
 /** Width a page is rendered at (the reader straightens pages to 1654 px; a little more keeps lines crisp). */
 export const PDF_RENDER_WIDTH = 2000;
@@ -61,6 +62,8 @@ export interface PdfDocument {
   numPages: number;
   /** page (1-based) as a gray image `width` pixels wide on white */
   render(page: number, width?: number): Promise<Gray>;
+  /** the tempo printed at the top of a page (1-based), from its text layer (lib/score/pageTempo.ts); null: none found */
+  tempo(page: number): Promise<PageTempo | null>;
   close(): Promise<void>;
 }
 
@@ -91,6 +94,23 @@ export async function openPdf(bytes: Uint8Array): Promise<PdfDocument> {
       } finally {
         page.cleanup();
         canvas.width = canvas.height = 0;
+      }
+    },
+    tempo: async (n) => {
+      if (closed) throw new DOMException('Closed', 'AbortError');
+      const page = await doc.getPage(n);
+      try {
+        const vp = page.getViewport({ scale: 1 });
+        const content = await page.getTextContent();
+        const items: PageTextItem[] = [];
+        for (const it of content.items) {
+          if (!('str' in it) || !it.str) continue;
+          const tr = it.transform as number[];
+          items.push({ str: it.str, x: tr[4], y: tr[5] - (vp.viewBox?.[1] ?? 0), h: Math.abs(it.height || tr[3] || 0) });
+        }
+        return tempoFromPageText(items, vp.height);
+      } finally {
+        page.cleanup();
       }
     },
     close: async () => {

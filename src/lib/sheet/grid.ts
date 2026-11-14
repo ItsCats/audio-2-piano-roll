@@ -55,7 +55,7 @@ function median(xs: number[]): number {
   return s[s.length >> 1];
 }
 
-function localBpm(beats: number[], from: number, count: number): number {
+export function localBpm(beats: number[], from: number, count: number): number {
   const ibis: number[] = [];
   for (let i = Math.max(0, from); i < Math.min(beats.length - 1, from + count); i++) ibis.push(beats[i + 1] - beats[i]);
   const m = median(ibis);

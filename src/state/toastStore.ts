@@ -41,9 +41,18 @@ export const useToasts = create<ToastState>((set, get) => ({
   dismiss: (id) => set({ toasts: get().toasts.filter((t) => t.id !== id) }),
 }));
 
+/** Buttons and how long the toast stays (ms; 0: until dismissed). Without `ttl`, a toast with actions stays until answered. */
+export interface ToastOpts {
+  actions?: ToastAction[];
+  ttl?: number;
+}
+
+const show = (kind: Toast['kind'], defaultTtl: number) => (title: string, body?: string, opts?: ToastOpts) =>
+  useToasts.getState().push({ kind, title, body, ...(opts?.actions?.length ? { actions: opts.actions } : {}) }, opts?.ttl ?? (opts?.actions?.length ? 0 : defaultTtl));
+
 export const toast = {
-  info: (title: string, body?: string) => useToasts.getState().push({ kind: 'info', title, body }),
-  success: (title: string, body?: string) => useToasts.getState().push({ kind: 'success', title, body }),
-  warn: (title: string, body?: string) => useToasts.getState().push({ kind: 'warn', title, body }, 8000),
-  error: (title: string, body?: string) => useToasts.getState().push({ kind: 'error', title, body }, 10000),
+  info: show('info', 5000),
+  success: show('success', 5000),
+  warn: show('warn', 8000),
+  error: show('error', 10000),
 };

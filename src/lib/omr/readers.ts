@@ -91,3 +91,10 @@ export function readerFacts(id: SheetReaderId, s: { downloadMB: number; estSecon
 export function quickStaysAfterCrash(lowMemory: boolean | undefined, device: DeviceInfo | undefined = pageDeviceInfo()): boolean {
   return !!lowMemory || (!!device && isMemoryConstrained(device));
 }
+
+/**
+ * Added to a song read from a page with no tempo found (the readers write no tempo, so it plays at
+ * the default 120): shown on the import card. The Studio says it in its own words (Notes tab).
+ */
+export const NO_TEMPO_READ_WARNING =
+  'The reader doesn’t read tempo marks, so this plays at ♩ = 120. Set the tempo printed on your page in the Studio: Notes tab, Tempo.';

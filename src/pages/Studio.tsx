@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   Film,
   Download,
@@ -34,6 +34,7 @@ import { Transport } from '../components/studio/Transport';
 import { EditToolbar } from '../components/studio/EditToolbar';
 import { SheetReaderBadge, SheetReaderNotice, readFromSheet } from '../components/studio/SheetReaderNotice';
 import { ExportVideoDialog } from '../components/studio/ExportVideoDialog';
+import { AnalyzeAgainDialog } from '../components/studio/AnalyzeAgainDialog';
 import { SheetPdfDialog } from '../components/studio/SheetPdfDialog';
 import { FullscreenStage } from '../components/studio/FullscreenStage';
 import { isFullscreenKey, isStageFullscreen, toggleStageFullscreen } from '../state/fullscreenStore';
@@ -47,8 +48,9 @@ import { getAudio } from '../lib/storage/db';
 import { downloadBlob, downloadMidi, downloadMusicXml, exportProject, renderWav, safeFileName } from '../lib/export/downloads';
 import { showExportNoticeOnce } from '../lib/exportNotice';
 import { midiInput, QWERTY_MAP } from '../lib/midiInput/webmidi';
-import type { Difficulty } from '../lib/music/types';
+import type { Difficulty, TempoInfo } from '../lib/music/types';
 import { toast } from '../state/toastStore';
+import { OPEN_TEMPO_EVENT } from '../state/tempoUi';
 import { useImport } from '../state/importStore';
 import { arrowSeekDelta, shouldHandleGlobalKey } from '../state/studioKeys';
 import { sheetActionHandler, sheetKeyAction } from '../state/sheetKeys';
@@ -336,10 +338,12 @@ function usePlayerSync() {
   }, [sheetMeters, song?.sheet?.grid]);
 
   // an edit that changed the tempo or the length (a sheet edit past the end, undo of one): the
-  // player takes the new values without losing its place
+  // player takes the new values without losing its place. A tempo set for the song (every time
+  // scaled by one factor, up to a tempo set later on the sheet; or the undo of that) keeps the
+  // place in the music: the playback position and the loop move with it.
   const tempo = song?.tempo;
   const duration = song?.duration;
-  const synced = useRef<{ id?: string; tempo?: unknown; duration?: number }>({});
+  const synced = useRef<{ id?: string; tempo?: TempoInfo; duration?: number }>({});
   useEffect(() => {
     const prev = synced.current;
     synced.current = { id: songId, tempo, duration };
@@ -347,12 +351,17 @@ function usePlayerSync() {
     const s = useStudio.getState().song;
     const a = s && currentArrangement(useStudio.getState());
     if (!s || !a) return;
+    const map = prev.tempo && prev.duration ? tempoScaleMap(prev.tempo, prev.duration, s.tempo, s.duration) : null;
     const player = getPlayer();
-    const t = player.getTime();
+    const t = map ? map(player.getTime()) : player.getTime();
     const playing = player.isPlaying;
     if (playing) player.pause();
     player.setSong(a.notes, a.pedal, s.tempo, s.duration);
     player.seek(Math.min(t, s.duration));
+    if (map) {
+      const loop = useTransport.getState().loop;
+      if (loop) useTransport.setState({ loop: { start: map(loop.start), end: Math.min(s.duration, map(loop.end)) } });
+    }
     if (playing) void player.play();
   }, [songId, tempo, duration]);
 
@@ -388,8 +397,36 @@ export default function StudioPage() {
     else if (song) navigate(`/studio/${song.id}`, { replace: true });
   }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // /studio/:id?analyze=1 (the toast after a crash during "Analyze again"): the Notes tab with the
+  // dialog open, once the song is loaded; the parameter goes (a reload doesn't open it again)
+  const [search] = useSearchParams();
+  const wantsAnalyze = search.get('analyze') === '1';
+  const loadedId = !loading && song?.id === id ? id : undefined;
+  useEffect(() => {
+    if (!wantsAnalyze || !loadedId) return;
+    setTab('arrangement');
+    setPanelOpen(true);
+    useStudio.getState().setAnalyzeOpen(true);
+    navigate(`/studio/${encodeURIComponent(loadedId)}`, { replace: true });
+  }, [wantsAnalyze, loadedId]); // eslint-disable-line react-hooks/exhaustive-deps
+  // "Analyze again" opened from elsewhere (the Reset toast): show the Notes tab under it
+  const analyzeOpen = useStudio((s) => s.analyzeOpen);
+  useEffect(() => {
+    if (analyzeOpen) setTab('arrangement');
+  }, [analyzeOpen]);
+
   usePlayerSync();
   useStudioKeyboard(computerKeys);
+
+  // "Set the tempo" (the sheet-music notice, the sheet's tempo mark, the speed menu): the Notes tab
+  useEffect(() => {
+    const open = () => {
+      setPanelOpen(true);
+      setTab('arrangement');
+    };
+    window.addEventListener(OPEN_TEMPO_EVENT, open);
+    return () => window.removeEventListener(OPEN_TEMPO_EVENT, open);
+  }, []);
 
   if (!id && !song) {
     return (
@@ -587,7 +624,32 @@ export default function StudioPage() {
         </aside>
       )}
       <ExportVideoDialog open={exportOpen} onClose={() => setExportOpen(false)} />
+      <AnalyzeAgainDialog />
       <SheetPdfDialog open={pdfOpen} onClose={() => setPdfOpen(false)} />
     </div>
   );
+}
+
+/**
+ * How the times of a song moved between two of its tempos when its tempo was set (lib/sheet/retime.ts
+ * scaleSongTempo, or the undo of that): every time scaled by one factor k, or scaled up to a time T1
+ * and moved by T1·(k − 1) after it. null: any other change (the music did not move like that).
+ */
+function tempoScaleMap(t0: TempoInfo, d0: number, t1: TempoInfo, d1: number): ((t: number) => number) | null {
+  const a = t0.beats;
+  const b = t1.beats;
+  if (a.length !== b.length || a.length < 2 || !(d0 > 0) || Math.abs(d1 - d0) < 1e-9) return null;
+  const near = (x: number, y: number) => Math.abs(x - y) <= 1e-6 * Math.max(1, Math.abs(y));
+  const fits = (f: (t: number) => number) => near(f(d0), d1) && a.every((x, i) => near(f(x), b[i]));
+  const r = d1 / d0;
+  const uniform = (t: number) => t * r;
+  if (fits(uniform)) return uniform;
+  const i0 = a.findIndex((x) => x > 1e-3);
+  if (i0 < 0) return null;
+  const k = b[i0] / a[i0];
+  const shift = b[b.length - 1] - a[a.length - 1];
+  if (!(k > 0) || Math.abs(k - 1) < 1e-9) return null;
+  const T1 = shift / (k - 1);
+  const piecewise = (t: number) => (t <= T1 ? t * k : t + shift);
+  return T1 > 0 && fits(piecewise) ? piecewise : null;
 }

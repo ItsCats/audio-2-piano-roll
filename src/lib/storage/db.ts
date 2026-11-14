@@ -54,6 +54,8 @@ export type PendingSheet = (
 ) & {
   /** this read is already a retry after a crash, in the slower low-memory mode (one thread) */
   lowMemory?: boolean;
+  /** the starting tempo given on the import screen (lib/score ImportTempo) */
+  tempo?: { bpm: number; unit: 'q' | 'h' | 'e' | 'q.' | null; from: 'page' | 'set'; text?: string; guess?: boolean };
 };
 
 interface PVSchema extends DBSchema {
@@ -196,7 +198,11 @@ export async function saveSong(song: Song, opts: { pendingId?: string } = {}): P
 }
 
 export async function getSong(id: string): Promise<Song | undefined> {
-  const song = await (await db()).get('songs', id);
+  return prepared(await (await db()).get('songs', id));
+}
+
+/** A song as read from the store, made ready for use (note ids, damaged sheet and hands video data). */
+function prepared<T extends Song>(song: T | undefined): T | undefined {
   if (song) {
     bumpNoteIds(song.base);
     for (const a of Object.values(song.arrangements)) bumpNoteIds(a.notes);
@@ -223,6 +229,8 @@ export async function deleteSong(id: string): Promise<void> {
   const tx = d.transaction(['songs', 'summaries', 'audio', 'posteriors', 'handcam'], 'readwrite');
   await Promise.all([
     tx.objectStore('songs').delete(id),
+    // the song's other version ("Analyze again")
+    tx.objectStore('songs').delete(otherKey(id)),
     tx.objectStore('summaries').delete(id),
     tx.objectStore('audio').delete(id),
     tx.objectStore('posteriors').delete(id),
@@ -236,6 +244,10 @@ export async function saveAudio(id: string, blob: Blob, name: string): Promise<v
 }
 export async function getAudio(id: string): Promise<Blob | undefined> {
   return (await (await db()).get('audio', id))?.blob;
+}
+/** The song's original recording with the file name and type it was stored with (decoding a large video needs them). */
+export async function getAudioRecord(id: string): Promise<{ blob: Blob; name: string; type: string } | undefined> {
+  return (await db()).get('audio', id);
 }
 /** Whether the song's original recording is still stored (without reading it). */
 export async function hasStoredAudio(id: string): Promise<boolean> {
@@ -272,6 +284,124 @@ export async function listMedia(): Promise<MediaItem[]> {
 }
 export async function deleteMedia(id: string): Promise<void> {
   await (await db()).delete('media', id);
+}
+
+// ---------------------------------------------------------------- the other version of a song ("Analyze again")
+
+/**
+ * The key of a song's other version: after "Analyze again" the notes it replaced are kept, as a whole
+ * Song record in the 'songs' store under this key (no summary: the library never lists it; an older
+ * version of the app ignores it). Song ids never contain ':' (newId).
+ */
+export const otherKey = (id: string): string => `${id}:previous`;
+
+/**
+ * A song's other version. `role` 'older': the song now has the new analysis and this is the one it
+ * replaced; 'newer': the user went back to the old notes and this is the new analysis.
+ */
+export type StoredOther = Song & { otherVersion: { role: 'older' | 'newer'; at: number } };
+
+/**
+ * Model posteriors belong to whichever of the song and its other version has `hasPosteriors` (at most
+ * one of them): they are stored once, under the song's id, and never copied (they are large).
+ */
+export type ReanalysisOutcome = 'ok' | 'deleted' | 'quota';
+
+const isQuotaError = (e: unknown) => {
+  const x = e as { name?: string; message?: string } | null | undefined;
+  return !!x && /quota/i.test(`${x.name ?? ''} ${x.message ?? ''}`);
+};
+
+/**
+ * Saves the song a re-analysis produced (same id) in ONE transaction: the song as it is in storage now
+ * becomes its other version (`keepOther`, the default; otherwise any other version is deleted), the
+ * new song and its summary are written, and the new posteriors (Basic Pitch) replace the old ones,
+ * which are deleted when nobody owns them any more. 'deleted': the song is no longer stored (deleted
+ * while it was being analyzed), nothing is written. 'quota': the browser's storage is full, nothing
+ * is written.
+ */
+export async function commitReanalysis(next: Song, posteriors: StoredPosteriors | undefined, opts: { keepOther?: boolean } = {}): Promise<ReanalysisOutcome> {
+  const keepOther = opts.keepOther ?? true;
+  const d = await db();
+  const tx = d.transaction(['songs', 'summaries', 'posteriors'], 'readwrite');
+  const settled = tx.done.then(
+    () => null,
+    (e: unknown) => e ?? tx.error,
+  );
+  const abort = () => {
+    try {
+      tx.abort();
+    } catch {
+      /* already finished */
+    }
+  };
+  try {
+    const songs = tx.objectStore('songs');
+    const cur = await songs.get(next.id);
+    if (!cur) {
+      abort();
+      await settled;
+      return 'deleted';
+    }
+    const other: StoredOther | null = keepOther
+      ? { ...cur, id: otherKey(next.id), hasPosteriors: posteriors ? false : cur.hasPosteriors, otherVersion: { role: 'older', at: Date.now() } }
+      : null;
+    const clean = { ...next } as Song & { otherVersion?: unknown };
+    delete clean.otherVersion;
+    const writes: Promise<unknown>[] = [other ? songs.put(other) : songs.delete(otherKey(next.id)), songs.put(clean), tx.objectStore('summaries').put(summarize(clean))];
+    const post = tx.objectStore('posteriors');
+    if (posteriors) writes.push(post.put(posteriors, next.id));
+    else if (!clean.hasPosteriors && !other?.hasPosteriors) writes.push(post.delete(next.id));
+    await Promise.all([...writes, tx.done]);
+    return 'ok';
+  } catch (err) {
+    abort();
+    const e = await settled;
+    if (isQuotaError(err) || isQuotaError(e) || isQuotaError(tx.error)) return 'quota';
+    throw err;
+  }
+}
+
+/** The song's other version, if one is kept. */
+export async function getOtherVersion(id: string): Promise<StoredOther | undefined> {
+  return prepared((await (await db()).get('songs', otherKey(id))) as StoredOther | undefined);
+}
+
+export async function hasOtherVersion(id: string): Promise<boolean> {
+  return (await (await db()).getKey('songs', otherKey(id))) !== undefined;
+}
+
+/**
+ * Swaps the song's analysis with its other version's (in one transaction): the song gets the other
+ * version's notes (edits included), and the other version becomes the song's current notes as they
+ * are. Returns the song as it is now (undefined: either is missing).
+ */
+export async function swapWithOther(id: string, withAnalysisOf: (target: Song, from: Song) => Song): Promise<Song | undefined> {
+  const d = await db();
+  const tx = d.transaction(['songs', 'summaries'], 'readwrite');
+  const songs = tx.objectStore('songs');
+  const [cur, other] = await Promise.all([songs.get(id), songs.get(otherKey(id)) as Promise<StoredOther | undefined>]);
+  if (!cur || !other?.otherVersion) {
+    await tx.done;
+    return undefined;
+  }
+  const now = Date.now();
+  const nextCur = withAnalysisOf({ ...cur, updatedAt: now }, other) as Song & { otherVersion?: unknown };
+  delete nextCur.otherVersion;
+  const nextOther: StoredOther = { ...cur, id: otherKey(id), otherVersion: { role: other.otherVersion.role === 'older' ? 'newer' : 'older', at: now } };
+  await Promise.all([songs.put(nextCur), songs.put(nextOther), tx.objectStore('summaries').put(summarize(nextCur)), tx.done]);
+  return prepared(nextCur);
+}
+
+/** Deletes the song's other version (and the posteriors only it owned). */
+export async function deleteOtherVersion(id: string): Promise<void> {
+  const d = await db();
+  const tx = d.transaction(['songs', 'posteriors'], 'readwrite');
+  const songs = tx.objectStore('songs');
+  const [cur, other] = await Promise.all([songs.get(id), songs.get(otherKey(id))]);
+  const writes: Promise<unknown>[] = [songs.delete(otherKey(id))];
+  if (other?.hasPosteriors && !cur?.hasPosteriors) writes.push(tx.objectStore('posteriors').delete(id));
+  await Promise.all([...writes, tx.done]);
 }
 
 export async function savePending(p: PendingImport): Promise<void> {

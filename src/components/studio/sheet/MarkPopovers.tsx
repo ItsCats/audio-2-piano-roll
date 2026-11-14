@@ -9,7 +9,9 @@ import { Type, Waves } from 'lucide-react';
 import type { DynamicValue, SheetMark, TempoUnit } from '../../../lib/music/types';
 import { buildSheet } from '../../../lib/sheet';
 import { resolveMark, pedalSel } from '../../../lib/sheet/marks';
-import { canRetime } from '../../../lib/sheet/retime';
+import { canRetime, songStartQpm, songTempoUnit } from '../../../lib/sheet/retime';
+import { TEMPO_UNIT_Q } from '../../../lib/sheet/score';
+import { UNIT_LABEL, UNIT_NAME } from '../../../lib/sheet/tempoUnits';
 import { keyAt } from '../../../lib/sheet/keys';
 import { DIV } from '../../../lib/sheet/types';
 import type { SheetCtx } from '../../../lib/sheet/edit';
@@ -24,8 +26,6 @@ const MAJOR = ['C♭', 'G♭', 'D♭', 'A♭', 'E♭', 'B♭', 'F', 'C', 'G', 'D
 const MINOR = ['A♭', 'E♭', 'B♭', 'F', 'C', 'G', 'D', 'A', 'E', 'B', 'F♯', 'C♯', 'G♯', 'D♯', 'A♯'];
 /** "D major" for a key signature. */
 export const keyName = (fifths: number, mode: 'major' | 'minor') => `${(mode === 'minor' ? MINOR : MAJOR)[fifths + 7] ?? '?'} ${mode}`;
-const UNIT_LABEL: Record<TempoUnit, string> = { q: '♩', h: '𝅗𝅥', e: '♪', 'q.': '♩.' };
-const UNIT_NAME: Record<TempoUnit, string> = { q: 'Quarter', h: 'Half', e: 'Eighth', 'q.': 'Dotted quarter' };
 const DYN_SHOWN = 6;
 
 const useCtx = (): SheetCtx | null => {
@@ -456,8 +456,11 @@ function TempoForm({ ctx, m, dock, done }: { ctx: SheetCtx; m: number; dock: boo
   const existing = ctx.song.sheet?.tempos?.find((x) => x.pos === pos);
   const secs = ctx.score.measureStartTimes[m + 1] - ctx.score.measureStartTimes[m];
   const playedQpm = secs > 0 ? Math.round(((ctx.score.time.measureLenAt(m) / DIV) * 60) / secs) : 120;
-  const [bpm, setBpm] = useState(existing?.bpm ?? playedQpm);
-  const [unit, setUnit] = useState<TempoUnit>(existing?.unit ?? 'q');
+  // bar 1: the song's starting tempo in the sheet's beat (a fermata in bar 1 doesn't count)
+  const startUnit = m === 0 ? songTempoUnit(ctx.song) : 'q';
+  const startBpm = m === 0 ? Math.round((songStartQpm(ctx.song) / TEMPO_UNIT_Q[startUnit]) * 10) / 10 : playedQpm;
+  const [bpm, setBpm] = useState(existing?.bpm ?? startBpm);
+  const [unit, setUnit] = useState<TempoUnit>(existing?.unit ?? startUnit);
   const [text, setText] = useState(existing?.text ?? '');
   const can = canRetime(ctx.song);
   const [change, setChange] = useState(can);

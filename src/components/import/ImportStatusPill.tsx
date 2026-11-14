@@ -9,16 +9,18 @@ export function ImportStatusPill() {
   if (!job) return null;
   const done = job.stage === 'done';
   const err = job.stage === 'error';
+  // "Analyze again": the song it is for, in every state (the Studio shows its progress)
+  const re = job.reanalyze;
   return (
     <Link
-      to={done && job.songId ? `/studio/${job.songId}` : '/import'}
+      to={re ? `/studio/${encodeURIComponent(re.songId)}` : done && job.songId ? `/studio/${job.songId}` : '/import'}
       className="focus-ring block rounded-xl border border-ink-700 bg-ink-850 p-3 transition-colors hover:border-ink-600"
     >
       <div className="flex items-center gap-2 text-[12.5px]">
         {done ? <CheckCircle2 size={14} className="text-ok" /> : err ? <XCircle size={14} className="text-bad" /> : <Loader2 size={14} className="animate-spin text-accent-400" />}
-        <span className="truncate font-medium text-ink-100">{job.title}</span>
+        <span className="truncate font-medium text-ink-100">{re ? `Analyzing “${job.title}” again` : job.title}</span>
       </div>
-      <p className="mt-1 text-[11.5px] text-ink-300">{done ? 'Ready — open in Studio' : stageLabel(job, job.stage)}</p>
+      <p className="mt-1 text-[11.5px] text-ink-300">{done ? (re ? 'New notes are ready — open in Studio' : 'Ready — open in Studio') : err && re ? 'Analyze again failed' : stageLabel(job, job.stage)}</p>
       {!done && !err && (
         <div className="mt-2">
           <ProgressBar value={job.progress} />

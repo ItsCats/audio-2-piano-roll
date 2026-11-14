@@ -1,11 +1,14 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, PencilRuler, X } from 'lucide-react';
+import { AlertTriangle, Gauge, PencilRuler, X } from 'lucide-react';
 import type { Song } from '../../lib/music/types';
 import { useStudio } from '../../state/studioStore';
 import { useSettings } from '../../state/settingsStore';
 import { Badge, Button, IconButton, Modal } from '../ui';
 import { isTouchDevice } from '../../lib/wakeLock';
+import { followsWrittenTempo } from '../../lib/sheet/retime';
+import { openTempoSetting } from '../../state/tempoUi';
+import { TempoText, tempoGuessed } from './panels/TempoControl';
 
 /** Songs read from a PDF or photo by a sheet-music reader (the Quick one is Beta): the notes are its estimate. */
 export const readFromSheet = (song: Pick<Song, 'source'>): boolean => song.source.kind === 'score' && !!song.source.reader;
@@ -67,6 +70,24 @@ function TipsModal({ open, onClose, song }: { open: boolean; onClose: () => void
           </ul>
         </div>
         <div>
+          <p className="font-medium text-ink-50">Set the tempo</p>
+          <p className="mt-1">
+            The reader reads the notes, not tempo marks. Type the tempo printed on your page (like ♩ = 72): every level, Hard included, then plays at it.
+          </p>
+          <Button
+            size="sm"
+            className="mt-2"
+            icon={<Gauge size={15} />}
+            onClick={() => {
+              onClose();
+              openTempoSetting();
+            }}
+            data-testid="tips-set-tempo"
+          >
+            Set the tempo
+          </Button>
+        </div>
+        <div>
           <p className="font-medium text-ink-50">Fix mistakes in Edit mode</p>
           {touch ? (
             <ul className="mt-1 list-disc pl-5">
@@ -116,11 +137,58 @@ export function SheetReaderBadge({ song }: { song: Song }) {
   );
 }
 
-/** A strip under the Studio header: read from sheet music (Beta), check the notes; links to the tips. */
+/** The "Set tempo" link of the notices (the tempo is a guess). */
+function SetTempoLink({ song }: { song: Song }) {
+  return (
+    <>
+      {' '}
+      <span className="whitespace-nowrap">
+        Tempo <TempoText song={song} /> is a guess:
+      </span>{' '}
+      <button
+        type="button"
+        onClick={openTempoSetting}
+        className="focus-ring rounded font-medium text-accent-300 underline-offset-2 hover:underline"
+        data-testid="notice-set-tempo"
+      >
+        Set tempo
+      </button>
+    </>
+  );
+}
+
+/**
+ * A strip under the Studio header. Songs read from sheet music (Beta): check the notes, with the
+ * tips; and the tempo when it is a guess (the readers read none). Other sheet-music files with no
+ * metronome mark: the tempo is a guess, set it.
+ */
 export function SheetReaderNotice({ song }: { song: Song }) {
   const [hidden, setHidden] = useState(() => dismissed.has(song.id));
   const [open, setOpen] = useState(false);
-  if (!readFromSheet(song) || hidden) return null;
+  const guess = followsWrittenTempo(song) && song.source.kind === 'score' && tempoGuessed(song);
+  if (hidden) return null;
+  if (!readFromSheet(song)) {
+    if (!guess) return null;
+    return (
+      <div className="flex items-center gap-2 border-b border-warn/25 bg-warn/10 px-3 py-1.5 text-[12.5px] text-ink-100 md:px-4" role="note" data-testid="tempo-guess-notice">
+        <Gauge size={15} className="shrink-0 text-warn" />
+        <p className="min-w-0 flex-1">
+          <span className="font-medium text-warn">No metronome mark in this file.</span>
+          <SetTempoLink song={song} />
+        </p>
+        <IconButton
+          size="sm"
+          label="Hide this note"
+          onClick={() => {
+            dismissed.add(song.id);
+            setHidden(true);
+          }}
+        >
+          <X size={15} />
+        </IconButton>
+      </div>
+    );
+  }
   return (
     <div className="flex items-center gap-2 border-b border-warn/25 bg-warn/10 px-3 py-1.5 text-[12.5px] text-ink-100 md:px-4" role="note" data-testid="sheet-reader-notice">
       <AlertTriangle size={15} className="shrink-0 text-warn" />
@@ -129,6 +197,7 @@ export function SheetReaderNotice({ song }: { song: Song }) {
         <button type="button" onClick={() => setOpen(true)} className="focus-ring rounded font-medium text-accent-300 underline-offset-2 hover:underline">
           How to fix notes
         </button>
+        {guess && <SetTempoLink song={song} />}
       </p>
       <IconButton
         size="sm"

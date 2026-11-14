@@ -2,6 +2,7 @@ import { Midi } from '@tonejs/midi';
 import type { Note, PedalRange, TempoInfo } from './types';
 import { assignHands } from './hands';
 import { newNoteId, sortNotes, songDuration } from './cleanup';
+import { tempoQpm } from './beats';
 
 export interface ParsedMidi {
   title?: string;
@@ -88,7 +89,10 @@ export function parseMidi(data: ArrayBuffer): ParsedMidi {
     notes: sortNotes(notes),
     pedal,
     tempo: {
-      bpm: Math.round(bpm * 10) / 10,
+      // beats of the time signature's lower note per minute, like every other song (the file's
+      // tempo is in quarters: 6/8 at a quarter of 120 counts 240 eighths)
+      bpm: Math.round(bpm * ((ts[1] === 2 || ts[1] === 8 ? ts[1] : 4) / 4) * 10) / 10,
+      qpm: bpm,
       beats,
       beatsPerBar: ts[0] || 4,
       ...(ts[1] === 2 || ts[1] === 8 ? { beatUnit: ts[1] as 2 | 8 } : {}),
@@ -115,7 +119,8 @@ const KEY_NAMES = ['Cb', 'Gb', 'Db', 'Ab', 'Eb', 'Bb', 'F', 'C', 'G', 'D', 'A', 
 export function exportMidi(notes: Note[], pedal: PedalRange[], tempo: TempoInfo, title: string, meta?: MidiMeta): Uint8Array {
   const midi = new Midi();
   midi.name = title;
-  midi.header.setTempo(tempo.bpm);
+  // the file's tempo is in quarter notes per minute (tempo.bpm counts the beat unit)
+  midi.header.setTempo(tempoQpm(tempo));
   midi.header.timeSignatures.push({ ticks: 0, timeSignature: [tempo.beatsPerBar, tempo.beatUnit ?? 4], measures: 0 });
   midi.header.update();
   if (meta) {

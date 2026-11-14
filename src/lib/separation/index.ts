@@ -37,6 +37,12 @@ export interface SeparationResult {
    * (transcription/bassLine.ts). Browser separation only (the server returns two stems).
    */
   bass?: Float32Array;
+  /**
+   * The "other" stem alone (everything but vocals, drums and bass), mono 22.05 kHz: the piano part
+   * (pianoPartStem). Server stems from a server that reports `features.otherStem`; the browser's is
+   * `accomp - bass`.
+   */
+  other?: Float32Array;
   vocalPresence: VocalPresence;
   /**
    * Onset strength of the drums stem, 8-bit at DRUM_ENV_FPS (separation/dsp.ts drumOnsetEnvelope).
@@ -132,7 +138,7 @@ export function separationSupport(seconds?: number): SeparationSupport {
   const est = Math.round(EST_SECONDS_PER_MINUTE / SPEEDUP[Math.min(4, separationThreads())]);
   const mem = typeof navigator === 'undefined' ? undefined : (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
   const maxSeconds = typeof mem === 'number' && mem >= 8 ? LARGE_DEVICE_MAX_SECONDS : BROWSER_SEPARATION_MAX_SECONDS;
-  const base = separationSupportBase(est, mem, maxSeconds);
+  const base = separationSupportBase(est, mem, maxSeconds, seconds);
   if (base.ok && base.recommended && seconds !== undefined && seconds > maxSeconds) {
     return { ...base, recommended: false, reason: longReason(seconds) };
   }
@@ -144,7 +150,13 @@ export function longReason(seconds: number): string {
   return `A ${Math.round(seconds / 60)}-minute recording needs ${formatMemory(estimateSeparationMB(seconds))} of memory to separate in this browser.`;
 }
 
-function separationSupportBase(est: number, mem: number | undefined, maxSeconds: number): SeparationSupport {
+/** "a 22-second recording", "a 3-minute recording" */
+function recordingLength(seconds: number): string {
+  return seconds < 60 ? `a ${Math.max(1, Math.round(seconds))}-second recording` : `a ${Math.round(seconds / 60)}-minute recording`;
+}
+
+/** `seconds`: the recording's length, when known ("Analyze again"): the memory it needs, said for it. */
+function separationSupportBase(est: number, mem: number | undefined, maxSeconds: number, seconds?: number): SeparationSupport {
   if (typeof WebAssembly !== 'object' || typeof Worker === 'undefined') {
     return { ok: false, recommended: false, reason: 'This browser has no WebAssembly or Web Worker support.', estSecondsPerMinute: est, maxSeconds };
   }
@@ -162,7 +174,10 @@ function separationSupportBase(est: number, mem: number | undefined, maxSeconds:
     return {
       ok: true,
       recommended: false,
-      reason: `Needs ${typical} of memory for a 4-minute song (more for longer ones) and several minutes per song.`,
+      reason:
+        seconds !== undefined
+          ? `Needs ${formatMemory(estimateSeparationMB(seconds))} of memory even for ${recordingLength(seconds)} like this one, and takes a while on a phone.`
+          : `Needs ${typical} of memory for a 4-minute song (more for longer ones) and several minutes per song.`,
       estSecondsPerMinute: est * 2,
       maxSeconds,
     };
@@ -171,7 +186,10 @@ function separationSupportBase(est: number, mem: number | undefined, maxSeconds:
     return {
       ok: true,
       recommended: false,
-      reason: `This device reports ${mem} GB of memory; separating vocals & drums needs ${typical} for a 4-minute song.`,
+      reason:
+        seconds !== undefined
+          ? `This device reports ${mem} GB of memory; separating ${recordingLength(seconds)} like this one needs ${formatMemory(estimateSeparationMB(seconds))}.`
+          : `This device reports ${mem} GB of memory; separating a song needs ${typical} for a 4-minute song.`,
       estSecondsPerMinute: est,
       maxSeconds,
     };
@@ -318,9 +336,13 @@ function fitLength(x: Float32Array, n: number): Float32Array {
  * `serverMs` is the server's own separation time when it reports one; otherwise ms is 0 (unknown:
  * the time spent here is only decoding the downloaded stems).
  */
-export async function stemsFromBlobs(vocals: Blob, accomp: Blob, mixDuration: number, serverMs?: number): Promise<SeparationResult> {
+export async function stemsFromBlobs(vocals: Blob, accomp: Blob, mixDuration: number, serverMs?: number, other?: Blob): Promise<SeparationResult> {
   const n = Math.max(1, Math.round(mixDuration * SEPARATION_RATE));
-  const [vb, ab] = await Promise.all([decodeToRate(vocals, SEPARATION_RATE), decodeToRate(accomp, SEPARATION_RATE)]);
+  const [vb, ab, ob] = await Promise.all([
+    decodeToRate(vocals, SEPARATION_RATE),
+    decodeToRate(accomp, SEPARATION_RATE),
+    other ? decodeToRate(other, SEPARATION_RATE) : null,
+  ]);
   const v = fitLength(mixToMono(vb), n);
   const a = fitLength(mixToMono(ab), n);
   const mix = new Float32Array(n);
@@ -329,10 +351,34 @@ export async function stemsFromBlobs(vocals: Blob, accomp: Blob, mixDuration: nu
     sampleRate: SEPARATION_RATE,
     vocals: v,
     accomp: a,
+    ...(ob ? { other: fitLength(mixToMono(ob), n) } : {}),
     vocalPresence: measureVocalPresence(v, mix, SEPARATION_RATE),
     engine: 'scnet-server',
     ms: serverMs !== undefined && Number.isFinite(serverMs) && serverMs > 0 ? serverMs : 0,
   };
+}
+
+/** Shown when the piano part had to come from a server that sends the bass together with "other" (pianoPartStem). */
+export const PIANO_PART_OLD_SERVER =
+  'Your processing server sends the bass together with the other instruments, so a bass guitar can show up as low notes. Updating the server fixes this.';
+
+/**
+ * The audio "Remove singing and drums" (Piano solo) transcribes: SCNet's "other" stem, without the
+ * vocals, the drums and the bass. Measured (docs/TRANSCRIPTION.md): with no bass instrument a solo
+ * piano's low notes stay in "other" (its bass stem is 48-58 dB down), so adding the bass stem back
+ * gains nothing; with a bass guitar it costs note F1 0.72 -> 0.53 (Basic Pitch) and 0.82 -> 0.69 (the
+ * piano model). Browser separation: accomp - bass; a server with `other`: that stem; an older server
+ * (vocals + accomp only): its accompaniment, with `bassRemoved: false` (PIANO_PART_OLD_SERVER).
+ * The returned array may be one of `sep`'s own (callers that normalise it in place own `sep`).
+ */
+export function pianoPartStem(sep: Pick<SeparationResult, 'accomp' | 'bass' | 'other'>): { audio: Float32Array; bassRemoved: boolean } {
+  if (sep.other) return { audio: sep.other, bassRemoved: true };
+  if (sep.bass) {
+    const out = new Float32Array(sep.accomp.length);
+    for (let i = 0; i < out.length; i++) out[i] = sep.accomp[i] - (sep.bass[i] ?? 0);
+    return { audio: out, bassRemoved: true };
+  }
+  return { audio: sep.accomp, bassRemoved: false };
 }
 
 /** number of 11 s model segments for `seconds` of audio (for time estimates in the UI) */

@@ -2,21 +2,26 @@
  * Client for the optional self-hosted processing server (server/). It fetches audio for
  * YouTube URLs (yt-dlp) and separates full mixes with SCNet (the same model the browser runs,
  * faster on a multi-core server) into two stems: `vocals` and `accomp` (bass + other: no drums,
- * no vocals), each mono 22.05 kHz FLAC, sample-aligned with the mixture. Servers before 2.0
- * (Demucs) returned a single "piano part" file instead and report no `features.stems`.
+ * no vocals), each mono 22.05 kHz FLAC, sample-aligned with the mixture; servers reporting
+ * `features.otherStem` also return `other` (the accompaniment without the bass: what "Remove singing
+ * and drums" transcribes). Servers before 2.0 (Demucs) returned a single "piano part" file instead
+ * and report no `features.stems`.
  * Transcription itself always runs in the browser.
  */
 export interface BackendHealth {
   ok: boolean;
   version: string;
-  /** stems: separation returns ?stem=vocals|accomp (server 2.0+, SCNet) */
-  features: { youtube: boolean; separation: boolean; stems?: boolean };
+  /**
+   * stems: separation returns ?stem=vocals|accomp (server 2.0+, SCNet); otherStem: also ?stem=other
+   * (the "other" stem alone, without the bass)
+   */
+  features: { youtube: boolean; separation: boolean; stems?: boolean; otherStem?: boolean };
   separationModel?: string | null;
   maxDurationSec: number;
 }
 
-/** Downloadable results of a job: separation -> vocals, accomp; YouTube -> mix (+ vocals, accomp when separated). */
-export type BackendStem = 'vocals' | 'accomp' | 'mix';
+/** Downloadable results of a job: separation -> vocals, accomp (+ other); YouTube -> mix (+ vocals, accomp, other when separated). */
+export type BackendStem = 'vocals' | 'accomp' | 'other' | 'mix';
 
 export interface BackendJob {
   id: string;
@@ -116,10 +121,17 @@ export async function getJobAudio(url: string, id: string, stem?: BackendStem, s
   return res.blob();
 }
 
-/** Both separated stems of a finished separation (or separated YouTube) job, downloaded in parallel. */
-export async function fetchStems(serverUrl: string, jobId: string, signal?: AbortSignal): Promise<{ vocals: Blob; accomp: Blob }> {
-  const [vocals, accomp] = await Promise.all([getJobAudio(serverUrl, jobId, 'vocals', signal), getJobAudio(serverUrl, jobId, 'accomp', signal)]);
-  return { vocals, accomp };
+/**
+ * Both separated stems of a finished separation (or separated YouTube) job, downloaded in parallel;
+ * with `other` (a server reporting `features.otherStem`) the "other" stem too.
+ */
+export async function fetchStems(serverUrl: string, jobId: string, signal?: AbortSignal, other = false): Promise<{ vocals: Blob; accomp: Blob; other?: Blob }> {
+  const [vocals, accomp, o] = await Promise.all([
+    getJobAudio(serverUrl, jobId, 'vocals', signal),
+    getJobAudio(serverUrl, jobId, 'accomp', signal),
+    other ? getJobAudio(serverUrl, jobId, 'other', signal) : null,
+  ]);
+  return o ? { vocals, accomp, other: o } : { vocals, accomp };
 }
 
 export async function waitForJob(

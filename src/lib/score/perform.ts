@@ -67,12 +67,21 @@ export interface Performance {
   /** Sustain pedal down ranges in quarters. */
   pedal: { on: number; off: number }[];
   tempo: TempoMap;
-  /** Quarter-notes-per-minute marks in force, in performance order (for the first tempo). */
+  /** Quarter notes per minute at the start (the first tempo mark, else the default). */
   firstQpm: number;
+  /** Where firstQpm came from: a mark (`words`: guessed from these tempo words), or null: the default. */
+  firstMark: { words?: string } | null;
   warnings: string[];
 }
 
-export function perform(ir: ScoreIR): Performance {
+export interface PerformOptions {
+  /** Quarter notes per minute when the score has no tempo mark (default DEFAULT_QPM). */
+  qpm?: number;
+  /** Start at `qpm` even when the score has tempo marks: every mark is scaled by the same factor. */
+  force?: boolean;
+}
+
+export function perform(ir: ScoreIR, opts: PerformOptions = {}): Performance {
   const { order, warnings } = unroll(ir.measures);
   const measureStart: number[] = [0];
   for (const pm of order) measureStart.push(measureStart[measureStart.length - 1] + ir.measures[pm.index].length);
@@ -133,12 +142,28 @@ export function perform(ir: ScoreIR): Performance {
   }
 
   // ---- tempo map: tempo marks in performance order, fermatas held longer
-  const marks: { q: number; qpm: number }[] = [];
+  const all: { q: number; qpm: number; words?: string }[] = [];
   order.forEach((pm, k) => {
-    for (const t of ir.measures[pm.index].tempos) marks.push({ q: measureStart[k] + t.pos, qpm: t.qpm });
+    for (const t of ir.measures[pm.index].tempos) all.push({ q: measureStart[k] + t.pos, qpm: t.qpm, ...(t.words ? { words: t.words } : {}) });
   });
-  marks.sort((a, b) => a.q - b.q);
-  const firstQpm = marks[0]?.qpm ?? DEFAULT_QPM;
+  all.sort((a, b) => a.q - b.q);
+  // one mark per position (any part): an explicit one (metronome, sound tempo, a number) wins over
+  // a guess from tempo words, else the first in part order
+  const marks: typeof all = [];
+  for (let i = 0; i < all.length; ) {
+    let j = i;
+    while (j < all.length && all[j].q - all[i].q < EPS) j++;
+    const group = all.slice(i, j);
+    marks.push(group.find((x) => !x.words) ?? group[0]);
+    i = j;
+  }
+  const fallback = opts.qpm !== undefined && opts.qpm > 0 && Number.isFinite(opts.qpm) ? opts.qpm : DEFAULT_QPM;
+  const firstMark = marks.length ? (marks[0].words ? { words: marks[0].words } : {}) : null;
+  if (opts.force && marks.length && opts.qpm !== undefined && fallback === opts.qpm) {
+    const r = fallback / marks[0].qpm;
+    for (const m of marks) m.qpm *= r;
+  }
+  const firstQpm = marks[0]?.qpm ?? fallback;
   const ferm: [number, number][] = [];
   order.forEach((pm, k) => {
     for (const f of ir.measures[pm.index].fermatas) ferm.push([measureStart[k] + f.pos, measureStart[k] + f.pos + f.dur]);
@@ -298,7 +323,7 @@ export function perform(ir: ScoreIR): Performance {
     ...(n.grace ? { grace: true } : {}),
   }));
   out.sort((a, b) => a.on - b.on || a.midi - b.midi);
-  return { order, measureStart, notes: out, pedal, tempo, firstQpm, warnings };
+  return { order, measureStart, notes: out, pedal, tempo, firstQpm, firstMark, warnings };
 }
 
 function spqAt(map: TempoMap, q: number): number {

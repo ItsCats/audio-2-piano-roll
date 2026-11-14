@@ -14,10 +14,10 @@ import type { KeyInfo, Note, PedalRange, TempoInfo } from '../music/types';
 import { assignHands } from '../music/hands';
 import { newNoteId, sortNotes } from '../music/cleanup';
 import { PIANO_MAX, PIANO_MIN, prefersFlats } from '../music/theory';
-import type { ScoreIR } from './ir';
+import { meterTempoUnit, TEMPO_UNIT_QUARTERS, type ScoreIR, type WrittenTempoUnit } from './ir';
 import { musicXmlToIR } from './musicxml';
 import { MscxError, mscxToIR } from './mscx';
-import { perform, qToSec, type Performance } from './perform';
+import { perform, qToSec, type Performance, type PerformOptions } from './perform';
 import { decodeXmlBytes, parseXml, child, childrenNamed } from './xml';
 
 export { musicXmlToIR } from './musicxml';
@@ -56,6 +56,23 @@ export interface ScoreMeta {
   fileName?: string;
   /** Format to report (default 'musicxml'). */
   format?: ScoreFormat;
+  /**
+   * The starting tempo from outside the file (a PDF / photo read: the sheet-music readers write no
+   * tempo): 'page' the text printed on the PDF page, used when the score has no tempo mark; 'set'
+   * typed by the user, which always sets the start (later tempo changes keep their proportions).
+   */
+  tempo?: ImportTempo;
+}
+
+/** A tempo given at import: `bpm` beats of `unit` per minute (null: the meter's beat, meterTempoUnit). */
+export interface ImportTempo {
+  bpm: number;
+  unit: WrittenTempoUnit | null;
+  from: 'page' | 'set';
+  /** the text it was read from (from 'page') */
+  text?: string;
+  /** from 'page': tempo words only ("Andante"), a guess */
+  guess?: boolean;
 }
 
 /** Thrown for files that are valid but can't be read here; `message` is shown to the user as is. */
@@ -199,8 +216,8 @@ export interface ScoreTiming {
 }
 
 /** The performance and its clock (exported for tests). */
-export function scoreTiming(ir: ScoreIR): ScoreTiming {
-  const perf = perform(ir);
+export function scoreTiming(ir: ScoreIR, opts?: PerformOptions): ScoreTiming {
+  const perf = perform(ir, opts);
   const first = ir.measures[perf.order[0]?.index ?? 0];
   const { beatUnit } = first ? meterOf(first.beats, first.beatType) : { beatUnit: 4 as const };
   const beatQ = 4 / beatUnit;
@@ -216,7 +233,11 @@ export function fromIR(ir: ScoreIR, meta: ScoreMeta = {}): ParsedScore {
   const warnings = [...ir.warnings];
   const playable = ir.parts.filter((p) => !p.ignored);
   if (!ir.measures.length || !playable.length) throw new ScoreImportError('This sheet music has no notes to play.');
-  const { perf, pickup, lead, sec } = scoreTiming(ir);
+  // a tempo given at import, in quarters per minute (an unknown beat: the opening meter's)
+  const given = meta.tempo && meta.tempo.bpm >= 20 && meta.tempo.bpm <= 400 ? meta.tempo : undefined;
+  const m0 = ir.measures[0];
+  const givenQpm = given ? given.bpm * TEMPO_UNIT_QUARTERS[given.unit ?? meterTempoUnit(m0?.beats ?? 4, m0?.beatType ?? 4)] : undefined;
+  const { perf, pickup, lead, sec } = scoreTiming(ir, givenQpm ? { qpm: givenQpm, force: given!.from === 'set' } : undefined);
   warnings.push(...perf.warnings);
   if (!perf.notes.length) throw new ScoreImportError('This sheet music has no notes to play.');
 
@@ -310,6 +331,16 @@ export function fromIR(ir: ScoreIR, meta: ScoreMeta = {}): ParsedScore {
     downbeatIndex,
     confidence: 1,
     source: 'midi',
+    qpm: perf.firstQpm,
+    ...(given?.from === 'set'
+      ? { from: 'set' as const }
+      : perf.firstMark
+        ? perf.firstMark.words
+          ? { from: 'words' as const, fromText: perf.firstMark.words }
+          : { from: 'mark' as const }
+        : given
+          ? { from: given.guess ? ('words' as const) : ('page' as const), ...(given.text ? { fromText: given.text.slice(0, 60) } : {}) }
+          : { from: 'default' as const }),
   };
 
   const k0 = ir.measures.find((m) => m.key)?.key;

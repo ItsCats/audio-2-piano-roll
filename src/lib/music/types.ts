@@ -107,7 +107,24 @@ export interface TempoInfo {
   confidence: number;
   /** Where the tempo came from. */
   source: 'midi' | 'estimated' | 'manual';
+  /**
+   * Quarter notes per minute at the start, exactly (`bpm` counts the beat unit and is rounded).
+   * Set on songs from sheet music and MIDI files imported since tempo setting existed, and when the
+   * tempo is set in the Studio; absent otherwise (lib/sheet/retime.ts songStartQpm works it out).
+   */
+  qpm?: number;
+  /** Songs from sheet music: where the starting tempo came from (absent in older songs). */
+  from?: TempoFrom;
+  /** With `from` 'words' or 'page': the text the tempo was read from ("Andante", "q = 72"). */
+  fromText?: string;
 }
+
+/**
+ * Where a sheet-music song's starting tempo came from: 'mark' a metronome mark in the file, 'words'
+ * tempo words in the file (a guess, "Andante" → 76), 'page' the text printed on the PDF page,
+ * 'default' nothing on the page (a guess: 120), 'set' set by the user (at import or in the Studio).
+ */
+export type TempoFrom = 'mark' | 'words' | 'page' | 'default' | 'set';
 
 export interface KeyInfo {
   tonic: number; // pitch class 0..11
@@ -213,6 +230,16 @@ export interface TranscriptionInfo {
     vocals: boolean;
     /** no singing, or no melody line from it: the vocal stem was transcribed together with the accompaniment (pipeline.ts vocalsIntoAccomp) */
     vocalsInAccomp?: boolean;
+    /**
+     * "Remove singing and drums" (Piano solo): only the separated piano part was transcribed (SCNet's
+     * "other" stem); the singing was not turned into notes and nothing was added back. Absent on songs
+     * imported before it existed and on every other kind of separated import.
+     */
+    pianoPart?: boolean;
+    /** with pianoPart: singing was found in the separated vocals (and removed) */
+    singing?: boolean;
+    /** with pianoPart: the bass stem was removed too (false: an older processing server sent it with the rest) */
+    bassRemoved?: boolean;
     ms: number;
     threads?: number;
   };

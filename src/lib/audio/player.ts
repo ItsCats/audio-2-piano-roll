@@ -328,9 +328,10 @@ export class PlaybackController {
       this.scheduleRange(this.scheduledUntil, horizon);
       this.scheduledUntil = horizon;
     }
-    // end of song
+    // end of song (also with a loop when playing on past its end: the playhead was after B)
     const t = this.getTime();
-    if (!loop && t >= this.duration + 0.5) {
+    const looping = !!loop && loop.end > loop.start + 0.2 && t <= loop.end + 0.5;
+    if (!looping && t >= this.duration + 0.5) {
       this.pausedAt = this.duration;
       this.stopScheduling();
       this.engine.allNotesOff(now, false);

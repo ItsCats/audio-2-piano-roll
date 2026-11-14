@@ -39,6 +39,34 @@ export interface OfflineRenderOptions {
 
 const PREROLL = 18;
 
+const canceled = () => new DOMException('Render canceled', 'AbortError');
+
+/** `p`, or an AbortError as soon as the signal fires (p then goes on and its result is dropped). */
+function whileNotAborted<T>(p: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return p;
+  if (signal.aborted) {
+    p.catch(() => {});
+    return Promise.reject(canceled());
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      p.catch(() => {});
+      reject(canceled());
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    p.then(
+      (v) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(v);
+      },
+      (e) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(e);
+      },
+    );
+  });
+}
+
 /**
  * Renders and calls `onChunk` with consecutive pieces of output audio (output timeline,
  * starting at 0). Returns the total output duration in seconds.
@@ -61,7 +89,7 @@ export async function renderOfflineChunks(
   const vol = opts.volume ?? 1;
 
   for (let c0 = 0; c0 < outDuration; c0 += chunk) {
-    if (opts.signal?.aborted) throw new DOMException('Render canceled', 'AbortError');
+    if (opts.signal?.aborted) throw canceled();
     const c1 = Math.min(outDuration, c0 + chunk);
     const pre = c0 === 0 ? 0 : PREROLL;
     // render the engine's processing latency extra and drop it, so output is sample-aligned
@@ -69,7 +97,8 @@ export async function renderOfflineChunks(
     const len = Math.ceil((c1 - c0 + pre + lat) * sr);
     const ctx = new OfflineAudioContext(2, len, sr);
     const engine = new PianoEngine(ctx, ctx.destination);
-    await engine.applySettings({ ...opts.settings, volume: opts.settings.volume * vol }, undefined, true);
+    // loading the samples and rendering can't be stopped part-way: a cancel stops waiting for them
+    await whileNotAborted(engine.applySettings({ ...opts.settings, volume: opts.settings.volume * vol }, undefined, true), opts.signal);
     // output time o (seconds) <-> context time (o - c0 + pre)
     const toCtx = (songT: number) => (songT - opts.start) / rate - c0 + pre;
     for (const e of events) {
@@ -86,7 +115,7 @@ export async function renderOfflineChunks(
     // release the pedal at the end of the range so the tail decays naturally
     const endCtx = toCtx(opts.end);
     if (endCtx > 0 && endCtx < len / sr) engine.setPedal(false, endCtx);
-    const rendered = await ctx.startRendering();
+    const rendered = await whileNotAborted(ctx.startRendering(), opts.signal);
     // fades (output timeline)
     const preFrames = Math.round((pre + lat) * sr);
     for (let ch = 0; ch < rendered.numberOfChannels; ch++) {
