@@ -2,7 +2,7 @@
 Piano2Vision processing server.
 
 Optional companion to the web app: fetches YouTube audio (yt-dlp) and separates full mixes
-into a vocal stem and a drum-less accompaniment (SCNet, int8 ONNX on onnxruntime CPU) — the same
+into a vocal stem, a drum-less accompaniment and its "other" stem without the bass (SCNet, int8 ONNX on onnxruntime CPU) — the same
 model the browser runs, just faster on a multi-core server. Note transcription itself runs in the
 browser, so this server never needs a GPU to be useful.
 """
@@ -23,13 +23,13 @@ from .auth import require_auth
 from .config import settings
 from .jobs import Job, manager
 
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 # Piano2Vision is licensed under the GNU AGPL-3.0-or-later. Section 13 asks a server that people use over the
 # network to offer them its source: the root response and /api/health link to it. If you run a modified version,
 # set SOURCE_CODE_URL to where your modified source is published.
 LICENSE_ID = "AGPL-3.0-or-later"
 SOURCE_CODE_URL = os.environ.get("SOURCE_CODE_URL", "https://github.com/ItsCats/audio-2-piano-roll")
-STEMS = ("vocals", "accomp", "mix")
+STEMS = ("vocals", "accomp", "other", "mix")
 
 app = FastAPI(title="Piano2Vision processing server", version=VERSION)
 app.add_middleware(
@@ -59,7 +59,7 @@ def separation_enabled() -> bool:
 
 
 def _separate_into(job: Job, source_path: str, out_dir: str) -> None:
-    """SCNet -> vocals.flac + accomp.flac (mono 22.05 kHz, sample-aligned with the source)."""
+    """SCNet -> vocals.flac + accomp.flac + other.flac (mono 22.05 kHz, sample-aligned with the source)."""
     t0 = time.perf_counter()
     job.stage = "decoding"
     job.progress = None
@@ -75,7 +75,7 @@ def _separate_into(job: Job, source_path: str, out_dir: str) -> None:
     del audio
     job.stage = "encoding"
     job.progress = None
-    # one common gain for both stems (keeps their ratio, so vocal-presence measurements stay valid)
+    # one common gain for all stems (keeps their ratio, so vocal-presence measurements stay valid)
     peak = max(float(abs(v).max()) if v.size else 0.0 for v in stems.values())
     gain = 0.98 / peak if peak > 0.98 else 1.0
     for name, data in stems.items():
@@ -105,8 +105,9 @@ def health() -> dict:
         "version": VERSION,
         "license": LICENSE_ID,
         "source": SOURCE_CODE_URL,
-        # stems: separation returns ?stem=vocals|accomp (SCNet); older servers returned one "piano part" file
-        "features": {"youtube": youtube.available(), "separation": separation_enabled(), "stems": True},
+        # stems: separation returns ?stem=vocals|accomp (SCNet); older servers returned one "piano part" file.
+        # otherStem: also ?stem=other (the accompaniment without the bass; older 2.x servers lack it)
+        "features": {"youtube": youtube.available(), "separation": separation_enabled(), "stems": True, "otherStem": True},
         "separationModel": "scnet-int8" if separation_enabled() else None,
         "maxDurationSec": settings.max_duration_sec,
     }
@@ -148,7 +149,7 @@ def create_youtube_job(req: YouTubeRequest) -> dict:
             except Exception as e:  # noqa: BLE001 - the download is still useful: the client separates it itself
                 # keep the job done with the mix only, so the client can fetch it instead of making
                 # the server download the video a second time
-                for name in ("vocals", "accomp"):
+                for name in ("vocals", "accomp", "other"):
                     path = job.stems.pop(name, None)
                     if path and os.path.exists(path):
                         os.remove(path)
@@ -208,7 +209,7 @@ def get_job(job_id: str) -> dict:
 
 @app.get("/api/jobs/{job_id}/audio", dependencies=[Depends(require_auth)])
 def get_job_audio(job_id: str, stem: str | None = Query(default=None, max_length=16)) -> FileResponse:
-    """Processed audio. ?stem=vocals|accomp (separation) or mix (YouTube); without it: the accompaniment for
+    """Processed audio. ?stem=vocals|accomp|other (separation) or mix (YouTube); without it: the accompaniment for
     separation jobs (what pre-2.0 clients expect) or the mix for plain YouTube jobs."""
     if stem is not None and stem not in STEMS:
         raise HTTPException(status_code=400, detail=f"Unknown stem; use one of {', '.join(STEMS)}.")

@@ -213,6 +213,16 @@ export interface TranscriptionInfo {
     vocals: boolean;
     /** no singing, or no melody line from it: the vocal stem was transcribed together with the accompaniment (pipeline.ts vocalsIntoAccomp) */
     vocalsInAccomp?: boolean;
+    /**
+     * "Remove singing and drums" (Piano solo): only the separated piano part was transcribed (SCNet's
+     * "other" stem); the singing was not turned into notes and nothing was added back. Absent on songs
+     * imported before it existed and on every other kind of separated import.
+     */
+    pianoPart?: boolean;
+    /** with pianoPart: singing was found in the separated vocals (and removed) */
+    singing?: boolean;
+    /** with pianoPart: the bass stem was removed too (false: an older processing server sent it with the rest) */
+    bassRemoved?: boolean;
     ms: number;
     threads?: number;
   };

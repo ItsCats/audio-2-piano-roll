@@ -64,6 +64,8 @@ const {
   checkCrashedBlend,
   resumeBlend,
   STAGE_LABELS,
+  separationCrashNotice,
+  stageLabel,
 } = await import('../../src/state/importStore');
 const { interruptedNotice } = await import('../../src/state/interruptedImport');
 const { useSettings } = await import('../../src/state/settingsStore');
@@ -406,16 +408,19 @@ describe('high-accuracy piano model (piano specialist)', () => {
     expect(parsePrefs('not json')).toEqual({ separate: {} });
   });
 
-  it('a ticked choice runs the specialist (no separation), keeps it in the crash record and saves no posteriors', async () => {
+  it('a ticked choice runs the specialist (with "Remove singing and drums" when ticked), keeps it in the crash record and saves no posteriors', async () => {
     useImport.getState().setPianoModelPref(true);
     vi.mocked(pipeline.transcribeAudio).mockResolvedValue(specialistResult());
     await useImport.getState().importFile(file(), { separate: true });
     const job = useImport.getState().job!;
     expect(job.stage).toBe('done');
     expect(job.transcriber).toBe('piano-specialist');
-    expect(vi.mocked(pipeline.transcribeAudio).mock.calls[0][4]).toEqual({ engine: 'piano-specialist' });
-    expect(job.warnings.join(' ')).toMatch(/not used with the high-accuracy piano model/);
-    expect(vi.mocked(db.savePending).mock.calls[0][0]).toMatchObject({ transcriber: 'piano-specialist', separate: false, presetId: 'piano' });
+    expect(job.pianoPart).toBe(true);
+    const opts = vi.mocked(pipeline.transcribeAudio).mock.calls[0][4]!;
+    expect(opts).toMatchObject({ engine: 'piano-specialist', separate: true, pianoPart: true });
+    expect(typeof opts.onPhase).toBe('function');
+    expect(job.warnings.join(' ')).not.toMatch(/not used with the high-accuracy piano model/);
+    expect(vi.mocked(db.savePending).mock.calls[0][0]).toMatchObject({ transcriber: 'piano-specialist', separate: true, presetId: 'piano' });
     expect(db.savePosteriors).not.toHaveBeenCalled();
     expect(vi.mocked(db.saveSong).mock.calls[0][0]).toMatchObject({ hasPosteriors: false, hasAudio: true });
   });
@@ -742,7 +747,8 @@ describe('"Full song + piano model" (piano-model blend)', () => {
     vi.mocked(pipeline.transcribeAudio).mockClear();
     useSettings.setState({ detectionPreset: 'piano' });
     await useImport.getState().importFile(file(), { separate: true });
-    expect(vi.mocked(pipeline.transcribeAudio).mock.calls[0][4]).toEqual({ separate: true });
+    // (Piano solo with separation is "Remove singing and drums": the piano part only, no blend)
+    expect(vi.mocked(pipeline.transcribeAudio).mock.calls[0][4]).toEqual({ separate: true, pianoPart: true });
   });
 
   it('a song the blend does not run on (a sung line): its stage leaves the checklist', async () => {
@@ -826,5 +832,199 @@ describe('"Full song + piano model" (piano-model blend)', () => {
     } as Parameters<ReturnType<typeof useImport.getState>['resumePending']>[0]);
     expect(vi.mocked(pipeline.transcribeAudio).mock.calls[0][4]).toEqual({ separate: true });
     expect(await checkCrashedBlend(turnOff)).toBe(false);
+  });
+});
+
+describe('"Remove singing and drums" (Piano solo with separation)', () => {
+  let store: Map<string, string>;
+  let held: Set<string>;
+  beforeEach(() => {
+    store = new Map();
+    held = new Set();
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+    });
+    vi.stubGlobal('navigator', {
+      userAgent: 'Mozilla/5.0 (X11; Linux x86_64) Chrome/140',
+      maxTouchPoints: 0,
+      deviceMemory: 16,
+      locks: {
+        request: (name: string, cb: () => Promise<void>) => {
+          held.add(name);
+          return Promise.resolve(cb()).finally(() => held.delete(name));
+        },
+        query: async () => ({ held: [...held].map((name) => ({ name })) }),
+      },
+    });
+    for (const f of [db.savePending, db.saveSong, db.savePosteriors]) vi.mocked(f).mockClear();
+    useSettings.setState({ backendUrl: '', detectionPreset: 'piano' });
+    specialist.available = true;
+    useImport.setState({ prefs: { separate: {} } });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    useImport.setState({ prefs: { separate: {} } });
+  });
+  const file = () => new File([new Uint8Array(16)], 'song.mp3', { type: 'audio/mpeg' });
+  const rec = (extra: Record<string, unknown>) =>
+    ({
+      id: 'r1',
+      title: 'Song',
+      kind: 'audio',
+      source: { kind: 'audio', fileName: 'song.mp3', mimeType: 'audio/mpeg' },
+      blob: new Blob([new Uint8Array(16)], { type: 'audio/mpeg' }),
+      mimeType: 'audio/mpeg',
+      fileName: 'song.mp3',
+      startedAt: 1,
+      ...extra,
+    }) as Parameters<ReturnType<typeof useImport.getState>['resumePending']>[0];
+
+  it('Piano solo + separation asks for the piano part with either model; the other presets are unchanged', async () => {
+    vi.mocked(pipeline.transcribeAudio).mockResolvedValue(result());
+    await useImport.getState().importFile(file(), { separate: true });
+    expect(vi.mocked(pipeline.transcribeAudio).mock.calls[0][4]).toEqual({ separate: true, pianoPart: true });
+    expect(useImport.getState().job).toMatchObject({ pianoPart: true, separation: 'browser' });
+    expect(vi.mocked(db.savePending).mock.calls[0][0]).toMatchObject({ presetId: 'piano', separate: true });
+    expect(vi.mocked(db.savePending).mock.calls[0][0]).not.toHaveProperty('pianoPart');
+    // the piano model too (no "not used" warning any more)
+    useImport.getState().setPianoModelPref(true);
+    await useImport.getState().importFile(file(), { separate: true });
+    expect(vi.mocked(pipeline.transcribeAudio).mock.calls[1][4]).toMatchObject({ separate: true, pianoPart: true, engine: 'piano-specialist' });
+    expect(useImport.getState().job!.warnings.join(' ')).not.toMatch(/not used/);
+    // unticked: exactly as before
+    await useImport.getState().importFile(file(), { separate: false });
+    expect(vi.mocked(pipeline.transcribeAudio).mock.calls[2][4]).toEqual({ engine: 'piano-specialist' });
+    expect(useImport.getState().job!.pianoPart).toBeUndefined();
+    useImport.getState().setPianoModelPref(false);
+    await useImport.getState().importFile(file(), { separate: false });
+    expect(vi.mocked(pipeline.transcribeAudio).mock.calls[3][4]).toEqual({});
+    // Full song and Sensitive with separation: no piano part
+    for (const preset of ['mix', 'sensitive'] as const) {
+      useSettings.setState({ detectionPreset: preset });
+      vi.mocked(pipeline.transcribeAudio).mockClear();
+      await useImport.getState().importFile(file(), { separate: true });
+      expect(vi.mocked(pipeline.transcribeAudio).mock.calls[0][4]).toEqual({ separate: true });
+      expect(useImport.getState().job!.pianoPart).toBeUndefined();
+    }
+  });
+
+  it('the Record tab path (importAudioBlob with presetId "piano") asks for the piano part too', async () => {
+    useSettings.setState({ detectionPreset: 'mix' });
+    vi.mocked(pipeline.transcribeAudio).mockResolvedValue(result());
+    await useImport.getState().importAudioBlob(new Blob([new Uint8Array(4000)], { type: 'audio/mp4' }), {
+      title: 'Recording',
+      source: { kind: 'capture', mimeType: 'audio/mp4', fileSize: 4000 },
+      presetId: 'piano',
+      separate: true,
+      transcriber: 'basic-pitch',
+    });
+    expect(vi.mocked(pipeline.transcribeAudio).mock.calls[0][4]).toEqual({ separate: true, pianoPart: true });
+    // the existing Record-tab model choice without separation: as before
+    await useImport.getState().importAudioBlob(new Blob([new Uint8Array(4000)], { type: 'audio/mp4' }), {
+      title: 'Recording',
+      source: { kind: 'capture', mimeType: 'audio/mp4', fileSize: 4000 },
+      presetId: 'piano',
+      transcriber: 'piano-specialist',
+    });
+    expect(vi.mocked(pipeline.transcribeAudio).mock.calls[1][4]).toEqual({ engine: 'piano-specialist' });
+  });
+
+  it('crash markers: separation first, then the piano model (the marker moves when the model starts)', async () => {
+    useImport.getState().setPianoModelPref(true);
+    const seen: Record<string, unknown> = {};
+    vi.mocked(pipeline.transcribeAudio).mockImplementationOnce(async (_b, _p, _o, _s, opts) => {
+      seen.sepBefore = JSON.parse(store.get('piano2vision-separating') ?? 'null');
+      seen.specBefore = store.has(SPECIALIST_RUNNING_KEY);
+      opts?.onPhase?.('piano-model');
+      seen.sepAfter = store.has('piano2vision-separating');
+      seen.specAfter = JSON.parse(store.get(SPECIALIST_RUNNING_KEY) ?? 'null');
+      return { ...result(), posteriors: undefined };
+    });
+    await useImport.getState().importFile(file(), { separate: true });
+    expect(seen.sepBefore).toMatchObject({ preset: 'piano' });
+    expect(seen.specBefore).toBe(false);
+    expect(seen.sepAfter).toBe(false);
+    expect(seen.specAfter).toMatchObject({ pendingId: vi.mocked(db.savePending).mock.calls[0][0].id });
+    expect(store.has(SPECIALIST_RUNNING_KEY)).toBe(false);
+    expect(store.has('piano2vision-separating')).toBe(false);
+  });
+
+  it('server separation: the "other" stem is fetched where the server has it; an older server sends none', async () => {
+    useSettings.setState({ backendUrl: `http://server-other-${++url}.test` });
+    vi.mocked(client.health).mockResolvedValue({ ...healthy, features: { ...healthy.features, otherStem: true } } as typeof healthy);
+    vi.mocked(client.createSeparationJob).mockResolvedValue({ id: 'sep1', status: 'queued', stage: 'queued', progress: null });
+    vi.mocked(client.waitForJob).mockResolvedValue(done({ stems: ['accomp', 'other', 'vocals'] }));
+    vi.mocked(client.fetchStems).mockResolvedValue({ vocals: new Blob(['v']), accomp: new Blob(['a']), other: new Blob(['o']) });
+    vi.mocked(pipeline.transcribeAudio).mockResolvedValue(result());
+    await useImport.getState().importFile(file(), { separate: true });
+    expect(vi.mocked(client.fetchStems).mock.calls[0][3]).toBe(true);
+    const opts = vi.mocked(pipeline.transcribeAudio).mock.calls[0][4]!;
+    expect(opts.pianoPart).toBe(true);
+    expect(opts.stems?.other).toBeInstanceOf(Blob);
+    expect(useImport.getState().job).toMatchObject({ pianoPart: true, separation: 'server' });
+    // decided from the finished job's stems, not from a health check (one that fails or times out at
+    // upload time must not fall back to bass + other with the "update your server" notice)
+    useSettings.setState({ backendUrl: `http://server-flaky-${++url}.test` });
+    vi.mocked(client.health).mockResolvedValue(healthy);
+    vi.mocked(client.fetchStems).mockClear();
+    await useImport.getState().importFile(file(), { separate: true });
+    expect(vi.mocked(client.fetchStems).mock.calls[0][3]).toBe(true);
+    vi.mocked(pipeline.transcribeAudio).mockClear();
+    // an older 2.x server (its job lists no "other"): its two stems, the pipeline uses the accompaniment and warns
+    useSettings.setState({ backendUrl: `http://server-old-${++url}.test` });
+    vi.mocked(client.waitForJob).mockResolvedValue(done({ stems: ['accomp', 'vocals'] }));
+    vi.mocked(client.fetchStems).mockClear();
+    vi.mocked(client.fetchStems).mockResolvedValue({ vocals: new Blob(['v']), accomp: new Blob(['a']) });
+    await useImport.getState().importFile(file(), { separate: true });
+    expect(vi.mocked(client.fetchStems).mock.calls[0]).toHaveLength(3);
+    expect(vi.mocked(pipeline.transcribeAudio).mock.calls[0][4]).toMatchObject({ pianoPart: true });
+    // Full song never asks for it
+    useSettings.setState({ detectionPreset: 'mix', backendUrl: `http://server-mix-${++url}.test` });
+    vi.mocked(client.health).mockResolvedValue({ ...healthy, features: { ...healthy.features, otherStem: true } } as typeof healthy);
+    vi.mocked(client.waitForJob).mockResolvedValue(done({ stems: ['accomp', 'other', 'vocals'] }));
+    vi.mocked(client.fetchStems).mockClear();
+    await useImport.getState().importFile(file(), { separate: true });
+    expect(vi.mocked(client.fetchStems).mock.calls[0]).toHaveLength(3);
+  });
+
+  it('a separation that ran out of memory turns the option off for Piano solo, worded for it', async () => {
+    vi.mocked(pipeline.transcribeAudio).mockResolvedValue({ ...result(), separationFailure: 'memory' });
+    await useImport.getState().importFile(file(), { separate: true });
+    expect(useImport.getState().prefs.separate.piano).toBe(false);
+    expect(useImport.getState().job!.warnings.join(' ')).toMatch(/“Remove singing and drums” is now off for Piano solo/);
+    expect(separationCrashNotice('piano')[1]).toMatch(/“Remove singing and drums” is now off for Piano solo/);
+    expect(separationCrashNotice('mix')[1]).toMatch(/"Separate vocals & drums" is now off for this detection preset/);
+    expect(stageLabel({ pianoPart: true }, 'separating')).toBe('Removing singing and drums');
+    expect(stageLabel({}, 'separating')).toBe('Separating vocals & drums');
+    expect(stageLabel({ pianoPart: true }, 'analyzing')).toBe('Finding the piano notes');
+    expect(stageLabel({}, 'analyzing')).toBe('Detecting notes');
+  });
+
+  it('old prefs and old interrupted-import records load unchanged; an old Piano solo record with separation resumes piano-only', async () => {
+    expect(parsePrefs('{"separate":{"piano":true},"engine":{"piano":"browser"},"pianoModel":true}')).toEqual({
+      separate: { piano: true },
+      engine: { piano: 'browser' },
+      pianoModel: true,
+    });
+    useImport.setState({ prefs: parsePrefs('{"separate":{"piano":true},"engine":{"piano":"browser"}}') });
+    vi.mocked(pipeline.transcribeAudio).mockResolvedValue(result());
+    await useImport.getState().resumePending(rec({ presetId: 'piano', separate: true }));
+    expect(vi.mocked(pipeline.transcribeAudio).mock.calls[0][4]).toEqual({ separate: true, pianoPart: true });
+    // with the piano model, as it was started
+    await useImport.getState().resumePending(rec({ id: 'r2', presetId: 'piano', separate: true, transcriber: 'piano-specialist' }));
+    expect(vi.mocked(pipeline.transcribeAudio).mock.calls[1][4]).toMatchObject({ separate: true, pianoPart: true, engine: 'piano-specialist' });
+    // a separation that took a tab down was switched off for Piano solo: the record resumes without it
+    useImport.getState().setSeparatePref('piano', false, 'browser');
+    await useImport.getState().resumePending(rec({ id: 'r3', presetId: 'piano', separate: true }));
+    expect(vi.mocked(pipeline.transcribeAudio).mock.calls[2][4]).toEqual({});
+    // separation choice for Piano solo: off unless ticked
+    const avail = separationAvailability(false, { ok: true, recommended: true, estSecondsPerMinute: 60, maxSeconds: 600 });
+    expect(separationChoice({ separate: {} }, 'piano', avail)).toBe(false);
+    expect(separationChoice({ separate: { piano: true } }, 'piano', avail)).toBe(true);
+    // a phone: a "yes" given while the server separated does not carry over to the phone's browser
+    const phone = separationAvailability(false, { ok: true, recommended: false, estSecondsPerMinute: 120, maxSeconds: 600 });
+    expect(separationChoice({ separate: { piano: true }, engine: { piano: 'server' } }, 'piano', phone)).toBe(false);
   });
 });

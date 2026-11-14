@@ -13,6 +13,7 @@ import {
   METHOD_NOTES,
   OTHER_PIANO_ROWS,
   PIANO_BLEND_EFFECT,
+  PIANO_PART_EFFECT,
   PLAYABILITY,
   SEPARATION_EFFECT,
   SHEET_READER,
@@ -555,6 +556,14 @@ export default function AccuracyPage() {
         </section>
 
         <section>
+          <SectionTitle title={PIANO_PART_EFFECT.title} sub={PIANO_PART_EFFECT.intro} />
+          <BeforeAfterTable rows={PIANO_PART_EFFECT.rows} cols={['', 'Whole song', 'Singing and drums removed']} />
+          {PIANO_PART_EFFECT.notes.map((n) => (
+            <Note key={n}>{n}</Note>
+          ))}
+        </section>
+
+        <section>
           <SectionTitle
             title="Playable arrangements"
             sub="Two things that made the generated levels hard to play: long notes chopped into quick repeats of the same key, and chords one hand cannot reach. Measured on the same songs and pieces, before → now."
@@ -611,7 +620,7 @@ export default function AccuracyPage() {
           <ol className="mt-3 flex flex-col gap-2 text-[13px] leading-relaxed text-ink-200">
             {[
               'Choose the right detection preset when importing: Piano solo, Full song or Sensitive (fast or very soft playing). For solo piano on a computer, pick “High-accuracy piano model” when you can wait a few minutes; for instrumental band songs, “Full song” with “Add the high-accuracy piano model” adds keyboard parts the normal model misses.',
-              'For songs with a singer, keep “Separate vocals & drums” on: the right hand then follows the singer.',
+              'For songs with a singer, keep “Separate vocals & drums” on: the right hand then follows the singer. To play only the piano part of a song with singing, pick Piano solo and tick “Remove singing and drums”.',
               'Use the cleanest recording you can — less reverb, crowd noise and background music means better notes.',
               'In the Studio, blend in the original recording (Sound tab → Original recording) to hear differences.',
               'Re-tune detection in the Notes tab — it re-runs in seconds without re-analyzing the audio.',

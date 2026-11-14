@@ -58,6 +58,8 @@ export interface ImportJob {
   separation?: SeparationEngine;
   /** transcription model of this import (absent: Basic Pitch) */
   transcriber?: TranscriptionEngine;
+  /** "Remove singing and drums" (Piano solo with separation): only the piano part is transcribed */
+  pianoPart?: boolean;
   /** a PDF or photos read by the sheet-music reader */
   sheet?: 'pdf' | 'photo';
   /** which sheet-music reader (src/lib/omr/readers.ts) */
@@ -451,15 +453,26 @@ function markSeparating(preset: PresetId): () => void {
   return setCrashMarker(SEPARATING_KEY, SEPARATING_LOCK, { preset });
 }
 
+/** The toast after a tab died while separating (the option is now off for that preset). */
+export function separationCrashNotice(preset: PresetId): [title: string, body: string] {
+  if (preset === 'piano') {
+    return [
+      'The last import stopped while removing the singing and drums',
+      'The page most likely ran out of memory. “Remove singing and drums” is now off for Piano solo. Close other tabs and tick it again to retry, or use a processing server with separation.',
+    ];
+  }
+  return [
+    'The last import stopped while separating vocals & drums',
+    'The page most likely ran out of memory. "Separate vocals & drums" is now off for this detection preset. Close other tabs and tick it again to retry, or use a processing server with separation.',
+  ];
+}
+
 async function checkCrashedSeparation(turnOff: (preset: PresetId) => void): Promise<void> {
   const m = await takeCrashMarker(SEPARATING_KEY, SEPARATING_LOCK);
   const preset = m?.preset as PresetId | undefined;
   if (!preset || !['piano', 'mix', 'sensitive', 'custom'].includes(preset)) return;
   turnOff(preset);
-  toast.warn(
-    'The last import stopped while separating vocals & drums',
-    'The page most likely ran out of memory. "Separate vocals & drums" is now off for this detection preset. Close other tabs and tick it again to retry, or use a processing server with separation.',
-  );
+  toast.warn(...separationCrashNotice(preset));
 }
 
 function markSpecialist(pendingId: string | undefined): () => void {
@@ -593,8 +606,11 @@ function planFor(kind: SongSource['kind'], sep: SeparationEngine | undefined, yo
 }
 
 /** "Separating vocals & drums: part 3 of 12" and "… part 4 of 12" are the same phase; numbers are dropped. */
-/** Human-readable text for a processing-server job stage (server 2.0: queued → decoding → separating → encoding → done). */
-function serverStageDetail(stage: string): string {
+/**
+ * Human-readable text for a processing-server job stage (server 2.0: queued → decoding → separating → encoding → done).
+ * `pianoPart`: "Remove singing and drums" wording.
+ */
+function serverStageDetail(stage: string, pianoPart = false): string {
   switch (stage) {
     case 'queued':
       return 'Waiting for your processing server';
@@ -603,7 +619,7 @@ function serverStageDetail(stage: string): string {
     case 'decoding':
       return 'Preparing the audio on your processing server';
     case 'separating':
-      return 'Separating vocals & drums on your server';
+      return pianoPart ? 'Removing singing and drums on your server' : 'Separating vocals & drums on your server';
     case 'encoding':
       return 'Saving the separated stems on your server';
     default:
@@ -726,11 +742,16 @@ export const useImport = create<ImportState>((set, get) => {
     return ctx;
   };
 
-  /** The piano specialist is for solo piano: a ticked "Separate vocals & drums" is not used with it. */
+  /**
+   * The piano specialist outside "Piano solo" (where it is never offered): a ticked "Separate vocals &
+   * drums" is not used with it. Under "Piano solo" separation is "Remove singing and drums", which
+   * works with both models.
+   */
   const skipSeparation = (ctx: Ctx) => {
     ctx.early.push('"Separate vocals & drums" is not used with the high-accuracy piano model.');
     ctx.update({ warnings: [...ctx.early] });
   };
+  const separationUnused = (ctx: Ctx, separate: boolean | undefined) => !!separate && ctx.transcriber === 'piano-specialist' && ctx.preset !== 'piano';
 
   /** Keep a copy of the audio and the options until this import ends (see persistPending). */
   const pend = async (ctx: Ctx, rec: Omit<PendingImport, 'id' | 'startedAt' | 'presetId'> & { id?: string }) => {
@@ -825,10 +846,15 @@ export const useImport = create<ImportState>((set, get) => {
     return separationChoice(get().prefs, preset, separationAvailability(serverStems));
   };
 
-  /** Separate on the processing server and download both stems. */
-  const serverStems = async ({ update, signal }: Ctx, blob: Blob, name: string) => {
+  /** "Remove singing and drums": the Piano solo preset with separation (only the piano part is transcribed). */
+  const isPianoPart = (ctx: Ctx) => ctx.preset === 'piano';
+
+  /** Separate on the processing server and download both stems (and the "other" stem for the piano part, where the server has it). */
+  const serverStems = async (ctx: Ctx, blob: Blob, name: string) => {
+    const { update, signal } = ctx;
     const url = backendUrl();
     if (!url) throw new Error('No processing server is configured.');
+    const pianoPart = isPianoPart(ctx);
     update({ stage: 'uploading', progress: null, detail: 'Uploading to your processing server' });
     const job = await createSeparationJob(url, blob, name);
     if (signal.aborted) throw new DOMException('Canceled', 'AbortError');
@@ -839,12 +865,15 @@ export const useImport = create<ImportState>((set, get) => {
         update({
           stage: 'separating',
           progress: j.progress,
-          detail: serverStageDetail(j.stage),
+          detail: serverStageDetail(j.stage, pianoPart),
         }),
       signal,
     );
-    update({ stage: 'downloading', progress: null, detail: 'Downloading the separated vocals and accompaniment' });
-    const stems = await backendApi.fetchStems(url, job.id, signal);
+    update({ stage: 'downloading', progress: null, detail: pianoPart ? 'Downloading the separated parts' : 'Downloading the separated vocals and accompaniment' });
+    // the finished job lists its stems: a 2.1+ server's "other" (no bass) is fetched for the piano part
+    // (decided from the job itself, not a health check that could time out right now)
+    const withOther = pianoPart && !!done.stems?.includes('other');
+    const stems = withOther ? await backendApi.fetchStems(url, job.id, signal, true) : await backendApi.fetchStems(url, job.id, signal);
     if (signal.aborted) throw new DOMException('Canceled', 'AbortError');
     return { ...stems, serverMs: done.separationMs ?? undefined };
   };
@@ -859,13 +888,15 @@ export const useImport = create<ImportState>((set, get) => {
     meta: { title: string; artist?: string; source: SongSource; fileName: string; keepVideo?: boolean },
     engine: SeparationEngine | undefined,
     /** stems the server already produced (a separated YouTube job): used as they are */
-    prefetched?: { vocals: Blob; accomp: Blob; serverMs?: number },
+    prefetched?: { vocals: Blob; accomp: Blob; other?: Blob; serverMs?: number },
     /** warnings from earlier steps of this import */
     earlier: string[] = [],
   ) => {
     const { update, onProgress, signal } = ctx;
     const params = detectionParams(ctx.preset);
     const extraWarnings: string[] = [...ctx.early, ...earlier];
+    // the timeline says "Removing singing and drums" from the start (also while a server separates)
+    if (isPianoPart(ctx) && engine) update({ pianoPart: true });
     let opts: TranscribeOptions = {};
     let progress = onProgress;
     if (engine === 'server') {
@@ -894,11 +925,31 @@ export const useImport = create<ImportState>((set, get) => {
       opts = { separate: true };
     }
     if (ctx.transcriber === 'piano-specialist') opts = { ...opts, engine: 'piano-specialist' };
+    // "Remove singing and drums": Piano solo with separation, either model
+    const pianoPart = isPianoPart(ctx) && (!!opts.separate || !!opts.stems);
+    if (pianoPart) opts = { ...opts, pianoPart: true };
+    if (!!get().job?.pianoPart !== pianoPart) update({ pianoPart });
     // the piano-model blend needs this browser's separation (its bass and other stems)
     const blendHere = ctx.blend && !!opts.separate && !!pianoBlendAvailability(pageBlendEnv(true)).available;
-    // in-browser separation and the piano specialist: leave a marker in case the tab dies of it (setCrashMarker)
+    // in-browser separation and the piano specialist: leave a marker in case the tab dies of it (setCrashMarker);
+    // the piano model of a piano-part import runs after separation: the marker moves to it then
+    const specialistAfterSeparation = opts.engine === 'piano-specialist' && pianoPart && !!opts.separate;
     let unmark =
-      opts.engine === 'piano-specialist' ? markSpecialist(ctx.pendingId) : opts.separate ? markSeparating(ctx.preset) : () => {};
+      opts.engine === 'piano-specialist' && !specialistAfterSeparation
+        ? markSpecialist(ctx.pendingId)
+        : opts.separate
+          ? markSeparating(ctx.preset)
+          : () => {};
+    if (specialistAfterSeparation) {
+      opts = {
+        ...opts,
+        onPhase: (phase) => {
+          if (phase !== 'piano-model') return;
+          unmark();
+          unmark = markSpecialist(ctx.pendingId);
+        },
+      };
+    }
     if (blendHere) {
       // the blend's piano model runs after separation: the crash marker moves to it
       opts = {
@@ -925,7 +976,11 @@ export const useImport = create<ImportState>((set, get) => {
     if (result.separationFailure === 'memory' && opts.separate) {
       // the next import of this preset would fail the same way
       get().setSeparatePref(ctx.preset, false, 'browser');
-      result.info.warnings.push('"Separate vocals & drums" is now off for this detection preset; tick it again to retry.');
+      result.info.warnings.push(
+        pianoPart
+          ? '“Remove singing and drums” is now off for Piano solo; tick it again to retry.'
+          : '"Separate vocals & drums" is now off for this detection preset; tick it again to retry.',
+      );
     }
     result.info.warnings = [...extraWarnings, ...result.info.warnings];
     const song = buildSong({
@@ -1065,8 +1120,8 @@ export const useImport = create<ImportState>((set, get) => {
       let separate = opts.separate;
       try {
         separate ??= await defaultSeparate();
-        // the piano specialist is for solo piano: no separation (the pipeline would ignore it)
-        if (ctx.transcriber === 'piano-specialist' && separate) {
+        // the piano specialist outside Piano solo: no separation (the pipeline would ignore it)
+        if (separationUnused(ctx, separate)) {
           skipSeparation(ctx);
           separate = false;
         }
@@ -1227,7 +1282,7 @@ export const useImport = create<ImportState>((set, get) => {
       const fileName = recordingName(meta.title, blob.type);
       let separate = !!meta.separate;
       try {
-        if (ctx.transcriber === 'piano-specialist' && separate) {
+        if (separationUnused(ctx, separate)) {
           skipSeparation(ctx);
           separate = false;
         }
@@ -1301,7 +1356,7 @@ export const useImport = create<ImportState>((set, get) => {
       try {
         const backend = backendUrl();
         if (!backend) throw new Error('No processing server is configured (Settings → Processing server).');
-        if (ctx.transcriber === 'piano-specialist' && separate) {
+        if (separationUnused(ctx, separate)) {
           skipSeparation(ctx);
           separate = false;
         }
@@ -1320,7 +1375,7 @@ export const useImport = create<ImportState>((set, get) => {
           update({ plan: [...new Set<ImportStage>(['validating', 'downloading', 'separating', ...TRANSCRIBE])], separation: 'server' });
           // only the server's part is inside this try: transcription and saving errors are not
           // separation failures and must not start the fallback
-          let served: { mix: Blob; stems: { vocals: Blob; accomp: Blob; serverMs?: number }; title: string; artist?: string } | null = null;
+          let served: { mix: Blob; stems: { vocals: Blob; accomp: Blob; other?: Blob; serverMs?: number }; title: string; artist?: string } | null = null;
           let why = '';
           try {
             update({ stage: 'downloading', progress: null, detail: 'Fetching audio on your processing server' });
@@ -1346,7 +1401,8 @@ export const useImport = create<ImportState>((set, get) => {
             if (!hasStems) {
               why = done.separationError || 'it returned no separated stems';
             } else {
-              const stems = await backendApi.fetchStems(backend, job.id, signal);
+              const withOther = isPianoPart(ctx) && !!done.stems?.includes('other');
+              const stems = withOther ? await backendApi.fetchStems(backend, job.id, signal, true) : await backendApi.fetchStems(backend, job.id, signal);
               served = { mix, stems: { ...stems, serverMs: done.separationMs ?? undefined }, title, artist };
             }
           } catch (err) {
@@ -1539,9 +1595,15 @@ export const SHEET_STAGE_LABELS: Partial<Record<ImportStage, string>> = {
 };
 
 /** A stage's label in the progress timeline of this job. */
-export function stageLabel(job: Pick<ImportJob, 'sheet'>, stage: ImportStage): string {
-  return (job.sheet && SHEET_STAGE_LABELS[stage]) || STAGE_LABELS[stage];
+export function stageLabel(job: Pick<ImportJob, 'sheet' | 'pianoPart'>, stage: ImportStage): string {
+  return (job.sheet && SHEET_STAGE_LABELS[stage]) || (job.pianoPart && PIANO_PART_STAGE_LABELS[stage]) || STAGE_LABELS[stage];
 }
+
+/** Timeline labels of a "Remove singing and drums" import (the rest as in STAGE_LABELS). */
+export const PIANO_PART_STAGE_LABELS: Partial<Record<ImportStage, string>> = {
+  separating: 'Removing singing and drums',
+  analyzing: 'Finding the piano notes',
+};
 
 export const STAGE_LABELS: Record<ImportStage, string> = {
   validating: 'Checking file',

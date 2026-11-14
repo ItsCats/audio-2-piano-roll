@@ -274,7 +274,23 @@ export function ArrangementPanel() {
             )
           )}
         </dl>
-        {t.separation && (
+        {t.separation?.pianoPart ? (
+          <div className="flex flex-wrap gap-1.5" aria-label="Source separation">
+            {t.separation.singing ? (
+              <Badge tone="accent" title="The singing was separated out and not turned into notes">
+                Singing removed
+              </Badge>
+            ) : (
+              <Badge title="No singing was found in the separated vocals">No singing found</Badge>
+            )}
+            <Badge
+              tone="accent"
+              title={t.separation.bassRemoved ? 'Drums and bass were removed before the piano part was transcribed' : 'Drums were removed before the piano part was transcribed'}
+            >
+              {t.separation.bassRemoved ? 'Drums and bass removed' : 'Drums removed'}
+            </Badge>
+          </div>
+        ) : t.separation && (
           <div className="flex flex-wrap gap-1.5" aria-label="Source separation">
             {t.separation.vocals ? (
               <Badge tone="accent" title="The sung melody was transcribed from the separated vocals and put on the right hand">
@@ -333,7 +349,7 @@ export function ArrangementPanel() {
             Set tempo
           </Button>
         </div>
-        <p className="text-[11.5px] text-ink-400">Sets a steady grid for the metronome, quantising and the simplified levels.</p>
+        <p className="text-[11.5px] text-ink-400">Sets a steady grid for the metronome, quantizing and the simplified levels.</p>
       </Section>
 
       {song.hasPosteriors && (

@@ -16,8 +16,14 @@
  *
  * Engine 'piano-specialist' (solo piano, opt-in): decode at 16 kHz → the ByteDance piano
  * transcription model (lib/pianoSpecialist, in its own worker) → its regression post-processor
- * (pianoSpecialist/postprocess.ts) → hands → tempo/beats → key. No separation and none of the
- * Basic Pitch cleanup (see specialistNotes).
+ * (pianoSpecialist/postprocess.ts) → hands → tempo/beats → key. None of the Basic Pitch cleanup
+ * (see specialistNotes).
+ *
+ * "Remove singing and drums" (TranscribeOptions.pianoPart, the "Piano solo" preset with separation;
+ * either engine): separate, then transcribe only SCNet's "other" stem (separation/index.ts
+ * pianoPartStem: no vocals, drums or bass). No vocal pass, no melody line, nothing added back. The
+ * piano model gets the stem resampled 22.05 → 16 kHz after the separation worker has ended (the two
+ * models never hold their memory at the same time).
  */
 import type { ExtractionParams, KeyInfo, Note, PedalRange, PianoBlendInfo, TempoInfo, TranscriptionInfo } from '../music/types';
 import { BP_FPS, BP_MIDI_OFFSET, BP_N_PITCHES, BP_SAMPLE_RATE, frameToTime, timeToFrame } from './constants';
@@ -37,7 +43,7 @@ import type { StoredPosteriors } from './posteriors';
 import { BASS_BAND_PITCHES, BASS_LINE, bassBand, decodeBassLine, mergeBassLine, type BassPosteriors } from './bassLine';
 import { gapCue, pitchContinues, pitchHeldEnd, pitchSupport, storedPitch, type StoredPitch } from './stemPitch';
 import { isMemoryConstrained, pageDeviceInfo } from './backendChoice';
-import { BROWSER_SEPARATION_MAX_SECONDS, DRUM_ENV_FPS, longReason, separateStems, separationSupport, stemsFromBlobs, type SeparationResult } from '../separation';
+import { BROWSER_SEPARATION_MAX_SECONDS, DRUM_ENV_FPS, PIANO_PART_OLD_SERVER, longReason, pianoPartStem, separateStems, separationSupport, stemsFromBlobs, type SeparationResult } from '../separation';
 import { regressionToNotes, type RegressionOutputs } from '../pianoSpecialist/postprocess';
 import { watchWorker } from '../newVersion';
 // (protocol.ts is pure: the specialist's runtime itself is only loaded when it is used)
@@ -222,9 +228,16 @@ export interface TranscribeOptions {
   separate?: boolean;
   /**
    * Stems that were already separated (processing server); used instead of `separate`.
-   * `serverMs`: the server's separation time, when it reported one.
+   * `serverMs`: the server's separation time, when it reported one. `other`: the "other" stem alone
+   * (servers reporting `features.otherStem`), used by `pianoPart`.
    */
-  stems?: { vocals: Blob; accomp: Blob; serverMs?: number };
+  stems?: { vocals: Blob; accomp: Blob; other?: Blob; serverMs?: number };
+  /**
+   * "Remove singing and drums" (the "Piano solo" preset with separation, either engine): transcribe
+   * only the separated piano part (pianoPartStem), with no sung melody line and nothing added back.
+   * Only used together with `separate`, `stems` or `separation`.
+   */
+  pianoPart?: boolean;
   /**
    * An in-page separation result of this same audio (tests, accuracy harness); used instead of
    * both. Not consumed: its arrays are copied, so the same result can be passed to several calls.
@@ -251,9 +264,10 @@ export interface TranscribeOptions {
   /**
    * 'piano-blend': right before the piano model starts (the import moves its crash marker there);
    * 'piano-blend-skipped': the blend was asked for but does not run for this song (a sung line, too
-   * long, no separated stems; a warning says why)
+   * long, no separated stems; a warning says why);
+   * 'piano-model': `pianoPart` with the piano model: separation is over and the model starts next
    */
-  onPhase?: (phase: 'piano-blend' | 'piano-blend-skipped') => void;
+  onPhase?: (phase: 'piano-blend' | 'piano-blend-skipped' | 'piano-model') => void;
 }
 
 /**
@@ -269,10 +283,23 @@ function transcriptionTempo(accomp: Note[], merged: Note[], duration: number): T
 /** Errors that mean the browser ran out of memory (onnxruntime, Emscripten, V8), or a worker that died without a message. */
 const MEMORY_ERROR = /bad_alloc|out of memory|\bOOM\b|allocation failed|could not allocate|ERROR_CODE: 6\b|RangeError|WebAssembly\.Memory|worker failed/i;
 
-/** The warning for a separation that failed (memory errors get advice instead of the raw engine message). */
-export function separationFailureWarning(err: unknown): { kind: 'memory' | 'error'; warning: string } {
+/**
+ * The warning for a separation that failed (memory errors get advice instead of the raw engine message).
+ * `pianoPart`: worded for "Remove singing and drums".
+ */
+export function separationFailureWarning(err: unknown, pianoPart = false): { kind: 'memory' | 'error'; warning: string } {
   const e = err as Error | undefined;
   const raw = `${e?.name ?? ''} ${e?.message ?? String(err)}`.trim();
+  if (pianoPart) {
+    const memory = MEMORY_ERROR.test(raw);
+    const why = memory ? 'out of memory' : (e?.message ?? String(err));
+    return {
+      kind: memory ? 'memory' : 'error',
+      warning:
+        `The singing could not be removed (${why}), so the whole recording was turned into notes: some notes may come from the singing.` +
+        (memory ? ' Close other tabs and try again, or use a processing server with separation (Settings → Processing server).' : ''),
+    };
+  }
   if (MEMORY_ERROR.test(raw)) {
     const detail = (e?.message ?? String(err)).replace(/\s+/g, ' ').slice(0, 80);
     return {
@@ -954,40 +981,13 @@ async function transcribeAudioOnce(
   if (level.rms < 0.01) warnings.push('The recording is very quiet; quiet notes may be missed.');
 
   // ---- optional source separation
-  // a reused in-page result is copied: its arrays are normalised in place and transferred below
-  let sep: SeparationResult | null = opts.separation
-    ? { ...opts.separation, accomp: opts.separation.accomp.slice(), vocals: opts.separation.vocals.slice(), ...(opts.separation.bass ? { bass: opts.separation.bass.slice() } : {}) }
-    : null;
-  const support = !sep && !opts.stems && opts.separate ? separationSupport(duration) : null;
-  if (support && support.ok && duration > support.maxSeconds) {
-    warnings.push(
-      `${longReason(duration)} It was skipped, so the full mix was transcribed and the right hand does not follow the singer; a processing server with separation can handle long recordings.`,
-    );
-    separationFailure = 'too-long';
-  } else if (!sep && (opts.stems || opts.separate)) {
-    try {
-      if (opts.stems) {
-        onProgress({ stage: 'separating', progress: null, detail: 'Reading the separated stems' });
-        sep = await stemsFromBlobs(opts.stems.vocals, opts.stems.accomp, duration, opts.stems.serverMs);
-      } else {
-        onProgress({ stage: 'separating', progress: 0, detail: 'Separating vocals and drums' });
-        sep = await separateStems(
-          blob,
-          (fraction, detail) => onProgress({ stage: 'separating', progress: fraction, detail: detail ?? 'Separating vocals and drums' }),
-          signal,
-        );
-      }
-    } catch (err) {
-      if (signal?.aborted || (err as Error)?.name === 'AbortError') throw aborted();
-      const f = separationFailureWarning(err);
-      warnings.push(f.warning);
-      separationFailure = f.kind;
-      sep = null;
-    }
-    if (signal?.aborted) throw aborted();
-  }
-  const withVocals = !!sep && sep.vocalPresence.present;
+  const pianoPart = !!opts.pianoPart;
+  let sep: SeparationResult | null;
+  ({ sep, failure: separationFailure } = await separateFor(blob, duration, opts, onProgress, signal, warnings, pianoPart));
   if (sep && sep.sampleRate !== BP_SAMPLE_RATE) throw new Error(`Separated stems have an unexpected sample rate (${sep.sampleRate} Hz).`);
+  // "Remove singing and drums": only the piano part is transcribed (a failed separation: the full mix, below)
+  if (sep && pianoPart) return transcribePianoPart(audio, sep, duration, params, onProgress, signal, warnings, t0);
+  const withVocals = !!sep && sep.vocalPresence.present;
 
   // ---- the passes over the stems, numbered for the progress text
   // The bass line and the stem pitch track are the "Full song" preset's (a piano recording's low
@@ -1117,7 +1117,7 @@ async function transcribeAudioOnce(
   if (vocal && !melody.length) warnings.push('Singing was detected but no clear melody line could be extracted from it.');
   if (notes.length === 0) warnings.push('No notes were detected. Try the "Sensitive" detection preset.');
   const tempo = transcriptionTempo(accomp.main, notes, duration);
-  if (tempo.confidence < 0.15) warnings.push('Tempo could not be detected reliably; the beat grid and quantisation may be off.');
+  if (tempo.confidence < 0.15) warnings.push('Tempo could not be detected reliably; the beat grid and quantization may be off.');
   const meanConf = result.notes.length ? result.notes.reduce((s, n) => s + n.amplitude, 0) / result.notes.length : 0;
   return {
     notes,
@@ -1154,6 +1154,169 @@ async function transcribeAudioOnce(
       confidence: Math.round(meanConf * 100) / 100,
     },
     ...(separationFailure ? { separationFailure } : {}),
+  };
+}
+
+/**
+ * The separation an import asked for (`opts.separation`, `opts.stems` or `opts.separate`), or null
+ * with the reason it did not run (`failure`, and a warning in `warnings`). A reused in-page result is
+ * copied: its arrays are normalised in place and transferred to workers. `pianoPart` words the
+ * progress and the warnings for "Remove singing and drums".
+ */
+async function separateFor(
+  blob: Blob,
+  duration: number,
+  opts: TranscribeOptions,
+  onProgress: (e: ProgressEvent) => void,
+  signal: AbortSignal | undefined,
+  warnings: string[],
+  pianoPart: boolean,
+): Promise<{ sep: SeparationResult | null; failure?: TranscriptionResult['separationFailure'] }> {
+  const given = opts.separation;
+  let sep: SeparationResult | null = given
+    ? {
+        ...given,
+        accomp: given.accomp.slice(),
+        vocals: given.vocals.slice(),
+        ...(given.bass ? { bass: given.bass.slice() } : {}),
+        ...(given.other ? { other: given.other.slice() } : {}),
+      }
+    : null;
+  let failure: TranscriptionResult['separationFailure'];
+  const support = !sep && !opts.stems && opts.separate ? separationSupport(duration) : null;
+  const what = pianoPart ? PIANO_PART_SEPARATING : 'Separating vocals and drums';
+  if (support && support.ok && duration > support.maxSeconds) {
+    warnings.push(
+      pianoPart
+        ? `${longReason(duration)} The singing was not removed, so some notes may come from it; a processing server with separation can handle long recordings.`
+        : `${longReason(duration)} It was skipped, so the full mix was transcribed and the right hand does not follow the singer; a processing server with separation can handle long recordings.`,
+    );
+    failure = 'too-long';
+  } else if (!sep && (opts.stems || opts.separate)) {
+    try {
+      if (opts.stems) {
+        onProgress({ stage: 'separating', progress: null, detail: 'Reading the separated stems' });
+        // the "other" stem is only decoded where it is used (the piano part)
+        sep = await stemsFromBlobs(opts.stems.vocals, opts.stems.accomp, duration, opts.stems.serverMs, pianoPart ? opts.stems.other : undefined);
+      } else {
+        onProgress({ stage: 'separating', progress: 0, detail: what });
+        sep = await separateStems(
+          blob,
+          (fraction, detail) =>
+            onProgress({ stage: 'separating', progress: fraction, detail: detail ? (pianoPart ? pianoPartDetail(detail) : detail) : what }),
+          signal,
+        );
+      }
+    } catch (err) {
+      if (signal?.aborted || (err as Error)?.name === 'AbortError') throw aborted();
+      const f = separationFailureWarning(err, pianoPart);
+      warnings.push(f.warning);
+      failure = f.kind;
+      sep = null;
+    }
+    if (signal?.aborted) throw aborted();
+  }
+  return { sep, failure };
+}
+
+// ---------------------------------------------------------------- "Remove singing and drums" (Piano solo)
+
+/** Progress text while separating for the piano part. */
+export const PIANO_PART_SEPARATING = 'Removing singing and drums';
+/** "Separating vocals & drums: part 3 of 12" → "Removing singing and drums: part 3 of 12" */
+export function pianoPartDetail(detail: string): string {
+  return detail.replace(/^Separating vocals (&|and) drums/, PIANO_PART_SEPARATING);
+}
+/** The error when nothing is left once the singing and drums are removed (an a cappella song). */
+export const PIANO_PART_EMPTY =
+  'After removing the singing and drums, nothing was left to turn into notes. Untick “Remove singing and drums” to transcribe the whole recording.';
+/** The piano model found fewer than PIANO_PART_FEW_NOTES_PER_SECOND notes in the piano part. */
+export const PIANO_PART_FEW_NOTES = 'The high-accuracy piano model found very few piano notes. If this song has no piano, try the normal model.';
+/**
+ * Below this many notes per second the piano model's result on a piano part gets PIANO_PART_FEW_NOTES:
+ * on two of five sung songs it found 0.1-0.6 notes/s on the "other" stem where Basic Pitch found
+ * 2.5-3.8/s (apparently little or no piano in them).
+ */
+export const PIANO_PART_FEW_NOTES_PER_SECOND = 0.5;
+/**
+ * The piano part counts as empty when its peak is under 0.01 or its level (stemLevelDb) is more than
+ * this far below the recording's: what is left is separation residue.
+ */
+export const PIANO_PART_MIN_DB = -40;
+
+/** Whether a separated piano part holds nothing to transcribe (PIANO_PART_MIN_DB). */
+export function pianoPartEmpty(part: Float32Array, mix: Float32Array): boolean {
+  return analyzeLevel(part).peak < 0.01 || stemLevelDb(part, mix) < PIANO_PART_MIN_DB;
+}
+
+/** TranscriptionInfo.separation of a piano-part import. */
+function pianoPartInfo(sep: SeparationResult, bassRemoved: boolean): NonNullable<TranscriptionInfo['separation']> {
+  return {
+    engine: sep.engine,
+    vocals: false,
+    pianoPart: true,
+    singing: sep.vocalPresence.present,
+    bassRemoved,
+    ms: Math.round(sep.ms),
+    ...(sep.threads ? { threads: sep.threads } : {}),
+  };
+}
+
+/**
+ * Basic Pitch on the separated piano part (pianoPartStem) with the user's "Piano solo" parameters, one
+ * pass: no vocal pass, no melody line, nothing added back, none of the "Full song" stem passes.
+ * `mix`: the recording at 22.05 kHz (only for the empty-part check).
+ */
+async function transcribePianoPart(
+  mix: Float32Array,
+  sep: SeparationResult,
+  duration: number,
+  params: ExtractionParams,
+  onProgress: (e: ProgressEvent) => void,
+  signal: AbortSignal | undefined,
+  warnings: string[],
+  t0: number,
+): Promise<TranscriptionResult> {
+  const { audio, bassRemoved } = pianoPartStem(sep);
+  if (pianoPartEmpty(audio, mix)) throw new Error(PIANO_PART_EMPTY);
+  if (!bassRemoved) warnings.push(PIANO_PART_OLD_SERVER);
+  const separation = pianoPartInfo(sep, bassRemoved);
+  const drums = sep.drumOnsets;
+  normalise(audio);
+  const result = await runModel(audio, params, onProgress, signal, 'Finding the piano notes');
+  onProgress({ stage: 'arranging', progress: null, detail: 'Cleaning notes, assigning hands, tracking beats' });
+  const accomp = accompFromRaw(result.notes, result.leadNotes, result.rms, params, duration, {
+    frames: result.frames,
+    onsets: result.onsets,
+    nFrames: result.nFrames,
+    drums,
+    separated: true,
+  });
+  const notes = accomp.notes;
+  if (result.backend === 'cpu') {
+    warnings.push('Ran on the CPU fallback backend (no WebGL/WASM available); transcription was slower than usual.');
+  }
+  if (notes.length === 0) warnings.push('No notes were detected. Try the "Sensitive" detection preset.');
+  const tempo = transcriptionTempo(accomp.main, notes, duration);
+  if (tempo.confidence < 0.15) warnings.push('Tempo could not be detected reliably; the beat grid and quantization may be off.');
+  const meanConf = result.notes.length ? result.notes.reduce((s, n) => s + n.amplitude, 0) / result.notes.length : 0;
+  return {
+    notes,
+    duration,
+    tempo,
+    key: detectKey(notes),
+    posteriors: { ...toStored(result, drums?.length ? drums : undefined), separated: true },
+    info: {
+      method: 'basic-pitch',
+      estimated: true,
+      params,
+      backend: result.backend,
+      processingMs: Math.round(performance.now() - t0),
+      separated: true,
+      separation,
+      warnings,
+      confidence: Math.round(meanConf * 100) / 100,
+    },
   };
 }
 
@@ -1263,17 +1426,55 @@ async function transcribeWithSpecialist(
   t0: number,
 ): Promise<TranscriptionResult> {
   onProgress({ stage: 'decoding', progress: null, detail: 'Decoding and resampling audio' });
+  // "Remove singing and drums": separate first, then the model hears only the piano part
+  const wantsPart = !!opts.pianoPart && !!(opts.separate || opts.stems || opts.separation);
   // only the mono samples and the duration are kept (the AudioBuffer is not)
   let audio: Float32Array | null;
   let duration: number;
-  ({ audio, duration } = await decodeMono(blob, SPECIALIST_SAMPLE_RATE));
-  if (signal?.aborted) throw aborted();
   const warnings: string[] = [];
-  const level = analyzeLevel(audio);
-  if (level.peak < 0.01) throw new Error('The audio is (nearly) silent — nothing to transcribe.');
-  if (level.rms < 0.01) warnings.push('The recording is very quiet; quiet notes may be missed.');
-  if (opts.separate || opts.stems || opts.separation) warnings.push('"Separate vocals & drums" is not used with the high-accuracy piano model.');
-  // (not normalised: the model was trained on, and the reference runs on, the recording's own level)
+  let separation: TranscriptionInfo['separation'];
+  let separationFailure: TranscriptionResult['separationFailure'];
+  if (wantsPart) {
+    // at the separation's rate (its stems are on this timebase); the model's 16 kHz input is made below
+    let mix: Float32Array | null;
+    ({ audio: mix, duration } = await decodeMono(blob, BP_SAMPLE_RATE));
+    if (signal?.aborted) throw aborted();
+    const level = analyzeLevel(mix);
+    if (level.peak < 0.01) throw new Error('The audio is (nearly) silent — nothing to transcribe.');
+    if (level.rms < 0.01) warnings.push('The recording is very quiet; quiet notes may be missed.');
+    let sep: SeparationResult | null;
+    ({ sep, failure: separationFailure } = await separateFor(blob, duration, opts, onProgress, signal, warnings, true));
+    if (sep) {
+      if (sep.sampleRate !== BP_SAMPLE_RATE) throw new Error(`Separated stems have an unexpected sample rate (${sep.sampleRate} Hz).`);
+      const part = pianoPartStem(sep);
+      if (pianoPartEmpty(part.audio, mix)) throw new Error(PIANO_PART_EMPTY);
+      if (!part.bassRemoved) warnings.push(PIANO_PART_OLD_SERVER);
+      separation = pianoPartInfo(sep, part.bassRemoved);
+      // from here only the piano part is kept (the separation worker has already ended and freed its memory)
+      mix = null;
+      sep = null;
+      // the normal model's worker is not used on this path: on small-memory devices its memory goes back first
+      const device = pageDeviceInfo();
+      if (device && isMemoryConstrained(device)) transcriber.releaseIfIdle();
+      onProgress({ stage: 'loading-model', progress: null, detail: 'Preparing the piano part' });
+      audio = await resampleToAsync(part.audio, BP_SAMPLE_RATE, SPECIALIST_SAMPLE_RATE, { signal });
+    } else {
+      // separation did not run (a warning says why): the whole recording, as without the option
+      mix = null;
+      ({ audio } = await decodeMono(blob, SPECIALIST_SAMPLE_RATE));
+    }
+    if (signal?.aborted) throw aborted();
+    opts.onPhase?.('piano-model');
+  } else {
+    ({ audio, duration } = await decodeMono(blob, SPECIALIST_SAMPLE_RATE));
+    if (signal?.aborted) throw aborted();
+    const level = analyzeLevel(audio);
+    if (level.peak < 0.01) throw new Error('The audio is (nearly) silent — nothing to transcribe.');
+    if (level.rms < 0.01) warnings.push('The recording is very quiet; quiet notes may be missed.');
+    if (opts.separate || opts.stems || opts.separation) warnings.push('"Separate vocals & drums" is not used with the high-accuracy piano model.');
+  }
+  // (not normalised: the model was trained on, and the reference runs on, the recording's own level;
+  // a separated piano part keeps the mix's scale)
 
   // Any length runs, also on phones: the checkbox warns that long recordings might not work on phones
   // with little memory (PTI_CONSTRAINED_MAX_SECONDS), and if the tab is killed the interrupted-import
@@ -1310,8 +1511,9 @@ async function transcribeWithSpecialist(
   const cleaned = specialistNotes(run, duration);
   const notes = assignHands(cleaned, duration);
   if (notes.length === 0) warnings.push('No notes were detected. Is this a piano recording? Try again with the normal model.');
+  else if (separation && notes.length < PIANO_PART_FEW_NOTES_PER_SECOND * duration) warnings.push(PIANO_PART_FEW_NOTES);
   const tempo = transcriptionTempo(notes, notes, duration);
-  if (tempo.confidence < 0.15) warnings.push('Tempo could not be detected reliably; the beat grid and quantisation may be off.');
+  if (tempo.confidence < 0.15) warnings.push('Tempo could not be detected reliably; the beat grid and quantization may be off.');
   // the model's notes end where the sound stops (pedal included): drawn, written and practiced as
   // played, with the pedal heard in the recording carrying the sound (docs/TRANSCRIPTION.md "Note length")
   const played = asPlayed(notes);
@@ -1327,8 +1529,10 @@ async function transcribeWithSpecialist(
       // (no detection params: Basic Pitch's thresholds do not apply)
       backend: run.threads > 1 ? `wasm (${run.threads} threads)` : 'wasm',
       processingMs: Math.round(performance.now() - t0),
+      ...(separation ? { separated: true, separation } : {}),
       warnings,
     },
+    ...(separationFailure ? { separationFailure } : {}),
   };
 }
 
