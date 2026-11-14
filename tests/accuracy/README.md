@@ -21,6 +21,7 @@ piano_transcription_inference, remotezip). Node 22 + Playwright Chromium.
 | strong piano transcriber (the original PyTorch model of the app's "High-accuracy piano model") | `pti_transcribe.py CKPT WORK/refs/pti FILES...` (mono = channel mean, like the package and the app; references made before 2026-11-12 used ffmpeg's 3 dB louder `-ac 1` mix — regenerate them for parity checks) | `refs/pti/<id>.pti.json` |
 | the high-accuracy piano model in the browser (the app's specialist engine) | `node tests/accuracy/transcribe.mjs --coi --presets specialist --out WORK/specialist [--timeout-min 20] FILES...` (fresh tab per file, ≈ 38 s per audio minute with 3 threads (36–41 s on 11 recordings, more when the machine is busy), peak tab 0.8–0.9 GB; without `--coi` one thread, ≈ 97 s) | `specialist/<id>.specialist.json` |
 | specialist scoring (headline MAESTRO test split, onset / onset+offset / +velocity F1, velocity r, parity with Python, speed, memory) | `specialist_eval.py --work WORK --trans WORK/specialist --out OUT FILES...` | `OUT.json`, `OUT.md` |
+| note length of the specialist ("as played" + the pedal heard in the recording, `music/noteLength.ts`) against MAESTRO's key-up times and sustain pedal: on+off F1 against the key-up, length errors, notes held at once per hand, derived pedal P/R/F, the sound of notes + pedal | `notelen_eval.py --maestro DIR --est WORK/specialist [--before OLD_RUNS] [--out OUT] PIECES...` (uses `notelen_hands.mjs` for the app's hands and automatic pedal) | `OUT/notelen_eval.{json,md}` |
 | everything for the specialist, strictly sequential, with timeouts | `WORK=... RECORDINGS="..." [PTI_CKPT=...] [ONE_THREAD=1] bash tests/accuracy/run_specialist.sh` | `WORK/specialist/`, `WORK/eval/specialist*.{json,md}` |
 | specialist end-to-end check (rendered excerpt, MAESTRO excerpt, cancel) | `node tests/e2e/specialist.mjs [--maestro WORK/maestro/m-mozart-k280-1.wav]` | stdout PASS/FAIL |
 | score-informed snapping | `snap_ref.py ALIGNED.json PTI.json OUT.json [--truth PERF.midi]` | `refs/snapped/<id>.json` |
@@ -98,6 +99,12 @@ Build the oracle inputs from the stems (16-bit stereo, 44.1 kHz; the stems are s
 - Circular references: `refs/pti` IS this model (Python), and the `snapped` score references take their timing from it.
   For the specialist both measure the browser port (parity), not accuracy; specialist_eval.py reports them as parity.
   Basic Pitch's vs-PTI numbers remain a strong-model proxy.
+- Note length: since 2026-11-14 the specialist's `base` notes are "as played" (a note ends when its key is let go) and
+  the run JSON has `pedal` (the pedal heard in the recording; docs/TRANSCRIPTION.md section 3d). specialist_eval.py scores
+  them as heard (the pedal applied to the note ends, as playback does) so its numbers stay comparable; notelen_eval.py
+  scores the note lengths against the key-up times. As heard is a close reconstruction of the model's own ends, not an
+  exact one: onset+offset F1 against the pedal-extended MIDI on the 5 test-split pieces 0.843 (model's ends) → 0.815, and
+  the parity check's offset differences grow by the same amount; onset numbers are identical.
 - Offsets: MAESTRO references are extended by the sustain pedal (`acclib.midi_notes(pedal_extend=True)`), which is also
   how the model's training targets were made, so onset+offset F1 is meaningful for it (Basic Pitch has no pedal and scores
   ≈ 0.3 there).

@@ -149,7 +149,7 @@ export const SPECIALIST = {
     { what: 'Download', before: 'included', after: '41 MB, once', note: 'Kept in the browser’s cache; it also needs the app’s 15 MB WebAssembly engine, shared with vocal separation' },
   ] as CompareRow[],
   useWhen: [
-    'Solo piano recordings — classical, jazz or pop piano — when you want the notes close to exact: far fewer missed notes in fast runs and high passages, note lengths close to how long each note really sounds (sustain pedal included), and loudness that follows the touch.',
+    'Solo piano recordings — classical, jazz or pop piano — when you want the notes close to exact: far fewer missed notes in fast runs and high passages, notes as long as each key is held (the sustain pedal it hears in the recording keeps them ringing), and loudness that follows the touch.',
     'On a computer, or on a phone if you can wait: on an iPhone an 8-minute piece took about 9 minutes (one test). It needs a lot of memory, so songs over 6 minutes might not work on phones with little memory.',
   ],
   skipWhen: [
@@ -158,6 +158,7 @@ export const SPECIALIST = {
   ],
   notes: [
     'It was trained on other performances from the same dataset (Yamaha Disklavier concert grands, similar recording setup), so on very different pianos, rooms or home recordings expect lower numbers than these.',
+    '“Notes that also end right” counts where each note stops ringing (sustain pedal included), which this model hears well. The Studio shows its notes as long as each key is held instead (Notes → Note length: As played), with the pedal heard in the recording keeping them ringing: about half of the notes then end within 20% of the real key release (was 25–31%), and the right hand holds about 2 notes at a time instead of 3–4, close to the real performances (15 pieces).',
     'The browser version gives the same notes as the original Python version of the model: 99.7–100% of notes on the six answer-key recordings, 96–99% on our 5 other piano recordings (MP3 files, which the browser decodes slightly differently). On those 5 that only checks the browser version, not its accuracy: we have no independent answer key for them.',
   ],
 };
@@ -364,7 +365,7 @@ export const LIMITATIONS: { title: string; body: string }[] = [
   { title: 'Backing vocals and harmonies', body: 'When several voices sing at once, or an instrument doubles the voice, the right hand can follow the wrong one. The worst song in our tests (a dense, loud mix) reached 34% against a best possible 56%.' },
   { title: 'Fast passages', body: 'Quick runs lose more notes than slow music (57% found vs 78%). “Sensitive” helps (68%) at the cost of a few more wrong notes. On solo piano, the high-accuracy piano model finds 94% of them (on the five pieces it was not trained on).' },
   { title: 'Very high and very low notes', body: 'The top octave is found less often (39%; 52% with “Sensitive”) and the lowest notes below C2 are mostly missed. The high-accuracy piano model finds most of both on solo piano (88% and 78%). On band songs, drum hits are sometimes written as low notes.' },
-  { title: 'Note lengths and the pedal', body: 'Start times are precise, end times are not: the sustain pedal isn’t detected and only 15–45% of notes end at the right moment. Playback sounds right because note lengths include the ringing. MIDI imports keep their pedal. On solo piano, the high-accuracy piano model gets most note ends right (74–94%).' },
+  { title: 'Note lengths and the pedal', body: 'Start times are precise, end times are not: the sustain pedal isn’t detected and only 15–45% of notes end at the right moment. Playback sounds right because note lengths include the ringing. MIDI imports keep their pedal. On solo piano, the high-accuracy piano model hears where most notes stop ringing (74–94% right), and shows each note as long as its key is held, with the pedal it hears in the recording.' },
   { title: 'Left / right hand', body: 'Hands are assigned by rules (pitch gaps and reach), not by watching a pianist. Medium never asks one hand to stretch more than an octave; Hard keeps every note, so a few wide stretches remain.' },
   { title: 'Octaves and overtones', body: 'A loud low note contains its own octave above. We filter these “ghost” notes, but real doubled octaves played softly can be removed by mistake, and vice versa.' },
   { title: 'Long songs and phones', body: 'Separating vocals & drums needs about 2 GB of memory and roughly a minute per minute of audio, so it is off by default on phones and skipped for recordings over 10 minutes (20 on devices with 8 GB or more); the right hand then does not follow the singer. On phones the notes are detected on the processor (WebAssembly), not the graphics chip, to stay within the phone’s memory.' },

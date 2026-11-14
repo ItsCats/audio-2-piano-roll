@@ -14,6 +14,8 @@ export function SoundPanel() {
   const hasAudio = useStudio((s) => s.song?.hasAudio);
   const fromAudio = useStudio((s) => !!s.song && isAudioSong(s.song));
   const autoPedal = useStudio((s) => s.song?.autoPedal === true);
+  // high-accuracy piano model songs with a note length: their base pedal is the one heard in the recording
+  const heardPedal = useStudio((s) => !!s.song?.noteLength);
   return (
     <div>
       <Section title="Piano">
@@ -77,7 +79,11 @@ export function SoundPanel() {
         {fromAudio && (
           <Toggle
             label="Automatic pedal"
-            hint="Adds pedal to Medium and Hard so the notes join up (also in MIDI and video)."
+            hint={
+              heardPedal
+                ? 'Off: the pedal heard in the recording. On: pedal worked out from the notes, changed with the harmony.'
+                : 'Adds pedal to Medium and Hard so the notes join up (also in MIDI and video).'
+            }
             checked={autoPedal}
             disabled={!a.pedalEnabled}
             onChange={(on) => {
