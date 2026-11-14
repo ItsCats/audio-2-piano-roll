@@ -1,6 +1,7 @@
 import { sanitizeSheetData } from '../sheet/sanitize';
 import type { Difficulty, Song } from '../music/types';
 import { exportMidi } from '../music/midi';
+import { tempoQpm } from '../music/beats';
 import { renderOfflineChunks } from '../audio/offlineRender';
 import { WavWriter } from '../audio/wav';
 import type { AudioSettings } from '../audio/types';
@@ -26,7 +27,9 @@ export async function downloadMidi(song: Song, difficulty: Difficulty): Promise<
   const arr = song.arrangements[difficulty];
   // key, time and tempo changes placed on the sheet go in as meta events (songs without: unchanged)
   const meta = song.sheet ? (await import('../sheet/midiMeta')).sheetMidiMeta(song, difficulty) : undefined;
-  const bytes = exportMidi(arr.notes, arr.pedal, song.tempo, song.title, meta);
+  // the file's tempo in quarters per minute (older MIDI-file songs stored the file's as bpm)
+  const tempo = { ...song.tempo, qpm: tempoQpm(song.tempo, song.transcription?.method === 'midi-file') };
+  const bytes = exportMidi(arr.notes, arr.pedal, tempo, song.title, meta);
   downloadBlob(new Blob([bytes as BlobPart], { type: 'audio/midi' }), `${safeFileName(song.title)} (${difficulty}).mid`);
 }
 

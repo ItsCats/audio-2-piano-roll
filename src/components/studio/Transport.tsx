@@ -8,6 +8,8 @@ import { formatTime } from '../../lib/music/theory';
 import { IconButton, cn } from '../ui';
 import { arrowSeekDelta } from '../../state/studioKeys';
 import { useCanvasRestored } from './useCanvasRestored';
+import { followsWrittenTempo } from '../../lib/sheet/retime';
+import { openTempoSetting } from '../../state/tempoUi';
 
 const SPEEDS = [0.25, 0.5, 0.6, 0.75, 0.85, 1, 1.15, 1.25, 1.5, 2];
 
@@ -59,6 +61,26 @@ export function Transport({ compact = false }: { compact?: boolean } = {}) {
   const fillRef = useRef<HTMLDivElement>(null);
   const barRef = useRef<HTMLDivElement>(null);
   const [speedOpen, setSpeedOpen] = useState(false);
+  const speedRef = useRef<HTMLDivElement>(null);
+  // the speed menu closes with Escape or a tap outside it
+  useEffect(() => {
+    if (!speedOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      setSpeedOpen(false);
+    };
+    const onDown = (e: PointerEvent) => {
+      if (!speedRef.current?.contains(e.target as Node)) setSpeedOpen(false);
+    };
+    window.addEventListener('keydown', onKey, true);
+    window.addEventListener('pointerdown', onDown, true);
+    return () => {
+      window.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('pointerdown', onDown, true);
+    };
+  }, [speedOpen]);
+  const writtenTempo = !!song && followsWrittenTempo(song);
   const duration = song?.duration ?? 0;
   const player = getPlayer();
 
@@ -201,7 +223,7 @@ export function Transport({ compact = false }: { compact?: boolean } = {}) {
               Loading piano… {Math.round(audioStatus.progress * 100)}%
             </span>
           )}
-          <div className="relative">
+          <div className="relative" ref={speedRef}>
             <button
               type="button"
               onClick={() => setSpeedOpen((o) => !o)}
@@ -213,7 +235,7 @@ export function Transport({ compact = false }: { compact?: boolean } = {}) {
               {t.rate}× <ChevronDown size={14} />
             </button>
             {speedOpen && (
-              <div className="panel absolute bottom-11 left-0 z-20 flex w-28 flex-col p-1" role="listbox">
+              <div className={cn('panel absolute bottom-11 left-0 z-20 flex flex-col p-1', writtenTempo ? 'w-44' : 'w-28')} role="listbox" aria-label="Playback speed">
                 {SPEEDS.map((s) => (
                   <button
                     key={s}
@@ -228,6 +250,19 @@ export function Transport({ compact = false }: { compact?: boolean } = {}) {
                     {s}× {s < 1 ? '· practice' : ''}
                   </button>
                 ))}
+                {writtenTempo && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSpeedOpen(false);
+                      openTempoSetting();
+                    }}
+                    className="mt-1 rounded-md border-t border-ink-700 px-2.5 py-1.5 text-left text-[12px] leading-snug text-accent-300 hover:bg-ink-700"
+                    data-testid="speed-set-tempo"
+                  >
+                    Wrong tempo? Set the song’s tempo
+                  </button>
+                )}
               </div>
             )}
           </div>

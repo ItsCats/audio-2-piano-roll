@@ -301,3 +301,13 @@ export function snapTime(beats: number[], bpm: number, t: number, subdivision: n
   const snapped = Math.round(b * subdivision) / subdivision;
   return beatToTime(beats, snapped, bpm);
 }
+
+/**
+ * Quarter notes per minute of a song tempo: `qpm` when set, else `bpm` in its beat unit. MIDI-file
+ * songs saved before `qpm` existed stored the file's quarter tempo as `bpm` (pass `bpmIsQuarters`).
+ */
+export function tempoQpm(tempo: TempoInfo, bpmIsQuarters = false): number {
+  if (tempo.qpm !== undefined && tempo.qpm > 0 && Number.isFinite(tempo.qpm)) return tempo.qpm;
+  const unit = tempo.beatUnit ?? (tempo.source === 'midi' && [6, 9, 12].includes(tempo.beatsPerBar) ? 8 : 4);
+  return bpmIsQuarters ? tempo.bpm : (tempo.bpm * 4) / unit;
+}

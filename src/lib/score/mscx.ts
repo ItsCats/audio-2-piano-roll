@@ -237,7 +237,8 @@ export function mscxToIR(text: string): ScoreIR {
             }
             case 'Tempo': {
               const t = childNum(el, 'tempo');
-              if (si === 0 && vi === 0 && t > 0) M.tempos.push({ pos: cursor, qpm: t * 60 });
+              // on any staff or voice (MuseScore keeps it where it was entered), once per position
+              if (t > 0 && !M.tempos.some((x) => Math.abs(x.pos - cursor) < 1e-6)) M.tempos.push({ pos: cursor, qpm: t * 60 });
               break;
             }
             case 'Dynamic': {

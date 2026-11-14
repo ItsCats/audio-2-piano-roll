@@ -10,8 +10,11 @@ import {
   DYNAMIC_VEL,
   jumpFromWords,
   parseEndingNumbers,
+  meterTempoUnit,
   resolveCodaSigns,
   tempoFromWords,
+  tempoNumberInText,
+  TEMPO_UNIT_QUARTERS,
   type IRMeasure,
   type IRNote,
   type IRPart,
@@ -312,8 +315,14 @@ export function musicXmlToIR(text: string): ScoreIR {
             // <sound dynamics>: percent of forte (MIDI velocity 90)
             if (Number.isFinite(sdyn) && level === null) M.dynamics.push({ part: pi, pos, vel: Math.max(0.05, Math.min(1, (sdyn * 0.9) / 127)), kind: 'level' });
             if (!hasTempoMark && M.tempos.length === hadTempo && words.length) {
-              const qpm = tempoFromWords(words.join(' '));
-              if (qpm) M.tempos.push({ pos, qpm });
+              const text = words.join(' ').trim();
+              // a metronome mark typed as words ("♩ = 72"): exact; else tempo words are a guess
+              const num = tempoNumberInText(text);
+              if (num) M.tempos.push({ pos, qpm: num.bpm * TEMPO_UNIT_QUARTERS[num.unit ?? meterTempoUnit(beats, beatType)] });
+              else {
+                const qpm = tempoFromWords(text);
+                if (qpm) M.tempos.push({ pos, qpm, words: text.slice(0, 60) });
+              }
             }
             break;
           }

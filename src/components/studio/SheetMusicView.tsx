@@ -22,6 +22,8 @@ import { SheetContextMenu } from './sheet/SheetContextMenu';
 import { useSheetOverlay, useSheetPointer } from './sheet/useSheetPointer';
 import { performSheetAction } from './sheet/sheetActions';
 import { setSheetActionHandler } from '../../state/sheetKeys';
+import { followsWrittenTempo } from '../../lib/sheet/retime';
+import { openTempoSetting } from '../../state/tempoUi';
 
 const ZOOM_MIN = 0.5;
 const ZOOM_MAX = 1.5;
@@ -446,6 +448,14 @@ export function SheetMusicView() {
     const w = hostRef.current?.parentElement;
     if (!r || !w) return;
     const rect = w.getBoundingClientRect();
+    // the tempo mark at the start: a song that follows a written tempo opens its tempo setting
+    if (followsWrittenTempo(song) && r.drawnScore?.tempoMarks.length) {
+      const hit = r.markAt(e.clientX - rect.left, e.clientY - rect.top, [{ id: 'tempo:start', kind: 'tempo', measure: 0 }], e.pointerType);
+      if (hit) {
+        openTempoSetting();
+        return;
+      }
+    }
     const t = r.timeAtPoint(e.clientX - rect.left, e.clientY - rect.top);
     if (t === null) return;
     tappedAt.current = performance.now();

@@ -35,21 +35,27 @@ export const TEMPO_UNIT_Q: Record<TempoUnit, number> = { q: 1, h: 2, e: 0.5, 'q.
 export const pinValid = (n: Partial<Pick<Note, 'pin' | 'start' | 'dur'>>): boolean => !!n.pin && n.pin.t === n.start && n.pin.d === n.dur;
 
 function tempoMarks(time: TimeMap, measureStartTimes: number[], measureCount: number, user?: SheetTempo[]): TempoMark[] {
-  const inferred = inferredTempoMarks(time, measureStartTimes, measureCount);
-  if (!user?.length) return inferred;
-  // a tempo mark placed on the sheet replaces the inferred ones from its measure on
+  if (!user?.length) return inferredTempoMarks(time, measureStartTimes, measureCount);
   const marks = user.map((u): TempoMark => ({ measure: Math.min(measureCount - 1, time.measureOf(u.pos)), bpm: u.bpm, qpm: Math.round(u.bpm * TEMPO_UNIT_Q[u.unit] * 100) / 100, unit: u.unit, ...(u.text ? { text: u.text } : {}) }));
-  const firstUser = Math.min(...marks.map((mk) => mk.measure));
+  // a re-timed mark at the very start sets the opening speed (the Studio's tempo setting, or bar 1
+  // on the sheet): the tempo changes after it are still read from the music, measured against it
+  const lead = user.find((u) => u.retimed && u.pos === 0);
+  const startBpm = lead ? (lead.bpm * TEMPO_UNIT_Q[lead.unit]) / (4 / time.beatUnit) : undefined;
+  const inferred = inferredTempoMarks(time, measureStartTimes, measureCount, startBpm);
+  // any other tempo mark placed on the sheet replaces the inferred ones from its measure on
+  const others = marks.filter((_, i) => user[i] !== lead);
+  const firstUser = others.length ? Math.min(...others.map((mk) => mk.measure)) : Infinity;
   const out = [...inferred.filter((mk) => mk.measure < firstUser), ...marks].sort((a, b) => a.measure - b.measure);
   return out.filter((mk, i) => i + 1 >= out.length || out[i + 1].measure !== mk.measure);
 }
 
-function inferredTempoMarks(time: TimeMap, measureStartTimes: number[], measureCount: number): TempoMark[] {
+/** `startBpm`: the opening speed in beat units (default: the grid's). */
+function inferredTempoMarks(time: TimeMap, measureStartTimes: number[], measureCount: number, startBpm?: number): TempoMark[] {
   const qPerBeat = 4 / time.beatUnit;
   const markBpm = (bpm: number) => (time.compound ? bpm / 3 : bpm);
   const round = (x: number) => (time.source === 'estimated' ? Math.max(5, Math.round(x / 5) * 5) : Math.round(x));
   const toQpm = (shown: number) => (time.compound ? shown * 3 : shown) * qPerBeat;
-  const first = round(markBpm(time.bpm));
+  const first = round(markBpm(startBpm ?? time.bpm));
   const marks: TempoMark[] = [{ measure: 0, bpm: first, qpm: Math.round(toQpm(first) * 100) / 100 }];
   if (time.source === 'estimated') return marks;
   // local tempo of each bar (beat units per minute)

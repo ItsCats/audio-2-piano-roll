@@ -54,6 +54,8 @@ export type PendingSheet = (
 ) & {
   /** this read is already a retry after a crash, in the slower low-memory mode (one thread) */
   lowMemory?: boolean;
+  /** the starting tempo given on the import screen (lib/score ImportTempo) */
+  tempo?: { bpm: number; unit: 'q' | 'h' | 'e' | 'q.' | null; from: 'page' | 'set'; text?: string; guess?: boolean };
 };
 
 interface PVSchema extends DBSchema {
