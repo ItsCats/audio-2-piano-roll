@@ -20,6 +20,43 @@ export interface Note {
    * Easy's left hand follows it where it sounds.
    */
   role?: 'melody' | 'lead' | 'bass';
+  /**
+   * Where the note is written on the sheet, set by sheet edits (lib/sheet/edit.ts): positions on the
+   * song's locked grid (Song.sheet). Valid only while `start === t && dur === d`: a piano-roll edit
+   * that moves or resizes the note releases it back to the normal quantizing.
+   */
+  pin?: NotePin;
+  /** Fingering written on the sheet (1 = thumb … 5 = little finger). */
+  finger?: 1 | 2 | 3 | 4 | 5;
+  /** Articulations written on the sheet (de-duplicated, known values only); their sound is baked into dur / vel. */
+  art?: Articulation[];
+  /** Sounding values before articulations changed them; restored when the last one is removed. */
+  artBase?: { dur?: number; vel?: number };
+}
+
+export type Articulation = 'staccato' | 'accent' | 'tenuto' | 'marcato';
+export const ARTICULATIONS: Articulation[] = ['staccato', 'accent', 'tenuto', 'marcato'];
+
+export type DynamicValue = 'pp' | 'p' | 'mp' | 'mf' | 'f' | 'ff' | 'fff' | 'sf' | 'sfz' | 'fp';
+export const DYNAMIC_VALUES: DynamicValue[] = ['pp', 'p', 'mp', 'mf', 'f', 'ff', 'fff', 'sf', 'sfz', 'fp'];
+
+/**
+ * A marking on the sheet of one level. `pos` / `end`: integer divisions (12 per quarter) on the
+ * song's locked grid (Song.sheet.grid). Staff 0 = both hands (written once, between the staves).
+ * Slurs join two notes of the same hand by note id.
+ */
+export type SheetMark =
+  | { id: string; kind: 'dyn'; pos: number; staff: 0 | 1 | 2; value: DynamicValue }
+  | { id: string; kind: 'wedge'; pos: number; end: number; staff: 0 | 1 | 2; dir: 'cresc' | 'dim' }
+  | { id: string; kind: 'text'; pos: number; staff: 1 | 2; text: string; above: boolean; style?: 'italic' | 'bold' }
+  | { id: string; kind: 'slur'; from: number; to: number; below?: boolean };
+
+/** A written position on Song.sheet.grid (divisions, 12 per quarter) and the seconds it was set at. */
+export interface NotePin {
+  on: number;
+  off: number;
+  t: number;
+  d: number;
 }
 
 /** Sustain pedal held from `start` to `end` (seconds). */
@@ -34,6 +71,12 @@ export interface Arrangement {
   /** True once the user has edited this arrangement by hand. */
   edited: boolean;
   generatedAt: number;
+  /** Markings written on this level's sheet (sheet editing; absent in older songs). */
+  marks?: SheetMark[];
+  /** Write `pedal` as pedal marks on this level's sheet (off for older songs: their sheet is unchanged). */
+  showPedal?: true;
+  /** The pedal was edited on the sheet: automatic pedal and regenerating ask before replacing it. */
+  pedalEdited?: true;
 }
 
 export interface TempoInfo {
@@ -199,6 +242,62 @@ export interface Song {
    * and when none was added; the file is in IndexedDB (see HandVideo.store).
    */
   handVideo?: HandVideo;
+  /** Sheet edits: the locked beat grid (absent in older songs and until the sheet is first edited). */
+  sheet?: SongSheet;
+}
+
+/**
+ * The beat grid the sheet is written on, frozen at the first sheet edit (lib/sheet/lock.ts), so later
+ * edits never re-bar the piece: the effective sheet beats (after grid.ts sheetTempo and the halving
+ * or doubling of an estimated tempo), the downbeat, the extrapolation tempo, the meter, the origin
+ * and the pickup.
+ */
+export interface SheetGridLock {
+  /** Seconds, strictly increasing, at least 2. */
+  beats: number[];
+  /** Downbeat index into `beats`. */
+  db: number;
+  bpm: number;
+  beatsPerBar: number;
+  beatUnit: 2 | 4 | 8;
+  /** Quarters from the downbeat to the start of measure 0. */
+  originQ: number;
+  /** Divisions of an implicit pickup measure (0 = none). */
+  pickup: number;
+}
+
+/** Sheet-music data of a song (absent until the sheet is first edited). */
+export interface SongSheet {
+  v: 1;
+  grid: SheetGridLock;
+  /** At least this many measures are written (the sheet's "Add bar"). */
+  bars?: number;
+  /** Key signatures from a measure start (pos, divisions); pos 0 overrides song.key for the sheet only. Sorted by pos. */
+  keys?: SheetKey[];
+  /** Time signatures from a measure start: a relabel (no note moves, the bars are regrouped). Sorted by pos. */
+  meters?: SheetMeter[];
+  /** Tempo marks from a measure start. `retimed`: the music was re-timed to it (songs without a recording). Sorted by pos. */
+  tempos?: SheetTempo[];
+}
+
+export interface SheetKey {
+  pos: number;
+  fifths: number;
+  mode: 'major' | 'minor';
+}
+export interface SheetMeter {
+  pos: number;
+  beatsPerBar: number;
+  beatUnit: 2 | 4 | 8;
+}
+/** unit: the note value of one beat ('q.' = dotted quarter). */
+export type TempoUnit = 'q' | 'h' | 'e' | 'q.';
+export interface SheetTempo {
+  pos: number;
+  bpm: number;
+  unit: TempoUnit;
+  text?: string;
+  retimed: boolean;
 }
 
 export type SongSummary = Pick<

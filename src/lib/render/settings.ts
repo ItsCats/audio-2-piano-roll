@@ -17,6 +17,8 @@ export interface LabelSettings {
   showOnKeys: boolean;
   bold: boolean;
   custom: string[]; // 12 custom labels by pitch class
+  /** Fingering numbers (1–5) placed on the sheet, on their falling notes (absent in old settings: on). */
+  fingering?: boolean;
 }
 
 export interface BackgroundSettings {
@@ -167,6 +169,7 @@ export const DEFAULT_VISUAL: VisualSettings = {
     showOnKeys: true,
     bold: true,
     custom: ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'],
+    fingering: true,
   },
   decal: {
     source: 'none',

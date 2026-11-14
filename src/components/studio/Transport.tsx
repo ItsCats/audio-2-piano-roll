@@ -45,7 +45,8 @@ function Minimap({ duration }: { duration: number }) {
   return <canvas ref={ref} className="pointer-events-none absolute inset-0 h-full w-full" />;
 }
 
-export function Transport() {
+/** `compact`: editing the sheet on a phone (the volume row makes room for the music). */
+export function Transport({ compact = false }: { compact?: boolean } = {}) {
   const song = useStudio((s) => s.song);
   const t = useTransport();
   const audio = useSettings((s) => s.audio);
@@ -131,7 +132,11 @@ export function Transport() {
   };
 
   return (
-    <div className="flex flex-col gap-2 border-t border-ink-800 bg-ink-900/95 px-3 pt-2 pb-2.5 md:px-4">
+    <div
+      className="flex flex-col gap-2 border-t border-ink-800 bg-ink-900/95 px-3 pt-2 pb-2.5 md:px-4"
+      // with the bottom tabs hidden (editing the sheet on a phone) the transport is the last row: keep it above the home bar
+      style={compact ? { paddingBottom: 'max(0.625rem, env(safe-area-inset-bottom))' } : undefined}
+    >
       {/* timeline */}
       <div className="flex items-center gap-3">
         <span ref={timeRef} className="w-12 text-right font-mono text-[12px] text-ink-100 tabular-nums">
@@ -256,7 +261,7 @@ export function Transport() {
           </IconButton>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className={cn('items-center gap-3', compact ? 'hidden' : 'flex')}>
           {audioStatus.loading && audioStatus.ready && (
             <span className="flex items-center gap-1.5 text-[11.5px] text-ink-300" title="Loading more piano velocity layers in the background">
               <Music4 size={14} className="animate-pulse text-accent-400" /> {Math.round(audioStatus.progress * 100)}%

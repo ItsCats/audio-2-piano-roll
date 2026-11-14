@@ -7,6 +7,7 @@ import { useStudio } from '../../state/studioStore';
 import { ImportStatusPill } from '../import/ImportStatusPill';
 import { InterruptedImportNotice } from '../import/InterruptedImportNotice';
 import { useStageFullscreen } from '../../state/fullscreenStore';
+import { useSettings } from '../../state/settingsStore';
 
 export function Logo({ compact }: { compact?: boolean }) {
   return (
@@ -27,6 +28,10 @@ export function AppShell() {
   const inStudio = location.pathname.startsWith('/studio');
   // the Studio's full screen: hide the app's navigation (sidebar, bottom tabs)
   const chromeHidden = useStageFullscreen((s) => s.mode !== 'off');
+  // editing the sheet music on a phone: the bottom tabs make room for the music (back when Edit is off)
+  const editing = useStudio((s) => s.editMode);
+  const sheetView = useSettings((s) => s.sheet.view === 'sheet');
+  const sheetEditing = editing && sheetView && inStudio;
   const nav = [
     { to: '/', label: 'Home', icon: Home, end: true },
     { to: '/import', label: 'Import Music', icon: Upload },
@@ -112,7 +117,7 @@ export function AppShell() {
         <Outlet />
       </main>
       {/* mobile bottom navigation */}
-      <nav className={cn('h-14 shrink-0 items-stretch border-t border-ink-800 bg-ink-900 md:hidden', chromeHidden ? 'hidden' : 'flex')} aria-label="Main">
+      <nav className={cn('h-14 shrink-0 items-stretch border-t border-ink-800 bg-ink-900 md:hidden', chromeHidden || sheetEditing ? 'hidden' : 'flex')} aria-label="Main">
         {nav.map(({ to, label, icon: Icon, end }) => (
           <NavLink
             key={label}

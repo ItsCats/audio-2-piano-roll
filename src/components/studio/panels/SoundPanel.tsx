@@ -5,7 +5,7 @@ import { Section, Segmented, Slider, Toggle, cn } from '../../ui';
 import { getPlayer, useAudioStatus } from '../../../state/playback';
 import { useStudio } from '../../../state/studioStore';
 import { isAudioSong } from '../../../lib/music/autoPedal';
-import { withAutoPedal } from '../../../lib/songs';
+import { pedalEditedLevels, withAutoPedal } from '../../../lib/songs';
 
 export function SoundPanel() {
   const a = useSettings((s) => s.audio);
@@ -83,8 +83,11 @@ export function SoundPanel() {
             onChange={(on) => {
               const song = useStudio.getState().song;
               if (!song) return;
-              const next = withAutoPedal(song, on);
-              useStudio.getState().updateSong({ autoPedal: next.autoPedal, arrangements: next.arrangements });
+              // pedal edited on the sheet is kept unless the user says to replace it
+              const replaceEdited = pedalEditedLevels(song).length > 0 && confirm('Replace the pedal you edited on the sheet?');
+              const next = withAutoPedal(song, on, { replaceEdited });
+              // one undo step: Ctrl+Z puts back the pedal on every level and the switch together
+              useStudio.getState().editSong(() => ({ autoPedal: next.autoPedal, arrangements: next.arrangements }));
             }}
           />
         )}

@@ -8,6 +8,7 @@ import type { Song, SongSource, SongSummary } from '../music/types';
 import type { StoredPosteriors } from '../transcription/posteriors';
 import { bumpNoteIds } from '../music/cleanup';
 import { sanitizeHandVideo } from '../handcam/calibration';
+import { sanitizeSheetData } from '../sheet/sanitize';
 
 export interface MediaItem {
   id: string;
@@ -199,6 +200,8 @@ export async function getSong(id: string): Promise<Song | undefined> {
   if (song) {
     bumpNoteIds(song.base);
     for (const a of Object.values(song.arrangements)) bumpNoteIds(a.notes);
+    // damaged sheet-edit data (grid lock, pins) is dropped: the sheet is then generated as before
+    sanitizeSheetData(song);
     // a damaged hands video entry is repaired or dropped (it never breaks an export)
     if ('handVideo' in song) {
       const hv = sanitizeHandVideo(song.handVideo);

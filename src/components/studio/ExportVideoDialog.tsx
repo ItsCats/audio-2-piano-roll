@@ -538,6 +538,9 @@ export function ExportVideoDialog({ open, onClose }: { open: boolean; onClose: (
               ]}
             />
             <Toggle label="Note labels" checked={visual.labels.style !== 'none'} onChange={(on) => setLabels({ style: on ? 'letter' : 'none' })} />
+            {song.arrangements[difficulty]?.notes.some((n) => n.finger) && (
+              <Toggle label="Fingering" hint="The finger numbers added on the sheet music" checked={visual.labels.fingering !== false} onChange={(fingering) => setLabels({ fingering })} />
+            )}
             <p className="text-[11.5px] leading-relaxed text-ink-400">Colors, effects, labels and backgrounds come from the Studio’s Look and Labels tabs.</p>
           </div>
           <WatermarkSection />
