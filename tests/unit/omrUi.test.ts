@@ -18,7 +18,7 @@ describe('sheet-music reader: interrupted-import notice', () => {
     const n = interruptedNotice(pdf);
     expect(n.canRetry).toBe(true);
     expect(n.canSave).toBe(false);
-    expect(n.body).toMatch(/^Reading “Minuet” was interrupted — your browser probably ran out of memory\. Your file was kept\./);
+    expect(n.body).toMatch(/^Reading “Minuet” stopped before it finished\. Your browser probably ran out of memory\. Your file was kept\./);
     expect(n.body).toMatch(/slower mode that uses less memory/);
   });
   it('a crash during the low-memory retry is not offered again (no crash loop)', () => {
@@ -41,7 +41,7 @@ describe('sheet-music reader: interrupted-import notice', () => {
     expect(interruptedNotice({ title: 'Big', kind: 'score', blob: undefined, sheet: { kind: 'pdf', pages: [1, 2] } }).body).toMatch(/read fewer pages at a time/);
   });
   it('audio records are unchanged', () => {
-    expect(interruptedNotice({ title: 'song', kind: 'audio', blob: new Blob(['x']) }).body).toMatch(/^Your last import \(“song”\) was interrupted.*Your file was kept\.$/);
+    expect(interruptedNotice({ title: 'song', kind: 'audio', blob: new Blob(['x']) }).body).toMatch(/^Your last import \(“song”\) stopped before it finished.*Your file was kept\.$/);
   });
 
   it('the record (PDF or photos with corners) round-trips through the pending store', async () => {

@@ -48,7 +48,7 @@ export default function LibraryPage() {
     void refresh();
   };
   const del = async (s: SongSummary) => {
-    if (!confirm(`Delete “${s.title}” and its arrangements? This cannot be undone.`)) return;
+    if (!confirm(`Delete “${s.title}”? You can’t undo this.`)) return;
     if (useStudio.getState().song?.id === s.id) useStudio.getState().close();
     await remove(s.id);
     toast.info('Song deleted');
@@ -60,7 +60,7 @@ export default function LibraryPage() {
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-[26px] font-semibold tracking-tight text-ink-50">My Library</h1>
-            <p className="mt-1 text-[13.5px] text-ink-300">{songs.length} songs stored on this device</p>
+            <p className="mt-1 text-[13.5px] text-ink-300">{songs.length} {songs.length === 1 ? 'song' : 'songs'} on this device</p>
           </div>
           <div className="flex gap-2">
             <Button variant="ghost" icon={<FileJson size={15} />} onClick={() => fileRef.current?.click()}>
@@ -136,8 +136,8 @@ export default function LibraryPage() {
         </div>
 
         {loaded && !songs.length ? (
-          <EmptyState icon={<LibraryIcon size={22} />} title="Your library is empty" action={<Button variant="primary" onClick={() => navigate('/import')}>Import your first song</Button>}>
-            Imported songs, MIDI files and their arrangements are saved here automatically.
+          <EmptyState icon={<LibraryIcon size={22} />} title="No songs yet" action={<Button variant="primary" onClick={() => navigate('/import')}>Import your first song</Button>}>
+            Everything you import gets saved here.
           </EmptyState>
         ) : view === 'grid' ? (
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
@@ -172,7 +172,7 @@ export default function LibraryPage() {
                   <ReanalyzingBadge songId={s.id} />
                   {s.estimated && <Badge tone="warn">AI</Badge>}
                   {s.source.kind === 'score' && s.source.reader && (
-                    <Badge tone="warn" title={`${sourceLabel(s.source.kind, s.source.reader)} by the ${s.source.sheetReader === 'accurate' ? 'Accurate sheet-music reader' : 'Quick sheet-music reader (Beta)'} — check the notes`}>
+                    <Badge tone="warn" title={`${sourceLabel(s.source.kind, s.source.reader)} by the ${s.source.sheetReader === 'accurate' ? 'Accurate sheet-music reader' : 'Quick sheet-music reader (Beta)'}. Check the notes.`}>
                       {s.source.sheetReader === 'accurate' ? 'AI' : 'Beta'}
                     </Badge>
                   )}

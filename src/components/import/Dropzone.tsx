@@ -59,7 +59,7 @@ export function Dropzone({
       </div>
       {children ?? (
         <>
-          <p className="text-[15px] font-medium text-ink-50">Drop a song here, or click to browse</p>
+          <p className="text-[15px] font-medium text-ink-50">Drop a song here, or tap to pick a file</p>
           <p className="text-[12.5px] text-ink-300">MP3, WAV, M4A, MP4, FLAC, OGG, WebM · MIDI files</p>
         </>
       )}

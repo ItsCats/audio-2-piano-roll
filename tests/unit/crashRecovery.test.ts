@@ -144,7 +144,7 @@ describe('interrupted-import notice', async () => {
 
   it('says what happened in plain words and offers what is possible', () => {
     const n = interruptedNotice(rec('a', 1, { title: 'Recording 11/11/2026' }));
-    expect(n.body).toBe('Your last import (“Recording 11/11/2026”) was interrupted — your browser probably ran out of memory. Your recording was kept.');
+    expect(n.body).toBe('Your last import (“Recording 11/11/2026”) stopped before it finished. Your browser probably ran out of memory. Your recording was kept.');
     expect(n.canRetry).toBe(true);
     expect(n.canSave).toBe(true);
     expect(n.body).not.toMatch(/WebGL|WASM|IndexedDB|jetsam|memory budget/i);

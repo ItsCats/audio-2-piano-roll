@@ -281,7 +281,7 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
 
   const onFiles = (files: File[]) => {
     if (busy) {
-      setError('Another import is still running — wait for it to finish (progress is shown above).');
+      setError('Another song is still being worked on. Wait for it to finish (it’s shown above).');
       return;
     }
     setError(null);
@@ -349,7 +349,7 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
 
   const nPages = mode === 'pdf' ? (pdf?.selected.length ?? 0) : photos.length;
   const estimate = chosen && nPages ? readerTime(reader, nPages * chosen.estSecondsPerPage) : null;
-  const busyNote = busy ? 'Another import is still running — wait for it to finish (progress is shown above).' : null;
+  const busyNote = busy ? 'Another song is still being worked on. Wait for it to finish (it’s shown above).' : null;
 
   return (
     <div className="flex flex-col gap-4">
@@ -396,7 +396,7 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
               <p className="text-[12.5px] text-ink-300">
                 {pdf.count === 1
                   ? 'One page.'
-                  : `${pdf.count} pages — tap the pages to read (${pdf.selected.length} chosen).${pdf.count > maxPages ? ` Up to ${maxPages} pages at a time${support?.phone ? ' on a phone' : ''}.` : ''}`}
+                  : `${pdf.count} pages. Tap the ones to read (${pdf.selected.length} picked).${pdf.count > maxPages ? ` Up to ${maxPages} pages at a time${support?.phone ? ' on a phone' : ''}.` : ''}`}
               </p>
               {pdf.count > 1 && (
                 <div className="flex flex-wrap gap-2">
@@ -570,7 +570,7 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
             Notes from MIDI and sheet-music files are used exactly as written, and repeats are played in order. Hard is the piece as written; Easy and
             Medium are made simpler for you.
           </p>
-          <p className="text-[12px] text-ink-400">From other notation apps, save or export as MusicXML — it is exact, unlike reading a PDF.</p>
+          <p className="text-[12px] text-ink-400">Using another notation app? Export MusicXML from it. That’s exact, a PDF is only read as a guess.</p>
         </>
       )}
 

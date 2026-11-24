@@ -140,7 +140,7 @@ function ComputerTab({ busy, separate, transcriber }: { busy: boolean; separate:
   const block = !rights
     ? 'Tick the box above first.'
     : busy
-      ? 'Another import is still running — wait for it to finish (progress is shown above).'
+      ? 'Another song is still being worked on. Wait for it to finish (it’s shown above).'
       : null;
   return (
     <div className="flex flex-col gap-4">
@@ -279,7 +279,7 @@ function RecordTab({ busy }: { busy: boolean }) {
   };
   return (
     <div className="flex flex-col items-center gap-4 py-8 text-center">
-      <p className="max-w-md text-[13px] text-ink-300">Play piano (or anything) into your microphone. A quiet room and a close mic give the best transcription.</p>
+      <p className="max-w-md text-[13px] text-ink-300">Play piano (or anything) into your mic. A quiet room and the mic up close work best.</p>
       {rec ? (
         <>
           <div className="flex items-center gap-2 text-[14px] text-ink-50">
@@ -398,13 +398,11 @@ export default function ImportPage() {
         <header>
           <h1 className="text-[26px] font-semibold tracking-tight text-ink-50">Import music</h1>
           <p className="mt-1 text-[14px] text-ink-300">
-            Audio is analyzed on your device with Spotify’s Basic Pitch neural network (or an optional high-accuracy piano model: on its own for solo piano, or blended into Full song results for instrumental songs).
-            Nothing is uploaded unless you use your own processing server.
-            The result is an AI estimate —{' '}
+            Your song is worked out right here on your device. Nothing gets uploaded (unless you set up your own server in Settings).
+            The notes are a best guess, so check them against the song.{' '}
             <Link to="/accuracy" className="text-accent-400 hover:text-accent-300">
-              see how accurate it is
+              How close does it get?
             </Link>
-            .
           </p>
         </header>
 
