@@ -1,3 +1,4 @@
+import { useLayoutEffect } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { Home, Upload, Piano, Library, Settings as SettingsIcon, Gauge, Heart, Code } from 'lucide-react';
 import { SOURCE_CODE_LABEL, SOURCE_CODE_URL } from '../../lib/credits';
@@ -8,6 +9,7 @@ import { ImportStatusPill } from '../import/ImportStatusPill';
 import { InterruptedImportNotice } from '../import/InterruptedImportNotice';
 import { useStageFullscreen } from '../../state/fullscreenStore';
 import { useSettings } from '../../state/settingsStore';
+import { applySiteLook } from '../../lib/siteLook';
 
 export function Logo({ compact }: { compact?: boolean }) {
   return (
@@ -26,6 +28,8 @@ export function AppShell() {
   const songId = useStudio((s) => s.song?.id);
   const location = useLocation();
   const inStudio = location.pathname.startsWith('/studio');
+  // the site's look (light, or dark in dark mode); the Studio keeps its own dark look
+  useLayoutEffect(() => applySiteLook(inStudio), [inStudio]);
   // the Studio's full screen: hide the app's navigation (sidebar, bottom tabs)
   const chromeHidden = useStageFullscreen((s) => s.mode !== 'off');
   // editing the sheet music on a phone: the bottom tabs make room for the music (back when Edit is off)
@@ -108,7 +112,7 @@ export function AppShell() {
               <NavLink to="/copyright" className="focus-ring rounded hover:text-ink-100">Copyright</NavLink>
             </p>
             <p className="mt-2 text-[11px] leading-relaxed text-ink-400">
-              Everything stays in your browser. Songs are stored locally on this device.
+              Your songs are saved on this device. Nothing gets uploaded.
             </p>
           </div>
         )}

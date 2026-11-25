@@ -20,7 +20,7 @@ export function ImportStatusPill() {
         {done ? <CheckCircle2 size={14} className="text-ok" /> : err ? <XCircle size={14} className="text-bad" /> : <Loader2 size={14} className="animate-spin text-accent-400" />}
         <span className="truncate font-medium text-ink-100">{re ? `Analyzing “${job.title}” again` : job.title}</span>
       </div>
-      <p className="mt-1 text-[11.5px] text-ink-300">{done ? (re ? 'New notes are ready — open in Studio' : 'Ready — open in Studio') : err && re ? 'Analyze again failed' : stageLabel(job, job.stage)}</p>
+      <p className="mt-1 text-[11.5px] text-ink-300">{done ? (re ? 'New notes are ready. Open in Studio' : 'Done! Open in Studio') : err && re ? 'Analyze again failed' : stageLabel(job, job.stage)}</p>
       {!done && !err && (
         <div className="mt-2">
           <ProgressBar value={job.progress} />

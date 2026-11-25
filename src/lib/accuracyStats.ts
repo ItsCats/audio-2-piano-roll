@@ -66,12 +66,12 @@ export interface MaestroRow {
 
 /** MAESTRO v3 performances (exact Disklavier MIDI), full length. */
 export const MAESTRO_ROWS: MaestroRow[] = [
-  { piece: 'J. S. Bach — Prelude & Fugue in D major, BWV 850', detail: '2:56 · clear counterpoint · used for tuning', notes: 1498, f1: 0.92, precision: 0.94, recall: 0.91, f1Sensitive: 0.9, before: 0.91 },
-  { piece: 'Debussy — Des pas sur la neige', detail: '4:12 · slow and very soft · used for tuning', notes: 366, f1: 0.9, precision: 0.9, recall: 0.89, f1Sensitive: 0.86, before: 0.89 },
-  { piece: 'Mozart — Sonata in F major, K. 280, 1st mvt.', detail: '3:14 · fast scales and Alberti bass · used for tuning', notes: 1832, f1: 0.87, precision: 0.94, recall: 0.82, f1Sensitive: 0.88, before: 0.86 },
-  { piece: 'Chopin — Nocturne in F major, Op. 15 No. 1', detail: '4:03 · stormy fast middle section · used for tuning', notes: 1780, f1: 0.75, precision: 0.88, recall: 0.66, f1Sensitive: 0.78, before: 0.75 },
-  { piece: 'Chopin — Ballade No. 1 in G minor, Op. 23', detail: '8:32 · virtuoso, dense, wide range · used for tuning', notes: 5112, f1: 0.75, precision: 0.92, recall: 0.63, f1Sensitive: 0.78, before: 0.71 },
-  { piece: 'Liszt — Waldesrauschen (Concert Étude No. 1)', detail: '3:41 · rapid soft figuration · NOT used for tuning (the fairest test)', notes: 3297, f1: 0.62, precision: 0.94, recall: 0.46, f1Sensitive: 0.71, before: 0.57 },
+  { piece: 'J. S. Bach: Prelude & Fugue in D major, BWV 850', detail: '2:56 · clear counterpoint · used for tuning', notes: 1498, f1: 0.92, precision: 0.94, recall: 0.91, f1Sensitive: 0.9, before: 0.91 },
+  { piece: 'Debussy: Des pas sur la neige', detail: '4:12 · slow and very soft · used for tuning', notes: 366, f1: 0.9, precision: 0.9, recall: 0.89, f1Sensitive: 0.86, before: 0.89 },
+  { piece: 'Mozart: Sonata in F major, K. 280, 1st mvt.', detail: '3:14 · fast scales and Alberti bass · used for tuning', notes: 1832, f1: 0.87, precision: 0.94, recall: 0.82, f1Sensitive: 0.88, before: 0.86 },
+  { piece: 'Chopin: Nocturne in F major, Op. 15 No. 1', detail: '4:03 · stormy fast middle section · used for tuning', notes: 1780, f1: 0.75, precision: 0.88, recall: 0.66, f1Sensitive: 0.78, before: 0.75 },
+  { piece: 'Chopin: Ballade No. 1 in G minor, Op. 23', detail: '8:32 · virtuoso, dense, wide range · used for tuning', notes: 5112, f1: 0.75, precision: 0.92, recall: 0.63, f1Sensitive: 0.78, before: 0.71 },
+  { piece: 'Liszt: Waldesrauschen (Concert Étude No. 1)', detail: '3:41 · rapid soft figuration · NOT used for tuning, so the best guide to new songs', notes: 3297, f1: 0.62, precision: 0.94, recall: 0.46, f1Sensitive: 0.71, before: 0.57 },
 ];
 
 export const MAESTRO_CAVEATS: { title: string; body: string }[] = [
@@ -118,18 +118,18 @@ export interface SpecialistRow {
 
 /** "High-accuracy piano model" vs the normal model on the MAESTRO pieces above (same recordings). */
 export const SPECIALIST_ROWS: SpecialistRow[] = [
-  { piece: 'J. S. Bach — Prelude & Fugue, BWV 850', f1: 0.9957, f1Fast: 0.9234, ends: 0.9121, endsFast: 0.3664, velR: 0.967, velRFast: 0.546 },
-  { piece: 'Debussy — Des pas sur la neige', f1: 0.985, f1Fast: 0.8953, ends: 0.7367, endsFast: 0.168, velR: 0.964, velRFast: 0.47 },
-  { piece: 'Mozart — Sonata K. 280, 1st mvt.', f1: 0.9926, f1Fast: 0.8746, ends: 0.9406, endsFast: 0.4306, velR: 0.984, velRFast: 0.728 },
-  { piece: 'Chopin — Nocturne Op. 15 No. 1', f1: 0.9678, f1Fast: 0.7514, ends: 0.8781, endsFast: 0.3307, velR: 0.97, velRFast: 0.709 },
-  { piece: 'Liszt — Waldesrauschen', f1: 0.9411, f1Fast: 0.6195, ends: 0.7486, endsFast: 0.1614, velR: 0.952, velRFast: 0.556 },
-  { piece: 'Chopin — Ballade No. 1, Op. 23', f1: 0.9806, f1Fast: 0.7501, ends: 0.9242, endsFast: 0.2686, velR: 0.972, velRFast: 0.684, inTraining: true },
+  { piece: 'J. S. Bach: Prelude & Fugue, BWV 850', f1: 0.9957, f1Fast: 0.9234, ends: 0.9121, endsFast: 0.3664, velR: 0.967, velRFast: 0.546 },
+  { piece: 'Debussy: Des pas sur la neige', f1: 0.985, f1Fast: 0.8953, ends: 0.7367, endsFast: 0.168, velR: 0.964, velRFast: 0.47 },
+  { piece: 'Mozart: Sonata K. 280, 1st mvt.', f1: 0.9926, f1Fast: 0.8746, ends: 0.9406, endsFast: 0.4306, velR: 0.984, velRFast: 0.728 },
+  { piece: 'Chopin: Nocturne Op. 15 No. 1', f1: 0.9678, f1Fast: 0.7514, ends: 0.8781, endsFast: 0.3307, velR: 0.97, velRFast: 0.709 },
+  { piece: 'Liszt: Waldesrauschen', f1: 0.9411, f1Fast: 0.6195, ends: 0.7486, endsFast: 0.1614, velR: 0.952, velRFast: 0.556 },
+  { piece: 'Chopin: Ballade No. 1, Op. 23', f1: 0.9806, f1Fast: 0.7501, ends: 0.9242, endsFast: 0.2686, velR: 0.972, velRFast: 0.684, inTraining: true },
 ];
 
 export const SPECIALIST = {
   title: 'High-accuracy piano model',
   intro:
-    'A second, optional model for solo piano: ByteDance’s high-resolution piano transcription model (Kong et al., 2021), trained only on piano recordings, running in your browser. Measured on the same answer-key recordings as above, whole pieces, transcribed through the app. The averages leave out the Ballade: that recording was part of the model’s training data, so its score is flattering.',
+    'A second, optional model for solo piano: ByteDance’s high-resolution piano transcription model (Kong et al., 2021), trained only on piano recordings, running in your browser. Measured on the same answer-key recordings as above, whole pieces, transcribed through the app. The averages leave out the Ballade: that recording was part of the model’s training data, so its score would look better than it really is.',
   /** means over the 5 MAESTRO test-split pieces (not the Ballade) */
   mean: { f1: 0.9764, f1Fast: 0.8128, ends: 0.8432, endsFast: 0.2914, velR: 0.967, velRFast: 0.602 },
   /** notes found, pooled over the same 5 pieces (8,773 notes) */
@@ -144,12 +144,12 @@ export const SPECIALIST = {
   cost: [
     { what: 'Time per minute of audio, 3 processor threads', before: '≈ 7 s', after: '≈ 38 s', note: '36–41 s on 11 recordings: a 4-minute piece takes about 2½ minutes' },
     { what: 'With one thread (Safari, and pages without cross-origin isolation)', before: '≈ 7 s', after: '≈ 97 s', note: 'Mozart, 3:14 piece: 5¼ minutes, the same notes as with 3 threads' },
-    { what: 'On an iPhone (one test, an 8-minute piece)', before: '—', after: '≈ 9 min', note: 'About 70 s per minute of audio, timed by hand by a user (2026-11-12); it finished without problems. Older phones may be slower' },
+    { what: 'On an iPhone (one test, an 8-minute piece)', before: 'n/a', after: '≈ 9 min', note: 'About 70 s per minute of audio, timed by hand by a user (2026-11-12); it finished without problems. Older phones may be slower' },
     { what: 'Peak memory of the browser tab', before: '0.4–0.7 GB', after: '0.8–0.9 GB', note: 'About 0.7 GB more than the tab uses before an import (0.66–0.75 GB measured), more for very long recordings; freed when it is done' },
     { what: 'Download', before: 'included', after: '41 MB, once', note: 'Kept in the browser’s cache; it also needs the app’s 15 MB WebAssembly engine, shared with vocal separation' },
   ] as CompareRow[],
   useWhen: [
-    'Solo piano recordings — classical, jazz or pop piano — when you want the notes close to exact: far fewer missed notes in fast runs and high passages, notes as long as each key is held (the sustain pedal it hears in the recording keeps them ringing), and loudness that follows the touch.',
+    'Solo piano recordings (classical, jazz or pop piano) when you want the notes close to exact: far fewer missed notes in fast runs and high passages, notes as long as each key is held (the sustain pedal it hears in the recording keeps them ringing), and loudness that follows the touch.',
     'On a computer, or on a phone if you can wait: on an iPhone an 8-minute piece took about 9 minutes (one test). It needs a lot of memory, so songs over 6 minutes might not work on phones with little memory.',
   ],
   skipWhen: [
@@ -202,16 +202,16 @@ export const SONG_ROWS: SongRow[] = [
   { song: 'Song 2', detail: 'Synth-pop, solo voice · 4:07', easy: 0.61, easyBefore: 0.22, medium: 0.62, mediumBefore: 0.25, best: 0.69, bass: 0.83, bassBefore: 0.57 },
   { song: 'Song 3', detail: 'Electronic, little singing · 1:30', easy: 0.48, easyBefore: 0.16, medium: 0.46, mediumBefore: 0.17, best: 0.58, bass: 0.78, bassBefore: 0.67 },
   { song: 'Song 4', detail: 'Funk band · 1:30', easy: 0.57, easyBefore: 0.24, medium: 0.61, mediumBefore: 0.31, best: 0.62, bass: 0.65, bassBefore: 0.48 },
-  { song: 'Song 5', detail: 'Dense, loud band mix — the hardest · 4:47', easy: 0.34, easyBefore: 0.11, medium: 0.35, mediumBefore: 0.11, best: 0.56, bass: 0.62, bassBefore: 0.39 },
+  { song: 'Song 5', detail: 'Dense, loud band mix, the hardest · 4:47', easy: 0.34, easyBefore: 0.11, medium: 0.35, mediumBefore: 0.11, best: 0.56, bass: 0.62, bassBefore: 0.39 },
 ];
 
 export const SONG_SUMMARY = {
   intro:
-    'Five commercial songs with a singer, band and drums (we can’t share the audio). For every moment the singer sings, we check whether the Easy right hand plays the same note — in any octave, because Easy and Medium move the tune into a comfortable right-hand octave on purpose. “Best possible” is the singer’s own pitch written out as notes and scored the same way: vibrato, slides and very short notes can’t be written as piano notes, so 100% is out of reach.',
+    'Five commercial songs with a singer, band and drums (we can’t share the audio). For every moment the singer sings, we check whether the Easy right hand plays the same note in any octave, because Easy and Medium move the tune into a comfortable right-hand octave on purpose. “Best possible” is the singer’s own pitch written out as notes and scored the same way: vibrato, slides and very short notes can’t be written as piano notes, so 100% is out of reach.',
   notes: [
     'On average the Easy right hand now follows the singer 50% of the sung moments (was 19%; best possible 62%), Medium 53% (was 23%). The left hand plays the bass part’s note 71% of the time (was 52%).',
     'A second, independent pitch tracker (pYIN) agrees on the direction: on clearly sung moments the Easy right hand matches the singer 70% of the time, against 30% before.',
-    'Fair warning: the singer’s pitch was traced by AI tools (Demucs to separate the voice, CREPE to trace it), not written by hand — Piano2Vision itself uses neither. The melody settings were tuned on these same five songs, so expect somewhat lower results on other songs.',
+    'The singer’s pitch was traced by AI tools (Demucs to separate the voice, CREPE to trace it), not written by hand. Piano2Vision itself uses neither. The melody settings were tuned on these same five songs, so expect somewhat lower results on other songs.',
   ],
 };
 
@@ -225,7 +225,7 @@ export interface CompareRow {
 export const INSTRUMENTAL = {
   title: 'Instrumental band track (no singer)',
   intro:
-    'An anime soundtrack theme (about 3 minutes: bass, drums, piano and lead instruments, nobody singing). Separation correctly finds no vocals, so the Easy right hand plays the instruments’ tune — now one smooth lead line instead of hopping between the piano’s chord tops and the lead instrument. There is no written answer key for this track: the “tune” here is an estimate, the pitch of the lead instruments traced by an AI pitch tracker (pYIN) on a track separated with Demucs. Read these numbers as a rough guide.',
+    'An anime soundtrack theme (about 3 minutes: bass, drums, piano and lead instruments, nobody singing). Separation correctly finds no vocals, so the Easy right hand plays the instruments’ tune: now one smooth lead line instead of hopping between the piano’s chord tops and the lead instrument. There is no written answer key for this track: the “tune” here is an estimate, the pitch of the lead instruments traced by an AI pitch tracker (pYIN) on a track separated with Demucs. Read these numbers as a rough guide.',
   rows: [
     { what: 'Easy right hand plays the lead tune’s note (any octave)', before: '34%', after: '40%', note: 'Best possible from the notes the app hears: 51%. On clearly audible lead moments: 42% → 51%.' },
     { what: 'Easy right hand steps that jump more than an octave', before: '8.4%', after: '0.8%' },
@@ -234,7 +234,7 @@ export const INSTRUMENTAL = {
   ] as CompareRow[],
   notes: [
     'The tune line and the drum and hand-reach rules were tuned on this track, so these numbers are in-sample. Most of the gain comes from the smoother line held on the beat. Counted note by note (ignoring how long notes are held), the notes chosen are about as often right as before (58% → 59%).',
-    'In the instrumental breaks of the sung songs, where the right hand also switches to the instruments’ tune, we could not show an improvement — those breaks are short and the estimated tune is unreliable there.',
+    'In the instrumental breaks of the sung songs, where the right hand also switches to the instruments’ tune, we could not show an improvement. Those breaks are short and the estimated tune is unreliable there.',
   ],
 };
 
@@ -248,7 +248,7 @@ export const INSTRUMENTAL = {
 export const PIANO_BLEND_EFFECT = {
   title: 'Full song + piano model (instrumental songs)',
   intro:
-    'An option for instrumental songs: the high-accuracy piano model also listens to the separated instruments, and the notes it hears best — keyboard parts and the notes between the melody — are added to the Full song result. The melody line and the bass stay as they were. Measured on the instrumental band track above and on 15 synthesized band songs with an exact answer key.',
+    'An option for instrumental songs: the high-accuracy piano model also listens to the separated instruments, and the notes it hears best (keyboard parts and the notes between the melody) are added to the Full song result. The melody line and the bass stay as they were. Measured on the instrumental band track above and on 15 synthesized band songs with an exact answer key.',
   rows: [
     { what: 'Hard right hand plays the lead tune’s exact note', before: '64%', after: '70%', note: 'Band track. Most of the added lead notes are inside a chord, under the top note: the tune you hear on top changes little (53% → 54%).' },
     { what: 'Medium / Easy right hand plays the lead tune’s exact note', before: '51% / 38%', after: '55% / 39%', note: 'Band track; no lead note lost at any level' },
@@ -256,7 +256,7 @@ export const PIANO_BLEND_EFFECT = {
     { what: 'Accompaniment parts found (piano, guitar, organ…)', before: '41%', after: '53%', note: 'Synthesized band songs, exact answer key' },
     { what: 'Lead tune found on Hard', before: '41%', after: '46%', note: 'Synthesized band songs; no song lower' },
     { what: 'Bass notes', before: 'unchanged', after: 'unchanged', note: 'The bass line is never changed' },
-    { what: 'Notes per second (Hard / Medium / Easy)', before: '—', after: '+29% / +13% / +2%', note: 'Band track' },
+    { what: 'Notes per second (Hard / Medium / Easy)', before: 'n/a', after: '+29% / +13% / +2%', note: 'Band track' },
   ] as CompareRow[],
   notes: [
     'Opt-in: Import → Full song → tick “Add the high-accuracy piano model”. It needs in-browser separation and is not offered on phones and low-memory devices (about 0.8 GB more memory). Songs with singing and songs over 10 minutes get the standard Full song result.',
@@ -314,16 +314,16 @@ export const PLAYABILITY: CompareRow[] = [
 
 export const SPEED_ROWS: CompareRow[] = [
   { what: 'Full song, total time per minute of audio', before: '7 s', after: '≈ 1 min', note: '6 band songs: 0.11–0.12× / 0.9–1.07× the song’s length' },
-  { what: '…of which separating vocals & drums', before: '—', after: '≈ 48 s', note: '3 processor threads (the app page is cross-origin isolated)' },
+  { what: '…of which separating vocals & drums', before: 'n/a', after: '≈ 48 s', note: '3 processor threads (the app page is cross-origin isolated)' },
   { what: 'With one thread only (browsers without cross-origin isolation)', before: '7 s', after: '≈ 2 min 15 s', note: 'Measured on a 1.5-minute song. Safari runs single-threaded: it does not support the isolation the app uses.' },
-  { what: 'Piano solo / Sensitive, per minute of audio', before: '7 s', after: '—', note: 'no separation for piano' },
-  { what: 'High-accuracy piano model, per minute of audio', before: '≈ 38 s', after: '—', note: '3 threads, 11 piano recordings (36–41 s); ≈ 97 s single-threaded. Peak tab memory 0.8–0.9 GB; 41 MB model downloaded once' },
-  { what: 'Full song + piano model, extra time per minute of audio', before: '—', after: '≈ 40–60 s', note: '3 threads, band track; longer single-threaded. Runs after separation, so the peak memory stays separation’s' },
+  { what: 'Piano solo / Sensitive, per minute of audio', before: '7 s', after: 'n/a', note: 'no separation for piano' },
+  { what: 'High-accuracy piano model, per minute of audio', before: '≈ 38 s', after: 'n/a', note: '3 threads, 11 piano recordings (36–41 s); ≈ 97 s single-threaded. Peak tab memory 0.8–0.9 GB; 41 MB model downloaded once' },
+  { what: 'Full song + piano model, extra time per minute of audio', before: 'n/a', after: '≈ 40–60 s', note: '3 threads, band track; longer single-threaded. Runs after separation, so the peak memory stays separation’s' },
   { what: 'Peak memory of the browser tab', before: '0.4–0.9 GB', after: '1.9–2.2 GB', note: 'Separation is off by default on phones and skipped for recordings over 10 minutes (20 minutes on devices with 8 GB or more)' },
 ];
 
 export const SYNTHETIC_BENCHMARK =
-  'Pieces with known notes, played through the app’s own sampled grand piano with hall reverb and transcribed in the browser on every test run: Bach’s Prelude in C (BWV 846) 94% and a chord & melody study 88% notes right, average timing error 8–12 ms (on the real concert recordings above, the median is under 5 ms). These are best-case conditions — real recordings score lower, as shown above.';
+  'Pieces with known notes, played through the app’s own sampled grand piano with hall reverb and transcribed in the browser on every test run: Bach’s Prelude in C (BWV 846) 94% and a chord & melody study 88% notes right, average timing error 8–12 ms (on the real concert recordings above, the median is under 5 ms). These are best-case conditions. Real recordings score lower, as shown above.';
 
 export type Rating = 1 | 2 | 3 | 4 | 5;
 
@@ -343,7 +343,7 @@ export const EXPECTATIONS: Expectation[] = [
     examples: 'Any .mid / .midi file',
     rating: 5,
     measured: true,
-    summary: 'Exact. Notes, velocities, sustain pedal and tempo are read directly from the file — nothing is guessed.',
+    summary: 'Exact. Notes, velocities, sustain pedal and tempo are read directly from the file. Nothing is guessed.',
     tips: 'If you can find a MIDI of the piece, import it instead of audio.',
   },
   {
@@ -360,7 +360,7 @@ export const EXPECTATIONS: Expectation[] = [
     rating: 3,
     measured: true,
     summary: '62–75% of notes right on concert performances with “Piano solo” (71–78% with “Sensitive”): fast runs, soft inner voices and the top octave are often missed, but what is written is usually right.',
-    tips: 'Try “Sensitive” — it finds more notes in fast or soft music (Liszt 62% → 71%). On a computer, “High-accuracy piano model” does much better (Liszt 94%, Nocturne 97%), in a few minutes per piece.',
+    tips: 'Try “Sensitive”: it finds more notes in fast or soft music (Liszt 62% → 71%). On a computer, “High-accuracy piano model” does much better (Liszt 94%, Nocturne 97%), in a few minutes per piece.',
   },
   {
     kind: 'Jazz piano',
@@ -400,10 +400,10 @@ export const LIMITATIONS: { title: string; body: string }[] = [
 ];
 
 export const METHOD_NOTES: string[] = [
-  'Every number comes from the real app running in a browser (Chromium, WebAssembly, no GPU) on the complete recordings — not excerpts — with the preset the import page suggests. “Before” is the earlier version measured the same way on the same recordings.',
-  'Notes right (F1): a note counts when its pitch is exact and it starts within 50 ms of the real one — the standard measure in music-transcription research. F1 combines how many real notes were found with how many written notes were real.',
+  'Every number comes from the real app running in a browser (Chromium, WebAssembly, no GPU) on the complete recordings (not excerpts) with the preset the import page suggests. “Before” is the earlier version measured the same way on the same recordings.',
+  'Notes right (F1): a note counts when its pitch is exact and it starts within 50 ms of the real one, the standard measure in music-transcription research. F1 combines how many real notes were found with how many written notes were real.',
   '“Follows the singer / the tune”: 100 times a second we compare the highest right-hand note with the reference pitch and count a match when the note name is the same in any octave (the moments the right hand is silent count as misses).',
-  'Only the MAESTRO piano pieces have an exact answer key. Everything else is compared with AI-made references — a piano-specialist transcriber, and pitch tracking of vocal, bass and lead tracks separated with Demucs. They are second opinions, not the truth, and we say so wherever they are used.',
+  'Only the MAESTRO piano pieces have an exact answer key. Everything else is compared with AI-made references: a piano-specialist transcriber, and pitch tracking of vocal, bass and lead tracks separated with Demucs. They are second opinions, not the truth, and we say so wherever they are used.',
   'Some settings were tuned on the same recordings (the piano presets on five MAESTRO pieces, the melody on the five songs, the instruments’ tune line and the drum, chopped-note and hand-reach rules on the instrumental track and the piano recordings), which flatters those numbers a little; the held-out Liszt étude, the other piano recordings’ note scores and the independent pYIN check are the fairer tests.',
   'The high-accuracy piano model was measured the same way (the app in the browser, whole recordings, one at a time). Its model was trained on MAESTRO’s training recordings, so only the five answer-key pieces from MAESTRO’s test set count in its averages; the Ballade, a training recording, is shown but flagged. On recordings without an answer key we can only compare it with its own original Python version, which checks the browser version, not accuracy.',
   'Times come from a shared 4-core virtual machine; your device may be faster or slower.',
@@ -418,13 +418,13 @@ export interface Dataset {
 
 /** Matches the "Used to measure accuracy" group on the Credits page (src/lib/credits.ts). */
 export const DATASETS: Dataset[] = [
-  { name: 'MAESTRO v3 (Google Magenta)', use: '6 concert performances with the exact keys pressed — the answer key for solo piano', license: 'CC BY-NC-SA 4.0', url: 'https://magenta.tensorflow.org/datasets/maestro' },
+  { name: 'MAESTRO v3 (Google Magenta)', use: '6 concert performances with the exact keys pressed, the answer key for solo piano', license: 'CC BY-NC-SA 4.0', url: 'https://magenta.tensorflow.org/datasets/maestro' },
   { name: 'Musopen', use: 'Solo piano recording 4 (a public-domain recording)', license: 'Public domain (CC0)', url: 'https://musopen.org' },
   { name: 'High-resolution Piano Transcription (ByteDance)', use: 'Original Python version of the high-accuracy piano model: second opinion for piano recordings without an answer key, and the check that the browser version gives the same notes', license: 'MIT (inference code); CC BY 4.0 (weights)', url: 'https://github.com/qiuqiangkong/piano_transcription_inference' },
   { name: 'Demucs (Meta AI)', use: 'Separated vocal, bass, drum and lead tracks for the references (not used by the app)', license: 'MIT (code); weights for research use', url: 'https://github.com/facebookresearch/demucs' },
   { name: 'CREPE / torchcrepe', use: 'Pitch of the singer and the bass on those tracks', license: 'MIT', url: 'https://github.com/maxrmorrison/torchcrepe' },
   { name: 'librosa (pYIN) & mir_eval', use: 'Independent second pitch tracker; standard accuracy metrics', license: 'ISC; MIT', url: 'https://github.com/mir-evaluation/mir_eval' },
-  { name: 'Test songs and recordings', use: '5 songs with a singer, 1 instrumental soundtrack track, 4 piano recordings — used privately for measuring only, never copied into the app or shared', license: 'Copyrighted (not distributed)' },
+  { name: 'Test songs and recordings', use: '5 songs with a singer, 1 instrumental soundtrack track, 4 piano recordings, used privately for measuring only and never copied into the app or shared', license: 'Copyrighted (not distributed)' },
 ];
 
 /** notes right / rhythm right (0..1) of one reader on one test set; null: not measured */
@@ -462,7 +462,7 @@ export const SHEET_READER = {
     { title: 'Lay the page flat', body: 'A curved page, a blurry or dim photo comes out mostly wrong with the Quick reader, even with the corners set (not yet measured for the Accurate reader). Lay the page flat, light it evenly and hold the phone straight above it.' },
     { title: 'Rhythm is the Quick reader’s weak spot', body: 'It sometimes reads a note twice or gets a length wrong. A bar with too many beats is made longer so no note is lost; the notes after it then come a little later than on your page. The Accurate reader got the rhythm right on 97–99% of the notes in our tests.' },
     { title: 'Very high or very low notes', body: 'Notes with many ledger lines above or below the staff (or under an 8va sign) are the hardest part for both readers: on our ledger-line test piece the Accurate reader got 84% of the notes right, the Quick reader 55–73%. Some are missed or put in the wrong octave.' },
-    { title: 'One key (Quick reader)', body: 'The key used most is kept for the whole piece; a key change partway through is not followed. If the key signature is misread, every sharp or flat note is a semitone off — the app warns when lines disagree.' },
+    { title: 'One key (Quick reader)', body: 'The key used most is kept for the whole piece; a key change partway through is not followed. If the key signature is misread, every sharp or flat note is a semitone off. The app warns when lines disagree.' },
     { title: 'No handwriting, no text', body: 'Hand-written music is not supported. Lyrics, chord symbols, fingering, dynamics, tempo words and titles are not read.' },
     { title: 'Check every song', body: 'Even the Accurate reader can misread a page it was not tested on: a wrong rhythm, a missing sharp or flat or a note in the wrong hand. Compare with your page and fix notes in Edit mode.' },
   ],

@@ -221,22 +221,22 @@ export default function SettingsPage() {
           </div>
           <Section title="Transcription accuracy">
             <p className="text-[12.5px] leading-relaxed text-ink-300">
-              Audio transcription is an AI estimate.{' '}
+              Notes worked out from audio are a best guess.{' '}
               <Link to="/accuracy" className="text-accent-400 hover:text-accent-300">
-                See measured accuracy and what to expect →
+                See how accurate it is →
               </Link>
             </p>
           </Section>
           <Section title="Credits & licenses">
             <ul className="flex flex-col gap-1 text-[12.5px] text-ink-300">
-              <li>Basic Pitch note-detection model — Spotify (Apache-2.0)</li>
-              <li>SCNet vocals &amp; drums separation model — Tong et al. (MIT)</li>
-              <li>Salamander Grand Piano V3 — Alexander Holm (CC BY 3.0) · Upright Piano KW — FreePats (CC0)</li>
+              <li>Basic Pitch note detection, by Spotify (Apache-2.0)</li>
+              <li>SCNet vocals &amp; drums separation, by Tong et al. (MIT)</li>
+              <li>Salamander Grand Piano V3 by Alexander Holm (CC BY 3.0) · Upright Piano KW by FreePats (CC0)</li>
               <li>TensorFlow.js · ONNX Runtime Web · Mediabunny · @tonejs/midi · React, and more</li>
             </ul>
             <p className="mt-2 text-[12.5px] leading-relaxed text-ink-300">
               <Link to="/credits" className="text-accent-400 hover:text-accent-300">
-                All credits, licenses and the test data we used →
+                Full credits, licenses and test data →
               </Link>
             </p>
             <p className="mt-1 text-[12.5px] leading-relaxed text-ink-300">

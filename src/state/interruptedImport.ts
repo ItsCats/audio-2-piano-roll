@@ -64,9 +64,9 @@ export function interruptedNotice(
       const again = rec.sheet?.lowMemory;
       const offerAccurate = kept && !again && !(device && isMemoryConstrained(device));
       const remember = quickStaysAfterCrash(again, device) ? ' The Quick reader is then picked for next time (you can switch back on the Sheet music tab).' : '';
-      const why = again ? 'stopped again, even in the slower mode that uses less memory' : 'was interrupted — it probably needed more memory than this device had free';
+      const why = again ? 'stopped again, even in the slower mode that uses less memory' : 'stopped before it finished. It probably needed more memory than this device had free';
       return {
-        title: again ? 'Reading the sheet music stopped again' : 'Your last import was interrupted',
+        title: again ? 'Reading the sheet music stopped again' : 'Your last import didn’t finish',
         body: `Reading “${rec.title}” with the Accurate reader ${why}. ${
           !kept
             ? 'Choose the file again and pick the Quick reader, which needs much less memory.'
@@ -95,8 +95,8 @@ export function interruptedNotice(
         ? ' Reading sheet music needs a lot of memory: close other tabs and apps, or read fewer pages at a time.'
         : ' Reading sheet music needs a lot of memory: close other tabs and apps first.';
     return {
-      title: 'Your last import was interrupted',
-      body: `Reading “${rec.title}” was interrupted — your browser probably ran out of memory. ${kept ? what : 'Choose the file again to try once more.'}${advice}`,
+      title: 'Your last import didn’t finish',
+      body: `Reading “${rec.title}” stopped before it finished. The page was closed, or your browser ran out of memory. ${kept ? what : 'Choose the file again to try once more.'}${advice}`,
       canRetry: kept,
       canSave: false,
     };
@@ -114,8 +114,8 @@ export function interruptedNotice(
           : ' It was adding the piano model, which needs a lot of memory: Try again uses the standard Full song result.'
         : '';
   return {
-    title: 'Your last import was interrupted',
-    body: `Your last import (“${rec.title}”) was interrupted — your browser probably ran out of memory. ${what}${model}`,
+    title: 'Your last import didn’t finish',
+    body: `Your last import (“${rec.title}”) stopped before it finished. The page was closed, or your browser ran out of memory. ${what}${model}`,
     canRetry: kept,
     canSave: kept && isRecording(rec),
   };

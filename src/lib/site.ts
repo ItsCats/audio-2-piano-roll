@@ -49,4 +49,4 @@ export function processingHost(url: unknown): string {
 export const SITE_PROCESSING_HOST: string = processingHost(import.meta.env.VITE_PROCESSING_URL);
 
 /** Date shown as "Last updated" on the Privacy, Terms and Copyright pages. Change it whenever their text changes. */
-export const LEGAL_LAST_UPDATED = '2026-11-13';
+export const LEGAL_LAST_UPDATED = '2026-11-25';

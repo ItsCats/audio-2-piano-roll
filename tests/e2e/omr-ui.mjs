@@ -428,7 +428,7 @@ try {
       check(`${dev}: the photo is kept for crash recovery while reading`, pending.length === 1 && pending[0].sheet === 'photo' && pending[0].photos === 1 && pending[0].quad && pending[0].blob, pending);
       page.once('dialog', (d) => void d.accept());
       await page.reload();
-      await page.getByText('Your last import was interrupted').waitFor({ timeout: 20000 });
+      await page.getByText('Your last import didn’t finish').waitFor({ timeout: 20000 });
       await page.waitForTimeout(400);
       await shot(page, `${dev}-interrupted`);
       check(`${dev}: the notice says the photo was kept and Try again uses less memory`, (await page.getByText(/Your photo was kept/).isVisible()) && (await page.getByText(/slower mode that uses less memory/).isVisible()));

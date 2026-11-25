@@ -279,7 +279,7 @@ describe('the interrupted-import notice', () => {
     expect(n.canRetry).toBe(true);
     expect(n.retryLabel).toBe('Use the Quick reader');
     expect(n.retryAccurateLabel).toBe('Try the Accurate reader again');
-    expect(n.body).toMatch(/with the Accurate reader was interrupted/);
+    expect(n.body).toMatch(/with the Accurate reader stopped before it finished/);
     expect(n.body).toMatch(/Quick reader, which needs much less memory/);
     expect(n.body).toMatch(/try the Accurate reader again in a slower mode/);
     expect(n.body).not.toMatch(/picked for next time/);

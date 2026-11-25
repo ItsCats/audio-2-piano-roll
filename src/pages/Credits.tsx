@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { ExternalLink, Heart, Sparkles } from 'lucide-react';
+import { ExternalLink, Heart, PenLine } from 'lucide-react';
 import { COPYRIGHT_LINE, CREDITS, INSPIRATION, LICENSE_WORDS, ORIGINAL_WORK, SOURCE_CODE_LABEL, SOURCE_CODE_URL } from '../lib/credits';
 import { Badge } from '../components/ui';
 
@@ -9,10 +9,10 @@ export default function CreditsPage() {
       <div className="mx-auto flex max-w-5xl flex-col gap-8 px-5 py-8 md:px-10">
         <header>
           <p className="text-[12px] font-semibold tracking-[0.14em] text-accent-400 uppercase">Credits</p>
-          <h1 className="mt-2 text-[28px] font-semibold tracking-tight text-ink-50 md:text-[32px]">Made possible by</h1>
+          <h1 className="mt-2 text-[28px] font-semibold tracking-tight text-ink-50 md:text-[32px]">Thanks to</h1>
           <p className="mt-3 max-w-3xl text-[14.5px] leading-relaxed text-ink-300">
-            Piano2Vision is built on AI models, piano recordings, fonts and open-source software shared by other people. Thank you to everyone
-            below. Each item links to its project and license.
+            Piano2Vision runs on AI models, piano recordings, fonts and open-source code that other people shared for free. Thank you to
+            everyone below. Each one links to its project and license.
           </p>
           <nav className="mt-4 flex flex-wrap gap-2" aria-label="Sections">
             {CREDITS.map((g) => (
@@ -59,7 +59,7 @@ export default function CreditsPage() {
           <ul className="mt-2 flex flex-col gap-2 text-[13px] leading-relaxed text-ink-300">
             {INSPIRATION.map((i) => (
               <li key={i.name}>
-                <b className="font-semibold text-ink-100">{i.name}</b> — {i.text}
+                <b className="font-semibold text-ink-100">{i.name}</b>: {i.text}
               </li>
             ))}
           </ul>
@@ -67,7 +67,7 @@ export default function CreditsPage() {
 
         <section className="panel p-5">
           <h2 className="flex items-center gap-2 text-[15px] font-semibold text-ink-50">
-            <Sparkles size={16} className="text-accent-400" /> Made for Piano2Vision
+            <PenLine size={16} className="text-accent-400" /> Made for Piano2Vision
           </h2>
           <ul className="mt-2 flex list-disc flex-col gap-1 pl-5 text-[13px] leading-relaxed text-ink-300">
             {ORIGINAL_WORK.map((t) => (

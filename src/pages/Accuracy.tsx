@@ -142,7 +142,7 @@ function SpecialistSpotlight() {
 function TrainingTag() {
   return (
     <span className="mt-1 inline-flex rounded-full border border-warn/30 bg-warn/10 px-2 py-0.5 text-[11px] text-warn" title="MAESTRO train split">
-      In the model’s training data — flattering, not in the averages
+      The model trained on this one, so it scores too high (left out of the averages)
     </span>
   );
 }
@@ -210,7 +210,7 @@ function SheetReaderSection() {
       <Note>
         Songs read by the Quick reader are labeled <b className="text-warn">Sheet music · Beta</b> in the Studio, those read by the Accurate reader{' '}
         <b className="text-warn">Read from PDF</b> or <b className="text-warn">Read from photo</b>. Compare them with your page and fix mistakes in Edit mode. Have the music as a MusicXML or
-        MuseScore file? Import that instead — it is exact.
+        MuseScore file? Import that instead. It’s exact.
       </Note>
       <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {SHEET_READER.limits.map((l) => (
@@ -233,12 +233,12 @@ export default function AccuracyPage() {
     <div className="h-full overflow-y-auto">
       <div className="mx-auto flex max-w-5xl flex-col gap-9 px-4 py-8 sm:px-5 md:px-10">
         <header>
-          <p className="text-[12px] font-semibold tracking-[0.14em] text-accent-400 uppercase">Transparency</p>
+          <p className="text-[12px] font-semibold tracking-[0.14em] text-accent-400 uppercase">Measured results</p>
           <h1 className="mt-2 text-[28px] font-semibold tracking-tight text-ink-50 md:text-[32px]">How accurate is Piano2Vision?</h1>
           <p className="mt-3 max-w-3xl text-[14.5px] leading-relaxed text-ink-300">
-            When you import audio, an AI model listens to the recording and estimates which notes were played. It is an estimate, not a perfect
-            score. Below is what we measured on real recordings — concert piano performances with an exact answer key, other piano recordings,
-            and full songs with singers, bands and drums — what got better, and where it still goes wrong.
+            When you import audio, the note finder listens to it and guesses which notes were played. It’s a guess, not the real sheet music.
+            Here’s what we measured on real recordings: concert piano with an exact answer key, other piano recordings, and full songs with
+            singers, bands and drums. You’ll see what it gets right and where it still messes up.
           </p>
           <div className="mt-5">
             <SpecialistSpotlight />
@@ -247,7 +247,7 @@ export default function AccuracyPage() {
             <AlertTriangle size={17} className="mt-0.5 shrink-0 text-warn" />
             <p>
               Every song made from audio is labeled <b className="text-warn">AI transcription</b> in the Studio. Always compare it with the
-              original before learning a piece note-for-note — and fix anything that sounds off in Edit mode.
+              original before learning a piece note for note, and fix anything that sounds off in Edit mode.
             </p>
           </div>
         </header>
@@ -332,7 +332,7 @@ export default function AccuracyPage() {
           </div>
           <div className="flex flex-col gap-2 sm:hidden">
             {SPECIALIST_ROWS.map((r) => (
-              <div key={r.piece} className={cn('panel p-3.5', r.inTraining && 'opacity-80')}>
+              <div key={r.piece} className="panel p-3.5">
                 <p className="text-[13.5px] font-medium text-ink-50">{r.piece}</p>
                 {r.inTraining && <TrainingTag />}
                 <div className="mt-2 grid grid-cols-3 gap-2 text-[11px] text-ink-400">
@@ -355,7 +355,7 @@ export default function AccuracyPage() {
               </thead>
               <tbody>
                 {SPECIALIST_ROWS.map((r) => (
-                  <tr key={r.piece} className={cn('border-b border-ink-800 last:border-0', r.inTraining && 'opacity-80')}>
+                  <tr key={r.piece} className="border-b border-ink-800 last:border-0">
                     <td className="px-4 py-3">
                       <p className="font-medium text-ink-50">{r.piece}</p>
                       {r.inTraining && <TrainingTag />}
@@ -417,7 +417,7 @@ export default function AccuracyPage() {
         <section>
           <SectionTitle
             title="Other piano recordings (no answer key)"
-            sub="For recordings without a key-by-key record we compare the normal model with the piano-specialist model (the original Python version of the high-accuracy piano model). On the answer-key pieces above it scores 94–99 %, so high agreement is a good sign — but it is a second opinion, not the truth (it is weaker on pianos, rooms and styles unlike its training data, such as the jazz cover). For the same reason these rows say nothing about the high-accuracy option itself: compared with its own model it would always agree."
+            sub="For recordings without a key-by-key record we compare the normal model with the piano-specialist model (the original Python version of the high-accuracy piano model). On the answer-key pieces above it scores 94–99 %, so high agreement is a good sign. Still, it is a second opinion, not the truth (it is weaker on pianos, rooms and styles unlike its training data, such as the jazz cover). For the same reason these rows say nothing about the high-accuracy option itself: compared with its own model it would always agree."
           />
           <div className="flex flex-col gap-2 sm:hidden">
             {OTHER_PIANO_ROWS.map((r) => (
@@ -604,7 +604,7 @@ export default function AccuracyPage() {
         </section>
 
         <section>
-          <h2 className="mb-3 text-[15px] font-semibold text-ink-50">What the AI can’t (fully) do yet</h2>
+          <h2 className="mb-3 text-[15px] font-semibold text-ink-50">What it still gets wrong</h2>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {LIMITATIONS.map((l) => (
               <div key={l.title} className="rounded-xl border border-ink-700 bg-ink-900/60 p-4">
@@ -621,12 +621,12 @@ export default function AccuracyPage() {
             {[
               'Choose the right detection preset when importing: Piano solo, Full song or Sensitive (fast or very soft playing). For solo piano on a computer, pick “High-accuracy piano model” when you can wait a few minutes; for instrumental band songs, “Full song” with “Add the high-accuracy piano model” adds keyboard parts the normal model misses.',
               'For songs with a singer, keep “Separate vocals & drums” on: the right hand then follows the singer. To play only the piano part of a song with singing, pick Piano solo and tick “Remove singing and drums”.',
-              'Use the cleanest recording you can — less reverb, crowd noise and background music means better notes.',
+              'Use the cleanest recording you can. Less echo, crowd noise and background music means better notes.',
               'In the Studio, blend in the original recording (Sound tab → Original recording) to hear differences.',
-              'Re-tune detection in the Notes tab — it re-runs in seconds without re-analyzing the audio.',
+              'Tweak detection in the Notes tab. It redoes the notes in seconds without analyzing the audio again.',
               'Fix remaining mistakes in Edit mode; your edits are saved per difficulty level.',
-              'Have a MIDI file? Import that instead — it’s exact.',
-              'Printed piano music? A PDF or photo can be read too — check the notes afterwards.',
+              'Have a MIDI file? Import that instead. It’s exact.',
+              'Printed piano music? A PDF or photo can be read too. Check the notes afterward.',
             ].map((t, i) => (
               <li key={t} className="flex gap-3">
                 <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent-500/20 text-[11px] font-semibold text-accent-300">{i + 1}</span>

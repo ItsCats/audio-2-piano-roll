@@ -54,10 +54,26 @@ function setGuard(now: number): boolean {
 }
 
 const NOTE_ID = 'pv-update-note';
-const NOTE_STYLE =
+const NOTE_PLACE =
   'position:fixed;left:50%;top:max(16px,env(safe-area-inset-top));transform:translateX(-50%);z-index:2147483647;' +
-  'max-width:calc(100vw - 32px);padding:10px 16px;border-radius:12px;background:#1d1d27;color:#f4f4f6;' +
-  'font:500 14px/1.4 system-ui,sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.5);border:1px solid #33333f;text-align:center';
+  'max-width:calc(100vw - 32px);padding:10px 16px;border-radius:12px;text-align:center;';
+/** in the Piano Studio: its own dark look */
+const STUDIO_NOTE = {
+  box: NOTE_PLACE + 'background:#1d1d27;color:#f4f4f6;font:500 14px/1.4 system-ui,sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.5);border:1px solid #33333f',
+  button: 'font:500 14px system-ui,sans-serif;',
+  primary: 'background:var(--color-accent-500,#6d8cff);color:#fff;border:0',
+  secondary: 'background:transparent;color:#f4f4f6;border:1px solid #44444f',
+};
+/** everywhere else: the site's look, light or dark (src/styles/site.css), as wide as its text so a short note stays on one line */
+const SITE_NOTE = {
+  box:
+    NOTE_PLACE +
+    'width:max-content;background:var(--color-ink-850,#fff);color:var(--color-ink-50,#121110);font:500 14px/1.4 var(--font-sans,system-ui,sans-serif);' +
+    'box-shadow:0 6px 24px rgba(0,0,0,.16);border:1px solid var(--color-ink-700,#dfdcd4)',
+  button: 'font:500 14px var(--font-sans,system-ui,sans-serif);',
+  primary: 'background:var(--color-accent-500,#1a6b45);color:var(--on-accent,#fff);border:0',
+  secondary: 'background:transparent;color:var(--color-ink-50,#121110);border:1px solid var(--color-ink-600,#cbc7bd)',
+};
 
 /** A note at the top of the page; with `reload`, a "Reload" button the user presses when ready. */
 function showNote(text: string, reload = false) {
@@ -65,7 +81,8 @@ function showNote(text: string, reload = false) {
   const el = document.createElement('div');
   el.id = NOTE_ID;
   el.setAttribute('role', 'status');
-  el.style.cssText = NOTE_STYLE;
+  const look = document.documentElement?.dataset && 'site' in document.documentElement.dataset ? SITE_NOTE : STUDIO_NOTE;
+  el.style.cssText = look.box;
   const p = document.createElement('div');
   p.textContent = text;
   el.appendChild(p);
@@ -76,9 +93,7 @@ function showNote(text: string, reload = false) {
       const b = document.createElement('button');
       b.type = 'button';
       b.textContent = label;
-      b.style.cssText =
-        'min-height:40px;padding:0 16px;border-radius:8px;font:500 14px system-ui,sans-serif;cursor:pointer;' +
-        (primary ? 'background:var(--color-accent-500,#6d8cff);color:#fff;border:0' : 'background:transparent;color:#f4f4f6;border:1px solid #44444f');
+      b.style.cssText = 'min-height:40px;padding:0 16px;border-radius:8px;' + look.button + 'cursor:pointer;' + (primary ? look.primary : look.secondary);
       b.addEventListener('click', onClick);
       row.appendChild(b);
     };
@@ -131,7 +146,7 @@ export function reloadIfNewVersion(): Promise<boolean> {
       return false;
     }
     if (!setGuard(Date.now())) return false;
-    showNote('A new version is available — reloading');
+    showNote('A new version is available. Reloading…');
     window.setTimeout(() => location.reload(), 900);
     return true;
   })().finally(() => {

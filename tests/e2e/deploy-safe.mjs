@@ -104,7 +104,7 @@ try {
     const v1Entry = await page.evaluate(() => document.querySelector('script[type="module"][src*="/assets/"]')?.getAttribute('src'));
     let loads = 0;
     page.on('load', () => loads++);
-    const note = page.getByText('A new version is available — reloading');
+    const note = page.getByText('A new version is available. Reloading…');
     deploy(v2);
     // open My Library: its code is gone in the new version
     await page.evaluate(() => {
