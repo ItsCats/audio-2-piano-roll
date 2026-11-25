@@ -18,7 +18,7 @@ describe('sheet-music reader: interrupted-import notice', () => {
     const n = interruptedNotice(pdf);
     expect(n.canRetry).toBe(true);
     expect(n.canSave).toBe(false);
-    expect(n.body).toMatch(/^Reading “Minuet” stopped before it finished\. Your browser probably ran out of memory\. Your file was kept\./);
+    expect(n.body).toMatch(/^Reading “Minuet” stopped before it finished\. The page was closed, or your browser ran out of memory\. Your file was kept\./);
     expect(n.body).toMatch(/slower mode that uses less memory/);
   });
   it('a crash during the low-memory retry is not offered again (no crash loop)', () => {

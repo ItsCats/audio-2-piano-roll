@@ -429,7 +429,7 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
                           : setPdf({ ...pdf, full: false, selected: on ? pdf.selected.filter((p) => p !== page) : [...pdf.selected, page].sort((a, b) => a - b) })
                       }
                       className={cn(
-                        'focus-ring relative overflow-hidden rounded-lg border-2 bg-white transition-opacity disabled:cursor-default',
+                        'pdf-page focus-ring relative overflow-hidden rounded-lg border-2 bg-white transition-opacity disabled:cursor-default',
                         on ? 'border-accent-500' : 'border-ink-700 opacity-40 grayscale hover:opacity-70',
                         full && 'opacity-35',
                       )}
@@ -438,7 +438,7 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
                       <span className={cn('absolute right-1 bottom-1 flex h-6 min-w-6 items-center justify-center rounded-full px-1.5 text-[11px] font-semibold', on ? 'bg-accent-500 text-white' : 'bg-black/60 text-ink-100')}>
                         {on ? <Check size={13} /> : page}
                       </span>
-                      {on && <span className="absolute top-1 left-1 rounded bg-black/60 px-1 text-[10.5px] text-ink-50">{page}</span>}
+                      {on && <span className="absolute top-1 left-1 rounded bg-black/60 px-1 text-[10.5px] text-[#f1f1f5]">{page}</span>}
                     </button>
                   );
                 })}
@@ -498,9 +498,9 @@ export function SheetMusicTab({ busy, onScoreFile, onStarted }: { busy: boolean;
                     <div className="relative overflow-hidden rounded-lg bg-black/40">
                       <img src={p.preview} alt={`Page ${i + 1}`} className="block aspect-[0.75] w-full object-contain" />
                       <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox={`0 0 ${p.image.w} ${p.image.h}`} preserveAspectRatio="xMidYMid meet" aria-hidden>
-                        <polygon points={p.corners.map((c) => c.join(',')).join(' ')} fill="none" stroke="#8aa2ff" strokeWidth={2} vectorEffect="non-scaling-stroke" />
+                        <polygon points={p.corners.map((c) => c.join(',')).join(' ')} fill="none" stroke="var(--color-accent-400, #8aa2ff)" strokeWidth={2} vectorEffect="non-scaling-stroke" />
                       </svg>
-                      <span className="absolute top-1 left-1 rounded bg-black/70 px-1.5 text-[11px] font-semibold text-ink-50">Page {i + 1}</span>
+                      <span className="absolute top-1 left-1 rounded bg-black/70 px-1.5 text-[11px] font-semibold text-[#f1f1f5]">Page {i + 1}</span>
                     </div>
                     <div className="flex items-center justify-between gap-0.5">
                       <button type="button" className="focus-ring flex h-9 items-center gap-1 rounded-md px-1.5 text-[12px] text-accent-300 hover:bg-ink-800" onClick={() => setEditing(p.id)}>

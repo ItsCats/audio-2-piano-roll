@@ -125,3 +125,12 @@
 :root[data-site] :is(.bg-black\/60.text-warn, .group > svg.text-warn) {
   color: #fbbf24;
 }
+/* an unchosen sheet-music PDF page (a white page, faded) keeps a visible edge on the light page */
+:root[data-site] .pdf-page[aria-pressed='false'] {
+  border-color: var(--color-ink-300);
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-site] .pdf-page[aria-pressed='false'] {
+    border-color: var(--color-ink-700);
+  }
+}

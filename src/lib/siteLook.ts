@@ -13,11 +13,17 @@ const SITE_BAR = { light: '#faf9f6', dark: '#111110' };
 
 let darkMode: MediaQueryList | null = null;
 
+/**
+ * index.html has one theme-color <meta> for light mode and one for dark mode (media="(prefers-color-scheme: …)"),
+ * so the browser picks the right one itself, also before any script runs. In the Studio both are its dark.
+ */
 function setBarColor() {
-  const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
-  if (!meta) return;
   const inStudio = !('site' in document.documentElement.dataset);
-  meta.content = inStudio ? STUDIO_BAR : darkMode?.matches ? SITE_BAR.dark : SITE_BAR.light;
+  for (const meta of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')) {
+    const media = meta.getAttribute?.('media') ?? '';
+    const dark = /dark/.test(media) || (!/light/.test(media) && !!darkMode?.matches);
+    meta.content = inStudio ? STUDIO_BAR : dark ? SITE_BAR.dark : SITE_BAR.light;
+  }
 }
 
 /** Sets `data-site` on <html> outside the Studio and removes it in the Studio. */

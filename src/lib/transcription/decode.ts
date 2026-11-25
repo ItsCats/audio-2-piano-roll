@@ -103,6 +103,14 @@ export function placeByTimestamp(timestamps: number[], lengths: number[], rate: 
   return out;
 }
 
+/** What an import says when a file can't be decoded (the decoder's own words are technical). */
+export const UNREADABLE_FILE = 'This file couldn’t be read. Try an MP3, WAV or M4A file.';
+
+/** The plain message for a decodeToRate "Could not decode this file. …" error, or null for any other error. */
+export function plainDecodeError(message: string): string | null {
+  return /^Could not decode this file\./.test(message) ? UNREADABLE_FILE : null;
+}
+
 const tooLong = (d: number) =>
   `This recording is ${Math.round(d / 60)} minutes long. The limit is ${MAX_DURATION_SECONDS / 60} minutes. Trim it first.`;
 

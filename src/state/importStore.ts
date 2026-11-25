@@ -5,7 +5,7 @@
 import { create } from 'zustand';
 import { transcribeAudio, type ProgressEvent, type TranscribeOptions, type TranscriptionEngine } from '../lib/transcription/pipeline';
 import type { TranscriptionStage } from '../lib/transcription/workerProtocol';
-import { classifyFile } from '../lib/transcription/decode';
+import { classifyFile, plainDecodeError } from '../lib/transcription/decode';
 import { parseMidi } from '../lib/music/midi';
 import { buildSong, demoSong, songFromMidi, songFromReanalysis, songFromScore, songInputFromResult, titleFromFileName } from '../lib/songs';
 import {
@@ -959,7 +959,11 @@ export const useImport = create<ImportState>((set, get) => {
       if (get().job?.id === ctx.id) set({ job: null, controller: null });
       return null;
     }
-    const msg = err instanceof Error ? err.message : String(err);
+    const raw = err instanceof Error ? err.message : String(err);
+    // a file the browser can't decode: a plain message (the decoder's words go to the console)
+    const plain = plainDecodeError(raw);
+    if (plain) console.warn(raw);
+    const msg = plain ?? raw;
     ctx.update({ stage: 'error', error: msg, finishedAt: Date.now() });
     if (again && get().job?.id === ctx.id) set({ failed: { jobId: ctx.id, ...again } });
     return null;
@@ -1903,7 +1907,7 @@ export const STAGE_LABELS: Record<ImportStage, string> = {
   downloading: 'Fetching audio',
   separating: 'Separating vocals & drums',
   decoding: 'Reading the audio',
-  'loading-model': 'Loading the note finder',
+  'loading-model': 'Getting the note finder ready',
   analyzing: 'Detecting notes',
   'piano-model': 'Piano model: keyboard parts and in-between notes',
   extracting: 'Extracting notes',

@@ -61,6 +61,7 @@ describe('automatic reload after a deploy', () => {
     reload.mockReset();
     vi.stubGlobal('document', {
       querySelector: () => ({ src: 'https://p2v.test/assets/index-OLD.js' }),
+      documentElement: { dataset: { site: '' } },
       createElement: el,
       getElementById: (id: string) => body.find((e) => e.id === id) ?? null,
       body: { appendChild: (e: FakeEl) => void body.push(e) },

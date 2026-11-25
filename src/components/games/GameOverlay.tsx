@@ -555,16 +555,17 @@ function DPad({ onDir }: { onDir: (d: 'up' | 'down' | 'left' | 'right') => void 
   );
 }
 
+/** the game picker's card art: dark in both looks, with the site's green (the games themselves keep their own colors) */
 function HopperIcon() {
   return (
     <svg width="64" height="40" viewBox="0 0 64 40" aria-hidden="true">
       <rect x="0" y="0" width="64" height="40" rx="8" fill="#0c0c10" />
       <rect x="40" y="0" width="9" height="13" fill="#b4b4c2" />
-      <rect x="40" y="12" width="9" height="2" fill="#6d8cff" />
+      <rect x="40" y="12" width="9" height="2" fill="#4fb07d" />
       <rect x="40" y="27" width="9" height="13" fill="#b4b4c2" />
-      <rect x="40" y="27" width="9" height="2" fill="#6d8cff" />
-      <ellipse cx="20" cy="23" rx="4.6" ry="3.4" transform="rotate(-22 20 23)" fill="#8aa2ff" />
-      <path d="M24 22 V11 q1 4 5 5" stroke="#8aa2ff" strokeWidth="1.6" fill="none" />
+      <rect x="40" y="27" width="9" height="2" fill="#4fb07d" />
+      <ellipse cx="20" cy="23" rx="4.6" ry="3.4" transform="rotate(-22 20 23)" fill="#7ccfa0" />
+      <path d="M24 22 V11 q1 4 5 5" stroke="#7ccfa0" strokeWidth="1.6" fill="none" />
     </svg>
   );
 }
@@ -579,10 +580,10 @@ function SnakeIcon() {
       {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
         <rect key={`k${i}`} x={i * 8 + 0.5} y="31" width="7" height="9" fill="#dcdce4" />
       ))}
-      <rect x="9" y="17" width="6" height="6" rx="2" fill="#4258bd" />
-      <rect x="17" y="17" width="6" height="6" rx="2" fill="#5672e8" />
-      <rect x="25" y="17" width="6" height="6" rx="2" fill="#6d8cff" />
-      <rect x="25" y="9" width="6" height="6" rx="2" fill="#a9bbff" />
+      <rect x="9" y="17" width="6" height="6" rx="2" fill="#2f7a53" />
+      <rect x="17" y="17" width="6" height="6" rx="2" fill="#3e9a6a" />
+      <rect x="25" y="17" width="6" height="6" rx="2" fill="#4fb07d" />
+      <rect x="25" y="9" width="6" height="6" rx="2" fill="#a6e0bf" />
       <ellipse cx="44" cy="12" rx="2.8" ry="2.1" transform="rotate(-22 44 12)" fill="#f5a524" />
       <rect x="46" y="5" width="1.2" height="7" fill="#f5a524" />
     </svg>

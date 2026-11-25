@@ -96,7 +96,7 @@ export function interruptedNotice(
         : ' Reading sheet music needs a lot of memory: close other tabs and apps first.';
     return {
       title: 'Your last import didn’t finish',
-      body: `Reading “${rec.title}” stopped before it finished. Your browser probably ran out of memory. ${kept ? what : 'Choose the file again to try once more.'}${advice}`,
+      body: `Reading “${rec.title}” stopped before it finished. The page was closed, or your browser ran out of memory. ${kept ? what : 'Choose the file again to try once more.'}${advice}`,
       canRetry: kept,
       canSave: false,
     };
@@ -115,7 +115,7 @@ export function interruptedNotice(
         : '';
   return {
     title: 'Your last import didn’t finish',
-    body: `Your last import (“${rec.title}”) stopped before it finished. Your browser probably ran out of memory. ${what}${model}`,
+    body: `Your last import (“${rec.title}”) stopped before it finished. The page was closed, or your browser ran out of memory. ${what}${model}`,
     canRetry: kept,
     canSave: kept && isRecording(rec),
   };

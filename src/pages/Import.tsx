@@ -193,6 +193,15 @@ function ComputerTab({ busy, separate, transcriber }: { busy: boolean; separate:
 }
 
 
+/** What went wrong with the microphone, in plain words (the browser's own message is technical). */
+function micProblem(e: unknown): string {
+  const name = (e as { name?: string } | null)?.name ?? '';
+  if (name === 'NotFoundError' || name === 'OverconstrainedError') return 'No microphone was found. Check that one is connected and allowed for this site.';
+  if (name === 'NotAllowedError' || name === 'SecurityError') return 'The microphone isn’t allowed for this site. Allow it in your browser’s settings, then try again.';
+  if (name === 'NotReadableError' || name === 'AbortError') return 'The microphone couldn’t start. Close other apps that use it, then try again.';
+  return 'The microphone couldn’t start. Check that one is connected and allowed for this site.';
+}
+
 function RecordTab({ busy }: { busy: boolean }) {
   const [rec, setRec] = useState<{ r: MediaRecorder; start: number; stream: MediaStream } | null>(null);
   const chunks = useRef<Blob[]>([]);
@@ -274,7 +283,7 @@ function RecordTab({ busy }: { busy: boolean }) {
     } catch (e) {
       endSession();
       void wake.hold(false);
-      toast.error('Microphone unavailable', (e as Error).message);
+      toast.error('Microphone unavailable', micProblem(e));
     }
   };
   return (

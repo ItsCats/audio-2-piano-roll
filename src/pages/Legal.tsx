@@ -59,7 +59,7 @@ function Contact({ email, privateNote }: { email: string; privateNote: string })
         </p>
       )}
       <p>
-        {email ? 'Or open' : 'Open'} an issue on GitHub: <Ext href={CONTACT_URL}>{CONTACT_URL.replace(/^https:\/\//, '')}</Ext>. Issues are public, so
+        {email ? 'Or open' : 'Open'} an issue on <Ext href={CONTACT_URL}>the project’s GitHub issues page</Ext>. Issues are public, so
         don’t put private details there{email ? ': email us instead.' : `. ${privateNote}`}
       </p>
     </>
@@ -80,7 +80,7 @@ function Privacy() {
           {SITE_PROCESSING_HOST ? 'They are not uploaded to us, except audio sent to our processing server (see below).' : 'They are not uploaded to us.'}
         </p>
         <p>
-          The AI that listens to the music and writes out the notes runs inside your browser too. We can’t see your songs, and we can’t get them back
+          The note finder, which listens to the music and writes out the notes, runs inside your browser too. We can’t see your songs, and we can’t get them back
           for you if they are deleted. To keep a copy or move a song to another device, use <b>Export → Project file</b>.
         </p>
       </Part>

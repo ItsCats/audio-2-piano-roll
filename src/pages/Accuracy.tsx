@@ -236,7 +236,7 @@ export default function AccuracyPage() {
           <p className="text-[12px] font-semibold tracking-[0.14em] text-accent-400 uppercase">Measured results</p>
           <h1 className="mt-2 text-[28px] font-semibold tracking-tight text-ink-50 md:text-[32px]">How accurate is Piano2Vision?</h1>
           <p className="mt-3 max-w-3xl text-[14.5px] leading-relaxed text-ink-300">
-            When you import audio, an AI model listens to it and guesses which notes were played. It’s a guess, not the real sheet music.
+            When you import audio, the note finder listens to it and guesses which notes were played. It’s a guess, not the real sheet music.
             Here’s what we measured on real recordings: concert piano with an exact answer key, other piano recordings, and full songs with
             singers, bands and drums. You’ll see what it gets right and where it still messes up.
           </p>

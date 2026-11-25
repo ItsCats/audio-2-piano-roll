@@ -71,7 +71,7 @@ export const MAESTRO_ROWS: MaestroRow[] = [
   { piece: 'Mozart: Sonata in F major, K. 280, 1st mvt.', detail: '3:14 · fast scales and Alberti bass · used for tuning', notes: 1832, f1: 0.87, precision: 0.94, recall: 0.82, f1Sensitive: 0.88, before: 0.86 },
   { piece: 'Chopin: Nocturne in F major, Op. 15 No. 1', detail: '4:03 · stormy fast middle section · used for tuning', notes: 1780, f1: 0.75, precision: 0.88, recall: 0.66, f1Sensitive: 0.78, before: 0.75 },
   { piece: 'Chopin: Ballade No. 1 in G minor, Op. 23', detail: '8:32 · virtuoso, dense, wide range · used for tuning', notes: 5112, f1: 0.75, precision: 0.92, recall: 0.63, f1Sensitive: 0.78, before: 0.71 },
-  { piece: 'Liszt: Waldesrauschen (Concert Étude No. 1)', detail: '3:41 · rapid soft figuration · NOT used for tuning (the fairest test)', notes: 3297, f1: 0.62, precision: 0.94, recall: 0.46, f1Sensitive: 0.71, before: 0.57 },
+  { piece: 'Liszt: Waldesrauschen (Concert Étude No. 1)', detail: '3:41 · rapid soft figuration · NOT used for tuning, so the best guide to new songs', notes: 3297, f1: 0.62, precision: 0.94, recall: 0.46, f1Sensitive: 0.71, before: 0.57 },
 ];
 
 export const MAESTRO_CAVEATS: { title: string; body: string }[] = [
@@ -129,7 +129,7 @@ export const SPECIALIST_ROWS: SpecialistRow[] = [
 export const SPECIALIST = {
   title: 'High-accuracy piano model',
   intro:
-    'A second, optional model for solo piano: ByteDance’s high-resolution piano transcription model (Kong et al., 2021), trained only on piano recordings, running in your browser. Measured on the same answer-key recordings as above, whole pieces, transcribed through the app. The averages leave out the Ballade: that recording was part of the model’s training data, so its score is flattering.',
+    'A second, optional model for solo piano: ByteDance’s high-resolution piano transcription model (Kong et al., 2021), trained only on piano recordings, running in your browser. Measured on the same answer-key recordings as above, whole pieces, transcribed through the app. The averages leave out the Ballade: that recording was part of the model’s training data, so its score would look better than it really is.',
   /** means over the 5 MAESTRO test-split pieces (not the Ballade) */
   mean: { f1: 0.9764, f1Fast: 0.8128, ends: 0.8432, endsFast: 0.2914, velR: 0.967, velRFast: 0.602 },
   /** notes found, pooled over the same 5 pieces (8,773 notes) */
@@ -211,7 +211,7 @@ export const SONG_SUMMARY = {
   notes: [
     'On average the Easy right hand now follows the singer 50% of the sung moments (was 19%; best possible 62%), Medium 53% (was 23%). The left hand plays the bass part’s note 71% of the time (was 52%).',
     'A second, independent pitch tracker (pYIN) agrees on the direction: on clearly sung moments the Easy right hand matches the singer 70% of the time, against 30% before.',
-    'Fair warning: the singer’s pitch was traced by AI tools (Demucs to separate the voice, CREPE to trace it), not written by hand. Piano2Vision itself uses neither. The melody settings were tuned on these same five songs, so expect somewhat lower results on other songs.',
+    'The singer’s pitch was traced by AI tools (Demucs to separate the voice, CREPE to trace it), not written by hand. Piano2Vision itself uses neither. The melody settings were tuned on these same five songs, so expect somewhat lower results on other songs.',
   ],
 };
 

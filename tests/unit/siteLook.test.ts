@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-/** a tiny stand-in for <html>, the theme-color <meta>, localStorage and the dark-mode query */
-function fakePage(dark: boolean) {
+/** a theme-color <meta>, with or without a media="(prefers-color-scheme: …)" */
+const fakeMeta = (media?: string) => ({ content: '#0b0b0f', getAttribute: (n: string) => (n === 'media' ? (media ?? null) : null) });
+
+/** a tiny stand-in for <html>, the theme-color <meta>(s), localStorage and the dark-mode query */
+function fakePage(dark: boolean, metas = [fakeMeta()]) {
   const root = { dataset: {} as Record<string, string> };
-  const meta = { content: '#0b0b0f' };
+  const meta = metas[0];
   const store = new Map<string, string>([
     ['piano2vision-skin', 'editorial'],
     ['pianovision-settings', '{"keep":true}'],
@@ -11,7 +14,7 @@ function fakePage(dark: boolean) {
   ]);
   const listeners: (() => void)[] = [];
   const query = { matches: dark, addEventListener: (_: string, f: () => void) => listeners.push(f) };
-  vi.stubGlobal('document', { documentElement: root, querySelector: () => meta });
+  vi.stubGlobal('document', { documentElement: root, querySelectorAll: () => metas });
   vi.stubGlobal('window', { matchMedia: () => query });
   vi.stubGlobal('localStorage', {
     getItem: (k: string) => store.get(k) ?? null,
@@ -46,6 +49,19 @@ describe('the site look (Studio keeps its own)', () => {
     page.query.matches = false;
     page.listeners.forEach((f) => f());
     expect(page.meta.content).toBe('#faf9f6');
+  });
+
+  it('sets the light and the dark-mode bar color of index.html, and the Studio dark on both', async () => {
+    const light = fakeMeta('(prefers-color-scheme: light)');
+    const dark = fakeMeta('(prefers-color-scheme: dark)');
+    fakePage(false, [light, dark]);
+    const { applySiteLook } = await import('../../src/lib/siteLook');
+    applySiteLook(false);
+    expect([light.content, dark.content]).toEqual(['#faf9f6', '#111110']);
+    applySiteLook(true);
+    expect([light.content, dark.content]).toEqual(['#0b0b0f', '#0b0b0f']);
+    applySiteLook(false);
+    expect([light.content, dark.content]).toEqual(['#faf9f6', '#111110']);
   });
 
   it('forgets the try-out choice and nothing else', async () => {
