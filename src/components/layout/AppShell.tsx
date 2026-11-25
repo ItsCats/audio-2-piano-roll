@@ -9,7 +9,7 @@ import { ImportStatusPill } from '../import/ImportStatusPill';
 import { InterruptedImportNotice } from '../import/InterruptedImportNotice';
 import { useStageFullscreen } from '../../state/fullscreenStore';
 import { useSettings } from '../../state/settingsStore';
-import { applySkin } from '../../lib/skin';
+import { applySiteLook } from '../../lib/siteLook';
 
 export function Logo({ compact }: { compact?: boolean }) {
   return (
@@ -28,8 +28,8 @@ export function AppShell() {
   const songId = useStudio((s) => s.song?.id);
   const location = useLocation();
   const inStudio = location.pathname.startsWith('/studio');
-  // the site skin being tried out; never in the Studio
-  useLayoutEffect(() => applySkin(inStudio), [inStudio]);
+  // the site's look (light, or dark in dark mode); the Studio keeps its own dark look
+  useLayoutEffect(() => applySiteLook(inStudio), [inStudio]);
   // the Studio's full screen: hide the app's navigation (sidebar, bottom tabs)
   const chromeHidden = useStageFullscreen((s) => s.mode !== 'off');
   // editing the sheet music on a phone: the bottom tabs make room for the music (back when Edit is off)

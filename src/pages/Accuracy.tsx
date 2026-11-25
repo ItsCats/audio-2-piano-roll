@@ -233,7 +233,7 @@ export default function AccuracyPage() {
     <div className="h-full overflow-y-auto">
       <div className="mx-auto flex max-w-5xl flex-col gap-9 px-4 py-8 sm:px-5 md:px-10">
         <header>
-          <p className="text-[12px] font-semibold tracking-[0.14em] text-accent-400 uppercase">Honest numbers</p>
+          <p className="text-[12px] font-semibold tracking-[0.14em] text-accent-400 uppercase">Measured results</p>
           <h1 className="mt-2 text-[28px] font-semibold tracking-tight text-ink-50 md:text-[32px]">How accurate is Piano2Vision?</h1>
           <p className="mt-3 max-w-3xl text-[14.5px] leading-relaxed text-ink-300">
             When you import audio, an AI model listens to it and guesses which notes were played. It’s a guess, not the real sheet music.
@@ -332,7 +332,7 @@ export default function AccuracyPage() {
           </div>
           <div className="flex flex-col gap-2 sm:hidden">
             {SPECIALIST_ROWS.map((r) => (
-              <div key={r.piece} className={cn('panel p-3.5', r.inTraining && 'opacity-80')}>
+              <div key={r.piece} className="panel p-3.5">
                 <p className="text-[13.5px] font-medium text-ink-50">{r.piece}</p>
                 {r.inTraining && <TrainingTag />}
                 <div className="mt-2 grid grid-cols-3 gap-2 text-[11px] text-ink-400">
@@ -355,7 +355,7 @@ export default function AccuracyPage() {
               </thead>
               <tbody>
                 {SPECIALIST_ROWS.map((r) => (
-                  <tr key={r.piece} className={cn('border-b border-ink-800 last:border-0', r.inTraining && 'opacity-80')}>
+                  <tr key={r.piece} className="border-b border-ink-800 last:border-0">
                     <td className="px-4 py-3">
                       <p className="font-medium text-ink-50">{r.piece}</p>
                       {r.inTraining && <TrainingTag />}
@@ -417,7 +417,7 @@ export default function AccuracyPage() {
         <section>
           <SectionTitle
             title="Other piano recordings (no answer key)"
-            sub="For recordings without a key-by-key record we compare the normal model with the piano-specialist model (the original Python version of the high-accuracy piano model). On the answer-key pieces above it scores 94–99 %, so high agreement is a good sign — but it is a second opinion, not the truth (it is weaker on pianos, rooms and styles unlike its training data, such as the jazz cover). For the same reason these rows say nothing about the high-accuracy option itself: compared with its own model it would always agree."
+            sub="For recordings without a key-by-key record we compare the normal model with the piano-specialist model (the original Python version of the high-accuracy piano model). On the answer-key pieces above it scores 94–99 %, so high agreement is a good sign. Still, it is a second opinion, not the truth (it is weaker on pianos, rooms and styles unlike its training data, such as the jazz cover). For the same reason these rows say nothing about the high-accuracy option itself: compared with its own model it would always agree."
           />
           <div className="flex flex-col gap-2 sm:hidden">
             {OTHER_PIANO_ROWS.map((r) => (

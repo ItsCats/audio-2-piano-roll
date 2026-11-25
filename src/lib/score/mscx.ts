@@ -90,7 +90,7 @@ export function mscxToIR(text: string): ScoreIR {
   };
   const workTitle = meta('workTitle');
   const movement = meta('movementTitle');
-  const title = (workTitle && movement && workTitle !== movement ? `${workTitle} — ${movement}` : workTitle || movement) || frameText('title');
+  const title = (workTitle && movement && workTitle !== movement ? `${workTitle}: ${movement}` : workTitle || movement) || frameText('title');
   const composer = meta('composer') || frameText('composer');
 
   // ---- parts and staves (global staff index in score order)

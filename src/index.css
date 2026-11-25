@@ -2,7 +2,7 @@
 @import '@fontsource-variable/inter';
 @import '@fontsource/jetbrains-mono/400.css';
 @import '@fontsource/jetbrains-mono/600.css';
-@import './styles/skins.css';
+@import './styles/site.css';
 
 @theme {
   --font-sans: 'Inter Variable', Inter, ui-sans-serif, system-ui, sans-serif;
@@ -40,7 +40,7 @@
 
 :root {
   color-scheme: dark;
-  /* the current look; the site skins (styles/skins.css) change these outside the Studio */
+  /* the Studio's look; the site's look (styles/site.css) changes these outside the Studio */
   --font-display: var(--font-sans);
   --on-accent: #fff;
   --shadow-primary: 0 6px 20px -8px rgba(109, 140, 255, 0.7);

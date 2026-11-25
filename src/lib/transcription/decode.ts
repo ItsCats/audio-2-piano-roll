@@ -104,7 +104,7 @@ export function placeByTimestamp(timestamps: number[], lengths: number[], rate: 
 }
 
 const tooLong = (d: number) =>
-  `This recording is ${Math.round(d / 60)} minutes long. The limit is ${MAX_DURATION_SECONDS / 60} minutes — trim it first.`;
+  `This recording is ${Math.round(d / 60)} minutes long. The limit is ${MAX_DURATION_SECONDS / 60} minutes. Trim it first.`;
 
 /** Decode to an AudioBuffer at `sampleRate` (the browser resamples during decoding). */
 export async function decodeToRate(blob: Blob, sampleRate: number): Promise<AudioBuffer> {

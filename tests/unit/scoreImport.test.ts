@@ -285,7 +285,7 @@ describe('MusicXML semantics', () => {
   it('title, composer and movement', () => {
     const head = '<work><work-title>Sonata</work-title></work><movement-title>Allegro</movement-title><identification><creator type="composer">W. A. Mozart</creator></identification>';
     const p = importMusicXml(score([{ measures: [ATTR() + N(60, 4)] }], head));
-    expect(p.title).toBe('Sonata — Allegro');
+    expect(p.title).toBe('Sonata: Allegro');
     expect(p.composer).toBe('W. A. Mozart');
   });
 

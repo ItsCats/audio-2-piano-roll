@@ -76,16 +76,11 @@ Google LLC) with long (Apache-2.0) and seedrandom (MIT); array-flatten (MIT).
 | EB Garamond | Copyright 2017 The EB Garamond Project Authors (https://github.com/octaviopardo/EBGaramond12) |
 | Great Vibes | Copyright 2010 The Great Vibes Pro Project Authors (https://github.com/googlefonts/great-vibes) |
 
-Site skins being tried out (`src/styles/skins.css`; Latin subsets from Fontsource 5.3.0 in `src/assets/fonts/`,
-each with its OFL text next to it as `<name>.OFL.txt`):
+The site's look outside the Piano Studio (`src/styles/site.css`; Latin subsets from Fontsource 5.3.0 in
+`src/assets/fonts/`, each with its OFL text next to it as `<name>.OFL.txt`):
 
 | Font | Copyright |
 | --- | --- |
-| Young Serif | Copyright 2023 The Young Serif Project Authors (https://github.com/noirblancrouge/YoungSerif) |
-| Atkinson Hyperlegible Next | Copyright 2020-2024 The Atkinson Hyperlegible Next Project Authors (https://github.com/googlefonts/atkinson-hyperlegible-next) |
-| Barlow Condensed | Copyright 2017 The Barlow Project Authors (https://github.com/jpt/barlow) |
-| IBM Plex Sans | Copyright 2019 IBM Corp. All rights reserved. |
-| IBM Plex Mono | Copyright 2017 IBM Corp. All rights reserved. |
 | Newsreader | Copyright 2020 The Newsreader Project Authors (http://github.com/productiontype/Newsreader) |
 | Libre Franklin | Copyright 2020 The Libre Franklin Project Authors (https://github.com/googlefonts/Libre-Franklin) |
 

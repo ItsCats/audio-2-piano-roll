@@ -131,7 +131,7 @@ export function reloadIfNewVersion(): Promise<boolean> {
       return false;
     }
     if (!setGuard(Date.now())) return false;
-    showNote('A new version is available — reloading');
+    showNote('A new version is available. Reloading…');
     window.setTimeout(() => location.reload(), 900);
     return true;
   })().finally(() => {

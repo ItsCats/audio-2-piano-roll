@@ -110,7 +110,7 @@ export function musicXmlToIR(text: string): ScoreIR {
     if (type === 'title' && !creditTitle) creditTitle = words;
     if (type === 'composer' && !composer) composer = words;
   }
-  const title = workTitle && movement && workTitle !== movement ? `${workTitle} — ${movement}` : workTitle || movement || creditTitle;
+  const title = workTitle && movement && workTitle !== movement ? `${workTitle}: ${movement}` : workTitle || movement || creditTitle;
 
   // ---- parts
   const partList = child(root, 'part-list');

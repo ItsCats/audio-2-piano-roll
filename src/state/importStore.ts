@@ -771,7 +771,7 @@ function serverStageDetail(stage: string, pianoPart = false): string {
     case 'separating':
       return pianoPart ? 'Removing singing and drums on your server' : 'Separating vocals & drums on your server';
     case 'encoding':
-      return 'Saving the separated stems on your server';
+      return 'Saving the separated parts on your server';
     default:
       return `Processing on your server (${stage})`;
   }
@@ -1574,12 +1574,12 @@ export const useImport = create<ImportState>((set, get) => {
             );
             const title = done.title ?? meta0.title;
             const artist = done.artist ?? meta0.artist;
-            update({ stage: 'downloading', progress: null, detail: 'Transferring the audio and the separated stems to the browser' });
+            update({ stage: 'downloading', progress: null, detail: 'Bringing the audio and the separated parts to the browser' });
             const mix = await getJobAudio(backend, job.id, 'mix', signal);
             mixFromServer = { blob: mix, title, artist };
             const hasStems = !!done.stems?.includes('vocals') && done.stems.includes('accomp');
             if (!hasStems) {
-              why = done.separationError || 'it returned no separated stems';
+              why = done.separationError || 'it returned no separated parts';
             } else {
               const withOther = isPianoPart(ctx) && !!done.stems?.includes('other');
               const stems = withOther ? await backendApi.fetchStems(backend, job.id, signal, true) : await backendApi.fetchStems(backend, job.id, signal);
@@ -1626,7 +1626,7 @@ export const useImport = create<ImportState>((set, get) => {
             }),
           signal,
         );
-        update({ stage: 'downloading', progress: null, detail: 'Transferring audio to the browser' });
+        update({ stage: 'downloading', progress: null, detail: 'Bringing the audio to the browser' });
         const blob = await getJobAudio(backend, job.id, undefined, signal);
         const title = done.title ?? meta0.title;
         return await transcribeAndSave(
@@ -1643,7 +1643,7 @@ export const useImport = create<ImportState>((set, get) => {
     },
 
     importDemo: async () => {
-      const ctx = start('Bach — Prelude in C major', 'demo', planFor('demo', undefined));
+      const ctx = start('Bach: Prelude in C major', 'demo', planFor('demo', undefined));
       const song = demoSong();
       return (await finish(ctx, song))!;
     },
@@ -1902,8 +1902,8 @@ export const STAGE_LABELS: Record<ImportStage, string> = {
   uploading: 'Uploading',
   downloading: 'Fetching audio',
   separating: 'Separating vocals & drums',
-  decoding: 'Decoding audio',
-  'loading-model': 'Loading AI model',
+  decoding: 'Reading the audio',
+  'loading-model': 'Loading the note finder',
   analyzing: 'Detecting notes',
   'piano-model': 'Piano model: keyboard parts and in-between notes',
   extracting: 'Extracting notes',

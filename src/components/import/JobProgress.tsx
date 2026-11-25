@@ -207,7 +207,7 @@ export function JobProgress({
       )}
       {done && job.sheet && (
         <p className="mt-4 flex gap-2 text-[12.5px] text-ink-200">
-          <Info size={14} className="mt-0.5 shrink-0 text-warn" /> Read from sheet music{job.sheetReader === 'accurate' ? '' : ' (Beta)'} — check the notes against your page.
+          <Info size={14} className="mt-0.5 shrink-0 text-warn" /> Read from sheet music{job.sheetReader === 'accurate' ? '' : ' (Beta)'}. Check the notes against your page.
         </p>
       )}
       {job.warnings.length > 0 && (
