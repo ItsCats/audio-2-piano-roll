@@ -972,14 +972,14 @@ async function transcribeAudioOnce(
 ): Promise<TranscriptionResult> {
   const t0 = performance.now();
   if (opts.engine === 'piano-specialist') return transcribeWithSpecialist(blob, onProgress, signal, opts, t0);
-  onProgress({ stage: 'decoding', progress: null, detail: 'Decoding and resampling audio' });
+  onProgress({ stage: 'decoding', progress: null, detail: 'Reading the audio' });
   // (the decoded AudioBuffer is not kept: separation decodes again at 44.1 kHz and memory is tight)
   let { audio, duration } = await decodeMono(blob, BP_SAMPLE_RATE);
   if (signal?.aborted) throw aborted();
   const warnings: string[] = [];
   let separationFailure: TranscriptionResult['separationFailure'];
   const level = analyzeLevel(audio);
-  if (level.peak < 0.01) throw new Error('The audio is (nearly) silent — nothing to transcribe.');
+  if (level.peak < 0.01) throw new Error('The audio is silent or nearly silent, so there are no notes to find.');
   if (level.rms < 0.01) warnings.push('The recording is very quiet; quiet notes may be missed.');
 
   // ---- optional source separation
@@ -1012,7 +1012,7 @@ async function transcribeAudioOnce(
     // a copy: the stem itself may still be added back into the accompaniment (vocalsIntoAccomp)
     const v = sep.vocals.slice();
     normalise(v);
-    vocal = await runModel(v, VOCAL_EXTRACTION, onProgress, signal, step('Neural pitch detection — vocal melody'));
+    vocal = await runModel(v, VOCAL_EXTRACTION, onProgress, signal, step('Finding notes: vocal melody'));
     melody = melodyFromRaw(vocal.notes, vocal.rms, duration);
   }
   const vocalsBack = !!sep && vocalsIntoAccomp(withVocals, melody.length);
@@ -1032,7 +1032,7 @@ async function transcribeAudioOnce(
   normalise(audio);
 
   // ---- accompaniment (or the full mix)
-  const what = sep ? step('Neural pitch detection — accompaniment') : 'Neural pitch detection';
+  const what = sep ? step('Finding notes: accompaniment') : 'Finding notes';
   const result = await runModel(audio, params, onProgress, signal, what);
 
   // ---- bass stem: its own pass, read as one line in accompFromRaw (a failure only loses the line)
@@ -1042,7 +1042,7 @@ async function transcribeAudioOnce(
     const { leadPass: _lp, ...bassParams } = params;
     void _lp;
     try {
-      const b = await runModel(bassStem, bassParams, onProgress, signal, step('Neural pitch detection — bass line'));
+      const b = await runModel(bassStem, bassParams, onProgress, signal, step('Finding notes: bass line'));
       bass = { nFrames: b.nFrames, pitches: BASS_BAND_PITCHES, frames: bassBand(b.frames, b.nFrames), onsets: bassBand(b.onsets, b.nFrames) };
     } catch (err) {
       if (signal?.aborted || (err as Error)?.name === 'AbortError') throw aborted();
@@ -1197,7 +1197,7 @@ async function separateFor(
   } else if (!sep && (opts.stems || opts.separate)) {
     try {
       if (opts.stems) {
-        onProgress({ stage: 'separating', progress: null, detail: 'Reading the separated stems' });
+        onProgress({ stage: 'separating', progress: null, detail: 'Reading the separated parts' });
         // the "other" stem is only decoded where it is used (the piano part)
         sep = await stemsFromBlobs(opts.stems.vocals, opts.stems.accomp, duration, opts.stems.serverMs, pianoPart ? opts.stems.other : undefined);
       } else {
@@ -1427,7 +1427,7 @@ async function transcribeWithSpecialist(
   opts: TranscribeOptions,
   t0: number,
 ): Promise<TranscriptionResult> {
-  onProgress({ stage: 'decoding', progress: null, detail: 'Decoding and resampling audio' });
+  onProgress({ stage: 'decoding', progress: null, detail: 'Reading the audio' });
   // "Remove singing and drums": separate first, then the model hears only the piano part
   const wantsPart = !!opts.pianoPart && !!(opts.separate || opts.stems || opts.separation);
   // only the mono samples and the duration are kept (the AudioBuffer is not)
@@ -1442,7 +1442,7 @@ async function transcribeWithSpecialist(
     ({ audio: mix, duration } = await decodeMono(blob, BP_SAMPLE_RATE));
     if (signal?.aborted) throw aborted();
     const level = analyzeLevel(mix);
-    if (level.peak < 0.01) throw new Error('The audio is (nearly) silent — nothing to transcribe.');
+    if (level.peak < 0.01) throw new Error('The audio is silent or nearly silent, so there are no notes to find.');
     if (level.rms < 0.01) warnings.push('The recording is very quiet; quiet notes may be missed.');
     let sep: SeparationResult | null;
     ({ sep, failure: separationFailure } = await separateFor(blob, duration, opts, onProgress, signal, warnings, true));
@@ -1471,7 +1471,7 @@ async function transcribeWithSpecialist(
     ({ audio, duration } = await decodeMono(blob, SPECIALIST_SAMPLE_RATE));
     if (signal?.aborted) throw aborted();
     const level = analyzeLevel(audio);
-    if (level.peak < 0.01) throw new Error('The audio is (nearly) silent — nothing to transcribe.');
+    if (level.peak < 0.01) throw new Error('The audio is silent or nearly silent, so there are no notes to find.');
     if (level.rms < 0.01) warnings.push('The recording is very quiet; quiet notes may be missed.');
     if (opts.separate || opts.stems || opts.separation) warnings.push('"Separate vocals & drums" is not used with the high-accuracy piano model.');
   }

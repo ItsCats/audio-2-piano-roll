@@ -76,6 +76,14 @@ Google LLC) with long (Apache-2.0) and seedrandom (MIT); array-flatten (MIT).
 | EB Garamond | Copyright 2017 The EB Garamond Project Authors (https://github.com/octaviopardo/EBGaramond12) |
 | Great Vibes | Copyright 2010 The Great Vibes Pro Project Authors (https://github.com/googlefonts/great-vibes) |
 
+The site's look outside the Piano Studio (`src/styles/site.css`; Latin subsets from Fontsource 5.3.0 in
+`src/assets/fonts/`, each with its OFL text next to it as `<name>.OFL.txt`):
+
+| Font | Copyright |
+| --- | --- |
+| Newsreader | Copyright 2020 The Newsreader Project Authors (http://github.com/productiontype/Newsreader) |
+| Libre Franklin | Copyright 2020 The Libre Franklin Project Authors (https://github.com/googlefonts/Libre-Franklin) |
+
 **Not bundled:** jsPDF's optional helpers html2canvas, canvg and dompurify are replaced by a stub
 (`src/lib/sheet/stub.ts`). Build and test tools (vite, rolldown, tailwindcss, lightningcss, typescript, vitest,
 playwright, @spotify/basic-pitch, @tensorflow/tfjs 3) are used only to build or test and are not part of the

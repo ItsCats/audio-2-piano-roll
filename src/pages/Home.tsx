@@ -1,5 +1,5 @@
 import { useNavigate, Link } from 'react-router-dom';
-import { Sparkles, MonitorSpeaker, Music2, Keyboard, ArrowRight, Wand2, Gauge, Film } from 'lucide-react';
+import { PlayCircle, MonitorSpeaker, Music2, Keyboard, ArrowRight, Upload, Gauge, Film } from 'lucide-react';
 import { Dropzone } from '../components/import/Dropzone';
 import { SongCard } from '../components/SongCard';
 import { useLibrary } from '../state/libraryStore';
@@ -21,9 +21,9 @@ export function HomePage() {
 
   const actions = [
     {
-      icon: Sparkles,
+      icon: PlayCircle,
       title: 'Try the demo',
-      text: 'Bach’s Prelude in C — hear the grand piano and explore the Studio.',
+      text: 'Bach’s Prelude in C. A good way to poke around the Studio.',
       onClick: async () => {
         try {
           const id = await importDemo();
@@ -34,8 +34,8 @@ export function HomePage() {
       },
     },
     { icon: MonitorSpeaker, title: 'Record what’s playing', text: 'Record a song playing in another tab on your computer.', onClick: () => navigate('/import?tab=computer') },
-    { icon: Music2, title: 'Import MIDI or sheet music', text: 'MIDI, MusicXML or MuseScore files: exact notes, no transcription needed.', onClick: () => navigate('/import?tab=midi') },
-    { icon: Keyboard, title: 'Connect a MIDI keyboard', text: 'Practice along and get scored on accuracy and timing.', onClick: () => navigate('/settings#midi') },
+    { icon: Music2, title: 'Import MIDI or sheet music', text: 'MIDI, MusicXML or MuseScore files. The notes come out exactly right.', onClick: () => navigate('/import?tab=midi') },
+    { icon: Keyboard, title: 'Connect a MIDI keyboard', text: 'Play along and see how many notes you hit, and how on time you were.', onClick: () => navigate('/settings#midi') },
   ];
 
   return (
@@ -43,34 +43,34 @@ export function HomePage() {
       <div className="mx-auto flex max-w-6xl flex-col gap-10 px-5 py-8 md:px-10 md:py-12">
         <section className="grid items-center gap-8 lg:grid-cols-[1.1fr_1fr]">
           <div className="animate-fade-in">
-            <p className="text-[12px] font-semibold tracking-[0.14em] text-accent-400 uppercase">Music → Piano roll</p>
+            <p className="text-[12px] font-semibold tracking-[0.14em] text-accent-400 uppercase">Free · No sign-up</p>
             <h1 className="mt-3 text-[34px] leading-[1.1] font-semibold tracking-tight text-ink-50 md:text-[44px]">
-              Hear a song. <span className="text-ink-300">See it on the keys.</span>
+              Turn a song into <span className="text-ink-300">notes you can play.</span>
             </h1>
             <p className="mt-4 max-w-lg text-[15px] leading-relaxed text-ink-300">
-              Piano2Vision listens to your music with a neural pitch detector, writes out the notes, and turns them into an
-              interactive falling-note piano roll — with a real sampled grand piano, three difficulty levels, editing,
-              practice tools and video export.
+              Drop in a song and Piano2Vision works out the notes, then shows them falling onto a keyboard so you can learn it by
+              watching. You also get a real grand piano sound, Easy, Medium and Hard versions, editing, practice tools and video
+              export.
             </p>
             <div className="mt-6 flex flex-wrap gap-3">
-              <Button variant="primary" size="lg" onClick={() => navigate('/import')} icon={<Wand2 size={18} />}>
+              <Button variant="primary" size="lg" onClick={() => navigate('/import')} icon={<Upload size={18} />}>
                 Import music
               </Button>
-              <Button variant="subtle" size="lg" onClick={actions[0].onClick} icon={<Sparkles size={18} />}>
+              <Button variant="subtle" size="lg" onClick={actions[0].onClick} icon={<PlayCircle size={18} />}>
                 Play the demo
               </Button>
             </div>
             <div className="mt-7 flex flex-wrap gap-x-6 gap-y-2 text-[12.5px] text-ink-300">
-              <span className="flex items-center gap-1.5"><Gauge size={14} className="text-accent-400" /> Runs in your browser</span>
+              <span className="flex items-center gap-1.5"><Gauge size={14} className="text-accent-400" /> Works in your browser</span>
               <span className="flex items-center gap-1.5"><Music2 size={14} className="text-accent-400" /> Easy · Medium · Hard</span>
-              <span className="flex items-center gap-1.5"><Film size={14} className="text-accent-400" /> 1080p60 video export</span>
+              <span className="flex items-center gap-1.5"><Film size={14} className="text-accent-400" /> Save it as a 1080p video</span>
             </div>
           </div>
           <Dropzone onFile={onFile} />
         </section>
 
         <section>
-          <h2 className="mb-3 text-[13px] font-semibold tracking-wide text-ink-200">Get started</h2>
+          <h2 className="mb-3 text-[13px] font-semibold tracking-wide text-ink-200">Ways to start</h2>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {actions.map((a) => (
               <button
@@ -103,7 +103,7 @@ export function HomePage() {
             </div>
           ) : (
             <div className="rounded-xl border border-ink-800 bg-ink-900/50 px-5 py-8 text-center text-[13px] text-ink-300">
-              Songs you import will appear here.
+              Nothing here yet. Songs you import show up here.
             </div>
           )}
         </section>

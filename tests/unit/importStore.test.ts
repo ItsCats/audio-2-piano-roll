@@ -101,7 +101,7 @@ const done = (extra: Record<string, unknown> = {}) => ({ id: 'job1', status: 'do
 describe('YouTube import via a separating server', () => {
   it('a transcription error is reported as is, not retried as a separation fallback', async () => {
     vi.mocked(client.waitForJob).mockResolvedValue(done({ stems: ['accomp', 'mix', 'vocals'], separationMs: 90_000 }));
-    vi.mocked(pipeline.transcribeAudio).mockRejectedValue(new Error('The audio is (nearly) silent — nothing to transcribe.'));
+    vi.mocked(pipeline.transcribeAudio).mockRejectedValue(new Error('The audio is silent or nearly silent, so there are no notes to find.'));
     await useImport.getState().importYouTubeViaServer('https://youtu.be/abc', 'abc', true);
     const job = useImport.getState().job!;
     expect(job.stage).toBe('error');
@@ -232,7 +232,7 @@ describe('interrupted-import record (crash recovery)', () => {
   });
 
   it('a failure deletes the record but keeps "Try again" and the recording for the open page', async () => {
-    vi.mocked(pipeline.transcribeAudio).mockRejectedValueOnce(new Error('The audio is (nearly) silent — nothing to transcribe.'));
+    vi.mocked(pipeline.transcribeAudio).mockRejectedValueOnce(new Error('The audio is silent or nearly silent, so there are no notes to find.'));
     const blob = recording();
     await useImport.getState().importAudioBlob(blob, meta);
     const st = useImport.getState();

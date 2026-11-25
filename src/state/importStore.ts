@@ -5,7 +5,7 @@
 import { create } from 'zustand';
 import { transcribeAudio, type ProgressEvent, type TranscribeOptions, type TranscriptionEngine } from '../lib/transcription/pipeline';
 import type { TranscriptionStage } from '../lib/transcription/workerProtocol';
-import { classifyFile } from '../lib/transcription/decode';
+import { classifyFile, plainDecodeError } from '../lib/transcription/decode';
 import { parseMidi } from '../lib/music/midi';
 import { buildSong, demoSong, songFromMidi, songFromReanalysis, songFromScore, songInputFromResult, titleFromFileName } from '../lib/songs';
 import {
@@ -771,7 +771,7 @@ function serverStageDetail(stage: string, pianoPart = false): string {
     case 'separating':
       return pianoPart ? 'Removing singing and drums on your server' : 'Separating vocals & drums on your server';
     case 'encoding':
-      return 'Saving the separated stems on your server';
+      return 'Saving the separated parts on your server';
     default:
       return `Processing on your server (${stage})`;
   }
@@ -959,7 +959,11 @@ export const useImport = create<ImportState>((set, get) => {
       if (get().job?.id === ctx.id) set({ job: null, controller: null });
       return null;
     }
-    const msg = err instanceof Error ? err.message : String(err);
+    const raw = err instanceof Error ? err.message : String(err);
+    // a file the browser can't decode: a plain message (the decoder's words go to the console)
+    const plain = plainDecodeError(raw);
+    if (plain) console.warn(raw);
+    const msg = plain ?? raw;
     ctx.update({ stage: 'error', error: msg, finishedAt: Date.now() });
     if (again && get().job?.id === ctx.id) set({ failed: { jobId: ctx.id, ...again } });
     return null;
@@ -1574,12 +1578,12 @@ export const useImport = create<ImportState>((set, get) => {
             );
             const title = done.title ?? meta0.title;
             const artist = done.artist ?? meta0.artist;
-            update({ stage: 'downloading', progress: null, detail: 'Transferring the audio and the separated stems to the browser' });
+            update({ stage: 'downloading', progress: null, detail: 'Bringing the audio and the separated parts to the browser' });
             const mix = await getJobAudio(backend, job.id, 'mix', signal);
             mixFromServer = { blob: mix, title, artist };
             const hasStems = !!done.stems?.includes('vocals') && done.stems.includes('accomp');
             if (!hasStems) {
-              why = done.separationError || 'it returned no separated stems';
+              why = done.separationError || 'it returned no separated parts';
             } else {
               const withOther = isPianoPart(ctx) && !!done.stems?.includes('other');
               const stems = withOther ? await backendApi.fetchStems(backend, job.id, signal, true) : await backendApi.fetchStems(backend, job.id, signal);
@@ -1626,7 +1630,7 @@ export const useImport = create<ImportState>((set, get) => {
             }),
           signal,
         );
-        update({ stage: 'downloading', progress: null, detail: 'Transferring audio to the browser' });
+        update({ stage: 'downloading', progress: null, detail: 'Bringing the audio to the browser' });
         const blob = await getJobAudio(backend, job.id, undefined, signal);
         const title = done.title ?? meta0.title;
         return await transcribeAndSave(
@@ -1643,7 +1647,7 @@ export const useImport = create<ImportState>((set, get) => {
     },
 
     importDemo: async () => {
-      const ctx = start('Bach — Prelude in C major', 'demo', planFor('demo', undefined));
+      const ctx = start('Bach: Prelude in C major', 'demo', planFor('demo', undefined));
       const song = demoSong();
       return (await finish(ctx, song))!;
     },
@@ -1902,8 +1906,8 @@ export const STAGE_LABELS: Record<ImportStage, string> = {
   uploading: 'Uploading',
   downloading: 'Fetching audio',
   separating: 'Separating vocals & drums',
-  decoding: 'Decoding audio',
-  'loading-model': 'Loading AI model',
+  decoding: 'Reading the audio',
+  'loading-model': 'Getting the note finder ready',
   analyzing: 'Detecting notes',
   'piano-model': 'Piano model: keyboard parts and in-between notes',
   extracting: 'Extracting notes',

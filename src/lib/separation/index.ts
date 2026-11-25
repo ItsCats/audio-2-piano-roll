@@ -299,7 +299,7 @@ export async function separateStems(
   signal?: AbortSignal,
 ): Promise<SeparationResult> {
   const t0 = performance.now();
-  onProgress(0, 'Decoding audio for separation');
+  onProgress(0, 'Reading the audio for separation');
   let buffer: AudioBuffer | null = await decodeToRate(blob, SCNET_RATE);
   if (signal?.aborted) throw abortError();
   // copies: the worker takes ownership of these

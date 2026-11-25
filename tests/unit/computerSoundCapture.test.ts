@@ -181,7 +181,7 @@ describe('a computer-sound recording is imported like a microphone recording', (
 
   it('a failed import keeps the recording for "Try again" and download', async () => {
     const blob = await (await startTabAudioCapture()).stop();
-    vi.mocked(pipeline.transcribeAudio).mockRejectedValueOnce(new Error('The audio is (nearly) silent — nothing to transcribe.'));
+    vi.mocked(pipeline.transcribeAudio).mockRejectedValueOnce(new Error('The audio is silent or nearly silent, so there are no notes to find.'));
     await useImport.getState().importAudioBlob(blob, { title: 'Tone test', source: { kind: 'capture', mimeType: blob.type, fileSize: blob.size } });
     const st = useImport.getState();
     expect(st.job!.stage).toBe('error');

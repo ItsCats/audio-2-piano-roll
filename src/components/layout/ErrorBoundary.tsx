@@ -22,7 +22,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, { error: E
             {update ? 'A new version of Piano2Vision may be out, or the connection dropped. Reload to try again.' : this.state.error.message}
           </p>
           <p className="mt-2 text-xs text-ink-400">Your songs are stored on this device and are not affected.</p>
-          <button className="mt-4 min-h-11 rounded-lg bg-accent-500 px-5 py-2 text-sm font-medium text-white" onClick={() => location.reload()}>
+          <button className="mt-4 min-h-11 rounded-lg bg-accent-500 px-5 py-2 text-sm font-medium text-[var(--on-accent)]" onClick={() => location.reload()}>
             Reload
           </button>
         </div>

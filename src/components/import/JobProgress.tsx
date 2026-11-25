@@ -161,13 +161,13 @@ export function JobProgress({
             </p>
           )}
           {job.progress !== null && (
-            <p className={cn('mt-1.5 flex justify-between gap-3 text-ink-300', plain ? 'text-[12px]' : 'font-mono text-[11px]')}>
+            <p className={cn('mt-1.5 flex justify-between gap-3 text-ink-300', plain ? 'text-[12px]' : 'text-[11px]')}>
               <span>
                 {job.sheet
                   ? sentence(eta ?? (job.stage === 'analyzing' && job.progress < 0.99 ? 'Working out the time left…' : ''))
                   : re
                     ? sentence(eta ?? ((job.stage === 'separating' || job.stage === 'analyzing' || job.stage === 'piano-model') && job.progress < 0.99 ? `${etaStep(job)}: working out the time left…` : ''))
-                    : (eta ?? ((job.stage === 'separating' || job.stage === 'analyzing' || job.stage === 'piano-model') && job.progress < 0.99 ? `${etaStep(job)}: measuring speed…` : ''))}
+                    : sentence(eta ?? ((job.stage === 'separating' || job.stage === 'analyzing' || job.stage === 'piano-model') && job.progress < 0.99 ? `${etaStep(job)}: measuring speed…` : ''))}
               </span>
               <span>{Math.round(job.progress * 100)}%</span>
             </p>
@@ -207,7 +207,7 @@ export function JobProgress({
       )}
       {done && job.sheet && (
         <p className="mt-4 flex gap-2 text-[12.5px] text-ink-200">
-          <Info size={14} className="mt-0.5 shrink-0 text-warn" /> Read from sheet music{job.sheetReader === 'accurate' ? '' : ' (Beta)'} — check the notes against your page.
+          <Info size={14} className="mt-0.5 shrink-0 text-warn" /> Read from sheet music{job.sheetReader === 'accurate' ? '' : ' (Beta)'}. Check the notes against your page.
         </p>
       )}
       {job.warnings.length > 0 && (

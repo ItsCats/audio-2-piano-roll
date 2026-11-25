@@ -304,14 +304,14 @@ try {
       });
       page.once('dialog', (d) => void d.accept());
       await page.reload();
-      await page.getByText('Your last import was interrupted').waitFor({ timeout: 20000 });
+      await page.getByText('Your last import didn’t finish').waitFor({ timeout: 20000 });
       await page.waitForTimeout(400);
       if (name) await shot(page, name);
     };
     await crash('desktop-interrupted-accurate');
     check(
       `${dev}: the notice offers the Quick reader and the Accurate reader again`,
-      (await page.getByText(/with the Accurate reader was interrupted/).isVisible()) &&
+      (await page.getByText(/with the Accurate reader stopped before it finished/).isVisible()) &&
         (await page.getByRole('button', { name: 'Use the Quick reader' }).isVisible()) &&
         (await page.getByRole('button', { name: 'Try the Accurate reader again' }).isVisible()),
     );
